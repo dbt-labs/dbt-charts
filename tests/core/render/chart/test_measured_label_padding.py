@@ -23,7 +23,11 @@ from dbt_charts.core.render.chart.emitters._measured_label_padding import (
     numeric_values,
     quantitative_tick_labels,
 )
-from dbt_charts.core.text.numeral_scale import SuffixMode
+from dbt_charts.core.text.numeral_scale import (
+    SuffixMode,
+    sub_unit_digit_format,
+    sub_unit_scientific_format,
+)
 from dbt_charts.core.utils import measured_label_padding
 
 
@@ -404,3 +408,48 @@ class TestEstimatedQuantitativeTickLabels:
         narrow_max_len = max(len(label) for label in narrow)
         wide_max_len = max(len(label) for label in wide)
         assert wide_max_len > narrow_max_len
+
+    def test_si_format_measures_what_the_ladder_less_guard_actually_paints(
+        self,
+    ) -> None:
+        """The paint/measure invariant this module's own docstring states:
+        a ladder-less axis (``ResolvedTickLabel.si_format`` set) doesn't
+        paint every candidate from ``format_spec`` alone -- a value at or
+        above 1 paints through ``si_format`` instead
+        (``inject_axis_numeral_expr``'s per-tick guard). Passing ``format_spec``
+        unconditionally here, as the pre-existing signature did, measures
+        "1500000" for a candidate Vega-Lite actually paints "1.5M" -- reserving
+        gutter for a string the axis never draws.
+        """
+        plain_only = estimated_quantitative_tick_labels([0.0, 1_500_000.0], ".3~r")
+        guarded = estimated_quantitative_tick_labels(
+            [0.0, 1_500_000.0], ".3~r", si_format=".3~s"
+        )
+        assert any(len(label) > 6 for label in plain_only)
+        assert all(len(label) <= 6 for label in guarded)
+        assert any(label.endswith("M") for label in guarded)
+
+    def test_si_format_still_uses_plain_format_below_one(self) -> None:
+        labels = estimated_quantitative_tick_labels(
+            [0.0, 0.5], ".3~r", si_format=".3~s"
+        )
+        assert "0.5" in labels
+
+    def test_scientific_format_covers_a_deep_sub_unit_candidate(self) -> None:
+        labels = estimated_quantitative_tick_labels(
+            [0.0, 1e-11],
+            sub_unit_digit_format(".3~s"),
+            si_format=".3~s",
+            scientific_format=sub_unit_scientific_format(".3~s"),
+        )
+        assert "1e-11" in labels
+        assert not any("0.0000000000" in label for label in labels)
+
+    def test_zero_never_measured_as_scientific(self) -> None:
+        labels = estimated_quantitative_tick_labels(
+            [0.0, 1e-11],
+            sub_unit_digit_format(".3~s"),
+            si_format=".3~s",
+            scientific_format=sub_unit_scientific_format(".3~s"),
+        )
+        assert "0" in labels

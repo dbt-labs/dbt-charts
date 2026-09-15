@@ -81,7 +81,12 @@ from dbt_charts.core.compile.models.style.resolved import (
 )
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.render.chart._types import VLDict
-from dbt_charts.core.text.numeral_scale import SuffixMode, decimal_pad_for, with_symbol
+from dbt_charts.core.text.numeral_scale import (
+    SUB_UNIT_SCIENTIFIC_FLOOR,
+    SuffixMode,
+    decimal_pad_for,
+    with_symbol,
+)
 
 # Plausible spread of tick counts Vega-Lite's own axis layout might land on
 # when dbt charts hasn't baked explicit tick values. Not an attempt to predict
@@ -212,7 +217,10 @@ def numeric_values(data: list[VLDict], fields: tuple[str, ...]) -> list[float]:
 
 
 def estimated_quantitative_tick_labels(
-    values: list[float], format_spec: str
+    values: list[float],
+    format_spec: str,
+    si_format: str | None = None,
+    scientific_format: str | None = None,
 ) -> list[str]:
     """Upper-bound candidate tick labels for a quantitative axis whose real
     Vega-Lite ticks aren't known (dbt charts hasn't baked ``tick_values``).
@@ -233,6 +241,18 @@ def estimated_quantitative_tick_labels(
     plausibly render. Returns every candidate's formatted string; callers
     measure all of them and take the max width. Returns ``[]`` for no values
     (nothing to estimate from).
+
+    ``si_format``/``scientific_format`` mirror ``ResolvedTickLabel``'s own
+    pair (set together or not at all — the caller threads them straight from
+    there): when set, a candidate doesn't format through ``format_spec``
+    unconditionally — it goes through the exact same per-tick guard
+    ``inject_axis_numeral_expr`` composes into the axis's real ``labelExpr``
+    (magnitude >= 1 -> ``si_format``; below 1 and below
+    ``SUB_UNIT_SCIENTIFIC_FLOOR`` -> ``scientific_format``; otherwise ->
+    ``format_spec``; zero always through ``format_spec``, never scientific).
+    Passing ``format_spec`` alone here for a ladder-less axis would measure a
+    string the axis never paints (e.g. "1500000" for a tick VL actually
+    renders "1.5M").
     """
     if not values:
         return []
@@ -241,4 +261,31 @@ def estimated_quantitative_tick_labels(
     candidates = {domain_min, domain_max}
     for count in _ESTIMATE_TARGET_COUNTS:
         candidates.update(nice_tick_values(domain_min, domain_max, count))
-    return [d3_format(format_spec, v) for v in candidates]
+    if si_format is None:
+        return [d3_format(format_spec, v) for v in candidates]
+    return [
+        _sub_unit_guarded_format(v, format_spec, si_format, scientific_format)
+        for v in candidates
+    ]
+
+
+def _sub_unit_guarded_format(
+    value: float,
+    format_spec: str,
+    si_format: str,
+    scientific_format: str | None,
+) -> str:
+    """The exact per-tick choice ``inject_axis_numeral_expr`` composes into a
+    ladder-less axis's ``labelExpr``, applied in Python so the gutter
+    estimate above measures what the axis actually paints. See that
+    function's docstring for the full rationale.
+    """
+    if abs(value) >= 1:
+        return d3_format(si_format, value)
+    if (
+        scientific_format is not None
+        and value != 0
+        and abs(value) < SUB_UNIT_SCIENTIFIC_FLOOR
+    ):
+        return d3_format(scientific_format, value)
+    return d3_format(format_spec, value)

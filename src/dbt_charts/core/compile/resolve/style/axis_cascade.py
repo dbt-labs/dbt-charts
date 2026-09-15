@@ -57,6 +57,8 @@ from dbt_charts.core.text.numeral_scale import (
     build_decimal_pad_table,
     non_compacting_tick_format,
     shared_scale_for_ladder,
+    sub_unit_digit_format,
+    sub_unit_scientific_format,
 )
 from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
 
@@ -337,6 +339,17 @@ def build_resolved_axis(
     currency-warning detector) or ``label.expr`` (a sentinel several other
     consumers read as "the author opted out").
 
+    A ladder-LESS axis (``tick_values`` empty — a theme leaving
+    ``ticks.count`` unset, or ``multiples.scale: independent``) has no step
+    for ``tick_label.format`` to derive a precision from, so it bakes
+    ``tick_label.si_format``/``.scientific_format`` alongside it instead: the
+    axis's own SI spec, untouched, and the scientific register for a tick too
+    small for significant digits to reach cleanly. ``inject_axis_numeral_expr``
+    reads the three as a per-tick guard rather than one fixed spec — see its
+    own docstring for the full mechanism, including why a log-scale axis
+    (which reaches this same empty-``tick_values`` branch for an unrelated
+    reason) is excluded below rather than folded into it.
+
     ``y_gridline_caps_bottom`` resolves an ``axis_x.ticks.visible: "auto"``
     (the base theme's default) into a concrete bool: True when this axis's
     own gridlines are hidden (nothing else marks position) or the caller
@@ -539,6 +552,27 @@ def build_resolved_axis(
             prefix=prefix,
             anchor_at_start=anchor_at_start_plain,
             decimal_pad_table=tick_label_pad_table,
+        )
+    elif (
+        not tick_values
+        and (not format_authored or format_is_alias)
+        and _si_format is not None
+        and label.expr is None
+        # Excludes a log-scale axis, which also reaches here with empty
+        # tick_values for its own, unrelated reason -- see the docstring
+        # above and `inject_axis_numeral_expr`'s own for why.
+        and not (
+            axis.scale is not None
+            and axis.scale.continuous is not None
+            and axis.scale.continuous.type == "log"
+        )
+    ):
+        # See the docstring above for the mechanism; `inject_axis_numeral_expr`
+        # is the authoritative account of how the three specs below compose.
+        tick_label = ResolvedTickLabel(
+            format=sub_unit_digit_format(_si_format),
+            si_format=_si_format,
+            scientific_format=sub_unit_scientific_format(_si_format),
         )
 
     # style.axis_y.mirror draws the y-scale on both edges (MirrorAxisFeature,
@@ -1173,9 +1207,12 @@ def resolved_axis_style(
     # this no-ladder path). No caller of this wrapper has a real chart id to
     # offer, so "" is passed inline rather than threading a dead parameter
     # through resolved_axis_style's public signature. format_authored and
-    # format_is_alias are threaded through regardless -- cheap and correct
-    # even though the non-compacting bake they govern can never fire without
-    # tick_values.
+    # format_is_alias are threaded through regardless -- cheap and correct,
+    # and not inert: the ladder-less sub-unit bake's own entry condition is
+    # empty tick_values, which this wrapper always has. What keeps it from
+    # firing on this path is that `labels.format` here is still an
+    # unresolved alias name (e.g. "number"), not the literal d3 spec
+    # `is_d3_si_spec` requires.
     return build_resolved_axis(
         base,
         band_position=band_position,

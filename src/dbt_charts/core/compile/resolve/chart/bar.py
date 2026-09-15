@@ -205,12 +205,9 @@ def _bar_endpoint_labels_for_stack(
     if normalized.sort is not None and not numeric_column_values(
         data, normalized.sort.by
     ):
-        # Conservative: both rails reproduce Vega-Lite's domain order, and a
-        # rail that anchors on a row VL does not draw on top is worse than a
-        # legend. A bar's sort pins `min` now (`bar_sort_op`), which Vega does
-        # compare natively on strings and dates — so this refuses a shape the
-        # engine could order. Relaxing it is its own change, with its own
-        # `vl_convert` evidence, not a side effect of pinning the aggregate.
+        # Conservative rather than necessary: `bar_sort_op` pins `min`, which
+        # Vega compares natively on strings and dates, so this refuses a shape
+        # the engine could order.
         return endpoint_labels.model_copy(update={"visible": False})
     if horizontal and stack_mode == "center":
         # The horizontal rail anchors on the cumulative (0..Σ) axis, which the
@@ -1245,12 +1242,15 @@ def _resolve_histogram(
     ay_merged = _bake_ay_position_left(ay_merged)
     # Histogram's x is always a bottom-orient bin axis — no left/right edge.
     # Neither axis carries tick_values on a histogram (VL computes bins
-    # client-side), so tick_label_format's `len(tick_values) >= 2` guard can
-    # never pass on either axis — format_authored/format_is_alias below are
-    # inert here, not a real provenance read (histogram has no cascade to
-    # read one from). The label gate below uses the REAL ay_format_authored
-    # from plan_cartesian so the narrative/native decision matches bar's
-    # behavior for the same format provenance.
+    # client-side). ay_format_authored=True below does not describe a real
+    # authoring (histogram has no cascade to read one from), yet it is not
+    # inert: empty tick_values is also the ladder-less sub-unit guard's own
+    # entry condition (build_resolved_axis's `elif`, axis_cascade.py), and
+    # True is what keeps that branch from firing here — histogram's y is a
+    # VL-computed row count, not real user data, so nothing chose it to
+    # receive that guard. The label gate below uses the REAL
+    # ay_format_authored from plan_cartesian so the narrative/native decision
+    # matches bar's behavior for the same format provenance.
     ay, style_tail = build_cartesian_axes(
         normalized.id,
         chart_style_context,

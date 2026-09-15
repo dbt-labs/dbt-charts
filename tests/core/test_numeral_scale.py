@@ -15,6 +15,7 @@ import pytest
 from d3_format import format as _d3_format
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.text.numeral_scale import (
+    SUB_UNIT_SCIENTIFIC_FLOOR,
     SharedScale,
     SuffixMode,
     _integer_digit_count,
@@ -24,6 +25,8 @@ from dbt_charts.core.text.numeral_scale import (
     non_compacting_tick_format,
     shared_scale_for_column,
     shared_scale_for_ladder,
+    sub_unit_digit_format,
+    sub_unit_scientific_format,
     suffix_at_register,
 )
 
@@ -474,3 +477,66 @@ def test_non_compacting_tick_format_no_symbol_empty_prefix():
     # trim=True appends "~" to the type indicator.
     assert digit_spec == ",.0~f"
     assert precision == 0
+
+
+def test_sub_unit_digit_format_swaps_si_type_for_significant_digits():
+    """No ladder means no step to derive a fixed-point spec from (that is
+    ``non_compacting_tick_format``'s job) -- this keeps the format's own
+    significant-figure count but drops the 's' type that would otherwise
+    print a milli/micro prefix below 1.
+    """
+    assert sub_unit_digit_format(".3~s") == ".3~r"
+
+
+def test_sub_unit_digit_format_keeps_the_currency_symbol():
+    # Unlike non_compacting_tick_format/ruler_digit_format, there is no
+    # anchor tick here to carry a split-out prefix -- every sub-1 tick paints
+    # on its own, so the symbol stays in the spec.
+    assert sub_unit_digit_format("$.3~s") == "$.3~r"
+
+
+def test_sub_unit_digit_format_keeps_comma_grouping():
+    assert sub_unit_digit_format(",.3~s") == ",.3~r"
+
+
+def test_sub_unit_digit_format_defaults_precision_to_six():
+    # A bare "s" carries no explicit precision; d3's own default for both
+    # 's' and 'r' is 6 significant digits.
+    assert sub_unit_digit_format("s") == ".6~r"
+
+
+def test_sub_unit_scientific_format_swaps_si_type_for_exponential():
+    """`sub_unit_digit_format`'s own significant-digit register still
+    collapses into a long run of leading zeros far enough below 1 (a pico
+    tick at 3 sig figs would print "0.00000000001", not "1e-11") -- this is
+    the scientific sibling `inject_axis_numeral_expr` falls to below
+    `SUB_UNIT_SCIENTIFIC_FLOOR`, mirroring `non_compacting_tick_format`'s own
+    fixed-point/scientific split for a real ladder.
+    """
+    assert sub_unit_scientific_format(".3~s") == ".3~e"
+
+
+def test_sub_unit_scientific_format_keeps_the_currency_symbol():
+    assert sub_unit_scientific_format("$.3~s") == "$.3~e"
+
+
+def test_sub_unit_scientific_format_drops_comma_grouping():
+    # Comma grouping is meaningless in exponential notation -- d3 itself
+    # ignores it for the 'e' type, so drop it explicitly rather than carry a
+    # dead flag.
+    assert sub_unit_scientific_format(",.3~s") == ".3~e"
+
+
+def test_sub_unit_scientific_floor_matches_non_compacting_tick_format_boundary():
+    """One threshold, not two: the same magnitude
+    `non_compacting_tick_format` treats as "too fine for fixed point" for a
+    real ladder step is what gates the scientific fallback here, since a
+    sub-1 tick's own magnitude is the only "step" a ladder-less axis has to
+    check it against.
+    """
+    assert pytest.approx(1e-10) == SUB_UNIT_SCIENTIFIC_FLOOR
+    assert (
+        non_compacting_tick_format(".3~s", SUB_UNIT_SCIENTIFIC_FLOOR * 10)[2]
+        is not None
+    )
+    assert non_compacting_tick_format(".3~s", SUB_UNIT_SCIENTIFIC_FLOOR / 10)[2] is None

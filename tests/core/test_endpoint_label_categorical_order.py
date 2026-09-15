@@ -140,8 +140,9 @@ def test_authored_sort_moves_the_anchor_to_the_column_it_renders_last() -> None:
     """An authored ``sort:`` reorders the axis, and no row order reflects that.
 
     The bar emitter puts the sort on the x encoding itself, so the rendered
-    order is the sort-field order — here the *smallest* column total renders
-    last. Neither the raw row order nor a lexical max finds it.
+    order is the sort-field order — here the column with the *smallest*
+    per-category minimum renders last. Neither the raw row order nor a lexical
+    max finds it.
     """
     from dbt_charts.core.compile.models.chart.normalized import BarChart
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -176,8 +177,9 @@ def test_authored_sort_moves_the_anchor_to_the_column_it_renders_last() -> None:
     x_enc = spec["hconcat"][0]["encoding"]["x"]
     assert x_enc["type"] == "nominal"
     assert x_enc["sort"] == {"field": "value", "order": "descending", "op": "min"}
-    # Column totals are 3x the weight, so descending renders "C" (weight 1)
-    # last — s1 = 2.0, s2 = 1.0 there. A lexical max would pick "H" (16, 8).
+    # Each column's own minimum is its weight, so descending renders "C"
+    # (weight 1) last — s1 = 2.0, s2 = 1.0 there. A lexical max would pick
+    # "H" (16, 8).
     assert dict(spec["$df_endpoint_label_cascade"]["anchors"]) == {
         "s1": 2.0,
         "s2": 1.0,
@@ -269,26 +271,20 @@ def test_wide_measures_anchor_at_the_last_axis_category(make_chart, model_copy_a
 
 
 def test_wide_measures_under_a_sort_rank_on_vega_lites_own_fold() -> None:
-    """The engine's wide fold drops a null measure; Vega-Lite's own does not.
+    """The rail's anchor follows the order the emitted sort actually produces.
 
-    VL emits a ``fold`` transform over the unfolded rows, so every category
-    contributes one row per measure and the sort field's per-category sum is a
-    uniform multiple of the unfolded sum. The fold in this feature skips a null
-    cell instead, so a category holding one totals short and can be ranked into
-    the wrong slot — anchoring two labels of one rail on two different columns.
-    The domain therefore has to come from the rows before the fold.
-
-    A wide bar's emitted sort now pins ``op: min`` (``bar_sort_to_vl``), closing
-    that divergence at the source — a dropped null row cannot move a minimum the
-    way it moved a total. What stays pinned here is that the rail's anchor
-    follows the emitted order, whatever aggregate that order carries.
+    The domain comes from the rows before this feature's own wide fold, which
+    skips a null cell where Vega-Lite's ``fold`` transform keeps the row. A
+    wide bar pins ``op: min`` (``bar_sort_to_vl``), where a dropped row cannot
+    move the result, so the two folds agree today — the pre-fold domain is what
+    keeps them agreeing if the aggregate ever changes again.
     """
     from dbt_charts.core.compile.models.chart.normalized import BarChart
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
 
-    # sum(alpha) descending renders B, A, C — "C" is the last column, and both
-    # labels belong to it. Folding first drops A's null bravo row, understating
-    # A to alpha's 20 alone and moving it behind C.
+    # alpha descending renders B, A, C — "C" is the last column, and both
+    # labels belong to it. One row per category here, so the fold cannot move
+    # anything; the pre-fold domain is what keeps it that way.
     data = [
         {"cat": "C", "alpha": 10.0, "bravo": 1.0},
         {"cat": "A", "alpha": 20.0, "bravo": None},

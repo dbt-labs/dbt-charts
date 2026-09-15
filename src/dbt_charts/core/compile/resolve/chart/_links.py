@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dbt_charts.core.compile.models.chart.normalized import (
-    BarChart,
     Chart,
     TableChart,
 )
@@ -20,19 +19,17 @@ __all__ = [
 
 
 def auto_link_excludes_x(normalized: Chart, data: ChartRows) -> bool:
-    """Whether x is a measure rather than an automatic-link identity."""
+    """Whether x is a measure rather than an automatic-link identity.
+
+    Not gated on bar orientation: a bar's x is always the category/time
+    channel, y is always the measure, regardless of style.orientation.
+    """
     x_field = getattr(normalized, "x", None)
-    horizontal_bar = (
-        isinstance(normalized, BarChart)
-        and normalized.style is not None
-        and normalized.style.orientation == "horizontal"
-    )
-    continuous_x = (
+    return (
         x_field is not None
         and bool(data)
         and all(isinstance(row.get(x_field), float) for row in data[:10])
     )
-    return horizontal_bar or continuous_x
 
 
 def should_synthesize_auto_link(

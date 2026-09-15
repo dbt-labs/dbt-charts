@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'The bundled Pygments lexer opens the `queries.<name>: |` SQL shorthand only under a top-level `queries:` key, so a nested mapping of that name is no longer highlighted as SQL.'
-time: 2026-09-14T14:22:27.74249-07:00

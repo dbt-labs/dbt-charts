@@ -519,10 +519,10 @@ def test_histogram_never_draws_an_endpoint_label_rail() -> None:
 
 
 def test_sort_by_a_non_numeric_column_keeps_its_legend() -> None:
-    """Both rails reproduce Vega-Lite's domain order by totaling the sort
-    column per category. Vega-Lite concatenates strings instead, an order that
-    cannot be mirrored — so the default steps aside rather than anchoring the
-    rail on a row Vega-Lite does not draw on top.
+    """Both rails place their labels from the order the sorted axis draws, and
+    dbt Charts confirms that order only for a numeric sort column — so the
+    default steps aside rather than risk labeling from an order Vega-Lite does
+    not draw.
     """
     chart = BarChart(
         id="t",

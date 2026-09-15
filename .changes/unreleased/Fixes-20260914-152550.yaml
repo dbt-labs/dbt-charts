@@ -1,3 +1,0 @@
-kind: Fixes
-body: Static column attribution no longer gives up on a set operation carrying its own `ORDER BY`. A `UNION` of `ref()` arms with a sort reported `WARN-DBT-QUERY-COLUMNS-INDETERMINATE`, and `dct validate` stopped checking that query's columns against the dbt models; the sort restates output columns the arms already attributed, so the query is checked like any other.
-time: 2026-09-14T15:25:50.168510-07:00

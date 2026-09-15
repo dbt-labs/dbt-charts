@@ -1,3 +1,0 @@
-kind: Fixes
-body: A multiselect's option menu stays open while you pick members and reopens after the board re-renders, rather than closing on the first pick.
-time: 2026-09-14T14:22:21.005159-07:00

@@ -1,3 +1,0 @@
-kind: Fixes
-body: List-valued variables are read from and written as repeated URL keys (`?region=west&region=east`); `dct serve` previously kept only the last repeat. Existing JSON-encoded links still resolve.
-time: 2026-09-14T14:22:22.127682-07:00

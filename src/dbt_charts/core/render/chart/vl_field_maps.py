@@ -22,7 +22,11 @@ from dbt_charts.core.render.chart.emitters._measured_label_padding import (
     quantitative_tick_labels,
 )
 from dbt_charts.core.render.numeral_expr import numeral_vega_expr
-from dbt_charts.core.text.numeral_scale import SuffixMode, with_symbol
+from dbt_charts.core.text.numeral_scale import (
+    SUB_UNIT_SCIENTIFIC_FLOOR,
+    SuffixMode,
+    with_symbol,
+)
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE_NAMES
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
@@ -384,7 +388,23 @@ def measure_axis_to_vl(
                         values = list(bounds)
                     else:
                         values = numeric_values(data, y_fields)
-                    labels = estimated_quantitative_tick_labels(values, measure_format)
+                    # tick_label.si_format/.scientific_format (set only for a
+                    # ladder-less axis) mirror the exact per-tick guard
+                    # inject_axis_numeral_expr composes into the real
+                    # labelExpr -- see estimated_quantitative_tick_labels's
+                    # own docstring for why measuring measure_format alone
+                    # would OVER-measure every candidate >= 1 (the axis
+                    # paints "1.5M"; measure_format alone reads "1500000").
+                    labels = estimated_quantitative_tick_labels(
+                        values,
+                        measure_format,
+                        si_format=axis.tick_label.si_format
+                        if axis.tick_label is not None
+                        else None,
+                        scientific_format=axis.tick_label.scientific_format
+                        if axis.tick_label is not None
+                        else None,
+                    )
     if labels:
         padding = measured_label_padding(
             labels, axis.labels.font.family, axis.labels.font.size
@@ -566,6 +586,20 @@ def inject_axis_numeral_expr(
     tick when any exist, else most-negative -- a "$" prefix has no scale
     dependency the way a shared suffix does).
 
+    ``tick_label.si_format`` is a third, mutually exclusive shape from the
+    above: set only for a ladder-LESS axis (``build_resolved_axis`` had no
+    ``tick_values`` to derive a step from), where ``tick_label.format`` alone
+    would otherwise flatten every tick to plain digits and trade away the
+    house's k/M compaction above 1. Handled first, before the
+    prefix/anchor/pad machinery above (which assumes a real ladder's fixed
+    spec) -- see the branch below. Never set for a log-scale axis, even
+    though it also reaches ``build_resolved_axis`` with empty ``tick_values``
+    (its own unrelated reason -- see ``axis_cascade.py``): composing ANY
+    ``labelExpr`` here, regardless of content, defeats Vega's own
+    ``labelOverlap`` thinning of a log axis's dense minor-tick ladder, since
+    that thinning only runs when the axis paints from a plain ``format``
+    string.
+
     No-ops (returns ``ax_vl`` unchanged) when both ``ruler`` and
     ``tick_label`` are None, or when ``labelExpr`` is already set
     (belt-and-braces: resolve's authored-``label.expr`` check already
@@ -576,6 +610,44 @@ def inject_axis_numeral_expr(
     if ruler is None:
         if tick_label is None:
             return ax_vl
+        if tick_label.si_format is not None:
+            # No ladder means no step to derive one fixed spec from (the
+            # branch below's mechanism) -- Vega's own auto-picked ticks can
+            # land anywhere the domain allows. Gate on each tick's own
+            # magnitude instead of a baked position (`datum.index`, the
+            # anchor mechanisms below use): a tick at or above 1 keeps this
+            # axis's own SI format untouched, so k/M compaction is
+            # unaffected; below 1, where nothing chose SI to begin with,
+            # `tick_label.format` (`sub_unit_digit_format`'s significant
+            # digits) applies -- except far enough below 1 that even that
+            # collapses into a wall of leading zeros, where
+            # `tick_label.scientific_format` (`sub_unit_scientific_format`,
+            # gated at `SUB_UNIT_SCIENTIFIC_FLOOR`) applies instead, mirroring
+            # `non_compacting_tick_format`'s own fixed-point/scientific split
+            # for a real ladder. `tick_label.scientific_format` is never None
+            # here -- `ResolvedTickLabel.__post_init__` requires it whenever
+            # `si_format` is set, which this branch already checked -- so
+            # there is no unguarded arm to fall back to. Neither arm has a
+            # prefix/decimal-pad device of its own -- see
+            # `sub_unit_digit_format`'s own docstring for why.
+            si_e = f"format(datum.value,{json.dumps(tick_label.si_format)})"
+            plain_e = f"format(datum.value,{json.dumps(tick_label.format)})"
+            # `datum.value !== 0` first: zero is exactly representable at any
+            # precision and reads as a plain "0" -- the fixed-point register
+            # handles it correctly on its own; scientific would print "0e+0"
+            # instead.
+            scientific_e = (
+                f"format(datum.value,{json.dumps(tick_label.scientific_format)})"
+            )
+            sub_one_e = (
+                f"(datum.value !== 0 && abs(datum.value) < "
+                f"{json.dumps(SUB_UNIT_SCIENTIFIC_FLOOR)} "
+                f"? {scientific_e} : {plain_e})"
+            )
+            return {
+                **ax_vl,
+                "labelExpr": f"(abs(datum.value) < 1 ? {sub_one_e} : {si_e})",
+            }
         trimmed_e = f"format(datum.value,{json.dumps(tick_label.format)})"
         text_e = _apply_decimal_pad(trimmed_e, tick_label.decimal_pad_table)
         if tick_label.prefix:

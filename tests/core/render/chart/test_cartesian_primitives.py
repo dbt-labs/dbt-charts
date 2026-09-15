@@ -8,6 +8,7 @@ is covered separately by the render-v2 emitter parity suite.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 
@@ -30,10 +31,16 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     build_palette_config,
     build_x_enc,
     chart_sort_to_vl,
+    pin_normalize_axis_format,
     resolve_cartesian_x,
     resolve_xy_titles,
 )
 from dbt_charts.core.render.chart.spec import RenderBox
+from dbt_charts.core.render.chart.vl_field_maps import compose_axis_label_expr
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_SPECS,
+    PredefinedNumberFormat,
+)
 from dbt_charts.core.utils import x_domain_order
 
 from ...conftest import fixture_chart_for_type
@@ -232,9 +239,12 @@ _HETEROGENEOUS_ROWS = {
 # agree except in the last row, where Jan folds to "n/a" and Vega's comparator
 # cannot order it against 2 or 3: it reports "equal" for those pairs, and
 # `Array.prototype.sort` over a non-transitive comparator partially ranks on
-# its own pivot choices. Row order is the deterministic reading of that. The
-# divergence cannot reach a rendered axis on the families this PR pins — an
-# explicit domain is what Vega draws — so it is recorded, not chased.
+# its own pivot choices. Row order is the deterministic reading of that. On
+# the families that pin an explicit domain the divergence cannot reach a
+# rendered axis, since that domain is what Vega draws. Bar is the exception:
+# it pins the sort's aggregate but never calls pin_sorted_x_domain, so a bar
+# sorted by a column mixing numbers and strings can land here. Recorded, not
+# chased.
 _HETEROGENEOUS_CASES = [
     ("number-first", "ascending", "Jan, Feb, Mar", ["Jan", "Feb", "Mar"]),
     ("number-first", "descending", "Mar, Feb, Jan", ["Mar", "Feb", "Jan"]),
@@ -320,3 +330,68 @@ def test_bar_sort_to_vl_pins_sum_only_for_a_stacked_measure_sort(
 def test_bar_sort_to_vl_passes_an_unauthored_sort_through() -> None:
     """No authored sort, nothing to pin — the encoding keeps VL's own order."""
     assert bar_sort_to_vl(None, "val", True) is None
+
+
+class TestPinNormalizeAxisFormat:
+    """A normalize-stacked axis is always a 0-100% share axis, unconditionally
+    -- including over a labelExpr the ladder-less sub-unit guard composed for
+    the axis's own (irrelevant here) SI default. See this function's own
+    docstring and ``inject_axis_numeral_expr``'s.
+    """
+
+    @staticmethod
+    def _ladder_less_ay() -> ResolvedAxisStyle:
+        """An axis whose `tick_label.si_format` is baked -- exactly the state
+        a normalize-stacked measure axis reaches today (ladder-less, SI
+        format unauthored), which is what let a stale labelExpr survive
+        alongside the percent pin.
+        """
+        chart_style_context = resolve_chart_style_context(
+            get_theme_style(get_default_theme_name())
+        )
+        _, ay_merged, _, ay_band_position, ay_format_authored, ay_format_is_alias = (
+            _bake_cartesian_axes(
+                chart_style_context,
+                fixture_chart_for_type("line"),
+                "line",
+                "temporal",
+                "quantitative",
+                AxisOverrides(),
+            )
+        )
+        return build_resolved_axis(
+            ay_merged,
+            band_position=ay_band_position,
+            chart_id="test",
+            format_authored=ay_format_authored,
+            format_is_alias=ay_format_is_alias,
+        )
+
+    def test_clears_a_composed_label_expr(self) -> None:
+        ay = self._ladder_less_ay()
+        assert ay.tick_label is not None and ay.tick_label.si_format is not None
+        ay_vl = compose_axis_label_expr({}, ay.ruler, ay)
+        assert "labelExpr" in ay_vl
+        pin_normalize_axis_format(ay_vl, ay)
+        assert "labelExpr" not in ay_vl
+        assert ay_vl["format"] == PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole]
+
+    def test_keeps_an_authored_label_expr(self) -> None:
+        """The pre-existing contract: an author's own `axis_y.labels.expr`
+        already wins over `format` today (Vega's own labelExpr precedence) --
+        that must survive unchanged, not be swept up by the new clear.
+        """
+        ay = self._ladder_less_ay()
+        authored_ay = dataclasses.replace(
+            ay, labels=dataclasses.replace(ay.labels, expr="'x'")
+        )
+        ay_vl = {"labelExpr": "'x'"}
+        pin_normalize_axis_format(ay_vl, authored_ay)
+        assert ay_vl["labelExpr"] == "'x'"
+
+    def test_no_op_when_no_label_expr_present(self) -> None:
+        ay = self._ladder_less_ay()
+        ay_vl: dict[str, object] = {}
+        pin_normalize_axis_format(ay_vl, ay)
+        assert "labelExpr" not in ay_vl
+        assert ay_vl["format"] == PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole]

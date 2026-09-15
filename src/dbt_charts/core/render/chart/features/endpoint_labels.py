@@ -456,14 +456,10 @@ def _refuse_unorderable_sort(
     """Refuse a `sort:` whose column carries no numbers to aggregate.
 
     ``x_domain_order`` reproduces Vega-Lite's domain order by folding the sort
-    field per category, and a rail that anchors on a row VL does not draw on
-    top is worse than a legend. Resolve steers the default away from this
-    shape; an explicit opt-in lands here and gets told why.
-
-    Conservative since bar's sort pins ``min`` (``bar_sort_op``), which Vega
-    compares natively on strings and dates — the twin gate in
-    ``compile/resolve/chart/bar.py`` carries the same note, and relaxing both
-    is its own change.
+    field per category, and a rail that anchors on the wrong category is worse
+    than a legend. Resolve steers the default away from this shape; an explicit
+    opt-in lands here and gets told why. The twin gate in
+    ``compile/resolve/chart/bar.py`` says why this is conservative.
     """
     if sort is None or numeric_column_values(data, sort.by):
         return
@@ -1032,11 +1028,10 @@ class EndpointLabelFeature:
             ) and chart.stack not in (None, "none")
             if is_stacked:
                 assert isinstance(chart, (ResolvedBarChart, ResolvedAreaChart))
-                # Bar only: bar leaves its x sort's aggregate to Vega-Lite,
-                # so a non-numeric sort column gives an order the rail cannot
-                # reproduce. A dimension axis pins its domain explicitly
-                # (pin_sorted_x_domain, emitters/_cartesian.py), which makes
-                # the ranking reproducible whatever the column holds.
+                # Bar only: a dimension axis pins its domain explicitly
+                # (pin_sorted_x_domain, emitters/_cartesian.py) and bar does
+                # not, so bar's rail is the one that has to predict the
+                # rendered order rather than read it back off a pin.
                 _refuse_unorderable_sort(
                     chart.id,
                     data,

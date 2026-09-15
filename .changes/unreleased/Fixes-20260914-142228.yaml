@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A zero baseline rule is no longer painted when the resolved y domain excludes 0. An all-negative line or area chart, or a bar chart with `zero: false` on data far from zero, drew the rule outside the plot rect, which grew the card to several times its slot height (and stretched every sibling card sharing that row) or, on the independent dual-axis path, rendered the chart blank.'
-time: 2026-09-14T14:22:28.862883-07:00

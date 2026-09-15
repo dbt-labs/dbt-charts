@@ -308,7 +308,7 @@ def _build_area_top_encoding(
     # Area always needs explicit stack to override VL's implicit stacking default.
     y_enc["stack"] = chart.stack if chart.stack not in (None, "none") else None
     if chart.stack == "normalize":
-        pin_normalize_axis_format(ay_vl)
+        pin_normalize_axis_format(ay_vl, ay)
     top_encoding: VLDict = {}
     if chart.x:
         top_encoding["x"] = build_x_enc(
@@ -446,7 +446,7 @@ def _emit_multi_metric_area(
     )
     y_enc["stack"] = chart.stack if chart.stack not in (None, "none") else None
     if chart.stack == "normalize":
-        pin_normalize_axis_format(ay_vl)
+        pin_normalize_axis_format(ay_vl, ay)
     top_encoding: VLDict = {}
     if chart.x:
         x_title = resolve_xy_titles(

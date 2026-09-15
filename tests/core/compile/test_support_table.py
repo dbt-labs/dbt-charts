@@ -13,6 +13,7 @@ import pytest
 
 from dbt_charts.core.compile.config import (
     get_theme_style,
+    list_built_in_themes,
 )
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -330,3 +331,41 @@ def test_top_bottom_position_rejected_on_vertical_category_axis():
         resolve_support_table_position("top", True, "left", "chart_id")
     with pytest.raises(CompilationError, match=r"(?i)horizontal"):
         resolve_support_table_position("bottom", True, "right", "chart_id")
+
+
+# _base is the abstract root — it has no font.family/color and is never used
+# directly at render time (see test_fontstyle_floor_guarantee.py's same filter).
+_RENDERABLE_THEMES = [t for t in list_built_in_themes() if t != "_base"]
+
+
+@pytest.mark.parametrize("theme_name", _RENDERABLE_THEMES)
+@pytest.mark.parametrize("channel_type", ["band", "temporal", "quantitative"])
+def test_axis_offset_font_size_matches_every_axis_x_channel_type(
+    theme_name: str, channel_type: str
+) -> None:
+    """axis_offset (this module) always resolves axis_x with channel_type
+    "band" — a bar's categorical axis. render/chart/support_table_attachment.py's
+    _tilted_label_axis_offset instead reads resolved_chart.style.axis_x,
+    baked with the CHART'S REAL channel type (e.g. "temporal" for a line/area
+    chart's date x, "quantitative" for a scatter's numeric x). The render-side
+    subtraction (labels.font.size * label_max_lines) only cancels what the
+    compile-side bake added if the two font sizes agree — nothing enforces
+    that equality, so this test stands in its place: a theme that varied
+    axis_x label font size by channel type would under- or over-reserve the
+    bottom-strip gap, silently, for exactly the chart families this doesn't
+    reach today.
+    """
+    from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
+
+    cs = resolve_chart_style_context(get_theme_style(theme_name))
+    band_size = resolved_axis_style(
+        cs, "axis_x", "band", chart_type="bar", label_authored=False
+    ).labels.font.size
+    other_size = resolved_axis_style(
+        cs, "axis_x", channel_type, chart_type="bar", label_authored=False
+    ).labels.font.size
+    assert other_size == band_size, (
+        f"{theme_name}: axis_x label font.size diverges between channel_type "
+        f"'band' ({band_size}) and '{channel_type}' ({other_size}) — "
+        "_tilted_label_axis_offset's subtraction would cancel the wrong term"
+    )

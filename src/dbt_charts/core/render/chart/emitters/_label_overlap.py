@@ -24,7 +24,11 @@ from dbt_charts.core.render.chart.time_unit_detect import (
     resolve_label_time_unit,
     resolve_temporal_label_visibility,
 )
-from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
+from dbt_charts.core.render.chart.type_inference import (
+    DetectedTimeUnit,
+    infer_vega_type_from_data,
+)
+from dbt_charts.core.text.case import apply_case
 from dbt_charts.core.text.format_d3 import portable_strftime
 
 
@@ -253,11 +257,48 @@ def _axis_label_values(
     )
 
 
+class _Unresolved:
+    """Sentinel: the caller has no ``resolve_cartesian_x_type`` verdict for this axis."""
+
+    def __repr__(self) -> str:
+        return "<unresolved>"
+
+
+_UNRESOLVED_GRAIN = _Unresolved()
+
+
+def _bucketed_grain(
+    axis: ResolvedAxisStyle,
+    values: list[str],
+    resolved_time_unit: DetectedTimeUnit | _Unresolved = _UNRESOLVED_GRAIN,
+) -> DetectedTimeUnit:
+    """axis.time_unit-else-detected-grain precedence, for the pinned-angle path.
+
+    An authored, bucketable ``axis.time_unit`` always wins outright — it is
+    an instruction, not a guess. Otherwise, a caller that already has
+    ``resolve_cartesian_x_type``'s own verdict for this axis must pass it as
+    ``resolved_time_unit`` rather than let this function re-detect from
+    ``values``: that verdict is gated by the ordinal-scaffold budget (dropped
+    to ``None`` once a grain would outrun it), which a fresh
+    ``detect_time_unit`` call has no way to see, so re-detecting here could
+    "find" a grain the axis itself no longer carries. A caller with no such
+    verdict yet falls back to detecting from the raw values — the same
+    expression ``_temporal_layout`` still spells out inline for its own,
+    unrelated auto-tilt-picking path.
+    """
+    if axis.time_unit in BUCKETED_CALENDAR_UNITS | TIME_PART_UNITS:
+        return axis.time_unit
+    if not isinstance(resolved_time_unit, _Unresolved):
+        return resolved_time_unit
+    return detect_time_unit(values)
+
+
 def _pinned_angle_block_height(
     axis: ResolvedAxisStyle,
     x_field: str | None,
     data: list[dict[str, AxisDatum]],
     domain_values: list[Any] | None,  # type-state: explicit_any — raw x values
+    resolved_time_unit: DetectedTimeUnit | _Unresolved = _UNRESOLVED_GRAIN,
 ) -> float:
     """Label-block height for an angle this module did not pick.
 
@@ -268,6 +309,9 @@ def _pinned_angle_block_height(
     picked one. Measures the same strings the ladder would: the formatted
     vocabulary on a bucketed temporal axis, the band values themselves
     otherwise. One band per row is what makes those measurable.
+
+    ``resolved_time_unit`` is ``resolve_cartesian_x_type``'s own verdict for
+    this axis, threaded in by the caller — see ``_bucketed_grain``.
     """
     font = axis.labels.font
     angle = axis.labels.angle
@@ -284,11 +328,7 @@ def _pinned_angle_block_height(
     if not values:
         return font.size
     if raw_type == "temporal":
-        encoding_time_unit = (
-            axis.time_unit
-            if axis.time_unit in BUCKETED_CALENDAR_UNITS | TIME_PART_UNITS
-            else detect_time_unit(values)
-        )
+        encoding_time_unit = _bucketed_grain(axis, values, resolved_time_unit)
         if encoding_time_unit is not None:
             format_time_unit = resolve_label_time_unit(
                 encoding_time_unit, axis.labels.time_unit
@@ -298,16 +338,25 @@ def _pinned_angle_block_height(
                 encoding_time_unit,
                 format_time_unit if format_time_unit is not None else "",
             )
-        # No bucketed grain (a sub-daily timestamp, or spacing no cadence
-        # explains): the axis goes continuous and Vega labels its own ticks —
-        # a clock vocabulary from default_subday_label_expr_for ("12:30am",
-        # ":30", "Midnight") whose text depends on tick count, card width and
-        # any authored domain, none of which reach this module. Measuring the
-        # datum's own text instead is a deliberate over-reservation, usually
-        # by some way: the strip clears the labels at the cost of an empty
-        # band. An authored labels.case or labels.format can still paint
-        # wider than the datum reads here — the same gap the quantitative
-        # branch above names, reached another way.
+        # No bucketed grain (a sub-daily timestamp, spacing no cadence
+        # explains, or resolve_cartesian_x_type's own scaffold-budget gate
+        # dropped it): the axis goes continuous and Vega labels its own
+        # ticks — a clock vocabulary from default_subday_label_expr_for
+        # ("12:30am", ":30", "Midnight") whose text depends on tick count,
+        # card width and any authored domain, none of which reach this
+        # module. Measuring the datum's own text instead is a deliberate
+        # over-reservation, usually by some way: the strip clears the labels
+        # at the cost of an empty band. An authored labels.format can still
+        # paint text unrelated to what was measured — the same gap the
+        # quantitative branch above names, reached another way.
+    if font.case in ("upper", "lower"):
+        # Only these two CaseValues change what Vega actually paints wider —
+        # inject_axis_label_case (vl_field_maps.py) can only express upper/
+        # lower as a Vega label expression; every other CaseValue ("title",
+        # "sentence", "slug", "camel") is a render-side no-op, so measuring
+        # them transformed would disagree with the untransformed text Vega
+        # actually draws.
+        values = [apply_case(value, font.case) for value in values]
     measurer = get_font_measurer(font.family)
     max_width = max(measurer.measure(value, font.size) for value in values)
     return _label_block_height(max_width, font.size, angle)
@@ -644,6 +693,7 @@ def resolve_axis_x_overlap(
     edge_labels_flushed: bool,
     chart_width: float,
     domain_values: list[Any] | None = None,
+    resolved_time_unit: DetectedTimeUnit | _Unresolved = _UNRESOLVED_GRAIN,
 ) -> AxisLabelLayout:
     """Return render-local overlap, angle, and temporal visibility choices.
 
@@ -655,6 +705,14 @@ def resolve_axis_x_overlap(
     both the temporal and the ordinal/nominal branch: the tilt angle below is
     picked from the same ``widths``/``usable_width`` the flat-fit gate just
     measured, never re-derived from ``data`` alone.
+
+    ``resolved_time_unit`` is ``resolve_cartesian_x_type``'s own verdict for
+    this axis (its third return value) — forwarded only to the two pinned-
+    angle branches below (``_pinned_angle_block_height``), which measure a
+    tilt this module did not pick and so cannot re-derive a grain that
+    agrees with what the encoding actually resolved to. Unset falls back to
+    detecting the grain from the raw values, unchanged from before this
+    parameter existed.
     """
     flat_height = axis.labels.font.size
     overlap = axis.labels.overlap
@@ -665,7 +723,9 @@ def resolve_axis_x_overlap(
             None,
             0,
             "",
-            _pinned_angle_block_height(axis, x_field, data, domain_values),
+            _pinned_angle_block_height(
+                axis, x_field, data, domain_values, resolved_time_unit
+            ),
         )
     if axis.labels.angle is not None:
         return AxisLabelLayout(
@@ -674,7 +734,9 @@ def resolve_axis_x_overlap(
             None,
             0,
             "",
-            _pinned_angle_block_height(axis, x_field, data, domain_values),
+            _pinned_angle_block_height(
+                axis, x_field, data, domain_values, resolved_time_unit
+            ),
         )
     if is_horizontal_bar:
         return AxisLabelLayout("allow", 0.0, None, 0, "", flat_height)

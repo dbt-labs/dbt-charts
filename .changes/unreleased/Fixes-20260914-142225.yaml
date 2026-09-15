@@ -1,3 +1,0 @@
-kind: Fixes
-body: Horizontal bar charts with a `support_table` beside their category labels no longer reserve the table's width twice, recovering the plot width that indentation cost.
-time: 2026-09-14T14:22:25.495913-07:00

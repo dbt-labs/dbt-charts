@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'On a 100%-stacked bar or area chart, an authored percent format is applied to the raw measure value in the hover rows, the printed value labels and the stack total: a count of 20 reads `2000%`, its group total of 80 reads `8000%`. The normalized stack pins its own 0-100% axis, so the format never reaches the axis it was written for. dbt charts now warns (`WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE`) when the measure is not already a 0..1 share; a chart whose stack groups each sum to about 1 is silent, since there the raw value and the painted share are the same number.'
-time: 2026-09-14T22:29:38.541016+00:00

@@ -46,6 +46,8 @@ from dbt_charts.core.render.chart.vl_field_maps import inject_axis_numeral_expr
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     ruler_digit_format,
+    sub_unit_digit_format,
+    sub_unit_scientific_format,
     suffix_at_register,
 )
 
@@ -559,3 +561,148 @@ class TestNegativeAnchorCurrencySign:
         labels = _render_axis_labels([-500.0, 0.0], (-500.0, 0.0), expr)
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
         assert labels[0] == "−$500", f"expected sign before symbol, got {labels[0]!r}"
+
+
+class TestLadderLessSubUnitGuard:
+    """A ladder-less axis (``tick_label.si_format`` set) gets a per-tick
+    guard instead of one fixed spec -- Vega picks its own ticks, and they can
+    land both below and above 1 on the same axis. See
+    ``test_axis_ruler_resolve.py::test_a_ladder_less_axis_bakes_a_per_tick_guard_instead_of_a_fixed_spec``
+    for the resolve-time bake this reads.
+    """
+
+    @staticmethod
+    def _tick_label(format_spec: str = ".3~s") -> ResolvedTickLabel:
+        return ResolvedTickLabel(
+            format=sub_unit_digit_format(format_spec),
+            si_format=format_spec,
+            scientific_format=sub_unit_scientific_format(format_spec),
+        )
+
+    def test_no_op_when_si_format_unset(self) -> None:
+        """A real ladder's tick_label (no si_format) is untouched by this
+        branch -- only pins that the two don't cross-fire.
+        """
+        expr = inject_axis_numeral_expr(
+            {}, None, tick_label=ResolvedTickLabel(format=",.1~f")
+        )["labelExpr"]
+        assert "abs(" not in expr
+
+    def test_expression_gates_on_magnitude_not_index(self) -> None:
+        """Unlike the ruler/anchor mechanisms, there is no tick position to
+        gate on here -- Vega's own tick set isn't known at resolve, so the
+        guard reads each tick's own value.
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+            "labelExpr"
+        ]
+        assert "abs(datum.value) < 1" in expr
+        assert "datum.index" not in expr
+
+    def test_sub_one_tick_paints_plain_digits_not_a_milli_suffix(self) -> None:
+        """The reported bug, on a ladder-less axis: 0.3 must render "0.3",
+        never d3's own SI "300m".
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([0.29, 0.3, 0.38], (0.29, 0.38), expr)
+        assert labels == ["0.29", "0.3", "0.38"], labels
+
+    def test_thousands_tick_still_compacts_through_the_si_branch(self) -> None:
+        """The house register isn't traded away to close the sub-unit band:
+        a tick at or above 1 keeps this axis's own SI compaction.
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label(",.3~s"))[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([0.0, 20_000.0], (0.0, 20_000.0), expr)
+        assert labels == ["0", "20k"], labels
+
+    def test_mixed_domain_uses_the_right_register_per_tick(self) -> None:
+        """Gating on the domain (once, for the whole axis) can't tell two
+        ticks on the same axis apart: a [0, 2] domain can place a tick at
+        0.5 and another at 1.5, and only the first should drop SI. Gating
+        per tick, on each tick's own value, closes exactly that hole.
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label(",.3~s"))[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([0.5, 1_500.0], (0.5, 1_500.0), expr)
+        assert labels == ["0.5", "1.5k"], labels
+
+    def test_negative_sub_one_tick_keeps_its_sign(self) -> None:
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([-0.38, 0.0], (-0.38, 0.0), expr)
+        # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
+        assert labels[0] == "−0.38", labels
+
+    def test_negative_tick_at_or_above_one_keeps_its_sign(self) -> None:
+        """The >= 1 arm is unmodified SI, so d3's own sign handling there is
+        no different than before this guard existed -- pinned anyway since
+        every other sign test in this class is on the sub-1 arm.
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([-1_500.0, 0.0], (-1_500.0, 0.0), expr)
+        assert labels[0] == "−1.5k", labels
+
+    def test_exactly_one_takes_the_si_branch_not_the_sub_unit_one(self) -> None:
+        """`abs(datum.value) < 1` is a strict less-than -- 1.0 itself is the
+        boundary's SI side, matching plain SI's own boundary (`format(1,
+        ".3~s")` prints "1", not "1.00" the way the significant-digit
+        register would).
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([1.0, 2.0], (1.0, 2.0), expr)
+        assert labels == ["1", "2"], labels
+
+    def test_currency_spec_paints_the_symbol_on_every_tick(self) -> None:
+        """No anchor mechanism on this path (see `ResolvedTickLabel.si_format`'s
+        field docstring) -- a currency symbol repeats on every tick, sub-1 and
+        SI arms alike, rather than anchoring on one the way a real ladder's
+        non-compacting currency spec does.
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label("$.3~s"))[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([0.5, 20_000.0], (0.5, 20_000.0), expr)
+        assert labels == ["$0.5", "$20k"], labels
+
+    def test_deep_sub_unit_tick_falls_to_scientific_not_a_wall_of_zeros(self) -> None:
+        """`sub_unit_digit_format`'s significant-digit register collapses
+        into a long run of leading zeros far enough below 1 -- this pins the
+        scientific fallback that keeps a pico tick reading "1e-11", not
+        "0.00000000001".
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([1e-11, 2e-11], (1e-11, 2e-11), expr)
+        assert labels == ["1e-11", "2e-11"], labels
+
+    def test_zero_never_goes_scientific(self) -> None:
+        """Zero is exactly representable at any precision -- it must read
+        "0", not the scientific register's "0e+0", even though `0 < FLOOR`
+        would otherwise select it.
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([0.0, 20_000.0], (0.0, 20_000.0), expr)
+        assert labels[0] == "0", labels
+
+    def test_moderate_sub_unit_tick_still_uses_significant_digits(self) -> None:
+        """Only the deep-sub-unit band falls to scientific -- an everyday
+        value like 0.3 stays on the plain significant-digit register.
+        """
+        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([0.29, 0.3], (0.29, 0.3), expr)
+        assert labels == ["0.29", "0.3"], labels

@@ -1,3 +1,0 @@
-kind: Fixes
-body: A text variable input draws the value you committed immediately, instead of snapping back to the previous one until the render lands. It also follows its field when the page scrolls or resizes and takes the field's own type size, so it no longer shrinks on a scaled board.
-time: 2026-09-14T14:22:23.254246-07:00

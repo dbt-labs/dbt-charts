@@ -14,7 +14,17 @@ class ChartSort(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    by: str = Field(description="Column name to sort by.")
+    by: str = Field(
+        description=(
+            "Column name to sort by. A category holding several rows (a color "
+            "series, or a y: [...] list) is folded to one value of this column "
+            "first, and on a bar that fold is the stacked total only when the "
+            "chart stacks and this names its single y column; everything "
+            "else, a y: [...] measure included, ranks by the smallest value "
+            "the column holds in that category. Name a column that is "
+            "constant within a category, or pre-aggregate in the query."
+        )
+    )
     order: Literal["asc", "desc"] = Field(
         default="asc", description="Sort direction (asc or desc)."
     )

@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A board rendered to SVG, `dct render`''s default format, is a static picture: every interactive rule left the board''s embedded stylesheet for the HTML host page. A standalone `.svg`, or a page embedding one without the host stylesheet, no longer draws hover tooltips or hover emphasis, no longer shows a text cursor or selection highlight on chart text, and no longer lets a table row''s link be clicked through its own cell values. All of it still works in `--format html` and under `dct serve`; an embedder that wants it back ships `controls_stylesheet()` alongside the SVG.'
-time: 2026-09-14T14:22:16.502248-07:00

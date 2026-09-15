@@ -641,3 +641,72 @@ def non_compacting_tick_format(
         return parsed.symbol, str(scientific), None
     precision = _precision_for_step(step)
     return parsed.symbol, _digit_spec(parsed, precision), precision
+
+
+def sub_unit_digit_format(format_spec: str) -> str:
+    """The spec a ladder-less axis's sub-1 ticks paint with -- ``non_compacting_
+    tick_format``'s sibling for the one case it cannot reach (see its
+    docstring): with no tick ladder, there is no step to derive a fixed-point
+    precision from, only the axis's own SI spec.
+
+    Swaps the SI ('s') type for 'r' (rounds to significant digits, no
+    magnitude suffix) at the same precision, keeping every other spec detail
+    (symbol, comma, sign) the author's own. ``~r`` and ``~s`` agree on every
+    digit printed for a value below 1 -- the only difference is the suffix
+    ``s`` would otherwise add (d3's own milli/micro/nano/pico prefixes, which
+    read as the house's magnitude suffixes above thousands). Always trims,
+    same as ``_digit_spec``, so a value that needs fewer than the full
+    precision doesn't pad trailing zeros.
+
+    Unlike ``non_compacting_tick_format``/``ruler_digit_format``, the symbol
+    is left in the spec rather than split into a separate prefix: those two
+    exist to anchor a currency symbol on one tick in a column of many
+    (``anchor_at_start``), but a sub-1 value carries no such shared-scale
+    decision to anchor -- each tick already stands on its own, so it can
+    just carry its own symbol.
+
+    Has its own scientific-register sibling, ``sub_unit_scientific_format``,
+    for a tick too small for this register to reach without an excessive run
+    of leading zeros -- see that function and ``SUB_UNIT_SCIENTIFIC_FLOOR``.
+    """
+    parsed = _d3_parse(format_spec)
+    precision = parsed.precision if parsed.precision is not None else 6
+    return str(dataclasses.replace(parsed, type="r", precision=precision, trim=True))
+
+
+# The magnitude below which `sub_unit_digit_format`'s significant-digit
+# register needs `sub_unit_scientific_format`'s exponential one instead.
+# Unlike `_fixed_point_reaches`'s own boundary (`non_compacting_tick_format`'s
+# fixed-point/scientific split for a real ladder step), the `r` type does not
+# collapse neighboring ticks by magnitude the way a fixed-point spec does --
+# it stays precise at any depth, just at the cost of an excessive run of
+# leading zeros. This reuses `_MAX_STEP_PRECISION` anyway, for parity with
+# that split rather than a second, independently-chosen legibility floor: one
+# number governing "how many leading zeros is too many" across both
+# registers.
+SUB_UNIT_SCIENTIFIC_FLOOR: float = 10.0**-_MAX_STEP_PRECISION
+
+
+def sub_unit_scientific_format(format_spec: str) -> str:
+    """The scientific-register sibling of ``sub_unit_digit_format``, for a
+    ladder-less axis's tick too small for significant digits to reach
+    without an excessive run of leading zeros -- mirrors
+    ``non_compacting_tick_format``'s own fixed-point/scientific split
+    (``_fixed_point_reaches``), applied to a tick's own magnitude directly
+    since there is no ladder step here to check it against instead.
+    ``inject_axis_numeral_expr`` selects between the two registers at
+    ``SUB_UNIT_SCIENTIFIC_FLOOR``.
+
+    Drops comma grouping (meaningless in exponential notation -- d3 itself
+    ignores it for the ``e`` type) but otherwise keeps the same spec details
+    ``sub_unit_digit_format`` does, including the currency symbol, for the
+    same reason: each tick paints alone, with no anchor tick to split it
+    onto.
+    """
+    parsed = _d3_parse(format_spec)
+    precision = parsed.precision if parsed.precision is not None else 6
+    return str(
+        dataclasses.replace(
+            parsed, type="e", precision=precision, trim=True, comma=False
+        )
+    )

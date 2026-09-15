@@ -1,3 +1,0 @@
-kind: Fixes
-body: A board-level `style.charts.bar.orientation` now reaches its bar charts. Only an inline `style.orientation` on the chart was consulted, so the board default was a silent no-op while its sibling `bar.stack` cascaded normally.
-time: 2026-09-14T15:02:50.860669-07:00

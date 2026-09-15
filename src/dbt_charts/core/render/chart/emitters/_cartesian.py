@@ -471,7 +471,7 @@ def resolve_cartesian_x(
     """
     from dbt_charts.core.render.chart.step_band import BAND_STEP_CURVE
 
-    vl_type, _, _ = resolve_cartesian_x_type(
+    vl_type, _, resolved_x_time_unit = resolve_cartesian_x_type(
         data, x_field, ax, mark_type, curve == BAND_STEP_CURVE, panel_fields
     )
     label_layout = resolve_axis_x_overlap(
@@ -483,6 +483,7 @@ def resolve_cartesian_x(
         edge_labels_flushed=temporal_edge_labels_flushed(vl_type, ax),
         chart_width=chart_width - reserved_width,
         domain_values=domain_values,
+        resolved_time_unit=resolved_x_time_unit,
     )
     if label_layout.collision_label_count is not None:
         record_axis_label_collision(
@@ -1572,7 +1573,7 @@ def resolve_measure_y_scale(ay: ResolvedAxisStyle) -> VLDict:
     return apply_domain_headroom_bounds(y_scale, ay.domain_max, ay.domain_min)
 
 
-def pin_normalize_axis_format(ay_vl: VLDict) -> None:
+def pin_normalize_axis_format(ay_vl: VLDict, ay: ResolvedAxisStyle) -> None:
     """Pin the render-local axis dict's percent format for a normalize stack.
 
     A normalize-stacked axis is always a 0-100% share axis — that is what
@@ -1586,6 +1587,19 @@ def pin_normalize_axis_format(ay_vl: VLDict) -> None:
     every ``stack: normalize``-capable family (bar, area) so the fix and its
     reasoning live in one place.
 
+    Also clears an ``ay_vl["labelExpr"]`` the ladder-less sub-unit guard
+    composed (``inject_axis_numeral_expr``, from ``ay.tick_label.si_format``)
+    for the axis's own SI default — a normalize-stacked measure axis is
+    always ladder-less and always unauthored-SI by construction (fixed [0, 1]
+    domain, no ``ticks.count`` bake), so that guard fires here unconditionally
+    too, and Vega prefers ``labelExpr`` over ``format`` -- left in place, the
+    percent pin above would be silently ignored. Gated on ``ay.labels.expr``
+    (not merely "labelExpr present"): an AUTHORED ``label.expr`` already wins
+    over ``format`` today via that same Vega precedence, before this function
+    ever runs -- unconditional as the percent format itself is, it does not
+    reach past an author's own expression, only past the engine's own
+    composition for a presentation this axis will never use.
+
     Mutates only the render-local ``ay_vl`` dict (the VL axis config for this
     encoding), never ``ay.labels.format`` on the resolved axis style: that
     field is shared with value labels, stack-total labels, and tooltips, and
@@ -1596,6 +1610,8 @@ def pin_normalize_axis_format(ay_vl: VLDict) -> None:
     0..1 share (``300`` prints as ``30000%``); that is reported, never
     rewritten, by ``render/warnings/normalize_percent_format_reads_raw_value.py``.
     """
+    if ay.labels.expr is None:
+        ay_vl.pop("labelExpr", None)
     ay_vl["format"] = PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole]
 
 

@@ -1,3 +1,0 @@
-kind: Features
-body: '`dct` can point at a dbt project outside the board project: `--dbt-project-dir` on the commands that read a dbt project, the `DBT_PROJECT_DIR` environment variable behind it, and a `dbt_project_dir:` key in `dbt_charts.yml`. The flag wins over the config key, which wins over today''s default of the board project directory; a named path that does not exist is an error rather than a silent fallback.'
-time: 2026-09-14T14:22:17.628506-07:00

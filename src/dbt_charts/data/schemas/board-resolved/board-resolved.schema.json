@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.7.2.dev5",
+  "version": "0.7.2.dev97",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -3550,7 +3550,7 @@
       "description": "Chart-level sort configuration for categorical axes.",
       "properties": {
         "by": {
-          "description": "Column name to sort by.",
+          "description": "Column name to sort by. A category holding several rows (a color series, or a y: [...] list) is folded to one value of this column first, and on a bar that fold is the stacked total only when the chart stacks and this names its single y column; everything else, a y: [...] measure included, ranks by the smallest value the column holds in that category. Name a column that is constant within a category, or pre-aggregate in the query.",
           "title": "By",
           "type": "string"
         },
@@ -17988,6 +17988,30 @@
           },
           "title": "Decimal Pad Table",
           "type": "array"
+        },
+        "si_format": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Si Format"
+        },
+        "scientific_format": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Scientific Format"
         }
       },
       "required": [

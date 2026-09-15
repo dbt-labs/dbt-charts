@@ -260,6 +260,8 @@ class MirrorAxisFeature:
         ghost_align = ghost_axis.get("labelAlign")
         if ghost_align in (opposite, "center"):
             ghost_format = ghost_axis.get("format")
+            ghost_si_format: str | None = None
+            ghost_scientific_format: str | None = None
             # Whether the ghost's rendered string is something dbt charts can
             # introspect and re-measure, decided from resolved fields rather
             # than sniffing "labelExpr" out of the VL dict (the ghost may
@@ -310,10 +312,14 @@ class MirrorAxisFeature:
                 # the plain-digit text that actually paints, not the SI
                 # spec Vega no longer uses for this axis's ticks. Unlike
                 # ruler, tick_label has no per-edge mirror variant -- it is
-                # a plain fixed-point spec with no anchor/reservation
-                # mechanism to diverge between primary and ghost.
+                # the same primary-authored spec on both edges. si_format/
+                # scientific_format (set only for a ladder-less axis) mirror
+                # the exact per-tick guard inject_axis_numeral_expr composes
+                # -- see estimated_quantitative_tick_labels's own docstring.
                 if axis_y.tick_label is not None:
                     ghost_format = axis_y.tick_label.format
+                    ghost_si_format = axis_y.tick_label.si_format
+                    ghost_scientific_format = axis_y.tick_label.scientific_format
             # A PREDEFINED_NATIVE format name (e.g. "percent_number") bypasses
             # d3 entirely -- quantitative_tick_labels/
             # estimated_quantitative_tick_labels call d3_format() directly,
@@ -361,7 +367,12 @@ class MirrorAxisFeature:
                         values = numeric_values(
                             chart_rows(chart, datasets).all_rows(), (chart.y,)
                         )
-                    labels = estimated_quantitative_tick_labels(values, ghost_format)
+                    labels = estimated_quantitative_tick_labels(
+                        values,
+                        ghost_format,
+                        si_format=ghost_si_format,
+                        scientific_format=ghost_scientific_format,
+                    )
             if labels:
                 padding = measured_label_padding(
                     labels, axis_y.labels.font.family, axis_y.labels.font.size

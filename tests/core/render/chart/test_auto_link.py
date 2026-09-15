@@ -3579,15 +3579,16 @@ charts:
             f"SVG snippet (first 3000 chars): {svg[:3000]}"
         )
 
-    def test_horizontal_bar_measure_x_no_link(
+    def test_horizontal_bar_links_on_x_not_on_measure_y(
         self, tmp_path, local_project: Callable[..., Project]
     ) -> None:
-        """Horizontal bar chart with y=amount (measure axis) emits no auto-link href.
+        """Horizontal bar chart auto-links on x=region, never on y=amount.
 
         Bar semantics fix x=category, y=measure regardless of orientation
         (see _bake_cartesian_axes docstring) — style.orientation only flips
-        which screen axis renders which channel. Auto-link must not produce
-        a link driven by the measure column.
+        which screen axis renders which channel. Auto-link must key off the
+        category (x), never the measure (y), on a horizontal bar exactly as
+        it would on a vertical one.
         """
         import sqlite3
 
@@ -3641,10 +3642,15 @@ charts:
         assert isinstance(svg, str)
 
         # y=amount is the measure axis regardless of orientation — must NOT
-        # drive a link. The dimension is x=region.
+        # drive a link. The dimension is x=region, which must.
         assert "/data/db/main/revenue/?amount=" not in svg, (
             "Horizontal bar with y=amount (measure axis) must not produce a "
             "filter link on the measure column. "
+            f"SVG snippet (first 3000 chars): {svg[:3000]}"
+        )
+        assert "/data/db/main/revenue/?region=" in svg, (
+            "Horizontal bar with x=region (category) must produce a filter "
+            "link on the category column, same as a vertical bar would. "
             f"SVG snippet (first 3000 chars): {svg[:3000]}"
         )
 

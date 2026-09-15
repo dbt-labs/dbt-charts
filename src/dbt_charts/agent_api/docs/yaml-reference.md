@@ -676,7 +676,7 @@ Chart-level sort configuration for categorical axes.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `by` | str | Column name to sort by. |
+| `by` | str | Column name to sort by. A category holding several rows (a color series, or a y: [...] list) is folded to one value of this column first, and on a bar that fold is the stacked total only when the chart stacks and this names its single y column; everything else, a y: [...] measure included, ranks by the smallest value the column holds in that category. Name a column that is constant within a category, or pre-aggregate in the query. |
 
 **Optional**
 

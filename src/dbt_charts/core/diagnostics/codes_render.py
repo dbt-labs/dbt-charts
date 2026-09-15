@@ -840,21 +840,23 @@ ERR_ENDPOINT_LABELS_UNORDERABLE_SORT = REGISTRY.register(
         title="sort by a non-numeric column cannot be combined with stacked endpoint labels",
         message_template=(
             "Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be "
-            "combined with stacked bar endpoint labels — the label rail "
-            "reproduces Vega-Lite's domain order by totaling that column "
-            "per category, and it carries no numeric values. Sort by a "
-            "measure instead, or set style.endpoint_labels.visible: false "
-            "on this chart."
+            "combined with stacked bar endpoint labels. The rail places "
+            "its labels from the order the sorted axis draws, and dbt "
+            "Charts confirms that order only for a column carrying numeric "
+            "values. Sort by a measure instead, or set "
+            "style.endpoint_labels.visible: false on this chart."
         ),
         doc=(
             "Fired when a stacked bar chart authors `sort:` by a column "
             "that carries no numeric values while its endpoint-label rail "
-            "is visible. The rail reproduces Vega-Lite's own domain order "
-            "by summing the sort field per category (VL's default `sum` "
-            "aggregation); on a non-numeric column VL concatenates the "
-            "strings instead, an order the rail cannot reproduce, so it "
-            "would anchor on a sequence VL never actually draws. Sort by a "
-            "measure, or turn the rail off with "
+            "is visible. The rail places its labels from the order the "
+            "sorted axis draws (a vertical rail anchors each series at its "
+            "own last drawn column, a horizontal one anchors every series "
+            "on the top row), so it has to know that order before the "
+            "chart renders. dbt Charts confirms it only for a numeric "
+            "sort column, and labels placed from the wrong order name "
+            "series in the wrong place, which is worse than a legend. Sort "
+            "by a measure, or turn the rail off with "
             "`style.endpoint_labels.visible: false`."
         ),
         docs_topic="charts",

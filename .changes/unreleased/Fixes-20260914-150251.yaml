@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct docs` lists the three generated references (`reference`, `error-reference`, `warning-reference`) in its topic index, and `dct docs all` includes the field reference it already advertised as "unsliced". The reference also documents the `dbt_charts.yml` project-config keys, `execution.max_template_output_bytes` among them. `dct docs all` grows from roughly 68KB to 310KB, worth knowing before loading it into an agent''s context.'
-time: 2026-09-14T15:02:51.989569-07:00

@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'Variable controls: a multiselect can be emptied again through its `All` row, a `default: true` checkbox can be unchecked, the slider commits a drag on both track and thumb, an option menu opens under its own field instead of drifting away from it, and a pressed control draws a focus ring.'
-time: 2026-09-14T14:22:19.877392-07:00

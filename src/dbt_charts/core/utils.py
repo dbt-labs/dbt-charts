@@ -599,11 +599,11 @@ def bar_sort_op(sort_by: str, measure_field: str | None, stacked: bool) -> VlSor
     matches an authored ``sort.by`` and its sorts read as ``min``, which is
     what a sort by one of the folded columns means.
 
-    A grouped bar is the deliberate call rather than a consequence: VL does
-    auto-stack a color-channeled bar mark (see ``emitters/bar.py``), but the
-    groups are size 1 and nothing accumulates, so a sort by the measure gets
-    ``min`` there too. The aggregate follows what the chart stacks, never the
-    presence of a color channel.
+    A grouped bar gets ``min`` too, and that is a decision rather than a
+    consequence: ``EncodingSortField.op`` folds every row in the category
+    whether or not ``xOffset`` drew them side by side, so ``sum`` there would
+    rank by a group total the bars never draw. The aggregate follows what the
+    chart stacks, not whether it carries a color channel.
     """
     return "sum" if stacked and sort_by == measure_field else "min"
 

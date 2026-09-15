@@ -25,14 +25,18 @@ import pytest
 from d3_format import format as d3_format_apply
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.models.chart.normalized import BarChart
+from dbt_charts.core.compile.models.chart.normalized import AreaChart, BarChart
 from dbt_charts.core.compile.models.style.authored import (
     AxisLabelStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
 )
 from dbt_charts.core.compile.models.style.resolved import ResolvedTickLabel
-from dbt_charts.core.compile.models.style.theme.axis import AxisMirrorStyle
+from dbt_charts.core.compile.models.style.theme.axis import (
+    AxisMirrorStyle,
+    BaseScaleStyle,
+    ScaleContinuousStyle,
+)
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart._axes import _bake_cartesian_axes
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -53,7 +57,12 @@ from dbt_charts.core.fonts import (
 )
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
-from dbt_charts.core.text.numeral_scale import SuffixMode, shared_scale_for_ladder
+from dbt_charts.core.text.numeral_scale import (
+    SuffixMode,
+    shared_scale_for_ladder,
+    sub_unit_digit_format,
+    sub_unit_scientific_format,
+)
 
 # A ladder that compacts in ANCHOR mode (mirrors the 0-450k worked example in
 # the numeral design doc): step 100,000 divides the thousands tier evenly and
@@ -1026,6 +1035,63 @@ def test_end_to_end_literal_authored_format_is_not_baked_through_real_resolve():
     assert ay.tick_label is None
 
 
+@pytest.mark.parametrize(
+    ("theme_name", "multiples"),
+    [
+        pytest.param("stark", None, id="stark-ticks-count-unset"),
+        pytest.param(
+            "clarity",
+            {"rows": "region", "scale": "independent"},
+            id="clarity-independent-scale",
+        ),
+    ],
+)
+def test_end_to_end_no_ladder_root_causes_bake_the_sub_unit_guard(
+    theme_name, multiples
+):
+    """Both no-ladder root causes, through the real resolve() seam --
+    ``build_resolved_axis`` has no visibility into *why* ``tick_values`` came
+    back empty, so both must reach the same bake:
+
+    - ``stark`` leaves ``axis_quantitative.ticks.count`` unset -- no
+      ``multiples:`` involved at all, the plain reported case.
+    - ``clarity`` (whose ``ticks.count: 6`` would otherwise bake a real
+      ladder under the default ``shared`` scale) with
+      ``multiples.scale: independent``.
+
+    Exercises the real ``plan_cartesian``/``_bake_cartesian_axes`` provenance
+    plumbing, not a hand-passed ``format_authored``/``format_is_alias`` pair
+    -- a caller elsewhere in that plumbing hardcoding the wrong pair (as
+    histogram's does, deliberately, in ``bar.py``) would leave the isolated
+    ``build_resolved_axis`` tests green while stark's real pipeline silently
+    stopped reaching this branch.
+    """
+    board = resolve_chart_style_context(get_theme_style(theme_name))
+    data = [
+        {"month": m, "region": r, "revenue": 0.05 + 0.01 * m}
+        for r in ("West", "East")
+        for m in range(6)
+    ]
+    chart_fields: dict[str, object] = {
+        "id": "t",
+        "type": "area",
+        "query_name": "q",
+        "x": "month",
+        "y": "revenue",
+    }
+    if multiples is not None:
+        chart_fields["multiples"] = multiples
+    chart = AreaChart.model_validate(chart_fields)
+    resolved = resolve(chart, data, chart_style_context=board)
+    ay = resolved.style.axis_y
+    assert ay.tick_values == ()
+    assert ay.ruler is None
+    assert ay.tick_label is not None
+    assert ay.tick_label.si_format == ay.labels.format
+    assert is_d3_si_spec(ay.tick_label.si_format)
+    assert d3_format_apply(ay.tick_label.format, 0.08) == "0.08"
+
+
 def test_non_compacting_currency_bakes_anchor_at_start():
     """A non-compacting currency axis must carry tick_label.prefix and
     tick_label.anchor_at_start -- the fields that enable the anchor-only
@@ -1274,16 +1340,18 @@ def test_a_ladder_below_fixed_point_reach_takes_scientific_not_a_false_zero():
     assert painted == ["0e+0", "1e-11", "2e-11", "3e-11"]
 
 
-def test_a_ladder_less_axis_keeps_the_si_format_for_now():
-    """The boundary of the rewrite: it needs a ladder to read a step off.
-
-    An axis with no baked ladder (a theme leaving `ticks.count` unset, or
+def test_a_ladder_less_axis_bakes_a_per_tick_guard_instead_of_a_fixed_spec():
+    """An axis with no baked ladder (a theme leaving `ticks.count` unset, or
     `multiples.scale: independent`) lets Vega pick its own ticks, so no
-    step-derived spec can be chosen for them and the SI format still paints.
-    Below 1 that is the milli misread this rewrite exists to end, and closing
-    it needs a per-tick expression rather than a format string. This pins where
-    the two cases part, so whoever closes it flips a test rather than
-    rediscovering the boundary.
+    step-derived spec can be chosen for them the way a real ladder gets one.
+
+    It still needs the milli-misread guard: `tick_label.si_format` carries
+    the axis's own untouched SI spec (for a tick at or above 1 -- the
+    house's k/M compaction stays exactly what it was), and `tick_label.format`
+    carries `sub_unit_digit_format`'s significant-digit rewrite (for a tick
+    below 1, where nothing chose SI to begin with). Choosing between the two
+    per tick, not baking one fixed spec here, is `inject_axis_numeral_expr`'s
+    job -- see its own tests.
     """
     ay = build_resolved_axis(
         _merged_axis_y(),
@@ -1292,9 +1360,77 @@ def test_a_ladder_less_axis_keeps_the_si_format_for_now():
         format_is_alias=False,
         chart_id="test",
     )
+    assert ay.ruler is None
+    assert ay.tick_label is not None
+    assert ay.tick_label.si_format == ay.labels.format
+    assert is_d3_si_spec(ay.tick_label.si_format)
+    assert ay.tick_label.format == sub_unit_digit_format(ay.labels.format)
+    assert ay.tick_label.scientific_format == sub_unit_scientific_format(
+        ay.labels.format
+    )
+    assert d3_format_apply(ay.tick_label.format, 0.3) == "0.3"
+
+
+def test_a_log_scale_ladder_less_axis_bakes_no_tick_label():
+    """A log-scale axis also reaches the ladder-less branch's entry condition
+    (`_resolve_cartesian_ticks` returns empty `tick_values` for `type: log`
+    unconditionally), but for an unrelated reason -- excluded here rather
+    than folded in, because ANY `labelExpr` defeats Vega's own
+    `labelOverlap` thinning of a log axis's dense minor-tick ladder,
+    regardless of what that expression composes. See
+    `test_render_small_multiples.py`-style real-render coverage for the
+    render-level consequence this guards against.
+    """
+    ay_merged = _merged_axis_y()
+    ay_log = ay_merged.model_copy(
+        update={"scale": BaseScaleStyle(continuous=ScaleContinuousStyle(type="log"))}
+    )
+    ay = build_resolved_axis(
+        ay_log,
+        tick_values=(),
+        format_authored=False,
+        format_is_alias=False,
+        chart_id="test",
+    )
+    assert ay.tick_label is None
+    assert ay.ruler is None
+
+
+def test_a_ladder_less_axis_with_an_authored_literal_format_keeps_it_untouched():
+    """The same author opt-out the real-ladder branch honors: a literal
+    (non-alias) SI format the author typed themselves is not a theme
+    placeholder, so it is not up for rewrite even with no ladder to bake.
+    """
+    ay = build_resolved_axis(
+        _merged_axis_y(),
+        tick_values=(),
+        format_authored=True,
+        format_is_alias=False,
+        chart_id="test",
+    )
     assert ay.tick_label is None
     assert ay.ruler is None
     assert is_d3_si_spec(ay.labels.format)
+
+
+def test_a_ladder_less_axis_with_an_authored_label_expr_is_not_touched():
+    """`label.expr` is the documented full opt-out for the real-ladder branch
+    too -- an author who wrote their own Vega expression does not get a
+    second one composed on top of it.
+    """
+    ay_merged = _merged_axis_y()
+    ay_expr = ay_merged.model_copy(
+        update={"labels": ay_merged.labels.model_copy(update={"expr": "datum.label"})}
+    )
+    ay = build_resolved_axis(
+        ay_expr,
+        tick_values=(),
+        format_authored=False,
+        format_is_alias=False,
+        chart_id="test",
+    )
+    assert ay.tick_label is None
+    assert ay.ruler is None
 
 
 def test_a_ladder_whose_rungs_round_to_each_other_derives_no_spec():
@@ -1520,6 +1656,22 @@ def test_ruler_and_tick_label_are_mutually_exclusive():
     assert compacting.tick_label is None
     with pytest.raises(ValueError, match="mutually exclusive"):
         dataclasses.replace(compacting, tick_label=ResolvedTickLabel(format=",.0~f"))
+
+
+def test_tick_label_si_format_and_scientific_format_are_set_together():
+    """ResolvedTickLabel's own invariant, sibling to the one just above:
+    ``si_format``/``scientific_format`` are the ladder-less per-tick guard's
+    two arms -- one without the other is not a state anything ever needs to
+    represent, and ``inject_axis_numeral_expr`` (the sole consumer) relies on
+    this to build the guard unconditionally, with no defensive fallback.
+    """
+    with pytest.raises(ValueError, match="si_format and .scientific_format"):
+        ResolvedTickLabel(format=".3~r", si_format=".3~s")
+    with pytest.raises(ValueError, match="si_format and .scientific_format"):
+        ResolvedTickLabel(format=".3~r", scientific_format=".3~e")
+    # Both set, or both unset, are the only valid states -- no raise.
+    ResolvedTickLabel(format=".3~r", si_format=".3~s", scientific_format=".3~e")
+    ResolvedTickLabel(format=",.0~f")
 
 
 def test_non_compacting_end_anchored_currency_splits_prefix():

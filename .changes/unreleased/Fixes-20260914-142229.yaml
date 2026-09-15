@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct docs error-reference` and `dct docs warning-reference` work on an installed wheel. Both reference documents were excluded from the package build, so every PyPI install answered those two topics with "error-reference.md is missing from the installed package." and its warning-side equivalent.'
-time: 2026-09-14T14:22:29.987932-07:00

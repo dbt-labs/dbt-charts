@@ -360,9 +360,8 @@ def test_stacked_area_rail_follows_an_authored_sort(
 
 def test_stacked_area_needs_no_unorderable_sort_guard() -> None:
     """A stacked bar refuses a sort column with no numbers in it
-    (``ERR-ENDPOINT-LABELS-UNORDERABLE-SORT``): it folds with ``sum``, which
-    totals to NaN there, so the axis falls back to row order and the rail
-    cannot tell that from a real ranking.
+    (``ERR-ENDPOINT-LABELS-UNORDERABLE-SORT``), a gate kept from when bar left
+    its aggregate to Vega-Lite; it is conservative now that bar pins ``min``.
 
     A dimension axis folds with ``min``, a comparison — so a text column is an
     ordering, not an unorderable one, and the rail follows it. The guard would

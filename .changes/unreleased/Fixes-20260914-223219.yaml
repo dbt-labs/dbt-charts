@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A quantitative axis whose ticks sit below 1 now writes them out in digits instead of d3''s SI sub-unit prefixes. A y-axis over 0.29-0.38 reads `0.3` / `0.35`, where it used to read `300m` / `350m` and be taken for millions. Axes at or above 1, and any axis with an authored `format:` of its own, are unchanged.'
-time: 2026-09-14T22:32:19.084121+00:00

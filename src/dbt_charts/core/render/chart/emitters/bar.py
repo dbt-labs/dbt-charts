@@ -876,7 +876,7 @@ def _emit_vertical(
 
     # Categorical axis (VL x): resolve overlap first, then axis_to_vl
     panel_fields = tuple(axis.field for axis in dataset.axes)
-    emitted_x_vl_type, _, _ = resolve_cartesian_x_type(
+    emitted_x_vl_type, _, emitted_x_time_unit = resolve_cartesian_x_type(
         data, cat_field, ax, "bar", False, panel_fields
     )
     reserved_width = resolve_endpoint_rail_span(chart, data, box.width)
@@ -889,6 +889,7 @@ def _emit_vertical(
         edge_labels_flushed=temporal_edge_labels_flushed(emitted_x_vl_type, ax),
         chart_width=box.width - reserved_width,
         domain_values=x_domain,
+        resolved_time_unit=emitted_x_time_unit,
     )
     ax_vl_raw = axis_to_vl(
         ax,
@@ -1027,7 +1028,7 @@ def _emit_vertical(
         # supplied explicit axis.values (already in ay_vl via axis_to_vl).
         if "values" not in ay_vl:
             ay_vl["values"] = list(_NORMALIZE_QUARTILE_TICKS)
-        pin_normalize_axis_format(ay_vl)
+        pin_normalize_axis_format(ay_vl, ay)
     else:
         is_stacked = bool(measure_field) and chart.stack not in (None, "none")
         _ay_cont = ay.scale.continuous if ay.scale is not None else None
@@ -1408,7 +1409,7 @@ def _emit_horizontal(
         # supplied explicit axis.values (already in ay_vl via axis_to_vl).
         if "values" not in ay_vl:
             ay_vl["values"] = list(_NORMALIZE_QUARTILE_TICKS)
-        pin_normalize_axis_format(ay_vl)
+        pin_normalize_axis_format(ay_vl, ay)
     else:
         # domainMax: use baked stacked total; fall back to nice-tick top.
         authored_x_domain = authored_measure_domain(ay)

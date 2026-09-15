@@ -210,6 +210,58 @@ def canonical_schema_bytes(schema: JsonObject) -> bytes:
     return (json.dumps(schema, separators=(",", ":"), sort_keys=True) + "\n").encode()
 
 
+def _stripped_prop(prop: JsonValue) -> JsonValue:
+    if not isinstance(prop, dict):
+        return prop
+    return {key: value for key, value in prop.items() if key != "description"}
+
+
+def _strip_node_description(node: JsonObject) -> JsonObject:
+    """Drop one schema node's own ``description``, plus its fields' (one level
+    down, in ``properties``/``additionalProperties``).
+
+    Only strips ``description`` as a schema *keyword*, never as a property
+    *name* -- a field can itself be named ``description``, and its entry in
+    a ``properties`` mapping must survive untouched.
+    """
+    stripped = {key: value for key, value in node.items() if key != "description"}
+    properties = stripped.get("properties")
+    if isinstance(properties, dict):
+        stripped["properties"] = {
+            name: _stripped_prop(prop) for name, prop in properties.items()
+        }
+    additional_properties = stripped.get("additionalProperties")
+    if isinstance(additional_properties, dict):
+        stripped["additionalProperties"] = _stripped_prop(additional_properties)
+    return stripped
+
+
+def structural_schema_bytes(schema: JsonObject) -> bytes:
+    """Serialize a schema's structure, ignoring documentation-only ``description`` prose.
+
+    Used by the freeze/verify checks to tell a grammar change (warrants a new
+    frozen version) apart from a pure wording edit to a docstring (does not).
+    Strips only the four spots the current renderer places ``description``
+    (schema root, each ``$defs`` entry, each field's own
+    ``properties``/``additionalProperties`` node) -- a ``description`` an
+    older renderer version left nested elsewhere in a historical frozen
+    snapshot survives and is compared structurally, which can only make an
+    unchanged grammar look changed, never the reverse. This also ignores a
+    changed ``InheritSlot``/``inherit_from`` fallback note, since
+    ``_inherit_note`` folds it into the same field ``description`` string
+    (``json_schema.py``); retargeting a field's inheritance source is a
+    wording-level change to what the schema documents, not to what it accepts.
+    """
+    stripped = _strip_node_description(schema)
+    defs = stripped.get("$defs")
+    if isinstance(defs, dict):
+        stripped["$defs"] = {
+            name: (_strip_node_description(defn) if isinstance(defn, dict) else defn)
+            for name, defn in defs.items()
+        }
+    return canonical_schema_bytes(stripped)
+
+
 def load_yaml_schema_catalog() -> YamlSchemaCatalog:
     """Load the package's immutable dbt charts YAML schemas."""
     return load_yaml_schema_catalog_from(

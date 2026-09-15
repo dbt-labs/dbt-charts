@@ -184,9 +184,11 @@ class ResolvedTickLabel:
     ladder compacts or it doesn't, never both.
     """
 
-    # Plain d3 spec (not a Vega expression -- a non-compacting ladder makes no
-    # per-tick decision, so unlike `ruler` it needs no expression, only a
-    # format string).
+    # Plain d3 spec. Not a Vega expression by itself -- a non-compacting
+    # ladder makes no per-tick decision, so unlike `ruler` it needs no
+    # expression, only a format string -- EXCEPT when `si_format` is also
+    # set, where this is one arm of a per-tick conditional instead (see that
+    # field, below).
     format: str
     # Currency prefix split from `format`'s symbol by non_compacting_tick_format
     # (mirrors ruler.prefix): the bare symbol (e.g. "$"), no added spacing.
@@ -209,6 +211,26 @@ class ResolvedTickLabel:
     # non-tabular, the mixed-depth gate finds every tick at the same depth, or
     # `format` is scientific (no fixed decimal position to pad to).
     decimal_pad_table: tuple[str, ...] = dataclasses.field(default_factory=tuple)
+    # Set only for a LADDER-LESS axis (`ResolvedAxisStyle.tick_values` empty),
+    # alongside `scientific_format` below -- both None or both set, never one
+    # without the other. Turns `format` from the whole story into one arm of
+    # a per-tick conditional; see `inject_axis_numeral_expr`'s docstring for
+    # the full mechanism (the authoritative account -- don't restate it here).
+    si_format: str | None = None
+    # The other arm set alongside `si_format`: `sub_unit_scientific_format`'s
+    # exponential register, for a tick too small for `format`'s
+    # significant-digit register to reach cleanly. See
+    # `inject_axis_numeral_expr`.
+    scientific_format: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.si_format is None) != (self.scientific_format is None):
+            raise ValueError(
+                "ResolvedTickLabel.si_format and .scientific_format are set "
+                "together or not at all -- one arm of the ladder-less "
+                f"per-tick conditional with no other. got si_format="
+                f"{self.si_format!r}, scientific_format={self.scientific_format!r}"
+            )
 
 
 # ── Resolved scale classes ────────────────────────────────────────────────────

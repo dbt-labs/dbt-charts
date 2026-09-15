@@ -19,6 +19,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog_from,
     next_minor,
     parse_dotted_version,
+    structural_schema_bytes,
 )
 
 
@@ -35,9 +36,11 @@ def freeze_yaml_schema(
     Requires an existing manifest carrying a DEV entry -- there is no
     bootstrap path; a project with nothing frozen yet has no entry to
     release. Returns the newly ``RELEASED`` entry, or ``None`` when the
-    candidate schema matches the latest released one: nothing is frozen,
-    only the DEV entry (and its module, if one exists) is renumbered to the
-    next predicted minor version when *version* has caught up with it.
+    candidate schema is structurally unchanged from the latest released one
+    -- a pure ``description`` wording edit is not a schema for release:
+    nothing is frozen, only the DEV entry (and its module, if one exists) is
+    renumbered to the next predicted minor version when *version* has caught
+    up with it.
     """
     manifest_path = directory / "manifest.json"
     if not manifest_path.exists():
@@ -53,16 +56,13 @@ def freeze_yaml_schema(
             "newer than the latest RELEASED version "
             f"{catalog.latest_released.version!r}."
         )
-    candidate_bytes = canonical_schema_bytes(candidate)
-    released_bytes = canonical_schema_bytes(
-        catalog.schema_for(catalog.latest_released.version)
-    )
+    released_schema = catalog.schema_for(catalog.latest_released.version)
     # Newest-first, DEV excluded -- catalog.entries' own order, reversed once
     # at write time rather than re-sorted here.
     released_entries = tuple(e for e in catalog.entries if e.status == "RELEASED")
     dev = catalog.dev
 
-    if candidate_bytes == released_bytes:
+    if structural_schema_bytes(candidate) == structural_schema_bytes(released_schema):
         target_dev_version = next_minor(version)
         if dev.version != target_dev_version:
             _rename_dev_module(versions_directory, dev.version, target_dev_version)
@@ -80,6 +80,7 @@ def freeze_yaml_schema(
         _rename_dev_module(versions_directory, dev.version, version)
         dev = dataclasses.replace(dev, version=version)
 
+    candidate_bytes = canonical_schema_bytes(candidate)
     snapshot_path.write_bytes(candidate_bytes)
 
     released = dataclasses.replace(
@@ -144,10 +145,11 @@ def verify_released_yaml_schema(
     """Ensure the release tag packages the current YAML grammar snapshot.
 
     A three-part check accepting both release shapes: the live schema must
-    match the latest released snapshot, that snapshot's version must not be
-    newer than the tag (an unchanged-grammar release may sit behind it), and
-    the DEV entry must be strictly newer than the tag -- a tag that has
-    caught up with the DEV name means that grammar was never frozen.
+    match the latest released snapshot structurally (a pure ``description``
+    wording edit does not count as a mismatch), that snapshot's version must
+    not be newer than the tag (an unchanged-grammar release may sit behind
+    it), and the DEV entry must be strictly newer than the tag -- a tag that
+    has caught up with the DEV name means that grammar was never frozen.
     """
     catalog = load_yaml_schema_catalog_from(directory)
     if _version_key(catalog.latest_released.version) > _version_key(version):
@@ -155,9 +157,9 @@ def verify_released_yaml_schema(
             f"Latest dbt charts YAML schema {catalog.latest_released.version} is "
             f"newer than the dbt charts release {version}."
         )
-    if canonical_schema_bytes(
+    if structural_schema_bytes(
         catalog.schema_for(catalog.latest_released.version)
-    ) != canonical_schema_bytes(candidate):
+    ) != structural_schema_bytes(candidate):
         raise ValueError(
             f"dbt charts {version} has an unfrozen YAML grammar. Run "
             f"`just freeze-yaml-schema {version} <released_at>` and commit "

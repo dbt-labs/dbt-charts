@@ -50,9 +50,25 @@ def test_auto_link_eligibility_stays_in_compile() -> None:
 
     assert should_synthesize_auto_link(_bar(color="region"), rows, True)
     assert auto_link_excludes_x(_bar(color="region"), rows)
-    assert auto_link_excludes_x(_bar(style={"orientation": "horizontal"}), [])
     assert not should_synthesize_auto_link(_bar(link="/authored/{{ x }}"), rows, True)
     assert not should_synthesize_auto_link(_bar(), rows, False)
+
+
+def test_auto_link_excludes_x_ignores_bar_orientation() -> None:
+    """An inline `style.orientation: horizontal` must not exclude x — a bar's
+    x is always the category/time channel, never the measure, regardless of
+    orientation. A plain bar with no style at all was never excluded either;
+    pinned here so a future orientation-based check can't reintroduce this.
+    """
+    string_x_rows = [
+        {"category": "north", "amount": 10.0},
+        {"category": "south", "amount": 20.0},
+    ]
+
+    assert not auto_link_excludes_x(
+        _bar(style={"orientation": "horizontal"}), string_x_rows
+    )
+    assert not auto_link_excludes_x(_bar(), string_x_rows)
 
 
 def test_table_fk_fact_eligibility_is_independent_of_root_link() -> None:

@@ -1119,6 +1119,15 @@ asc|desc}` — there is no explicit value-order list. A fixed stage order
 (sent → viewed → signed) belongs in the query (`ORDER BY CASE …`), because
 ordering is dataset meaning and the query layer owns it.
 
+**Sort aggregate:** a category with a `color:` series or a `y: [...]` list
+holds several rows, so the sort column is folded to one value per category
+first. A *stacked* bar sorted by its own measure ranks by the stacked total;
+every other sort ranks by the column's own value, so an ordering key
+(`release_seq`) ranks by that key no matter how many rows a category holds.
+A grouped (`stack: none`) bar sorted by its measure therefore ranks by each
+category's smallest series, not by the group total — pre-sum in the query
+when you want the total.
+
 ### Composition
 
 dbt charts composes charts in three ways:

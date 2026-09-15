@@ -1,3 +1,0 @@
-kind: Features
-body: '`dct cloud login` opens the approval page in a browser, the way `gcloud auth login` and `gh auth login` do; the URL is still printed as a fallback. `--no-browser` prints it without opening anything, and `--start` never opens a browser.'
-time: 2026-09-14T14:22:18.751957-07:00

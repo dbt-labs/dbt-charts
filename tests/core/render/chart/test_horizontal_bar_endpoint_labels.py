@@ -1219,9 +1219,9 @@ def test_rail_sorts_decimal_measures_like_vega_lite_does(resolve_horizontal_bar_
 def test_non_numeric_sort_raises_when_the_author_opts_in(resolve_horizontal_bar_chart):
     """Resolve steers the default away from a sort column with no numbers.
 
-    An explicit opt-in reaches render, where the rail cannot reproduce Vega-
-    Lite's string-concatenation order — so it says so rather than anchoring on
-    a row Vega-Lite does not draw on top.
+    An explicit opt-in reaches render, where dbt Charts does not confirm which
+    category the sorted axis draws first — so it says so rather than anchoring
+    every label on a row Vega-Lite may not draw on top.
     """
     from dbt_charts.core.compile.models.chart.authored import ChartSort
     from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -1229,7 +1229,7 @@ def test_non_numeric_sort_raises_when_the_author_opts_in(resolve_horizontal_bar_
     data = _two_series_two_row_data()
     rc = resolve_horizontal_bar_chart(data=data, enabled=True, stack="zero")
     rc = rc.model_copy(update={"sort": ChartSort(by="row", order="desc")})
-    with pytest.raises(ChartDataError, match="no numeric values"):
+    with pytest.raises(ChartDataError, match="carrying numeric values"):
         _render(rc, data)
 
 

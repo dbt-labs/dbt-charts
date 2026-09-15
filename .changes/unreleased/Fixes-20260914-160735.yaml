@@ -1,3 +1,0 @@
-kind: Fixes
-body: A bar chart's `sort:` orders categories by the sort column's own value rather than by that column's total across the category's rows, so a category holding fewer rows than its neighbors no longer sorts out of place. Sorting a stacked bar by its own measure still orders by the stacked total; a grouped bar sorted by its measure now ranks each category by its smallest series, so sort by a pre-summed column when you want the group total.
-time: 2026-09-14T16:07:35.473218-07:00

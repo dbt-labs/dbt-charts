@@ -1,9 +1,0 @@
-kind: Fixes
-body: >-
-  A `support_table` placed below the plot now clears x labels the chart rotated
-  to fit. The gap under the plot was sized for two lines of horizontal text, so
-  on a chart with enough categories to tilt its labels the first strip row was
-  drawn straight through them. The space is now measured from the angle the
-  labels are actually drawn at, and no longer has to be tuned by hand via
-  `style.support_table.label_max_lines`.
-time: 2026-09-14T16:05:00.000000-07:00

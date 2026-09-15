@@ -21,6 +21,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
     load_yaml_schema_catalog_from,
     next_minor,
+    structural_schema_bytes,
 )
 from dbt_charts.schema_release import freeze_yaml_schema, verify_released_yaml_schema
 
@@ -419,6 +420,172 @@ def test_catalog_rejects_a_modified_frozen_snapshot(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="sha256"):
         load_yaml_schema_catalog_from(tmp_path)
+
+
+def test_structural_schema_bytes_ignores_description_wording() -> None:
+    """A ``description`` edit at every injection point (root, a ``$defs``
+    entry's own doc, a ``$defs`` entry's *field* doc -- where most real
+    descriptions live, a root-level field, ``additionalProperties``) must not
+    affect structural equality -- only the shape a document is validated
+    against matters."""
+    old = {
+        "type": "object",
+        "description": "old root doc",
+        "properties": {
+            "x": {"type": "string", "description": "old field doc"},
+        },
+        "additionalProperties": {"type": "string", "description": "old extra doc"},
+        "$defs": {
+            "Thing": {
+                "type": "object",
+                "description": "old def doc",
+                "properties": {
+                    "y": {"type": "integer", "description": "old nested field doc"}
+                },
+            }
+        },
+    }
+    new = {
+        "type": "object",
+        "description": "new root doc",
+        "properties": {
+            "x": {"type": "string", "description": "new field doc"},
+        },
+        "additionalProperties": {"type": "string", "description": "new extra doc"},
+        "$defs": {
+            "Thing": {
+                "type": "object",
+                "description": "new def doc",
+                "properties": {
+                    "y": {"type": "integer", "description": "new nested field doc"}
+                },
+            }
+        },
+    }
+
+    assert structural_schema_bytes(old) == structural_schema_bytes(new)
+    assert canonical_schema_bytes(old) != canonical_schema_bytes(new)
+
+
+def _perturb_descriptions(value: object) -> object:
+    """Append text to every ``description`` string anywhere in *value*.
+
+    Deliberately blind recursion (unlike production's position-aware
+    ``_strip_node_description``): it targets every dict entry keyed
+    ``"description"`` whose value is a string, wherever nested, so this
+    fixture can't miss a real injection point the way a hand-built schema
+    could.
+    """
+    if isinstance(value, dict):
+        return {
+            key: (
+                f"{child} (perturbed)"
+                if key == "description" and isinstance(child, str)
+                else _perturb_descriptions(child)
+            )
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_perturb_descriptions(item) for item in value]
+    return value
+
+
+def test_structural_schema_bytes_ignores_description_anywhere_in_the_real_schema() -> (
+    None
+):
+    """Regression guard against a hand-built fixture missing where real
+    descriptions live: perturb every ``description`` string in the live
+    generated dbt charts YAML schema and confirm structural equality survives
+    while canonical (byte-for-byte) equality does not."""
+    schema = render_yaml_schema(introspect())
+    perturbed = _perturb_descriptions(schema)
+    assert isinstance(perturbed, dict)
+
+    assert structural_schema_bytes(schema) == structural_schema_bytes(perturbed)
+    assert canonical_schema_bytes(schema) != canonical_schema_bytes(perturbed)
+
+
+def test_structural_schema_bytes_preserves_a_field_literally_named_description() -> (
+    None
+):
+    """A field named ``description`` is a property key, not the JSON Schema
+    documentation keyword -- stripping must not mistake one for the other."""
+    old = {"type": "object", "properties": {"description": {"type": "string"}}}
+    new = {"type": "object", "properties": {"description": {"type": "integer"}}}
+
+    assert structural_schema_bytes(old) != structural_schema_bytes(new)
+
+
+def test_structural_schema_bytes_detects_real_grammar_changes() -> None:
+    old = {"type": "object", "properties": {"x": {"type": "string"}}}
+    new = {"type": "object", "properties": {"x": {"type": "integer"}}}
+
+    assert structural_schema_bytes(old) != structural_schema_bytes(new)
+
+
+def test_freeze_ignores_description_only_change(tmp_path: Path) -> None:
+    """A candidate differing from the latest RELEASED snapshot only in
+    ``description`` prose is not a schema for release: no snapshot is
+    written, only DEV is renumbered."""
+    directory = tmp_path / "schemas"
+    directory.mkdir()
+    versions_directory = tmp_path / "versions"
+    versions_directory.mkdir()
+
+    old_candidate = {
+        "type": "object",
+        "additionalProperties": False,
+        "description": "old doc",
+    }
+    sha = _write_schema_file(directory, "0.3.0.json", old_candidate)
+    (versions_directory / "v0_4_0.py").write_text("", encoding="utf-8")
+    _write_manifest(
+        directory,
+        [
+            _released_entry("0.3.0", sha256=sha, predecessor=None),
+            _dev_entry("0.4.0", predecessor="0.3.0"),
+        ],
+    )
+
+    new_candidate = {**old_candidate, "description": "new, clearer doc"}
+    result = freeze_yaml_schema(
+        directory,
+        versions_directory,
+        version="0.4.0",
+        released_at=date(2026, 8, 1),
+        candidate=new_candidate,
+    )
+
+    assert result is None
+    catalog = load_yaml_schema_catalog_from(directory)
+    assert catalog.dev.version == "0.5.0"
+    assert catalog.latest_released.version == "0.3.0"
+    assert not (directory / "0.4.0.json").exists()
+
+
+def test_verify_accepts_description_only_grammar_change(tmp_path: Path) -> None:
+    directory = tmp_path / "schemas"
+    directory.mkdir()
+
+    candidate = {
+        "type": "object",
+        "additionalProperties": False,
+        "description": "old doc",
+    }
+    sha = _write_schema_file(directory, "0.3.0.json", candidate)
+    _write_manifest(
+        directory,
+        [
+            _released_entry("0.3.0", sha256=sha, predecessor=None),
+            _dev_entry("0.4.0", predecessor="0.3.0"),
+        ],
+    )
+
+    verify_released_yaml_schema(
+        directory,
+        version="0.3.0",
+        candidate={**candidate, "description": "new, clearer doc"},
+    )
 
 
 def test_freeze_unchanged_grammar_renumbers_dev_without_writing(

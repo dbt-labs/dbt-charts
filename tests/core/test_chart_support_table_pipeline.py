@@ -4708,6 +4708,147 @@ def test_quantitative_pinned_angle_reserves_no_tilt_room() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("chart_type", "extra_style"),
+    [
+        pytest.param("line", {}, id="line"),
+        pytest.param("bar", {"orientation": "vertical"}, id="bar"),
+    ],
+)
+def test_bottom_strip_clears_a_pinned_tilt_past_the_ordinal_scaffold_budget(
+    chart_type: str, extra_style: dict[str, Any]
+) -> None:
+    """Ten dates 45 days apart detect as daily grain (see
+    ordinal_scaffold_within_budget's own docstring example), but banding that
+    grain would synthesize ~400 empty buckets against a budget of 60. Daily
+    ("yearmonthdate") is a FINE_BUCKET_UNITS grain, so resolve_cartesian_x_type
+    resolves both mark types to vl_type="temporal" here: line always does
+    (mark_type in ("line", "area", "scatter") forces it); bar reaches the
+    same verdict only because a FINE_BUCKET_UNITS grain past the scaffold
+    budget routes there too. Both then hit the shared `if vl_type ==
+    "temporal" and not scaffold_ok: time_unit = None` gate, so
+    resolve_cartesian_x_type drops the grain on both, the emitted axis
+    carries no timeUnit/format/labelExpr/values/tickCount of its own, and
+    Vega-Lite falls through to its own default temporal multi-format ticks
+    ('September', '2024', ...) instead of the bucketed '1 Jan' vocabulary the
+    daily grain alone would suggest. Render-time Python code cannot predict
+    that default's exact text, so the pinned-angle reservation has to agree
+    with the dropped verdict and fall back to measuring the raw datum, a
+    deliberate over-reservation, rather than re-detect a grain the axis no
+    longer has.
+    """
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": chart_type,
+            "x": "ts",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {"entries": [{"source": "revenue"}]},
+            "style": {
+                **extra_style,
+                "support_table": {"position": "bottom"},
+                "axis_x": {"labels": {"angle": -90}},
+            },
+        }
+    )
+    data = [
+        {
+            "ts": (
+                datetime.date(2024, 1, 1) + datetime.timedelta(days=45 * i)
+            ).isoformat(),
+            "revenue": 100.0 + i,
+        }
+        for i in range(10)
+    ]
+    resolved = resolve(
+        chart, data, chart_style_context=_BOARD_CONTEXT, width=_TILT_WIDTH
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    from dbt_charts.core.font_measure import get_font_measurer
+
+    font = resolved.style.axis_x.labels.font
+    measurer = get_font_measurer(font.family)
+    baked = resolved.support_table_axis_offset
+    assert baked is not None
+    gap = _reserved_axis_gap(spec, dt_style)
+    widest_raw = max(
+        (row["ts"] for row in data), key=lambda v: measurer.measure(v, font.size)
+    )
+    # At angle=-90 the block height IS the widest label's width
+    # (_label_block_height: max_width*sin(90) + line_height*cos(90)).
+    # _tilted_label_axis_offset only grows the baked gap by whatever the
+    # block exceeds the label_max_lines reservation already baked in.
+    reserved = font.size * dt_style.label_max_lines
+    # The raw ISO datum, measured as a deliberate over-reservation for
+    # whatever continuous date label Vega ends up painting once the
+    # scaffold-budget gate drops the grain. A bucketed "1 Jan"-style label
+    # reads well under half this width.
+    assert gap == pytest.approx(
+        baked + max(0.0, measurer.measure(widest_raw, font.size) - reserved)
+    )
+
+
+def test_bottom_strip_clears_a_pinned_tilt_measured_in_the_axis_case() -> None:
+    """``axis_x.labels.font.case: upper`` repaints every label upper-case at
+    render time (inject_axis_label_case) — the pinned-angle reservation has
+    to measure that same casing, not the source rows' own casing, which
+    paints narrower for a typeface with distinct upper/lower glyph widths.
+    """
+    chart = _bottom_strip_chart(
+        x_axis_style={"labels": {"angle": -90, "font": {"case": "upper"}}}
+    )
+    data = [{"month": f"department {i:02d}", "revenue": 100.0 + i} for i in range(20)]
+    resolved = resolve(
+        chart, data, chart_style_context=_BOARD_CONTEXT, width=_TILT_WIDTH
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    from dbt_charts.core.font_measure import get_font_measurer
+
+    font = resolved.style.axis_x.labels.font
+    assert font.case == "upper"
+    measurer = get_font_measurer(font.family)
+    baked = resolved.support_table_axis_offset
+    assert baked is not None
+    gap = _reserved_axis_gap(spec, dt_style)
+    widest_upper = max(
+        (row["month"].upper() for row in data),
+        key=lambda v: measurer.measure(v, font.size),
+    )
+    reserved = font.size * dt_style.label_max_lines
+    assert gap == pytest.approx(
+        baked + max(0.0, measurer.measure(widest_upper, font.size) - reserved)
+    )
+    # The un-cased source text measures narrower — confirms the case
+    # transform is what widens the reservation, not an incidental rounding
+    # difference.
+    widest_raw = max(
+        (row["month"] for row in data), key=lambda v: measurer.measure(v, font.size)
+    )
+    assert measurer.measure(widest_raw, font.size) < measurer.measure(
+        widest_upper, font.size
+    )
+
+
 def test_layered_bar_bottom_strip_clears_tilted_x_labels() -> None:
     """A `layers:` chart is wrapped in a fresh outer spec; the base owns the
     x-axis, so its label measurement has to survive that wrap.

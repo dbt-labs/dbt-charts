@@ -5,7 +5,15 @@ changelogPath: CHANGELOG.md
 versionExt: md
 versionFormat: '## {{.Version}} ({{.Time.Format "2006-01-02"}})'
 kindFormat: '### {{.Kind}}'
-changeFormat: '- {{.Body}}'
+# dbt-labs/dbt-charts below must track the Copybara export destination
+# (dbt-charts/oss/copy.bara.sky) -- a rename on either side silently stops
+# every marker from matching, closing nothing.
+changeFormat: '- {{.Body}}{{if and .Custom.DbtChartsIssue (ne .Custom.DbtChartsIssue "0")}} <!-- closes dbt-labs/dbt-charts#{{.Custom.DbtChartsIssue}} -->{{end}}'
+custom:
+  - key: DbtChartsIssue
+    label: "dbt-labs/dbt-charts (OSS) issue number this closes, if any (leave blank otherwise)"
+    type: int
+    optional: true
 kinds:
   - label: Breaking changes
   - label: Features

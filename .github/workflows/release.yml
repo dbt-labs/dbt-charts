@@ -61,6 +61,18 @@ jobs:
             exit 1
           fi
 
+      - name: Verify the changelog documents this release
+        # Same script, tag, repo, and changelog `close-linked-issues` uses for real after publish.
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 .github/scripts/close_linked_issues.py \
+            --changes-dir .changes \
+            --tag "$TAG" \
+            --repo "${{ github.repository }}" \
+            --dry-run
+
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           version: "0.12.13"
@@ -107,3 +119,27 @@ jobs:
           version: "0.12.13"
 
       - run: uv publish --trusted-publishing always dist/*
+
+  close-linked-issues:
+    # needs: [publish] alone skips this on workflow_dispatch -- publish
+    # itself only runs `if: github.event_name == 'release'`, and a skipped
+    # need skips its dependent under the default `success()`.
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Close issues this release's changelog says it fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 .github/scripts/close_linked_issues.py \
+            --changes-dir .changes \
+            --tag "$TAG" \
+            --repo "${{ github.repository }}"

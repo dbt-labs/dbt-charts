@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'A single-series horizontal bar with no color channel now keeps its value-descending default sort when a `support_table` is attached with no authored `sort:`. The bars no longer silently revert to alphabetical order.'
+time: 2026-09-15T19:41:17Z
+custom:
+  DbtChartsIssue: 8

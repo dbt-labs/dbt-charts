@@ -43,6 +43,7 @@ from __future__ import annotations
 import os
 import platform
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Callable, Dict, List, Optional
@@ -143,6 +144,34 @@ _VARIATION_SELECTOR_15 = 0xFE0E
 _VARIATION_SELECTOR_16 = 0xFE0F
 _KEYCAP_MARK = 0x20E3
 _KEYCAP_BASES = frozenset(range(0x30, 0x3A)) | {0x23, 0x2A}  # '0'-'9', '#', '*'
+
+
+def _is_wide_east_asian(char: str) -> bool:
+    """Whether ``char`` occupies a full em-square advance in a real
+    CJK-capable font: Unicode East Asian Width "Wide" or "Fullwidth", and
+    not a nonspacing/enclosing combining mark (category ``Mn``/``Me`` --
+    see ``_is_zero_advance_wide_mark``). A *spacing* combining mark
+    (category ``Mc``) does have a real, nonzero advance despite also being
+    a combining mark, so it stays in the wide bucket.
+    """
+    return unicodedata.east_asian_width(char) in (
+        "W",
+        "F",
+    ) and unicodedata.category(char) not in ("Mn", "Me")
+
+
+def _is_zero_advance_wide_mark(char: str) -> bool:
+    """Whether ``char`` is East Asian Wide/Fullwidth but renders at zero
+    advance, stacked onto the preceding base character: the combining
+    voiced/semi-voiced kana marks (U+3099, U+309A), four of the six
+    ideographic/hangul tone marks (U+302A-U+302D), and U+16FE4. Booking a
+    full em for one of these -- or even the generic placeholder -- would
+    over-measure NFD-normalized text and let the wrapper split a line
+    between a base character and its mark.
+    """
+    return unicodedata.east_asian_width(char) in ("W", "F") and unicodedata.category(
+        char
+    ) in ("Mn", "Me")
 
 
 def _is_pictograph(codepoint: int) -> bool:
@@ -412,7 +441,12 @@ class FontMeasurer:
         An emoji cluster (a pictograph, a VS16-forced symbol, a ZWJ sequence,
         a flag, or a keycap) books a fixed emoji-advance width regardless of
         whether the font has a real glyph for any of its codepoints -- these
-        are authored as pictures, not measured as ordinary text. Any other
+        are authored as pictures, not measured as ordinary text. An unmapped
+        East Asian Wide/Fullwidth codepoint (CJK ideographs, kana, hangul,
+        fullwidth punctuation) books a full em-square advance, matching how
+        CJK-capable fonts actually measure it -- except the small set of
+        Wide/Fullwidth combining marks that stack onto their base character
+        at zero advance (see ``_is_zero_advance_wide_mark``). Any other
         unmapped codepoint keeps the placeholder (space-like) fallback width.
 
         Args:
@@ -456,6 +490,12 @@ class FontMeasurer:
                 total_width += advance_width
                 if deltas is not None:
                     total_width += deltas.get(glyph_id, 0.0)
+            elif _is_wide_east_asian(char):
+                # Fallback for unknown East Asian Wide/Fullwidth glyphs: a
+                # full em-square, not the space-like placeholder below.
+                total_width += self._units_per_em
+            elif _is_zero_advance_wide_mark(char):
+                pass  # stacks onto the preceding base glyph; books nothing
             else:
                 # Fallback for unknown glyphs (space-like width)
                 total_width += self._units_per_em * 0.25
@@ -466,13 +506,14 @@ class FontMeasurer:
     def has_glyph(self, char: str) -> bool:
         """Whether ``char`` maps to a real, measurable glyph in this font.
 
-        ``measure()`` degrades an unmapped *non-emoji* codepoint to a
-        placeholder (space-like) width rather than raising — the right
-        behavior for ordinary prose, where blocking a whole render over one
-        rare character would be worse than an estimate. (An unmapped emoji
-        codepoint instead books a fixed emoji-advance width — see
-        ``measure()``'s own docstring.) A caller composing a layout out of
-        *specific* codepoints chosen for their exact advance needs the
+        ``measure()`` degrades an unmapped codepoint to a placeholder
+        (space-like) width rather than raising — the right behavior for
+        ordinary prose, where blocking a whole render over one rare
+        character would be worse than an estimate. (An unmapped emoji
+        codepoint instead books a fixed emoji-advance width, and an unmapped
+        East Asian Wide/Fullwidth codepoint books a full em-square advance —
+        see ``measure()``'s own docstring.) A caller composing a layout out
+        of *specific* codepoints chosen for their exact advance needs the
         opposite answer: whether the font can actually back that assumption,
         not a width that looks plausible but isn't real.
         """

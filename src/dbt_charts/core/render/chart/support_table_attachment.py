@@ -3631,22 +3631,21 @@ def _sorted_category_domain(
     category_field: str,
     data: list[dict[str, Any]],  # type-state: explicit_any — VL fragment
     op: VlSortOp,
+    emitted_sort: VLDict | None,
 ) -> list[Any] | None:  # type-state: explicit_any — a domain value, any JSON scalar
     """The category domain in Vega-Lite's own rendered order for an
-    EXPLICITLY authored ``chart.sort``, or ``None`` when none was authored
-    -- the caller then leaves the scale unpinned (Vega-Lite's own native
-    handling, or the existing drawn-index anchor logic, already covers
-    every other case).
+    EXPLICITLY authored ``chart.sort``, or for an emitted ENGINE-DEFAULT
+    sort on the category encoding when none was authored, or ``None`` when
+    neither exists -- the caller then leaves the scale unpinned (Vega-Lite's
+    own native handling, or the existing drawn-index anchor logic, already
+    covers every other case).
 
-    Takes the resolved chart's own ``sort: ChartSort | None`` -- never the
-    compiled VL encoding's ``sort`` key -- because a horizontal bar with no
-    color channel gets an ENGINE default there
-    (``{"field": measure, "order": "descending"}``, see
-    ``emitters/bar.py``'s largest-measure-first default) that looks
-    identical in shape to a genuine authored sort but must NOT reorder the
-    board: only what the author actually wrote in YAML pins a domain here.
-    ``chart_sort_to_vl`` returns ``None`` for that unauthored case, which is
-    exactly the signal this function needs.
+    Takes the resolved chart's own ``sort: ChartSort | None`` first, since
+    that's what an author actually wrote; *emitted_sort* (the caller's own
+    compiled encoding ``sort`` key, e.g. a horizontal bar's engine-default
+    largest-measure-first, see ``emitters/bar.py``) is the fallback,
+    matching the precedence ``rendered_x_domain`` (``x_domain.py``) already
+    applies to a layered chart's shared categorical scale.
 
     Delegates the actual ordering to ``x_domain_order``
     (``core/utils.py``) rather than reimplementing it: that helper already
@@ -3663,7 +3662,10 @@ def _sorted_category_domain(
     """
     vl_sort = chart_sort_to_vl(sort)
     if vl_sort is None:
-        return None
+        if isinstance(emitted_sort, dict) and emitted_sort.get("field"):
+            vl_sort = emitted_sort
+        else:
+            return None
     domain = x_domain_order(
         data,
         category_field,
@@ -3682,11 +3684,11 @@ def _pin_sorted_category_domain(
     sort: ChartSort | None,
 ) -> dict[str, Any]:  # type-state: explicit_any — VL fragment
     """Pin an explicit, sorted ``scale.domain`` onto the shared category
-    encoding when the chart AUTHORS an explicit ``chart.sort`` -- an
-    engine-default sort (e.g. a horizontal bar's largest-measure-first) never
-    reorders the board; see ``_sorted_category_domain``'s docstring for why
-    this takes ``sort`` as the resolved chart's own field rather than reading
-    it off the compiled encoding.
+    encoding when the chart AUTHORS an explicit ``chart.sort``, or -- absent
+    one -- when the compiled encoding itself already carries an engine-default
+    sort (e.g. a horizontal bar's largest-measure-first, see
+    ``_sorted_category_domain``'s docstring); this reproduces whichever order
+    Vega-Lite would otherwise natively render.
 
     Root cause this works around: Vega-Lite's own native sort-by-field
     resolves correctly across a plain layered chart (confirmed empirically),
@@ -3710,13 +3712,29 @@ def _pin_sorted_category_domain(
 
     No-op (returns ``spec`` unchanged) when the channel's own encoding is
     missing, the encoding's scale is not categorical (its ``type`` is not
-    ``nominal``/``ordinal``), the computed domain isn't all plain JSON
-    scalars, no explicit ``chart.sort`` was authored, or the sort's own
-    field has no data to sort by -- ``_sorted_category_domain`` returning
-    ``None`` is the single source of truth for the last case.
+    ``nominal``/``ordinal``), the ``scale`` ALREADY carries a ``domain``, the
+    computed domain isn't all plain JSON scalars, or neither an authored
+    ``chart.sort`` nor an emitted engine-default sort exists (or its field
+    has no data to sort by) -- ``_sorted_category_domain`` returning
+    ``None`` is the single source of truth for that last case.
 
-    Two gates guard the pin, and they answer DIFFERENT questions -- both are
-    load-bearing, neither is defensive:
+    The already-pinned-domain no-op matters for a layered chart:
+    ``_reconcile_x_domain`` (``emitters/_overlay.py``) pins the shared
+    categorical scale's ``domain`` earlier in the same render, as a UNION of
+    the base rows and every layer's own rows. This function computes its
+    domain from *data* alone (the base rows the support_table post-pass was
+    handed, via ``_apply_support_table_strip``, never the per-layer rows),
+    so recomputing here would silently drop a category that exists only in
+    a layer's own diverging query -- exactly what that function's own
+    docstring warns a narrower pin does to its union. Two other writers can
+    also reach this ``scale.domain`` first -- ``pin_categorical_domain_order``
+    (a sign-split bar's sub-layers) and ``pin_sorted_x_domain`` (line/area/
+    heatmap) -- and the invariant that makes deferring to any of the three
+    safe is the same one: each reads the identical compiled ``sort`` this
+    function would.
+
+    Three gates guard the pin, and they answer DIFFERENT questions -- all are
+    load-bearing, none is defensive:
 
     1. The encoding type must be ``nominal``/``ordinal``. An explicit
        ``scale.domain`` array is a categorical concept; on a continuous
@@ -3735,9 +3753,12 @@ def _pin_sorted_category_domain(
        crashes the render. Only the value gate catches a scale that merely
        LOOKS categorical but carries unserializable values.
 
-    Each gate covers a case the other misses -- a continuous scalar-valued x
-    passes the value gate, a categorical date-valued x passes the type gate
-    -- so the pin requires BOTH.
+    3. The ``scale`` must not already carry a ``domain``. See the
+       already-pinned-domain paragraph above.
+
+    Gates 1 and 2 each cover a case the other misses -- a continuous
+    scalar-valued x passes the value gate, a categorical date-valued x
+    passes the type gate -- so the pin requires BOTH.
     """
     top_encoding = spec.get("encoding")
     if not isinstance(top_encoding, dict):
@@ -3747,12 +3768,18 @@ def _pin_sorted_category_domain(
         return spec
     if cat_enc.get("type") not in ("nominal", "ordinal"):
         return spec
+    existing_scale = cat_enc.get("scale")
+    if isinstance(existing_scale, dict) and "domain" in existing_scale:
+        return spec
     domain = _sorted_category_domain(
-        sort, category_field, data, vl_sort_op(cat_enc.get("sort"))
+        sort,
+        category_field,
+        data,
+        vl_sort_op(cat_enc.get("sort")),
+        emitted_sort=cat_enc.get("sort"),
     )
     if domain is None or not _is_json_scalar_domain(domain):
         return spec
-    existing_scale = cat_enc.get("scale")
     new_scale = (
         {**existing_scale, "domain": domain} if existing_scale else {"domain": domain}
     )

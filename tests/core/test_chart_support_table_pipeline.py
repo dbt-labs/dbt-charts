@@ -53,6 +53,7 @@ def _render_v2_spec(
     height: float,
     monkeypatch: Any,
     padding: dict[str, int | float] | None = None,
+    datasets: dict[str | None, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Render *chart* through the v2 path and return the captured VL spec dict."""
     board_style = resolve_style(get_theme_style(get_default_theme_name()))
@@ -75,6 +76,7 @@ def _render_v2_spec(
         width=width,
         height=height,
         padding=padding,
+        datasets=datasets,
     )
     spec = captured.get("v2")
     assert spec is not None, "expected v2 renderer to fire; check chart.v2"
@@ -620,25 +622,83 @@ def test_layered_horizontal_bar_support_table_with_no_chart_sort_keeps_engine_or
     assert spec["encoding"]["y"]["scale"]["domain"] == ["A", "B", "C"]
 
 
-def test_support_table_pin_no_ops_without_an_authored_chart_sort():
-    """With NO `chart.sort` authored, the support_table pin must leave the
-    category domain alone -- even though a horizontal bar with no color
-    channel gets an ENGINE DEFAULT sort on its compiled encoding
-    (`{"field": measure, "order": "descending"}`, see `emitters/bar.py`'s
-    largest-measure-first default). Only an explicit, author-written
-    `chart.sort` may reorder the board, so the pin reads the resolved
-    chart's own `sort` field rather than the compiled encoding's `sort` key.
+def test_layered_horizontal_bar_support_table_keeps_a_layer_only_category(monkeypatch):
+    """CRITICAL regression: a support_table attached to a layered chart must
+    not narrow the shared categorical domain `_reconcile_x_domain`
+    (`emitters/_overlay.py`) already pinned as a UNION of the base rows and
+    every layer's own rows. The support_table post-pass only ever sees the
+    base rows, so recomputing the domain from them alone would silently drop
+    a category that exists ONLY in a layer's own diverging query -- exactly
+    the failure `_reconcile_x_domain`'s own docstring warns against.
+
+    The layer here queries a region ("D") the base query never returns.
+    Region names are chosen so alphabetical order (`A, B, C`) disagrees with
+    the expected revenue-descending order (`B, C, A`), so this also catches
+    an order regression, not just a dropped category.
+    """
+    base_data = [
+        {"region": "A", "revenue": 10.0},
+        {"region": "B", "revenue": 30.0},
+        {"region": "C", "revenue": 20.0},
+    ]
+    layer_data = [{"region": "D", "target": 5.0}]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "region",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {"entries": [{"source": "revenue", "label": "Revenue"}]},
+            "layers": [
+                {"type": "bar", "query": "q_layer", "y": "target", "label": "Target"}
+            ],
+            "style": {"orientation": "horizontal"},
+        }
+    )
+    spec = _render_v2_spec(
+        chart,
+        base_data,
+        width=400,
+        height=200,
+        monkeypatch=monkeypatch,
+        datasets={"q": base_data, "q_layer": layer_data},
+    )
+
+    domain = spec["encoding"]["y"]["scale"]["domain"]
+    assert domain == ["B", "C", "A", "D"], (
+        f"expected revenue-descending base order with the layer-only "
+        f"category 'D' tailed at the end; got {domain!r}"
+    )
+
+
+def test_support_table_pin_honors_an_emitted_engine_default_sort():
+    """With NO `chart.sort` authored, the support_table pin must still honor
+    a horizontal bar's ENGINE DEFAULT sort already present on its compiled
+    encoding (`{"field": measure, "order": "descending"}`, see
+    `emitters/bar.py`'s largest-measure-first default) -- otherwise a
+    support_table's own transform-bearing layers revert Vega-Lite's shared
+    categorical scale to alphabetical order. This mirrors `rendered_x_domain`
+    (`x_domain.py`), which reads the compiled encoding's `sort`
+    unconditionally (authored or emitted) for the layered path's own domain
+    pin.
+
+    Region names are chosen so alphabetical order (`A, B, C`) disagrees with
+    the expected revenue-descending order (`B, C, A`) -- a regression
+    collapsing to alphabetical is caught.
 
     Asserted against the pin itself, not a rendered spec: a layered chart's
     shared categorical domain is pinned by `_reconcile_x_domain`
     (`emitters/_overlay.py`) before this post-pass ever runs, so the
     presence of a `scale.domain` on the finished spec says nothing about
-    whether this gate held.
+    whether this gate held for a layered chart -- this fixture is
+    unlayered, so the pin here is the only thing that could have set it.
     """
     data = [
-        {"region": "C", "revenue": 10.0, "target": 50.0},
-        {"region": "A", "revenue": 30.0, "target": 10.0},
-        {"region": "B", "revenue": 20.0, "target": 30.0},
+        {"region": "A", "revenue": 10.0},
+        {"region": "B", "revenue": 30.0},
+        {"region": "C", "revenue": 20.0},
     ]
     spec = {
         "encoding": {
@@ -646,6 +706,31 @@ def test_support_table_pin_no_ops_without_an_authored_chart_sort():
                 "field": "region",
                 "type": "nominal",
                 "sort": {"field": "revenue", "order": "descending"},
+            }
+        }
+    }
+
+    pinned = _pin_sorted_category_domain(spec, "y", "region", data, None)
+    assert pinned["encoding"]["y"]["scale"]["domain"] == ["B", "C", "A"]
+
+
+def test_support_table_pin_no_ops_with_no_emitted_sort_at_all():
+    """With neither an authored `chart.sort` nor an emitted engine-default
+    sort on the compiled encoding (e.g. a colored or wide horizontal bar,
+    which pins `sort: null` -- see `emitters/bar.py`), the support_table pin
+    must leave the category domain alone: there is no order to reproduce.
+    """
+    data = [
+        {"region": "C", "revenue": 10.0},
+        {"region": "A", "revenue": 30.0},
+        {"region": "B", "revenue": 20.0},
+    ]
+    spec = {
+        "encoding": {
+            "y": {
+                "field": "region",
+                "type": "nominal",
+                "sort": None,
             }
         }
     }
@@ -955,6 +1040,50 @@ def test_unlayered_horizontal_bar_support_table_honors_chart_sort(monkeypatch):
         f"expected the domain sorted by target descending (C, B, A), not "
         f"alphabetical; got {domain!r}"
     )
+
+
+def test_unlayered_horizontal_bar_support_table_with_no_chart_sort_keeps_engine_order(
+    monkeypatch,
+):
+    """A single-series horizontal bar's value-descending default must
+    survive a `support_table` attachment even with NO `chart.sort`
+    authored. The non-layered path's own ENGINE DEFAULT sort (`{"field":
+    measure, "order": "descending"}`, `emitters/bar.py`) must be honored the
+    same way `test_layered_horizontal_bar_support_table_with_no_chart_sort_keeps_engine_order`
+    already requires for the layered path -- otherwise attaching a strip
+    reverts the board to alphabetical.
+
+    Stage names are chosen so alphabetical order (`Drew discussion`, `Linked
+    to a fix commit`, `Reports filed`) disagrees with both query row order
+    and the expected value-descending domain (`Reports filed`, `Drew
+    discussion`, `Linked to a fix commit`), so a regression collapsing to
+    either is caught.
+    """
+    data = [
+        {"stage": "Linked to a fix commit", "reports": 1113.0},
+        {"stage": "Reports filed", "reports": 5501.0},
+        {"stage": "Drew discussion", "reports": 4604.0},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "stage",
+            "y": "reports",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {"entries": [{"source": "reports", "label": "Reports"}]},
+            "style": {"orientation": "horizontal"},
+        }
+    )
+    spec = _render_v2_spec(chart, data, width=400, height=200, monkeypatch=monkeypatch)
+
+    assert spec["encoding"]["y"]["sort"] == {"field": "reports", "order": "descending"}
+    assert spec["encoding"]["y"]["scale"]["domain"] == [
+        "Reports filed",
+        "Drew discussion",
+        "Linked to a fix commit",
+    ]
 
 
 def test_vertical_bar_support_table_honors_chart_sort(monkeypatch):

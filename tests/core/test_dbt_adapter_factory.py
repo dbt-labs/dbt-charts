@@ -110,6 +110,61 @@ class TestTrinoAdapter:
         assert adapter.config.credentials.database == "hive"
 
 
+class TestAthenaAdapter:
+    """Athena wires through the generic dbt-athena seam (dbt-athena installed).
+
+    Offline: adapter construction opens no socket — build_adapter with
+    register_macros=False constructs the real AthenaAdapter and lets us assert
+    on the credentials the factory selected, with no live cluster.
+    """
+
+    def test_map_entry_names_dbt_athena(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            _ADAPTER_TYPE_MAP,
+        )
+
+        assert _ADAPTER_TYPE_MAP["athena"] == (
+            "dbt.adapters.athena",
+            "AthenaAdapter",
+            "AthenaCredentials",
+        )
+
+    def test_build_adapter_constructs_athena_credentials(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(
+            {
+                "type": "athena",
+                "s3_staging_dir": "s3://my-bucket/staging/",
+                "region_name": "us-east-1",
+                "database": "awsdatacatalog",
+                "schema": "analytics",
+            },
+            register_macros=False,
+        )
+        creds = adapter.config.credentials
+        assert type(creds).__name__ == "AthenaCredentials"
+        assert creds.type == "athena"
+        assert creds.database == "awsdatacatalog"
+        assert creds.schema == "analytics"
+
+    def test_catalog_alias_addresses_the_athena_database(self) -> None:
+        """`catalog` and `database` both name the Athena Glue catalog (dbt-athena alias)."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(
+            {
+                "type": "athena",
+                "s3_staging_dir": "s3://my-bucket/staging/",
+                "region_name": "us-east-1",
+                "catalog": "awsdatacatalog",
+                "schema": "analytics",
+            },
+            register_macros=False,
+        )
+        assert adapter.config.credentials.database == "awsdatacatalog"
+
+
 class TestTestConnection:
     """Tests for the public dct.connections.test_connection() API."""
 

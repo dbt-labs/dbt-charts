@@ -1,0 +1,5 @@
+kind: Fixes
+body: CJK, kana and hangul content in board text and layout measured too narrow, so a `text:` block's CJK paragraph clipped at the page edge instead of wrapping. Unmapped East Asian Wide/Fullwidth codepoints now book a full character-width advance and zero-advance combining marks book none, matching how these scripts actually render (this also widens a small set of double-width symbol/pictograph codepoints that happen to share the same Unicode property).
+time: 2026-09-15T12:30:06.272272-07:00
+custom:
+  DbtChartsIssue: 6

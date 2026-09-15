@@ -17,10 +17,13 @@ for all of them, so only that is sent. Team, board and query ride the query comm
 The rest of ``_ADAPTER_TYPE_MAP`` is absent for three different reasons:
 
 - **BigQuery** — carries the whole payload as structured job labels already.
-- **Redshift** — ``SET query_group`` is the one mechanism dbt leaves unexposed, and
-  unlike the fields below it is not inert: WLM rules route on ``query_group``, so
-  writing it to gain a label could silently move a customer's queries to another
-  queue. A deliberate no, not an oversight.
+- **Redshift and Athena** — each has exactly one session-identifying knob, and
+  unlike the fields above it is not inert. Redshift's ``SET query_group`` is
+  the one mechanism dbt leaves unexposed as a credential at all; Athena's
+  ``work_group`` is an exposed credential, but WLM rules route on
+  ``query_group`` and workgroup-scoped data limits/engine settings route on
+  ``work_group``, so writing either to gain a label could silently move a
+  customer's queries elsewhere. A deliberate no on both, not an oversight.
 - **DuckDB and Spark** — DuckDB runs in-process, with no session to identify. Spark
   was never assessed; if someone adds it, that is a new decision to make rather than
   one already taken here.

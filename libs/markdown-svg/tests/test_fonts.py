@@ -90,6 +90,45 @@ class TestFontMeasurer:
         assert measurer.measure(missing, 14.0) > 0.0  # the silent fallback
         assert measurer.has_glyph(missing) is False  # the honest answer
 
+    def test_measure_unmapped_cjk_ideograph_gets_a_full_width(
+        self, measurer: FontMeasurer
+    ) -> None:
+        """An unmapped CJK ideograph is East Asian Wide -- it should book a
+        full em-square advance, not the placeholder (space-like) fallback an
+        ordinary unmapped narrow codepoint gets."""
+        ideograph = "中"
+        if measurer.has_glyph(ideograph):
+            pytest.skip("this font has a real glyph for the ideograph under test")
+        assert measurer.measure(ideograph, 16.0) == pytest.approx(16.0)
+
+    def test_measure_unmapped_combining_kana_mark_books_zero_width(
+        self, measurer: FontMeasurer
+    ) -> None:
+        """The combining voiced-sound mark (U+3099) is East Asian Wide, but
+        it stacks onto the preceding kana with zero visual advance -- it
+        must book nothing at all, not even the ordinary placeholder
+        fallback, so it never widens a line or gets orphaned onto the next
+        one by the wrapper's character-break fallback."""
+        mark = "゙"
+        if measurer.has_glyph(mark):
+            pytest.skip("this font has a real glyph for the mark under test")
+        assert measurer.measure(mark, 16.0) == 0.0
+
+    def test_measure_nfd_kana_syllable_matches_its_nfc_form(
+        self, measurer: FontMeasurer
+    ) -> None:
+        """An NFD-normalized voiced kana syllable (base + combining mark)
+        must measure identically to its NFC (precomposed) form -- only the
+        base character is East Asian Wide; the mark books zero."""
+        base = "か"  # か
+        mark = "゙"  # combining voiced sound mark
+        precomposed = "が"  # が, NFC form of base + mark
+        if measurer.has_glyph(base):
+            pytest.skip("this font has a real glyph for the kana under test")
+        assert measurer.measure(base + mark, 16.0) == measurer.measure(
+            precomposed, 16.0
+        )
+
 
 class TestPreciseWrapper:
     """Test precise text wrapping."""
@@ -106,6 +145,22 @@ class TestPreciseWrapper:
         wrap = create_precise_wrapper(100, 14, measurer)
         lines = wrap("This is a long sentence that should wrap")
         assert len(lines) > 1
+
+    def test_long_cjk_text_wraps_without_spaces(self, measurer: FontMeasurer) -> None:
+        """CJK text has no spaces between words, so it arrives as one
+        unbreakable token; it must still wrap at character boundaries the
+        way a browser does by default for these scripts, instead of
+        measuring artificially narrow and fitting on one clipped line."""
+        ideograph = "中"
+        if measurer.has_glyph(ideograph):
+            pytest.skip("this font has real CJK glyphs; the repro needs unmapped ones")
+        max_width = 800.0
+        wrap = create_precise_wrapper(max_width, 16, measurer)
+        text = "中文" * 50
+        lines = wrap(text)
+        assert len(lines) > 1
+        for line in lines:
+            assert measurer.measure(line, 16) <= max_width
 
     def test_empty_text(self, measurer: FontMeasurer) -> None:
         """Test empty text returns empty line."""
@@ -490,7 +545,11 @@ class TestEmojiMeasurement:
         width = self._cluster_width(
             measurer, f"before {cluster} after", cluster, font_size
         )
-        assert width < 1.27 * font_size
+        # The checkmark itself is East Asian Wide (books >= one em); VS15's
+        # own contribution is font-dependent (a zero-width glyph in some
+        # fonts, the generic placeholder in others) -- the invariant under
+        # test is only that the pair never reaches the full emoji advance.
+        assert font_size <= width < 1.27 * font_size
 
     def test_bare_warning_sign_without_vs16_is_not_an_emoji_cluster(self) -> None:
         """Pins the "no golden churn" claim: a bare U+26A0 (no VS16) is a

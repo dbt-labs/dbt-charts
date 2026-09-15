@@ -226,8 +226,9 @@ environment, so install the one you use as an extra:
 
 ```bash
 uv tool install "dbt-charts[bigquery]"  # or: pip install "dbt-charts[bigquery]"
-                                         # also: databricks, postgresql, redshift,
-                                         # snowflake, spark, trino. DuckDB is built in.
+                                         # also: athena, databricks, postgresql,
+                                         # redshift, snowflake, spark, trino. DuckDB
+                                         # is built in.
 ```
 
 ```bash
@@ -376,8 +377,8 @@ your_dbt_project/
 
 **Local sources:** CSV, Parquet, JSON, DuckDB.
 
-**Warehouses:** BigQuery, Databricks, PostgreSQL, Redshift, Snowflake, Spark, Trino.
-Connected through dbt adapters, each installed as an extra.
+**Warehouses:** Athena, BigQuery, Databricks, PostgreSQL, Redshift, Snowflake, Spark,
+Trino. Connected through dbt adapters, each installed as an extra.
 
 **Output formats:** `dct serve` for a live board with working filters. `dct render` to
 HTML, PDF, PNG, SVG, JSON, and even

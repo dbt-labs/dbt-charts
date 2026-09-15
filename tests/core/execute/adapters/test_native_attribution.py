@@ -55,11 +55,14 @@ class TestPerWarehouseShape:
             "postgresql"
         ) == native_attribution_credential("postgres")
 
-    @pytest.mark.parametrize("adapter_type", ["redshift", "duckdb", "bigquery"])
+    @pytest.mark.parametrize(
+        "adapter_type", ["redshift", "athena", "duckdb", "bigquery"]
+    )
     def test_warehouses_without_an_inert_field_get_nothing(
         self, adapter_type: str
     ) -> None:
-        """Redshift's query_group routes WLM queues, so writing it could move a
-        customer's queries; BigQuery carries the whole payload as job labels; DuckDB
-        is in-process."""
+        """Redshift's query_group routes WLM queues and Athena's work_group routes
+        data limits/engine settings, so writing either could move a customer's
+        queries; BigQuery carries the whole payload as job labels; DuckDB is
+        in-process."""
         assert native_attribution_credential(adapter_type) == {}

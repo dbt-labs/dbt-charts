@@ -23,6 +23,7 @@ dev = [
     "dbt-redshift==1.10.1",  # Redshift adapter tests
     "dbt-snowflake==1.11.5",  # Snowflake adapter tests
     "dbt-trino==1.10.2",  # Trino adapter tests
+    "dbt-athena==1.10.2",  # Athena adapter tests
     "google-cloud-bigquery>=3.33.0",  # BigQuery warehouse-check tests
     "markdown>=3.0",  # Markdown reference and fence tests
     "mcp>=1.0.0,<2",  # MCP server tests
@@ -173,6 +174,10 @@ spark = [
 
 trino = [
     "dbt-trino>=1.9,<2.0",
+]
+
+athena = [
+    "dbt-athena>=1.10,<2.0",
 ]
 
 mcp = [

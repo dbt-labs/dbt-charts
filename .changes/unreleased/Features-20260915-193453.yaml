@@ -1,0 +1,3 @@
+kind: Features
+body: 'A GitHub issue you filed against this repo can now close automatically, with a comment linking back to the release that fixes it, once that release ships.'
+time: 2026-09-15T19:34:53Z

@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`test_connection` no longer returns a warehouse driver''s raw exception text. A failed probe now returns a classified error object whose message is authored, actionable copy (a rejected credential, a missing database, an unreachable host, a missing permission); the driver''s own text is preserved separately for logs only, never shown or persisted.'
+time: 2026-09-17T00:15:09Z

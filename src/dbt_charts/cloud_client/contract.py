@@ -409,7 +409,10 @@ class ConnectionTestResult(ContractModel):
     """The outcome of asking Cloud to reach a warehouse."""
 
     success: bool = Field(description="Whether the warehouse answered.")
-    message: str = Field(description="Driver or guard text; empty on success.")
+    message: str = Field(
+        description="Authored, classified failure copy (or the host guard's own"
+        " message); empty on success."
+    )
     connection: ConnectionSummary = Field(description="The connection that was tested.")
 
 

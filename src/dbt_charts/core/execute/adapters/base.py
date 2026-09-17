@@ -230,10 +230,10 @@ def handle_adapter_error(operation: str, error: Exception) -> QueryResult:
 def connection_failure_message(warehouse: str, error: Exception) -> str:
     """The one sentence a warehouse that could not be opened gets.
 
-    Shared with ``dbt_charts.core.connections.test_connection``, which reports a
-    connect failure as a bare string rather than a ``QueryResult``. One copy of
-    the wording, so a connect failure cannot be phrased two ways depending on
-    which verb hit it.
+    Used on the query-execution path only (``connection_failure`` below).
+    ``dbt_charts.core.connections.test_connection`` classifies its own connect
+    failures into a ``WarehouseProbeError`` whose ``str(exc)`` is authored
+    display copy, separate from this template.
     """
     return (
         f"{warehouse}: {ERR_WAREHOUSE_CONNECTION.message_template.format(detail=error)}"

@@ -169,25 +169,26 @@ class TestTestConnection:
     """Tests for the public dct.connections.test_connection() API."""
 
     def test_duckdb_memory_succeeds(self) -> None:
-        """test_connection with DuckDBSourceConfig :memory: returns (True, message)."""
+        """test_connection with DuckDBSourceConfig :memory: returns (True, None)."""
         from dbt_charts.core.connections import test_connection
 
-        ok, msg = test_connection(DuckDBSourceConfig(type="duckdb", path=":memory:"))
-        assert ok is True
-        assert "successful" in msg.lower() or len(msg) > 0
+        assert test_connection(DuckDBSourceConfig(type="duckdb", path=":memory:")) == (
+            True,
+            None,
+        )
 
-    def test_bad_path_returns_false(self) -> None:
-        """test_connection with an uncreateable path returns (False, error_message)."""
-        from dbt_charts.core.connections import test_connection
+    def test_bad_path_returns_a_classified_warehouse_probe_error(self) -> None:
+        from dbt_charts.core.connections import WarehouseProbeError, test_connection
 
-        ok, msg = test_connection(
+        success, exc = test_connection(
             DuckDBSourceConfig(
                 type="duckdb",
                 path="/nonexistent/path/that/cannot/be/created/db.duckdb",
             )
         )
-        assert ok is False
-        assert len(msg) > 0
+        assert success is False
+        assert isinstance(exc, WarehouseProbeError)
+        assert str(exc)
 
 
 class TestBigQueryMethodInference:

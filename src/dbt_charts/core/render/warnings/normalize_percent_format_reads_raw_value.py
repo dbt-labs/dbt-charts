@@ -39,7 +39,6 @@ their own measure and do not join the base chart's stack.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
@@ -54,11 +53,9 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.render.warnings.base import WarningContext
-from dbt_charts.core.utils import Rows, coerce_numeric_cell
+from dbt_charts.core.utils import CellValue, Rows, coerce_numeric_cell
 
 _NormalizableChart = ResolvedBarChart | ResolvedAreaChart
-
-_XValue = Any  # type-state: explicit_any — raw query cell, used only as a group key
 
 # How far a group's total may sit from 1 and still read as a share. A share
 # rounded for display accumulates its error per segment, not per group: N
@@ -188,7 +185,7 @@ def _group_totals(
             if chart.wide_measures
             else panel.rows
         )
-        sums: defaultdict[_XValue, float] = defaultdict(float)
+        sums: defaultdict[CellValue, float] = defaultdict(float)
         for row in panel_rows:
             x = row.get(x_field)
             value = coerce_numeric_cell(row.get(value_field))

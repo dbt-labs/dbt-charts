@@ -5,7 +5,7 @@ ignored, so they leave through the ``Deletion`` boundary declared in
 ``versions/v0_6_0.py`` (0.5.0 -> 0.6.0) -- authored boards migrate clean.
 
 ``gap`` is declarable but unconverted: its tail also matches the live
-``style.layout.grid.gap``, so it is legal only root-anchored (``_validate``'s
+``style.layout.grid.gap``, so it is legal only root-anchored (``validate_declarations``'s
 ``retired_at_root``), with ``_live_declares_tail`` holding the firing off the
 layout slot. Today it is fail-loud, with a hint naming the replacement.
 """
@@ -27,7 +27,6 @@ from dbt_charts.core.compile.migrations import (
 from dbt_charts.core.compile.migrations.migrations import (
     Deletion,
     MigrationError,
-    MigrationRegistry,
     _board_migration_context,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -35,6 +34,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._migration_declarations import checked_registry
 
 DELETED_GRID_KEYS = ("row_height", "default_width", "default_height")
 
@@ -126,7 +127,7 @@ def test_a_gap_deletion_is_rejected_on_the_dev_boundary(
     _, registry = _board_migration_context()
 
     with pytest.raises(MigrationError, match="still exists in"):
-        MigrationRegistry(
+        checked_registry(
             registry.moves,
             (
                 *registry.deletions,

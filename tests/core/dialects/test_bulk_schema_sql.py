@@ -59,3 +59,14 @@ def test_snowflake_qualifies_database_when_given() -> None:
     )
     # Embedded double-quotes are doubled (Snowflake identifier escaping).
     assert '"a""b".' in dialect.bulk_schema_sql('a"b')
+
+
+def test_clickhouse_reads_system_columns() -> None:
+    """One query over system.columns, aliased to the contract's column names
+    and with the server's own catalogs excluded."""
+    sql = get_dialect("clickhouse").bulk_schema_sql()
+    assert "FROM system.columns" in sql
+    for alias in ("table_schema", "table_name", "column_name", "data_type"):
+        assert f"AS {alias}" in sql
+    assert "'system'" in sql
+    assert sql.endswith("ORDER BY database, table, position")

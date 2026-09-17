@@ -1029,7 +1029,7 @@ class EndpointLabelFeature:
             if is_stacked:
                 assert isinstance(chart, (ResolvedBarChart, ResolvedAreaChart))
                 # Bar only: a dimension axis pins its domain explicitly
-                # (pin_sorted_x_domain, emitters/_cartesian.py) and bar does
+                # (pin_sorted_domain, emitters/_cartesian.py) and bar does
                 # not, so bar's rail is the one that has to predict the
                 # rendered order rather than read it back off a pin.
                 _refuse_unorderable_sort(

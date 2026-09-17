@@ -21,13 +21,14 @@ from dbt_charts.core.compile.migrations import (
 )
 from dbt_charts.core.compile.migrations.migrations import (
     _board_migration_context,
-    _schema_has_tail,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._migration_declarations import schema_has_tail
 
 
 @pytest.fixture
@@ -57,8 +58,8 @@ def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
     what stops the tail stripping a slot that still works.
     """
     tail = ("style", "page")
-    assert _schema_has_tail(catalog.schema_for("0.6.0"), tail)
-    assert not _schema_has_tail(catalog.current_schema, tail)
+    assert schema_has_tail(catalog.schema_for("0.6.0"), tail)
+    assert not schema_has_tail(catalog.current_schema, tail)
 
 
 @pytest.mark.parametrize(

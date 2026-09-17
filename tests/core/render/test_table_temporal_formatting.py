@@ -7,17 +7,29 @@ human-readable dates.
 
 Timezone policy (documented here per acceptance criteria):
   - Python datetime.date and naive datetime.datetime: treated as calendar-local
-    (no TZ conversion). The date component is taken as-is.
+    (no TZ conversion). Taken as-is.
   - ISO strings "YYYY-MM-DD" and "YYYY-MM-DDTHH:MM:SS": parsed in UTC
     so the display is identical under any runtime TZ.
-  - timezone-aware datetime objects: the date component is extracted after
-    UTC conversion to match ISO string behavior.
+  - timezone-aware datetime objects and ISO strings carrying a TZ offset:
+    normalized to UTC before formatting, to match naive-string behavior. A
+    date-only spec reads the UTC date (crossing a day boundary where the
+    original offset would not); a time directive reads the UTC time of day.
+    A genuinely date-only value (no time component at all) has no time to
+    convert and is taken as its own calendar date.
 """
 
 import datetime
 
 import pytest
 
+from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+from dbt_charts.core.compile.models.chart.normalized import TableChart
+from dbt_charts.core.compile.models.chart.resolved.table import ResolvedTableChart
+from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
+from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.chart.table import render_table_svg
 from dbt_charts.core.render.chart.table_support import (
     format_table_cell_value,
     is_temporal_value,
@@ -119,6 +131,35 @@ class TestFormatTableCellValueTemporal:
         )
         assert result == "Jan 15, 2024"
 
+    def test_time_directive_reflects_actual_time_of_day(self) -> None:
+        # A datetime (object or ISO string) carries a real time component --
+        # a %H:%M directive must read it, not the midnight a date-only
+        # reduction would produce.
+        result = format_table_cell_value(
+            datetime.datetime(2024, 1, 15, 14, 30, 0),
+            "%H:%M",
+            {"date_short": _DATE_SHORT_FORMAT},
+        )
+        assert result == "14:30"
+
+    def test_time_directive_on_iso_timestamp_string(self) -> None:
+        result = format_table_cell_value(
+            "2024-01-15T14:30:00",
+            "%H:%M",
+            {"date_short": _DATE_SHORT_FORMAT},
+        )
+        assert result == "14:30"
+
+    def test_time_directive_on_iso_date_only_string_has_no_time(self) -> None:
+        # A date-only value has no time to reflect -- midnight is correct
+        # here, not a bug (there is no real time component to lose).
+        result = format_table_cell_value(
+            "2024-01-15",
+            "%H:%M",
+            {"date_short": _DATE_SHORT_FORMAT},
+        )
+        assert result == "00:00"
+
     def test_explicit_format_on_iso_string(self) -> None:
         result = format_table_cell_value(
             "2024-01-15",
@@ -160,13 +201,30 @@ class TestFormatTableCellValueTemporal:
 
     def test_timezone_aware_datetime(self) -> None:
         # Aware datetime that crosses UTC day boundary: PST 23:00 Jan 15 = UTC Jan 16.
-        # This exercises the astimezone(UTC).date() path — UTC midnight can't catch it.
+        # This exercises the astimezone(UTC) path — UTC midnight can't catch it.
         pst = datetime.timezone(datetime.timedelta(hours=-8))
         aware = datetime.datetime(2024, 1, 15, 23, 0, 0, tzinfo=pst)
         result = format_table_cell_value(
             aware, None, {"date_short": _DATE_SHORT_FORMAT}
         )
         assert result == "16 Jan 2024"
+
+    def test_timezone_aware_datetime_time_directive_reads_utc_time(self) -> None:
+        # An aware value is normalized to UTC before formatting (matching the
+        # date-only path's day-boundary behavior above) -- a time directive
+        # must read the UTC wall clock (07:00), not the original tz's (23:00).
+        pst = datetime.timezone(datetime.timedelta(hours=-8))
+        aware = datetime.datetime(2024, 1, 15, 23, 0, 0, tzinfo=pst)
+        result = format_table_cell_value(aware, "%H:%M", {})
+        assert result == "07:00"
+
+    def test_timezone_aware_datetime_zone_directive_reads_utc(self) -> None:
+        # %Z/%z now resolve against the UTC-normalized value (it previously
+        # read the offset-less date-only reduction, so %Z rendered empty).
+        pst = datetime.timezone(datetime.timedelta(hours=-8))
+        aware = datetime.datetime(2024, 1, 15, 23, 0, 0, tzinfo=pst)
+        result = format_table_cell_value(aware, "%H:%M %Z", {})
+        assert result == "07:00 UTC"
 
     def test_timezone_aware_iso_string_crosses_day_boundary(self) -> None:
         # ISO string with TZ offset: 23:00 PST on Jan 15 = 07:00 UTC on Jan 16.
@@ -191,12 +249,65 @@ class TestFormatTableCellValueTemporal:
     def test_non_temporal_format_on_temporal_column_raises(self) -> None:
         # A d3/numeric format spec applied to a date must raise — not silently
         # fall back to str(value). "validate and error fast" non-negotiable.
-        with pytest.raises(ValueError, match="non-temporal"):
+        with pytest.raises(
+            ChartDataError, match="does not match its cell values"
+        ) as exc:
             format_table_cell_value(
                 datetime.date(2024, 1, 15),
                 "compact",
                 {"date_short": _DATE_SHORT_FORMAT},
             )
+        # Pins the diagnostic code identity, not just the message: a plain
+        # ChartDataError(...) with no code defaults to ERR_INTERNAL and would
+        # pass the message-only assertion above.
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-TABLE-FORMAT-KIND-MISMATCH"
+
+    def test_temporal_format_on_numeric_column_raises(self) -> None:
+        with pytest.raises(
+            ChartDataError, match="does not match its cell values"
+        ) as exc:
+            format_table_cell_value(14, "time_short")
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-TABLE-FORMAT-KIND-MISMATCH"
+
+    def test_temporal_format_on_numeric_string_raises(self) -> None:
+        # The except (ValueError, TypeError) swallow just below this branch
+        # in the source would otherwise hide this exact mismatch.
+        with pytest.raises(
+            ChartDataError, match="does not match its cell values"
+        ) as exc:
+            format_table_cell_value("14", "time_short")
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-TABLE-FORMAT-KIND-MISMATCH"
+
+    def test_date_like_numeric_string_under_time_format_unaffected(self) -> None:
+        # A bare-year string ("2024") is date-like, not a genuine numeric
+        # mismatch: a mixed date column can carry one such outlier row (see
+        # render/chart/AGENTS.md invariant 11), and it must keep rendering
+        # unchanged rather than raising like a real numeric value would.
+        result = format_table_cell_value("2024", "time_short")
+        assert result == "2024"
+
+    def test_date_like_numeric_string_with_numeric_format_still_formats(self) -> None:
+        result = format_table_cell_value("2024", "$,.0f")
+        assert result == "$2,024"
+
+    def test_literal_prefixed_strftime_spec_not_misdetected_as_non_temporal(
+        self,
+    ) -> None:
+        # A strftime spec with literal text before its first directive (e.g.
+        # authors writing "Week %W") must not be rejected as a mismatched
+        # d3-format spec: is_time_format scans the whole string, not just
+        # its first character.
+        result = format_table_cell_value(datetime.date(2024, 1, 15), "Week %W")
+        assert result == "Week 03"
+
+    def test_numeric_fill_percent_spec_not_misdetected_as_temporal(self) -> None:
+        # d3-format's `%` is also a legal *fill* character (e.g. "%>10.2f"),
+        # so a leading "%" alone must not be read as a strftime spec.
+        result = format_table_cell_value(1234.5, "%>10.2f")
+        assert result == "%%%1234.50"
 
     def test_date_short_works_without_formats_dict(self) -> None:
         # "date_short" is predefined — no formats dict needed.
@@ -272,3 +383,70 @@ class TestFormatTableCellValueStringWithFormatConfig:
         """Non-numeric string 'N/A' with format_config → raw string (no crash)."""
         result = format_table_cell_value("N/A", "$,.2f")
         assert result == "N/A"
+
+
+def _render_table_svg(data: list[dict[str, object]], column_format: str) -> str:
+    """Compile+resolve+render a single-column table board for board-level
+    (not unit-level format_table_cell_value) assertions."""
+    board_rs, board_ctx = resolve_style_and_context(
+        get_theme_style(get_default_theme_name())
+    )
+    chart = TableChart(
+        id="t1",
+        type="table",
+        style=TableChartStylePatch.model_validate(
+            {"columns": {"value": {"format": column_format}}}
+        ),
+    )
+    resolved = resolve(chart, data, chart_style_context=board_ctx)
+    assert isinstance(resolved, ResolvedTableChart)
+    return render_table_svg(resolved, data, width=400, board_style=board_rs)
+
+
+class TestTemporalFormatOnNumericColumnBoardLevel:
+    """format_table_cell_value's guard is bypassed by table.py's own direct
+    format_kpi_parts call in _compute_lane_positions (shared-scale/lane
+    measurement, which scans every row, unlike measure_column_demands's
+    50-row sample). This pins the board-level render path, not just the
+    unit-level formatter -- and the sibling class below pins that the same
+    guard does NOT misfire on a legitimate date/timestamp column."""
+
+    def test_late_numeric_row_under_time_format_raises(self) -> None:
+        # measure_column_demands only samples data[:50], so a numeric cell
+        # at row 51 is exactly the window its own guard misses.
+        data: list[dict[str, object]] = [{"value": None} for _ in range(50)]
+        data.append({"value": 14})
+        with pytest.raises(
+            ChartDataError, match="does not match its cell values"
+        ) as exc:
+            _render_table_svg(data, "time_short")
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-TABLE-FORMAT-KIND-MISMATCH"
+
+
+class TestTimeFormatOnLegitimateDateColumnBoardLevel:
+    """The board-level guard in _compute_lane_positions must never misfire
+    on a real date/timestamp column: it fires only for a value that
+    survives float(raw) and isinstance(num_val, (int, float)), so None, a
+    non-numeric string, and a timestamp string with a time component (which
+    is_date_like alone does not recognize) all skip it and reach
+    format_table_cell_value's own date-formatting path instead."""
+
+    def test_date_column_with_null_row_renders(self) -> None:
+        data: list[dict[str, object]] = [{"value": "2024-01-15"}, {"value": None}]
+        svg = _render_table_svg(data, "%Y-%m-%d")
+        assert "2024-01-15" in svg
+
+    def test_timestamp_string_column_under_date_short_renders(self) -> None:
+        data: list[dict[str, object]] = [
+            {"value": "2024-03-15 09:30:00"},
+            {"value": "2024-03-16 10:00:00"},
+        ]
+        svg = _render_table_svg(data, "date_short")
+        assert "15 Mar 2024" in svg
+
+    def test_date_column_with_text_sentinel_renders(self) -> None:
+        data: list[dict[str, object]] = [{"value": "2024-01-15"}, {"value": "N/A"}]
+        svg = _render_table_svg(data, "%Y-%m-%d")
+        assert "2024-01-15" in svg
+        assert "N/A" in svg

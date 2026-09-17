@@ -46,12 +46,18 @@ from dbt_charts.core.compile.models.style.theme import (
     TitleStyle,
     font_weight_as_css,
 )
+from dbt_charts.core.diagnostics import (
+    ERR_KPI_FORMAT_KIND_MISMATCH,
+    ERR_KPI_TEMPORAL_FORMAT_INVALID,
+)
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.table_support import (
     compute_scale_domain,
+    format_temporal_value,
     interpolate_scale_color,
+    is_temporal_value,
     resolve_hinge,
     resolve_palette_stops,
 )
@@ -68,6 +74,11 @@ from dbt_charts.core.render.svg_utils import (
     card_box,
 )
 from dbt_charts.core.render.utils import resolve_tone_color
+from dbt_charts.core.text.format_d3 import is_time_format
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_TIME_SPECS,
+    PredefinedTimeFormat,
+)
 from dbt_charts.core.utils import coerce_numeric_cell
 
 # Typographic ratios for KPI geometry. Tuned by eye against the playground
@@ -285,14 +296,51 @@ def _resolve_value(raw: str, row: dict[str, Any], chart_id: str) -> tuple[Any, s
 def _format_value_parts(
     cell: Any,
     format_input: FormatState,
+    chart_id: str,
     formats: dict[str, Any] | None = None,
     native: bool = False,
+    format_may_be_cascaded: bool = False,
 ) -> tuple[str, str, str, bool]:
     """Format a KPI cell into ``(prefix, number_str, suffix, is_numeric)``.
 
-    Non-numeric cells are returned as a string in ``number_str`` with empty
-    affixes -- used for status-style KPIs like ``"At risk"``.
+    Temporal cells are formatted with a strftime spec (``date_short``, or a
+    ``style.formats`` alias resolving to one -- an inline ``%``-spec is
+    compile-rejected on this slot), defaulting to ``date_short`` when
+    unformatted. ``format_may_be_cascaded`` is True only for the headline
+    value slot, whose format can be a board-wide cascade default shared
+    across every KPI on the board: a chart-local ``style.value.format``
+    override and a board-level default merge into the same field before this
+    point, so a mismatched (non-strftime) spec there falls back to
+    ``date_short`` instead of erroring the whole render -- distinguishing the
+    two here would mean carrying provenance on a resolved model, which core's
+    philosophy forbids. ``support.format`` is never cascaded
+    (``ResolvedKpiChart.support`` is the authored config verbatim), so a
+    mismatch there always raises, the same as an equivalent mistake would on
+    a table column. A genuinely broken strftime directive raises either way.
+    Other non-numeric, non-temporal cells render as a plain string with
+    empty affixes -- used for status-style KPIs like ``"At risk"``.
     """
+    if is_temporal_value(cell):
+        resolved = resolve_format(format_input, formats)
+        if not resolved or is_time_format(resolved):
+            spec = resolved or PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
+        elif format_may_be_cascaded:
+            spec = PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
+        else:
+            raise ChartDataError.from_code(
+                ERR_KPI_FORMAT_KIND_MISMATCH, chart_id=chart_id, spec=resolved
+            )
+        try:
+            return "", format_temporal_value(cell, spec), "", False
+        except ValueError as e:
+            raise ChartDataError.from_code(
+                ERR_KPI_TEMPORAL_FORMAT_INVALID,
+                chart_id=chart_id,
+                cell=cell,
+                spec=spec,
+                reason=str(e),
+            ) from e
+
     numeric = coerce_numeric_cell(cell)
     if numeric is None:
         text = "" if cell is None else str(cell)
@@ -807,7 +855,7 @@ def _resolve_support_row(
     # belongs alongside axis ticks and table cells, not the hero number
     # above it.
     s_prefix, s_number_str, s_suffix, _ = _format_value_parts(
-        s_cell, support.format, formats
+        s_cell, support.format, chart_id, formats
     )
     if s_prefix or s_suffix:
         value_str = f"{s_prefix}{s_number_str}{s_suffix}"
@@ -881,7 +929,12 @@ def _render_kpi_svg_core(
     # resolved separately in _resolve_support_row).
     main_format = chart.format
     prefix, number_str, suffix, value_is_numeric = _format_value_parts(
-        cell, main_format, formats, native=chart.format_native
+        cell,
+        main_format,
+        chart_id,
+        formats,
+        native=chart.format_native,
+        format_may_be_cascaded=True,
     )
     # Empty string honored as "no label" — renderer skips emission while
     # keeping the slot reserved (so multi-up KPI rows stay aligned).

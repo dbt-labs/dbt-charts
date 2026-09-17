@@ -17,6 +17,7 @@ Example:
 from dbt_charts.core.dialects.athena import AthenaDialect
 from dbt_charts.core.dialects.base import VALID_OPERATORS, SQLDialect
 from dbt_charts.core.dialects.bigquery import BigQueryDialect
+from dbt_charts.core.dialects.clickhouse import ClickHouseDialect
 from dbt_charts.core.dialects.databricks import DatabricksDialect, SparkDialect
 from dbt_charts.core.dialects.duckdb import DuckDBDialect
 from dbt_charts.core.dialects.mysql import MySQLDialect
@@ -37,6 +38,7 @@ _sqlserver_dialect = SQLServerDialect()
 _databricks_dialect = DatabricksDialect()
 _spark_dialect = SparkDialect()
 _athena_dialect = AthenaDialect()
+_clickhouse_dialect = ClickHouseDialect()
 _sqlite_dialect = SQLiteDialect()
 
 # Registry mapping profile types to dialect instances
@@ -68,6 +70,8 @@ DIALECTS: dict[str, SQLDialect] = {
     "athena": _athena_dialect,
     "presto": _athena_dialect,
     "trino": _athena_dialect,
+    # ClickHouse
+    "clickhouse": _clickhouse_dialect,
 }
 
 # Default dialect when profile type is unknown
@@ -121,6 +125,7 @@ __all__ = [
     "SQLServerDialect",
     "DatabricksDialect",
     "AthenaDialect",
+    "ClickHouseDialect",
     # Registry
     "DIALECTS",
     "get_dialect",

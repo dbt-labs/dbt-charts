@@ -28,7 +28,6 @@ from dbt_charts.core.compile.migrations import (
 from dbt_charts.core.compile.migrations.migrations import (
     _board_migration_context,
     _deletion_would_fire,
-    _schema_has_tail,
     _schema_path_exists,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -36,6 +35,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._migration_declarations import schema_has_tail
 
 PATH = ("style", "color")
 
@@ -79,7 +80,7 @@ def test_path_was_in_the_released_grammar_and_is_gone_from_the_live_root(
     """
     assert _schema_path_exists(catalog.schema_for("0.6.0"), PATH)
     assert not _schema_path_exists(catalog.current_schema, PATH)
-    assert _schema_has_tail(catalog.current_schema, PATH)
+    assert schema_has_tail(catalog.current_schema, PATH)
 
 
 def test_root_style_color_migrates_cleanly(catalog: YamlSchemaCatalog) -> None:

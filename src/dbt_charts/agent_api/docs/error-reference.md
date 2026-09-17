@@ -458,6 +458,20 @@ Fired when a histogram chart receives data where its x field forms a gapless run
 
 Fired when the render layer receives input data that fails a structural check. The message carries the specific validation error.
 
+### ERR-KPI-FORMAT-KIND-MISMATCH: KPI support format does not match a temporal value
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+KPI chart {chart_id!r} support value is a date/time, but its format {spec!r} is not a date format. Use date_short, a strftime spec via a style.formats alias, or remove format: to use date_short.
+```
+
+Fired when a KPI's support.format is a number format (not date_short, time_short, or a style.formats alias resolving to a strftime spec) and support.value is a date/datetime column. support.format is always authored for that one chart, unlike the headline value's format, which can be a board-wide cascade default -- so a mismatch here is never ambiguous.
+
 ### ERR-KPI-MULTIROW: KPI query returned more than one row
 
 - **Level:** error
@@ -471,6 +485,20 @@ KPI chart {chart_id!r} expects exactly 1 row, got {row_count}. Use a query that 
 ```
 
 Fired when a KPI chart's query returns more than one row. KPI charts display exactly one value; use a query that returns a single row (e.g. SELECT SUM(...) or LIMIT 1).
+
+### ERR-KPI-TEMPORAL-FORMAT-INVALID: KPI temporal format spec could not be applied
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+KPI chart {chart_id!r} could not format value {cell!r} with spec {spec!r}: {reason}
+```
+
+Fired when a KPI's resolved date/time format spec is itself invalid (an unknown strftime directive) or the cell's value cannot be parsed as a calendar date/time (e.g. an out-of-range hour in an ISO timestamp string).
 
 ### ERR-LABEL-FORMAT-AXIS-MISMATCH: a non-time axis format needs numeric tick values
 
@@ -1003,6 +1031,20 @@ Fired when `labels.position: middle_aligned` is set on a stacked bar. `middle_al
 ```
 
 Fired when `style.support_table.position` names a side the chart's own category-axis orientation can't place. A horizontal category axis (vertical bar, line, area) only accepts `top`/`bottom`; a vertical one (a horizontal bar) only accepts `left`/`right`. The message carries the specific value and orientation.
+
+### ERR-TABLE-FORMAT-KIND-MISMATCH: a table column's format spec does not match its cell values
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+table column format {fmt!r} does not match its cell values. {remedy}
+```
+
+Fired when a table column's `format:` spec is the wrong kind for the values it formats: a strftime-style time spec (a predefined name like `time_short`, or an explicit string containing a `%`-prefixed directive such as `%B` or `%W`) applied to a numeric value, or a d3 numeric spec applied to a date/datetime value. `format:` is kind-agnostic at compile time, so `dct validate` accepts either mismatch; this is caught per cell at render time instead, once the actual value kind is known.
 
 ### ERR-TICKS-COUNT-REQUIRES-NON-LOG-SCALE: ticks.count is not supported with log scale
 

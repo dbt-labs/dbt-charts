@@ -236,6 +236,35 @@ class TestColumnValues:
         ds = partition(MultiplesConfig(rows="region"), rows)
         assert ds.column_values("series") == ("A", "B")
 
+    def test_second_axis_of_a_grid_reads_its_own_query_order_not_panel_order(self):
+        """Panels are ordered by the axes' cartesian product (row-major over
+        the row axis), which is NOT the column axis's own first-encounter
+        order in a sparse grid: column "B" is query-first (row 1) but its
+        only panel sits under row-axis value "R2", traversed after "R1"."""
+        rows = _rows(
+            {"r": "R1", "c": "B"},
+            {"r": "R2", "c": "A"},
+            {"r": "R1", "c": "C"},
+        )
+        ds = partition(MultiplesConfig(rows="r", columns="c"), rows)
+        assert ds.column_values("r") == ("R1", "R2")
+        assert ds.column_values("c") == ("B", "A", "C")
+
+    def test_regrouped_subset_skips_a_baked_axis_value_with_no_panel(self):
+        """The row-truncated render path (`regroup()`) can hold fewer rows
+        than resolve saw: a baked axis value absent from this subset has no
+        panel to recover an original value from, and must be skipped rather
+        than raising."""
+        full_rows = _rows(
+            {"region": "West", "x": 1},
+            {"region": "East", "x": 2},
+            {"region": "North", "x": 3},
+        )
+        axes = partition(MultiplesConfig(rows="region"), full_rows).axes
+        truncated_rows = [row for row in full_rows if row["region"] != "North"]
+        ds = regroup(axes, truncated_rows)
+        assert ds.column_values("region") == ("West", "East")
+
 
 class TestRegroup:
     def test_no_axes_is_one_panel_with_all_rows(self):

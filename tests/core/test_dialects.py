@@ -13,6 +13,7 @@ from dbt_charts.core.dialects import (
     DIALECTS,
     AthenaDialect,
     BigQueryDialect,
+    ClickHouseDialect,
     DatabricksDialect,
     DuckDBDialect,
     MySQLDialect,
@@ -243,6 +244,170 @@ class TestAthenaDialect:
         assert dialect.param(2) == "?"
 
 
+class TestClickHouseDialect:
+    """Tests for ClickHouse dialect."""
+
+    @pytest.fixture
+    def dialect(self) -> ClickHouseDialect:
+        return ClickHouseDialect()
+
+    def test_name(self, dialect: ClickHouseDialect) -> None:
+        assert dialect.name == "clickhouse"
+
+    def test_param(self, dialect: ClickHouseDialect) -> None:
+        """ClickHouse drivers bind named %(name)s parameters."""
+        assert dialect.param(1) == "%(p1)s"
+        assert dialect.param(2) == "%(p2)s"
+        assert dialect.uses_named_params is True
+
+    def test_driver_limit_is_not_trusted(self, dialect: ClickHouseDialect) -> None:
+        """dbt-clickhouse accepts execute(limit=) and ignores it, so the row cap
+        must come from the post-fetch slice."""
+        assert dialect.cursor_supports_driver_limit is False
+
+    def test_no_timeout_sql(self, dialect: ClickHouseDialect) -> None:
+        """The cap travels as a connection setting, not a SET."""
+        assert dialect.statement_timeout_sql(30) is None
+
+    def test_connect_credentials_caps_an_unset_profile(
+        self, dialect: ClickHouseDialect
+    ) -> None:
+        creds = dialect.connect_credentials({"type": "clickhouse", "host": "h"}, 30)
+        assert creds["custom_settings"] == {"max_execution_time": 30}
+        assert creds["host"] == "h"
+
+    def test_connect_credentials_writes_the_cap_it_is_given(
+        self, dialect: ClickHouseDialect
+    ) -> None:
+        """It does not re-decide against the profile: deciding twice is how the
+        enforced cap drifts from the reported one."""
+        creds = dialect.connect_credentials(
+            {"custom_settings": {"max_execution_time": 5}}, 30
+        )
+        assert creds["custom_settings"]["max_execution_time"] == 30
+
+    def test_connect_credentials_leaves_the_source_config_alone(
+        self, dialect: ClickHouseDialect
+    ) -> None:
+        """The pool keys its connection pool on the dict it was handed, so a
+        mutation here would fork pools by cap."""
+        source = {"type": "clickhouse", "custom_settings": {"max_threads": 2}}
+        dialect.connect_credentials(source, 30)
+        assert source["custom_settings"] == {"max_threads": 2}
+
+    @pytest.mark.parametrize(
+        ("authored", "expected"),
+        [
+            # Looser than the ceiling: the ceiling stands.
+            (9999, 30),
+            # Stricter: the profile's own cap stands, normalized to whole seconds.
+            (5, 5),
+            ("5", 5),
+            (5.0, 5),
+        ],
+    )
+    def test_resolve_timeout_seconds_applies_the_cap_as_a_ceiling(
+        self, dialect: ClickHouseDialect, authored: object, expected: int
+    ) -> None:
+        resolved = dialect.resolve_timeout_seconds(
+            {"custom_settings": {"max_execution_time": authored}}, 30
+        )
+        assert resolved == expected
+
+    def test_the_enforced_cap_is_the_one_written_to_the_connection(
+        self, dialect: ClickHouseDialect
+    ) -> None:
+        """What a timeout error reports is _timeout_seconds, so the resolved cap
+        and the setting the warehouse enforces must be the same number."""
+        source = {"custom_settings": {"max_execution_time": 5}}
+        resolved = dialect.resolve_timeout_seconds(source, 120)
+        creds = dialect.connect_credentials(source, resolved)
+        assert resolved == 5
+        assert creds["custom_settings"]["max_execution_time"] == 5
+
+    def test_a_null_setting_is_an_unset_one(self, dialect: ClickHouseDialect) -> None:
+        """YAML `max_execution_time:` with no value is absence, not a value to
+        weigh against the ceiling."""
+        source = {"custom_settings": {"max_execution_time": None}}
+        assert dialect.resolve_timeout_seconds(source, 30) == 30
+
+    @pytest.mark.parametrize(
+        "authored",
+        [
+            "soon",
+            "",
+            [30],
+            # ClickHouse types the setting UInt64 and casts with int(), so a
+            # fractional cap truncates — and 0 means NO limit, so 0.5 would
+            # disable the cap the feature exists to enforce.
+            0.5,
+            0,
+            -1,
+            float("nan"),
+            float("inf"),
+            "nan",
+            # bool is an int in Python; True must not read as a 1s cap.
+            True,
+        ],
+    )
+    def test_resolve_timeout_seconds_rejects_a_cap_clickhouse_cannot_honor(
+        self, dialect: ClickHouseDialect, authored: object
+    ) -> None:
+        """No guess is safe: keeping it may run uncapped, overwriting it may cap
+        what the author did not ask to cap."""
+        with pytest.raises(ValueError, match="max_execution_time"):
+            dialect.resolve_timeout_seconds(
+                {"custom_settings": {"max_execution_time": authored}}, 30
+            )
+
+    def test_other_dialects_carry_neither_seam(self) -> None:
+        """Both base seams are no-ops: only ClickHouse's cap is credential-shaped
+        and only ClickHouse's profile can spell a cap of its own."""
+        source = {"type": "postgres", "host": "h"}
+        postgres = get_dialect("postgres")
+        assert postgres.connect_credentials(source, 30) is source
+        assert postgres.resolve_timeout_seconds(source, 30) == 30
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # HTTP driver: the server's symbolic error name is in the body.
+            "ClickHouse exception:  HTTPDriver for http://h:8123 returned response "
+            "code 500)\n Code: 159. DB::Exception: Timeout exceeded: elapsed 1000.2 "
+            "ms, maximum: 1000.0 ms. (TIMEOUT_EXCEEDED) (version 24.8.1)",
+            # Native driver: only the numeric code is guaranteed.
+            "Code: 159.\nDB::Exception: Timeout exceeded: elapsed 2.1 seconds",
+            # The symbolic arm alone, with no numeric code: it is what the
+            # Code: 159 arm cannot cover, so it is pinned separately.
+            "DB::Exception: Timeout exceeded (TIMEOUT_EXCEEDED)",
+        ],
+    )
+    def test_timeout_error_is_recognized(
+        self, dialect: ClickHouseDialect, message: str
+    ) -> None:
+        assert dialect.is_statement_timeout_error(RuntimeError(message)) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Code: 47. DB::Exception: Unknown expression identifier `nope` "
+            "(UNKNOWN_IDENTIFIER)",
+            # A code that merely contains 159 is not error 159.
+            "Code: 1590. DB::Exception: something else",
+            "Read timed out. (read timeout=300)",
+            # ClickHouse echoes the offending query back, so a board that
+            # selects the bare token is not a timeout — the symbolic name only
+            # counts inside the parentheses the server prints it in.
+            "Code: 47. DB::Exception: Unknown expression identifier `nope` in "
+            "scope SELECT 'TIMEOUT_EXCEEDED', nope FROM t. (UNKNOWN_IDENTIFIER)",
+        ],
+    )
+    def test_other_errors_are_not_timeouts(
+        self, dialect: ClickHouseDialect, message: str
+    ) -> None:
+        assert dialect.is_statement_timeout_error(RuntimeError(message)) is False
+
+
 class TestDialectRegistry:
     """Tests for the dialect registry and get_dialect() function."""
 
@@ -332,6 +497,11 @@ class TestDialectRegistry:
         dialect = get_dialect("trino")
         assert isinstance(dialect, AthenaDialect)
 
+    def test_get_clickhouse_dialect(self) -> None:
+        """Get ClickHouse dialect."""
+        dialect = get_dialect("clickhouse")
+        assert isinstance(dialect, ClickHouseDialect)
+
     def test_unknown_dialect_returns_postgres(self) -> None:
         """Unknown dialect type falls back to PostgreSQL."""
         dialect = get_dialect("unknown_db")
@@ -372,6 +542,7 @@ class TestDialectRegistry:
             "athena",
             "presto",
             "trino",
+            "clickhouse",
         ]
         for key in expected_keys:
             assert key in DIALECTS, f"Missing dialect: {key}"

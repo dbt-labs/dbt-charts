@@ -190,7 +190,7 @@ def _prepend_filter(layer: VLDict, expr: str) -> None:
     alphabetical. Band anchoring survives it because the order is not carried
     by ``sort`` alone: the overlay path pins an already-sorted domain on every
     layered categorical x (``_reconcile_x_domain``, ``emitters/_overlay.py``),
-    and an unlayered sorted line/area pins its own (``pin_sorted_x_domain``,
+    and an unlayered sorted line/area pins its own (``pin_sorted_domain``,
     ``emitters/_cartesian.py``) — a discarded ``sort`` cannot undo an explicit
     domain (``test_value_labels_keep_a_sorted_x_axis``). The bar segment-label
     path hoists its transforms out instead (``_hoist_sort_field_calculate``

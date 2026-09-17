@@ -956,3 +956,86 @@ class TestGroupedColumnsSkipsStackingHelpers:
             f"grouped bar must not use stacked total {stacked_total} as domainMax "
             f"(stacking helper fired for grouped bar); got scale={y_scale}"
         )
+
+
+NUMERIC_COLOR_DATA = [
+    {"category": "Alpha", "revenue": 100, "flag": 1},
+    {"category": "Alpha", "revenue": 80, "flag": 0},
+    {"category": "Beta", "revenue": 120, "flag": 1},
+    {"category": "Beta", "revenue": 90, "flag": 0},
+]
+
+BOOLEAN_COLOR_DATA = [
+    {"category": "Alpha", "revenue": 100, "flag": True},
+    {"category": "Alpha", "revenue": 80, "flag": False},
+    {"category": "Beta", "revenue": 120, "flag": True},
+    {"category": "Beta", "revenue": 90, "flag": False},
+]
+
+TEMPORAL_COLOR_DATA = [
+    {"category": "Alpha", "revenue": 100, "flag": "2024-01-01"},
+    {"category": "Alpha", "revenue": 80, "flag": "2024-02-01"},
+    {"category": "Beta", "revenue": 120, "flag": "2024-01-01"},
+    {"category": "Beta", "revenue": 90, "flag": "2024-02-01"},
+]
+
+_NON_DISCRETE_COLOR_CASES = [
+    (NUMERIC_COLOR_DATA, "flag", "quantitative"),
+    (BOOLEAN_COLOR_DATA, "flag", "quantitative"),
+    (TEMPORAL_COLOR_DATA, "flag", "temporal"),
+]
+_NON_DISCRETE_COLOR_IDS = ["numeric-color", "boolean-color", "temporal-color"]
+
+
+class TestGroupedBarNonStringColor:
+    """A numeric/boolean/temporal color field resolves to a non-discrete VL
+    type, but xOffset/yOffset always need a discrete (nominal/ordinal) type
+    regardless of the color paint scale's own type — a continuous scale has
+    no band for ``bandwidth(...)`` to size against, which degenerates every
+    bar to zero width/height (ERR-CHART-PAINTED-NO-MARKS). The asymmetry is
+    the point: the color channel itself keeps its own (non-discrete) type.
+    """
+
+    @pytest.mark.parametrize(
+        ("data", "color_field", "expected_color_type"),
+        _NON_DISCRETE_COLOR_CASES,
+        ids=_NON_DISCRETE_COLOR_IDS,
+    )
+    def test_vertical_bar_emits_discrete_xoffset_type(
+        self, data, color_field, expected_color_type
+    ):
+        chart = _chart(color=color_field)
+        resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, data)
+        enc = _get_encoding(spec)
+        assert enc["color"]["type"] == expected_color_type, (
+            "premise broken: the color channel itself is no longer "
+            f"{expected_color_type!r}, got {enc['color']['type']!r}"
+        )
+        assert "xOffset" in enc
+        assert enc["xOffset"]["type"] in ("nominal", "ordinal"), (
+            "xOffset must use a discrete VL type to get a band scale, got "
+            f"{enc['xOffset']['type']!r}"
+        )
+
+    @pytest.mark.parametrize(
+        ("data", "color_field", "expected_color_type"),
+        _NON_DISCRETE_COLOR_CASES,
+        ids=_NON_DISCRETE_COLOR_IDS,
+    )
+    def test_horizontal_bar_emits_discrete_yoffset_type(
+        self, data, color_field, expected_color_type
+    ):
+        chart = _chart(color=color_field, orientation="horizontal")
+        resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, data)
+        enc = _get_encoding(spec)
+        assert enc["color"]["type"] == expected_color_type, (
+            "premise broken: the color channel itself is no longer "
+            f"{expected_color_type!r}, got {enc['color']['type']!r}"
+        )
+        assert "yOffset" in enc
+        assert enc["yOffset"]["type"] in ("nominal", "ordinal"), (
+            "yOffset must use a discrete VL type to get a band scale, got "
+            f"{enc['yOffset']['type']!r}"
+        )

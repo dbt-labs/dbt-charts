@@ -478,6 +478,209 @@ class TestKpiDigitIntegrity:
 
 
 # ---------------------------------------------------------------------------
+# Temporal value formatting (dbt-labs/dbt-charts#15)
+# ---------------------------------------------------------------------------
+
+
+class TestKpiTemporalFormat:
+    """A date-valued KPI must honor its ``format:`` the same way a table cell
+    does — ``date_short`` formats the value, and an unformatted date defaults
+    to ``date_short`` too, matching table's default.
+
+    ``style.value.format`` can be a cascade result shared across every KPI on
+    the board (a theme/board-level default merged with this chart's own
+    patch, indistinguishable from each other once merged), so a numeric spec
+    that doesn't fit this chart's temporal value degrades to ``date_short``
+    instead of erroring the whole render. ``support.format`` is never
+    cascaded — ``ResolvedKpiChart.support`` is the authored ``KpiSupportConfig``
+    verbatim — so a mismatch there raises, the same as an equivalent mistake
+    would on a table column. A genuinely broken strftime directive raises on
+    either slot.
+    """
+
+    def _render(self, resolved, data):
+        return render_kpi_svg(
+            resolved,
+            data,
+            width=300,
+            height=160,
+            board_style=resolve_style(get_theme_style()),
+        )
+
+    def test_named_date_format_applies_to_date_value(self):
+        resolved, data = _resolved_kpi(
+            value="release_date",
+            label="Next release",
+            format="date_short",
+            _data=[{"release_date": "2026-11-15"}],
+        )
+        svg = self._render(resolved, data)
+        assert "15 Nov 2026" in svg
+        assert "2026-11-15" not in svg
+
+    def test_unformatted_date_value_defaults_to_date_short(self):
+        resolved, data = _resolved_kpi(
+            value="release_date",
+            label="Next release",
+            _data=[{"release_date": "2026-11-15"}],
+        )
+        svg = self._render(resolved, data)
+        assert "15 Nov 2026" in svg
+
+    def test_mismatched_value_format_falls_back_to_date_short(self):
+        # A chart-local `style.value.format: .2s` on a KPI whose value
+        # happens to be a date must not crash the render -- see
+        # test_true_board_cascade_format_falls_back_to_date_short below for
+        # the genuine board-wide-default version of this same scenario.
+        resolved, data = _resolved_kpi(
+            value="release_date",
+            label="Next release",
+            format=".2s",
+            _data=[{"release_date": "2026-11-15"}],
+        )
+        svg = self._render(resolved, data)
+        assert "15 Nov 2026" in svg
+
+    def test_true_board_cascade_format_falls_back_to_date_short(self):
+        # Unlike the test above (a chart-local `style:` patch, itself an
+        # authored-for-this-chart decision), this sets the mismatched format
+        # on the shared ChartStyleContext -- the actual shape a board/theme
+        # level `style.charts.kpi.value.format` cascade default takes before
+        # any individual chart's own style is merged in. The KPI here
+        # authors no format of its own.
+        import dataclasses
+
+        board_style = dataclasses.replace(
+            _BOARD_STYLE,
+            kpi=_BOARD_STYLE.kpi.model_copy(
+                update={
+                    "value": _BOARD_STYLE.kpi.value.model_copy(update={"format": ".2s"})
+                }
+            ),
+        )
+        chart = KpiChart(
+            id="t",
+            query=_DUMMY_QUERY,
+            query_name="q",
+            type="kpi",
+            value="release_date",
+            label="Next release",
+        )
+        data = [{"release_date": "2026-11-15"}]
+        resolved = resolve(chart, data, chart_style_context=board_style)
+        svg = self._render(resolved, data)
+        assert "15 Nov 2026" in svg
+
+    def test_strftime_alias_applies_to_date_value(self):
+        # An inline `%`-spec directly under `format:` is compile-rejected on
+        # this slot (`_TIME_CAPABLE_FIELDS` doesn't cover KPI value/support);
+        # a `style.formats` alias (validated with `time_format=True`) is the
+        # only author-reachable route to a strftime spec here, and resolves
+        # through the same `resolve_format` call `_format_value_parts` makes.
+        from dbt_charts.core.render.chart.kpi import _format_value_parts
+
+        _, number_str, _, is_numeric = _format_value_parts(
+            "2026-11-15", "my_date", "t", formats={"my_date": "%Y/%m"}
+        )
+        assert number_str == "2026/11"
+        assert is_numeric is False
+
+    def test_invalid_strftime_alias_raises(self):
+        from dbt_charts.core.render.chart.kpi import _format_value_parts
+
+        with pytest.raises(ChartDataError, match="unknown directive"):
+            _format_value_parts(
+                "2026-11-15", "bad_date", "t", formats={"bad_date": "%Q"}
+            )
+
+    def test_d3_fill_char_percent_spec_falls_back_to_date_short(self):
+        # `%` is also a legal d3-format FILL character (e.g. `%>10,.0f`) and
+        # the bare percent TYPE (`%`) -- neither is a strftime directive, so
+        # a bare `resolved.startswith("%")` check would misroute both: the
+        # first crashes on "unknown directive", the second would render the
+        # literal string "%" as the KPI's value. `is_time_format` is the
+        # correct discriminator and must route both to the date_short default.
+        resolved, data = _resolved_kpi(
+            value="release_date",
+            label="Next release",
+            format="%>10,.0f",
+            _data=[{"release_date": "2026-11-15"}],
+        )
+        svg = self._render(resolved, data)
+        assert "15 Nov 2026" in svg
+
+    def test_bare_percent_spec_falls_back_to_date_short(self):
+        resolved, data = _resolved_kpi(
+            value="release_date",
+            label="Next release",
+            format="%",
+            _data=[{"release_date": "2026-11-15"}],
+        )
+        svg = self._render(resolved, data)
+        assert "15 Nov 2026" in svg
+        assert ">%<" not in svg
+
+    def test_time_only_spec_reflects_actual_time(self):
+        resolved, data = _resolved_kpi(
+            value="updated_at",
+            label="Last updated",
+            format="time_short",
+            _data=[{"updated_at": "2026-11-15T14:30:00"}],
+        )
+        svg = self._render(resolved, data)
+        # "14:30" alone is a substring of the raw ISO value too -- assert the
+        # value renders as exactly "14:30" and the raw timestamp is gone, so
+        # this fails on the pre-fix (unformatted-raw-string) path.
+        assert ">14:30<" in svg
+        assert "2026-11-15" not in svg
+
+    def test_support_date_value_honors_named_format(self):
+        support = KpiSupportConfig(
+            value="renewed_on",
+            label="renewed",
+            format="date_short",
+        )
+        resolved, data = _resolved_kpi(
+            value="revenue",
+            label="Revenue",
+            support=support,
+            _data=[{"revenue": 1_500_000, "renewed_on": "2026-11-15"}],
+        )
+        svg = self._render(resolved, data)
+        assert "15 Nov 2026" in svg
+
+    def test_support_mismatched_format_raises(self):
+        # support.format is never a cascade result (ResolvedKpiChart.support
+        # is the authored KpiSupportConfig verbatim), so an explicit
+        # mismatched format there is unambiguously this chart's own
+        # authoring mistake -- it raises, unlike the value slot's fallback.
+        support = KpiSupportConfig(
+            value="renewed_on",
+            label="renewed",
+            format="percent",
+        )
+        resolved, data = _resolved_kpi(
+            value="revenue",
+            label="Revenue",
+            support=support,
+            _data=[{"revenue": 1_500_000, "renewed_on": "2026-11-15"}],
+        )
+        with pytest.raises(ChartDataError, match="is not a date format"):
+            self._render(resolved, data)
+
+    def test_non_temporal_non_numeric_value_still_renders_unformatted(self):
+        # Existing rule, unchanged: a status-style string value (not a date,
+        # not a number) renders verbatim regardless of format:.
+        resolved, data = _resolved_kpi(
+            value="status",
+            label="Pipeline",
+            _data=[{"status": "At risk"}],
+        )
+        svg = self._render(resolved, data)
+        assert "At risk" in svg
+
+
+# ---------------------------------------------------------------------------
 # Multi-KPI fixed-slot alignment
 # ---------------------------------------------------------------------------
 

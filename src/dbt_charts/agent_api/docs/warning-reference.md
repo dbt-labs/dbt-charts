@@ -150,9 +150,9 @@ Fires when an axis title is pre-wrapped to at most two lines (to prevent Vega-Li
 Chart {chart_id!r} has {distinct} bands x {series} series across {render_width:.0f}px (~{bar_width:.2f}px per bar); {min_band_width:.0f}px is the threshold this configuration crosses, so bars will read as a merged block instead of separate marks.
 ```
 
-**Fix:** Widen the chart, reduce the number of categories, or (for time series) roll up to a coarser grain (e.g. day -> week or month).
+**Fix:** Widen the chart (or, for a horizontal bar, make it taller), reduce the number of categories, or (for time series) roll up to a coarser grain (e.g. day -> week or month).
 
-Fires when a (vertical) bar chart packs so many bands into its plot width that each band's fill drops below a readability floor: the fill disappears and the bar's own border stroke merges neighbors into a "ghost band" smear. Classic trigger: daily-granularity data (hundreds of distinct days) rendered as bars at a normal chart width. Also fires on a numeric x (no band scale) when the bar's width, authored or computed from gap/min_size/max_size, exceeds the gap between the closest two x values, so adjacent bars visually overlap.
+Fires on bar (vertical + horizontal) charts that pack so many bands into the plot's bounding dimension (width for vertical, height for horizontal) that each band's fill drops below a readability floor: the fill disappears and the bar's own border stroke merges neighbors into a "ghost band" smear. Classic trigger: daily-granularity data (hundreds of distinct days) rendered as bars at a normal chart size, or a grouped/wide bar whose per-series sub-band is too thin even though the outer band is not. Also fires on a numeric x (no band scale, vertical bars only) when the bar's width, authored or computed from gap/min_size/max_size, exceeds the gap between the closest two x values, so adjacent bars visually overlap.
 
 ### WARN-BAR-GROUPED-SERIES-COINCIDE: Grouped bar series paint on top of each other
 

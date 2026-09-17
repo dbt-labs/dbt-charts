@@ -32,7 +32,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     dimension_sort_to_vl,
     distinct_series_values,
     multiples_scale_independent,
-    pin_sorted_x_domain,
+    pin_sorted_domain,
     resolve_cartesian_x,
     resolve_xy_titles,
     sorted_series_by_last_value,
@@ -411,7 +411,7 @@ def _build_line_top_encoding(
             x_res.time_unit,
             sort=dimension_sort_to_vl(chart.sort),
         )
-        pin_sorted_x_domain(top_encoding["x"], data, chart)
+        pin_sorted_domain(top_encoding["x"], data, chart, axis="x")
     if chart.y:
         top_encoding["y"] = y_enc
     has_color_enc = _apply_line_color_encoding(chart, data, style, top_encoding)
@@ -521,7 +521,7 @@ def _emit_folded_line(
             x_res.time_unit,
             sort=dimension_sort_to_vl(chart.sort),
         )
-        pin_sorted_x_domain(top_encoding["x"], data, chart)
+        pin_sorted_domain(top_encoding["x"], data, chart, axis="x")
     top_encoding["y"] = y_enc
     top_encoding["color"] = wide.color
     sub_layers = emit_line_layer(

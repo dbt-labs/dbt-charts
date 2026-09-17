@@ -125,6 +125,19 @@ DB_INFO_MAP: dict[str, dict[str, str]] = {
         ),
         "notes": "Trino queries a catalog.schema.table; `database` names the catalog.",
     },
+    "clickhouse": {
+        "type": "clickhouse",
+        "engine": "ClickHouse",
+        "dialect": "ClickHouse SQL",
+        "introspection": (
+            "List tables: `SHOW TABLES FROM database_name;` | "
+            "Describe table: `DESCRIBE TABLE database_name.table_name;`"
+        ),
+        "notes": (
+            "ClickHouse has one namespace level: the dbt `schema` is the "
+            "ClickHouse database. `system.columns` lists every column on the server."
+        ),
+    },
     "sqlserver": {
         "type": "sqlserver",
         "engine": "Microsoft SQL Server",

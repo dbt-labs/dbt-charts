@@ -1,0 +1,5 @@
+kind: Fixes
+body: Color-category reuse warning now scales with the chart's actual palette size instead of a fixed 12-category cap, and was previously silent on line, area, and stacked bar charts showing endpoint labels, so series silently sharing a color went unwarned there.
+time: 2026-09-16T11:33:20.840665-07:00
+custom:
+    DbtChartsIssue: "14"

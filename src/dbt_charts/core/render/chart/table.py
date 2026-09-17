@@ -92,6 +92,7 @@ from dbt_charts.core.render.chart.table_static_pagination import (
 from dbt_charts.core.render.chart.table_support import (
     _VALID_ROW_ROLES,
     _glyph_possible,
+    _raise_if_time_format_on_numeric,
     calculate_column_layout,
     cell_glyph_run,
     format_table_cell_value,
@@ -1403,7 +1404,10 @@ def _has_overflow(
                 # native SI notation would ("876.54M" vs "877 M"), so this
                 # can also make the fit cascade fire *more* often than
                 # before -- correctly, since that's the width the column
-                # will really occupy.
+                # will really occupy. No guard needed here: shared_scale is
+                # only ever set when is_d3_si_spec(fmt) is true, which is
+                # false for every time format -- the two are mutually
+                # exclusive by construction (compile/resolve/chart/_table.py).
                 _p, _n, _s = format_kpi_parts(
                     num_val,
                     fmt,
@@ -1481,6 +1485,8 @@ def _compute_lane_positions(
     for i, col in enumerate(columns):
         col_config = column_configs.get(col)
         fmt = col_config.format if col_config else None
+        # resolve_format is pure; resolve once per column, not per row.
+        resolved_fmt = resolve_format(fmt, formats)
         cw = col_widths.get(col, 100)
         cell_x = padding_x + col_x_offsets[i]
         # Content midpoint respects horizontal padding on both sides so
@@ -1536,6 +1542,13 @@ def _compute_lane_positions(
                     continue
                 if not isinstance(num_val, (int, float)) or isinstance(num_val, bool):
                     continue
+                # format_kpi_parts (below) bypasses format_table_cell_value's
+                # own guard against a time format on a numeric column; this
+                # gate (a real int/float survives the coercion above) is the
+                # same one format_table_cell_value's numeric branch uses, so
+                # a legitimately time-formatted date/timestamp cell -- which
+                # never reaches this point -- is never flagged.
+                _raise_if_time_format_on_numeric(resolved_fmt)
                 # is_anchor=True unconditionally: this column's suffix lane
                 # must be sized for the widest case that will actually
                 # paint -- the anchor row's real suffix in ANCHOR mode, or
@@ -2521,6 +2534,12 @@ def _render_data_rows(
                     num_value,
                     bool,
                 ):
+                    # No guard needed here: a date/timestamp value fails this
+                    # isinstance check and never reaches this branch, and any
+                    # genuinely numeric value under a mismatched format was
+                    # already raised on by _compute_lane_positions's identical
+                    # gate, computed over the full dataset before any row here
+                    # paints.
                     prefix, number_str, suffix = format_kpi_parts(
                         num_value,
                         fmt,

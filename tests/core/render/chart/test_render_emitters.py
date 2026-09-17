@@ -838,6 +838,130 @@ def test_heatmap_emit_encoding_has_x_and_y(heatmap_style: ResolvedHeatmapStyle) 
     assert "y" in spec.encoding
 
 
+def test_heatmap_unauthored_sort_preserves_query_order_on_both_axes(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    """No authored `sort:` must keep both axes in query row order (VL
+    ``sort: null``), not VL's default alphabetical domain."""
+    from dbt_charts.core.render.chart.emitters import get_emitter
+
+    chart = _heatmap(heatmap_style)
+    data = [
+        {"col": "Feb", "row": "low", "val": 2},
+        {"col": "Jan", "row": "high", "val": 5},
+    ]
+    spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
+    assert spec.encoding["x"]["sort"] is None, f"got {spec.encoding['x'].get('sort')!r}"
+    assert spec.encoding["y"]["sort"] is None, f"got {spec.encoding['y'].get('sort')!r}"
+
+
+def test_heatmap_authored_sort_reaches_y_encoding(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    """An authored `chart.sort` must reach the y encoding the same way it
+    already reaches x."""
+    from dbt_charts.core.compile.models.chart.authored import ChartSort
+    from dbt_charts.core.render.chart.emitters import get_emitter
+
+    hm_ax, hm_ay = _make_resolved_axes("heatmap", "nominal", "nominal")
+    chart = ResolvedHeatmapChart(
+        panel_axes=(),
+        id="heatmap_sorted",
+        chart_type="heatmap",
+        x="col",
+        y="row",
+        sort=ChartSort(by="val", order="desc"),
+        style=heatmap_style.model_copy(update={"axis_x": hm_ax, "axis_y": hm_ay}),
+        **_C,
+    )
+    data = [
+        {"col": "Feb", "row": "low", "val": 2},
+        {"col": "Jan", "row": "high", "val": 5},
+    ]
+    spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
+    expected = {"field": "val", "order": "descending", "op": "min"}
+    assert spec.encoding["y"]["sort"] == expected, (
+        f"got {spec.encoding['y'].get('sort')!r}"
+    )
+    assert spec.encoding["x"]["sort"] == expected, (
+        f"got {spec.encoding['x'].get('sort')!r}"
+    )
+    # An explicit domain outranks `sort` in Vega-Lite, so the key alone
+    # proves nothing about the order VL actually draws -- the pinned domain
+    # is what decides it (high=5 outranks low=2, descending).
+    assert spec.encoding["y"]["scale"]["domain"] == ["high", "low"], (
+        f"got {spec.encoding['y'].get('scale')!r}"
+    )
+
+
+def test_wide_heatmap_unauthored_sort_reaches_every_layer_y(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    """The multi-measure (`y: [...]`) path's layers share one y-position
+    scale, so an unsorted layer left VL to alphabetize the merged domain —
+    disagreeing with the top-level x's own query-order default on the same
+    chart. Every layer's y must get the same `sort: None` default."""
+    from dbt_charts.core.render.chart.emitters import get_emitter
+
+    hm_ax, hm_ay = _make_resolved_axes("heatmap", "nominal", "nominal")
+    chart = ResolvedHeatmapChart(
+        panel_axes=(),
+        id="heatmap_wide",
+        chart_type="heatmap",
+        x="col",
+        y=["low", "zeta", "high", "alpha"],
+        style=heatmap_style.model_copy(update={"axis_x": hm_ax, "axis_y": hm_ay}),
+        **_C,
+    )
+    data = [{"col": "Feb"}, {"col": "Jan"}]
+    spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
+    assert spec.encoding["x"]["sort"] is None
+    assert len(spec.layers) == 4
+    for layer in spec.layers:
+        assert layer.encoding["y"]["sort"] is None, f"got {layer.encoding['y']!r}"
+
+
+def test_wide_heatmap_authored_sort_reaches_every_layer_y(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    """The authored half of the same per-layer y pin: each layer's own
+    `scale.domain` — the value that actually decides drawn order, since an
+    explicit domain outranks `sort` in Vega-Lite — must reflect `chart.sort`,
+    not just carry the `sort` key."""
+    from dbt_charts.core.compile.models.chart.authored import ChartSort
+    from dbt_charts.core.render.chart.emitters import get_emitter
+
+    hm_ax, hm_ay = _make_resolved_axes("heatmap", "nominal", "nominal")
+    chart = ResolvedHeatmapChart(
+        panel_axes=(),
+        id="heatmap_wide_sorted",
+        chart_type="heatmap",
+        x="col",
+        y=["m1", "m2"],
+        sort=ChartSort(by="seq", order="desc"),
+        style=heatmap_style.model_copy(update={"axis_x": hm_ax, "axis_y": hm_ay}),
+        **_C,
+    )
+    # Query row order, alphabetical order and sort-desc-by-seq order are all
+    # different for these three values -- same discriminating shape as
+    # test_authored_sort_x_domain.py's four-orders fixture -- so a pin that
+    # silently fell back to either default would fail this, not just happen
+    # to pass.
+    data = [
+        {"col": "A", "m1": "Feb", "m2": "Q2", "seq": 2},
+        {"col": "B", "m1": "Mar", "m2": "Q3", "seq": 3},
+        {"col": "C", "m1": "Jan", "m2": "Q1", "seq": 1},
+    ]
+    spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
+    m1_layer, m2_layer = spec.layers
+    assert m1_layer.encoding["y"]["scale"]["domain"] == ["Mar", "Feb", "Jan"], (
+        f"got {m1_layer.encoding['y'].get('scale')!r}"
+    )
+    assert m2_layer.encoding["y"]["scale"]["domain"] == ["Q3", "Q2", "Q1"], (
+        f"got {m2_layer.encoding['y'].get('scale')!r}"
+    )
+
+
 def test_pie_emit_encoding_has_theta(pie_style: ResolvedPieStyle) -> None:
     from dbt_charts.core.render.chart.emitters import (
         get_emitter,

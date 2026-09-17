@@ -18,7 +18,7 @@ class TestUsesNamedParams:
 
     @pytest.mark.parametrize(
         "dialect_name",
-        ["bigquery", "sqlserver", "databricks"],
+        ["bigquery", "sqlserver", "databricks", "clickhouse"],
     )
     def test_named_dialects(self, dialect_name: str) -> None:
         dialect = get_dialect(dialect_name)

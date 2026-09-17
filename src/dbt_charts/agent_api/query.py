@@ -83,6 +83,7 @@ def lookup_board_query_sql(
     )
     from dbt_charts.core.diagnostics.execution import ExecutionError
     from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+    from dbt_charts.core.execute.executor import resolve_query_references
 
     try:
         file_path = resolve_board_path(path, project)
@@ -133,12 +134,18 @@ def lookup_board_query_sql(
     dbt_refs = DbtRefResolver(project)
     try:
         merged_vars = merge_board_variables(board, vars or {})
-        # The resolve/render/resolve order execution runs across
-        # `AdapterRegistry._compose_query_refs` and each adapter's own
-        # `DbtRefResolver.resolve`, for the same two reasons: the render is
-        # StrictUndefined and doesn't know `ref`, and `{{ queries.X }}` inlines
-        # X's raw SQL, which the first pass never saw.
-        resolved_sql, _relations = dbt_refs.resolve(query.sql)
+        # {{ queries.X }} is expanded to text first, recursively, exactly as the
+        # render/serve path does (Executor.execute_query Step 4) — don't move
+        # this after the two resolve calls below; it's what lets a template
+        # left inside X's own SQL (a plain variable, `filter()`, a literal) reach
+        # the single variable render instead of never.
+        expanded_query = resolve_query_references(
+            query,
+            all_queries={**board.queries, **compile_result.query_registry},
+            query_name=name,
+        )
+        assert isinstance(expanded_query, SqlQuery)
+        resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql)
         rendered = render_parameterized_with_queries(
             resolved_sql,
             merged_vars,
@@ -146,6 +153,12 @@ def lookup_board_query_sql(
             strict=not query.lenient_variables,
             warehouse=warehouse,
         )
+        # Same second resolve pass execution's own SqlAdapter.prepare_sql runs:
+        # `resolve_query_references`'s dependency-graph short-circuit only
+        # recognizes the spaced `{{ queries.` spelling, so a `{{queries.X}}`
+        # reference reaches `render_parameterized_with_queries` unexpanded and
+        # is inlined there instead — carrying any `ref()` call X's own SQL had.
+        # Do not remove this as redundant with the first resolve above.
         composed_sql, _inlined_relations = dbt_refs.resolve(rendered.sql)
     except (JinjaError, ExecutionError) as exc:
         return BoardQueryLookupResult(success=False, errors=[str(exc)])
@@ -380,6 +393,8 @@ def query_board(
     adapter_registry: AdapterRegistry,
 ) -> QueryBoardResult:
     """Run one named query from a compiled board and return its sample rows."""
+    from dbt_charts.core.execute.executor import resolve_query_references
+
     limit = min(limit, MAX_QUERY_LIMIT)
 
     try:
@@ -417,6 +432,18 @@ def query_board(
     # configured for this registry) and surfaces through exec_result.error
     # below — one dispatch point, not a second copy here.
     try:
+        if isinstance(query, SqlQuery):
+            # AdapterRegistry._compose_query_refs inlines {{ queries.X }} in a
+            # single non-recursive Jinja pass — don't remove this call as
+            # redundant with it. Expand refs to text first, exactly as the
+            # render/serve path does (Executor.execute_query Step 4), so
+            # composition below sees one flat template with nothing left to
+            # inline.
+            query = resolve_query_references(
+                query,
+                all_queries={**board.queries, **compile_result.query_registry},
+                query_name=name,
+            )
         exec_result = adapter_registry.execute(
             query, variables=merged_vars or None, board=board, query_name=name
         )

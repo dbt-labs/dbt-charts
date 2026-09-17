@@ -1,0 +1,5 @@
+kind: Fixes
+body: A time or date format (e.g. time_short) on a numeric table column now raises ERR-TABLE-FORMAT-KIND-MISMATCH at render time instead of crashing inside the d3-format library with ERR-INTERNAL. The reverse case (a numeric format on a date column) raises the same code, and no longer misdetects a literal-prefixed strftime spec such as "Week %W" as mismatched.
+time: 2026-09-16T11:37:20.578687-07:00
+custom:
+    DbtChartsIssue: 16

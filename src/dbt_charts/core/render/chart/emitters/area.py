@@ -33,7 +33,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     distinct_series_values,
     multiples_scale_independent,
     pin_normalize_axis_format,
-    pin_sorted_x_domain,
+    pin_sorted_domain,
     resolve_cartesian_x,
     resolve_xy_titles,
     series_order_expression,
@@ -320,7 +320,7 @@ def _build_area_top_encoding(
             x_res.time_unit,
             sort=dimension_sort_to_vl(chart.sort),
         )
-        pin_sorted_x_domain(top_encoding["x"], data, chart)
+        pin_sorted_domain(top_encoding["x"], data, chart, axis="x")
     if chart.y:
         top_encoding["y"] = y_enc
     color_ch = _apply_area_color_encoding(chart, data, top_encoding)
@@ -461,7 +461,7 @@ def _emit_multi_metric_area(
             x_res.time_unit,
             sort=dimension_sort_to_vl(chart.sort),
         )
-        pin_sorted_x_domain(top_encoding["x"], data, chart)
+        pin_sorted_domain(top_encoding["x"], data, chart, axis="x")
     top_encoding["y"] = y_enc
     top_encoding["color"] = wide.color
     if wide.order:

@@ -242,7 +242,7 @@ _HETEROGENEOUS_ROWS = {
 # its own pivot choices. Row order is the deterministic reading of that. On
 # the families that pin an explicit domain the divergence cannot reach a
 # rendered axis, since that domain is what Vega draws. Bar is the exception:
-# it pins the sort's aggregate but never calls pin_sorted_x_domain, so a bar
+# it pins the sort's aggregate but never calls pin_sorted_domain, so a bar
 # sorted by a column mixing numbers and strings can land here. Recorded, not
 # chased.
 _HETEROGENEOUS_CASES = [

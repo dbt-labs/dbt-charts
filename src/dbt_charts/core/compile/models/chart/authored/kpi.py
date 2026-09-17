@@ -29,7 +29,7 @@ class KpiSupportConfig(BaseModel):
     )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
-        description="How the number is written: a D3 spec, a preset name, or a format block.",
+        description="How the value is written: a D3 spec, a preset name, or a format block. A date value defaults to date_short when unformatted.",
     )
     glyph: str | None = Field(
         default=None,

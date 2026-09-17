@@ -579,7 +579,7 @@ Grid layout configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `columns` | int | Number of grid columns (default: 24). |
+| `columns` | int | Number of grid columns (default: 24). Positive number only. |
 
 <a id="tablayout"></a>
 ## TabLayout
@@ -971,7 +971,7 @@ Support-line block authored alongside a KPI's main value.
 |-------|------|-------------|
 | `value` | str | Column reference (string column name) for the support number/text. |
 | `label` | str | Trailing explainer text rendered beside the support value. |
-| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | How the number is written: a D3 spec, a preset name, or a format block. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | How the value is written: a D3 spec, a preset name, or a format block. A date value defaults to date_short when unformatted. |
 | `glyph` | str | Text shown before the value (e.g. '▲', '▼', '●'). |
 | `tone` | enum: "positive", "negative", "warning", "info" | Semantic styling for the support value/glyph. |
 
@@ -1131,10 +1131,10 @@ Grid layout item with position and span.
 |-------|------|-------------|
 | `col` | int | Column position (0-indexed). Auto-placed if omitted. |
 | `row` | int | Row position (0-indexed). Auto-placed if omitted. |
-| `col_span` | int | Number of columns to span (width in grid units). |
-| `row_span` | int | Number of rows to span (height in grid units). |
-| `width` | int | Alias for col_span (more intuitive name). |
-| `height` | int | Alias for row_span (more intuitive name). |
+| `col_span` | int | Number of columns to span (width in grid units). Zero or a positive number; 0 is treated as unset and falls back to width, then to 1. |
+| `row_span` | int | Number of rows to span (height in grid units). Zero or a positive number; 0 is treated as unset and falls back to height, then to 1. |
+| `width` | int | Alias for col_span (more intuitive name). Zero or a positive number; used only when col_span is unset or 0, and 0 here also falls back to 1. |
+| `height` | int | Alias for row_span (more intuitive name). Zero or a positive number; used only when row_span is unset or 0, and 0 here also falls back to 1. |
 | `notes` | str | Optional metadata for AI search. Emitted into the SVG DOM as a data-layout-notes attribute; never painted as visible pixels. |
 
 <a id="tabitem"></a>
@@ -1726,7 +1726,7 @@ Authored overlay for KpiValueStyle. KPI headline value slot: font and format. Th
 | Field | Type | Description |
 |-------|------|-------------|
 | `font` | [FontStyle](#fontstyle) | Headline value font. Unset fields fall back to [`style.charts.kpi.font`](#kpichartstyle) (except `color`). |
-| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Number format for the KPI headline value: D3 format string, preset name, or FormatConfig object. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Format for the KPI headline value: D3 format string, preset name, or FormatConfig object. A date value defaults to date_short when unformatted. |
 
 <a id="kpislotstyle"></a>
 ## KpiSlotStyle

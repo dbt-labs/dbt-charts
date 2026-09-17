@@ -223,7 +223,7 @@ Changes in this release:
   is discarded at resolve, which reads ``style.layout.grid.gap`` instead) but is
   fail-loud: the parser raises an unknown-field error hinting at
   ``style.layout.grid.gap``. Declarable but unconverted — the tail also matches
-  that live key, so it is legal only root-anchored (``_validate``'s
+  that live key, so it is legal only root-anchored (``validate_declarations``'s
   ``retired_at_root``), with ``_live_declares_tail`` holding the firing off the
   layout slot. The enum → pixel mapping is not lossless either way, so the
   successor is a hint rather than a value a migration could carry over.

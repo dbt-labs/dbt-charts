@@ -946,12 +946,66 @@ class TestWarehouseCheckFileSource:
     ):
         """An authored EXPLAIN can't be led by DESCRIBE — the gate refuses the
         shape from the author's own parsed statement before anything reaches
-        the materializer, same as every other reads_columns adapter."""
+        the materializer, same as every other DESCRIBE adapter."""
         registry = self._csv_registry(QueryResult(data=[]))
         result = _check_sql("EXPLAIN SELECT 1", registry)
         assert result.status == "unchecked"
         assert "DESCRIBE" in result.reason
         registry.execute.assert_not_called()
+
+
+class TestWarehouseCheckClickHouse:
+    """ClickHouse takes a bare DESCRIBE prefix like DuckDB, but names the
+    schema columns ``name``/``type`` rather than ``column_name``/``column_type``."""
+
+    def _registry(self, result: QueryResult) -> MagicMock:
+        from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
+
+        registry = MagicMock()
+        registry.resolve_query_source.return_value = DbtTargetSourceConfig(
+            type="clickhouse", host="h", schema="analytics"
+        )
+        registry.execute.return_value = result
+        return registry
+
+    def test_valid_query_reads_columns_from_describe(self):
+        registry = self._registry(
+            QueryResult(
+                data=[
+                    {"name": "month", "type": "Date", "default_type": ""},
+                    {"name": "revenue", "type": "Float64", "default_type": ""},
+                ]
+            )
+        )
+        result = _check_sql("SELECT month, revenue FROM orders", registry)
+        assert result.status == "valid"
+        assert result.mechanism == "DESCRIBE"
+        assert result.adapter_type == "clickhouse"
+        assert result.columns_checked is True
+        assert result.columns == [
+            WarehouseCheckColumn(name="month", type="Date"),
+            WarehouseCheckColumn(name="revenue", type="Float64"),
+        ]
+
+    def test_sends_the_describe_prefixed_sql_with_no_limit(self):
+        registry = self._registry(QueryResult(data=[]))
+        _check_sql("SELECT month FROM orders", registry)
+        sent = registry.execute.call_args.args[0]
+        assert sent.sql.startswith("DESCRIBE ")
+        assert sent.sql.endswith("SELECT month FROM orders")
+        assert sent.limit is None
+
+    def test_warehouse_rejection_is_invalid(self):
+        registry = self._registry(
+            QueryResult(
+                data=[],
+                error="Code: 47. DB::Exception: Unknown expression identifier `nope`",
+                error_code=ERR_WAREHOUSE_RUNTIME,
+            )
+        )
+        result = _check_sql("SELECT nope FROM orders", registry)
+        assert result.status == "invalid"
+        assert "nope" in result.error
 
 
 class TestWarehouseCheckCacheRef:
@@ -994,6 +1048,216 @@ class TestWarehouseCheckConnectionFailures:
 
         assert result.status == "unchecked"
         assert result.reason
+
+
+class TestWarehouseCheckDbtManifestFallback:
+    """A board on an auto-detected dbt project, with no `sources:` registered.
+
+    `resolve_query_source` legitimately returns None for a SqlQuery whose
+    authored `source:` names nothing in board/project sources when a dbt
+    project is in scope — DefaultSourceResolver's dbt fallback, the same path
+    `dct render` uses.
+    """
+
+    def _dbt_project(self, tmp_path: Path, sql: str, monkeypatch: pytest.MonkeyPatch):
+        import json
+
+        # A machine exporting DBT_PROFILES_DIR outranks the project-local
+        # profiles.yml this helper writes (_read_profiles_yml's resolution
+        # order), which would make this fixture read the wrong file wherever
+        # that env var happens to be set.
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+
+        db_path = tmp_path / "repro.duckdb"
+        conn = duckdb.connect(str(db_path))
+        conn.execute("CREATE TABLE makers (company_name VARCHAR, country VARCHAR)")
+        conn.execute("INSERT INTO makers VALUES ('Instruo', 'United Kingdom')")
+        conn.close()
+
+        (tmp_path / "dbt_project.yml").write_text(
+            "name: repro\nversion: '1.0.0'\nconfig-version: 2\nprofile: repro\n"
+        )
+        (tmp_path / "profiles.yml").write_text(
+            "repro:\n"
+            "  target: dev\n"
+            "  outputs:\n"
+            "    dev:\n"
+            "      type: duckdb\n"
+            f"      path: {db_path}\n"
+            "      schema: main\n"
+            "      threads: 1\n"
+        )
+        (tmp_path / "target").mkdir()
+        manifest = {
+            "nodes": {
+                "model.repro.dim_makers": {
+                    "resource_type": "model",
+                    "name": "dim_makers",
+                    "schema": "main",
+                    "alias": "makers",
+                }
+            },
+            "sources": {},
+        }
+        (tmp_path / "target" / "manifest.json").write_text(json.dumps(manifest))
+
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "count.yml").write_text(
+            "title: Maker count\n"
+            "source: repro\n"
+            "queries:\n"
+            "  q:\n"
+            f'    sql: "{sql}"\n'
+            "charts:\n"
+            "  c:\n"
+            "    query: q\n"
+            "    type: table\n"
+        )
+
+        project = FilesystemProject(tmp_path)
+        result = compile_file(project.path("charts/count.yml").read_board())
+        assert result.board is not None, result.errors
+        return result, build_adapter_registry(project, profile_type="duckdb")
+
+    def test_dbt_jinja_query_is_checked_via_the_dbt_adapter(
+        self, tmp_path, monkeypatch
+    ):
+        """`repro` is not a board or project source (no `dbt_charts.yml`)."""
+        compiled, registry = self._dbt_project(
+            tmp_path,
+            "select company_name, country from {{ ref('dim_makers') }}",
+            monkeypatch,
+        )
+        result = _check(compiled, registry, query_name="q")
+        assert result.status == "valid", result.error
+        assert result.mechanism == "DESCRIBE"
+        assert result.adapter_type == "duckdb"
+        assert result.columns_checked is True
+        assert {c.name for c in result.columns} == {"company_name", "country"}
+
+    def test_plain_sql_query_is_checked_via_the_duckdb_adapter(
+        self, tmp_path, monkeypatch
+    ):
+        """No `ref()`, so `DbtAdapter` declines and `DuckDBAdapter` claims it
+        instead, finding the project's own warehouse file by the dbt-project
+        auto-discovery convention (`data/dev.duckdb`)."""
+        (tmp_path / "data").mkdir()
+        dev_db = tmp_path / "data" / "dev.duckdb"
+        conn = duckdb.connect(str(dev_db))
+        conn.execute("CREATE TABLE makers (company_name VARCHAR, country VARCHAR)")
+        conn.close()
+
+        compiled, registry = self._dbt_project(
+            tmp_path, "select company_name, country from makers", monkeypatch
+        )
+        result = _check(compiled, registry, query_name="q")
+        assert result.status == "valid", result.error
+        assert result.mechanism == "DESCRIBE"
+        assert result.adapter_type == "duckdb"
+        assert {c.name for c in result.columns} == {"company_name", "country"}
+
+
+class TestWarehouseCheckDbtFallbackTypeResolution:
+    """`_resolve_dbt_fallback_type` in isolation: adapter routing and
+    profile-failure reporting, with the registry mocked."""
+
+    def _registry(self, claiming_adapter):
+        registry = MagicMock()
+        registry.resolve_query_source.return_value = None
+        registry.get_adapter.return_value = claiming_adapter
+        return registry
+
+    def test_no_claiming_adapter_is_unchecked_with_no_source_mechanism(self):
+        registry = self._registry(None)
+        result = _check_sql("SELECT 1", registry)
+        assert result.status == "unchecked"
+        assert result.mechanism == "no-source"
+        assert result.reason
+        registry.execute.assert_not_called()
+
+    def test_unresolvable_dbt_profile_reports_the_real_failure_in_the_reason(self):
+        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+
+        adapter = MagicMock(spec=DbtAdapter)
+        adapter.resolve_target_type.side_effect = ValueError("Profile 'x' not found")
+        result = _check_sql("SELECT {{ ref('x') }}", self._registry(adapter))
+        assert result.status == "unchecked"
+        assert result.mechanism == "no-source"
+        assert "Profile 'x' not found" in result.reason
+        adapter.resolve_target_type.assert_called_once()
+
+    def test_bigquery_fallback_type_without_a_resolved_config_is_unchecked(self):
+        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+        from dbt_charts.core.execute.warehouse_check import _BIGQUERY_DRY_RUN
+
+        adapter = MagicMock(spec=DbtAdapter)
+        adapter.resolve_target_type.return_value = "bigquery"
+        registry = self._registry(adapter)
+        result = _check_sql("SELECT {{ ref('x') }}", registry)
+        assert result.status == "unchecked"
+        assert result.adapter_type == "bigquery"
+        assert result.mechanism == _BIGQUERY_DRY_RUN
+        registry.execute.assert_not_called()
+
+    def test_databricks_fallback_type_is_unchecked_not_a_crash(self):
+        """A dbt-fallback type outside `_PREFIX_CHECKS ∪ {bigquery}` still
+        reaches the `is_file_source(source_config)` guard with
+        `source_config=None` — the guard's `source_config is not None` clause
+        is the only thing standing between this and an `AttributeError`."""
+        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+
+        adapter = MagicMock(spec=DbtAdapter)
+        adapter.resolve_target_type.return_value = "databricks"
+        registry = self._registry(adapter)
+        result = _check_sql("SELECT {{ ref('x') }}", registry)
+        assert result.status == "unchecked"
+        assert result.adapter_type == "databricks"
+        assert result.mechanism == "no-validity-primitive"
+        assert "plan text" in result.reason
+        registry.execute.assert_not_called()
+
+    def test_routes_on_the_composed_query_not_the_authored_one(self):
+        """A `ref()` reachable only through `{{ queries.base }}` must still
+        route to `DbtAdapter`: routing has to run after composition, or a
+        query whose own SQL carries no jinja gets handed to `DuckDBAdapter`
+        instead of the warehouse that will actually run it."""
+        import yaml
+
+        from dbt_charts.core.compile import compile as compile_board
+        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+
+        compiled = compile_board(
+            yaml.dump(
+                {
+                    "source": "repro",
+                    "queries": {
+                        "base": "select * from {{ ref('dim_makers') }}",
+                        "agg": "select * from ({{ queries.base }}) t",
+                    },
+                    "charts": {"c": {"query": "agg", "type": "table"}},
+                }
+            )
+        )
+        assert compiled.board is not None, compiled.errors
+
+        adapter = MagicMock(spec=DbtAdapter)
+        adapter.resolve_target_type.return_value = "postgres"
+        registry = self._registry(adapter)
+        registry.execute.return_value = QueryResult(data=[])
+
+        result = warehouse_check(
+            compiled.query_registry["agg"],
+            board=compiled.board,
+            adapter_registry=registry,
+            query_name="agg",
+            query_registry=compiled.query_registry,
+        )
+
+        routed_sql = registry.get_adapter.call_args.args[0].sql
+        assert "{{ queries" not in routed_sql
+        assert "dim_makers" in routed_sql
+        assert result.adapter_type == "postgres"
+        assert result.mechanism == "EXPLAIN"
 
 
 class TestPrepareSqlThroughARealRegistry:

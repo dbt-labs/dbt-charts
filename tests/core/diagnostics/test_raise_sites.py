@@ -221,6 +221,53 @@ class TestRenderKpiMultirowCarriesCode:
         assert exc_info.value.code is ERR_KPI_MULTIROW
 
 
+class TestRenderKpiFormatKindMismatchCarriesCode:
+    def test_support_format_mismatch_carries_code(self) -> None:
+        from dbt_charts.core.compile.models.chart.authored import KpiSupportConfig
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_KPI_FORMAT_KIND_MISMATCH,
+        )
+        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+        chart = KpiChart(
+            id="rev",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="kpi",
+            value="revenue",
+            support=KpiSupportConfig(value="renewed_on", format="percent"),
+        )
+        data = [{"revenue": 1_500_000, "renewed_on": "2026-11-15"}]
+        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+
+        with pytest.raises(ChartDataError) as exc_info:
+            render_kpi_svg(
+                resolved,
+                data,
+                width=300,
+                height=160,
+                board_style=resolve_style(get_theme_style()),
+            )
+
+        assert exc_info.value.code is ERR_KPI_FORMAT_KIND_MISMATCH
+
+
+class TestRenderKpiTemporalFormatInvalidCarriesCode:
+    def test_bad_strftime_alias_carries_code(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_KPI_TEMPORAL_FORMAT_INVALID,
+        )
+        from dbt_charts.core.render.chart.kpi import _format_value_parts
+
+        with pytest.raises(ChartDataError) as exc_info:
+            _format_value_parts(
+                "2026-11-15", "bad_date", "t", formats={"bad_date": "%Q"}
+            )
+
+        assert exc_info.value.code is ERR_KPI_TEMPORAL_FORMAT_INVALID
+
+
 class TestRenderMapLookupKeyMismatchCarriesCode:
     def test_world_map_alpha_lookup_carries_code(self, make_chart) -> None:
         from dbt_charts.core.diagnostics.codes_render import (

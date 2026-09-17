@@ -323,3 +323,186 @@ def test_y_scale_mismatch_fires_when_a_layer_has_its_own_query() -> None:
         f"(millions) — the detector must fire: {render_result.warnings}"
     )
     assert "revenue" in mismatches[0].message and "rate" in mismatches[0].message
+
+
+_GROUPED_HORIZONTAL_YAML = """
+title: Grouped horizontal bar
+charts:
+  grouped_chart:
+    query: q
+    type: bar
+    style:
+      orientation: horizontal
+    x: month
+    y: val
+    color: series
+queries:
+  q:
+    sql: SELECT month, series, val FROM t
+    source: test_source
+"""
+
+
+def _grouped_series_rows(n_x: int, n_series: int) -> list[dict[str, object]]:
+    return [
+        {"month": f"m{x}", "series": f"s{s}", "val": x + s}
+        for x in range(n_x)
+        for s in range(n_series)
+    ]
+
+
+def test_bar_band_width_warning_fires_on_grouped_horizontal_bar() -> None:
+    """A real compile -> execute -> render pass for a horizontal bar grouped
+    by a 12-value color field: the emitter's own height floor
+    (`min_height_for_horizontal_bar_categories`) only budgets room for one
+    bar per category, never for the yOffset sub-bands a color channel adds,
+    so the per-series band still collapses under the readability floor even
+    though the whole render path (including the auto-grown height) ran for
+    real.
+    """
+    result = compile(_GROUPED_HORIZONTAL_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(
+        result.board, result.query_registry, _grouped_series_rows(20, 12)
+    )
+
+    render_result = render(result.board, executor, format="svg")
+    assert not render_result.chart_errors, render_result.chart_errors
+
+    narrow = [
+        w
+        for w in render_result.warnings
+        if w.code == "WARN-BAR-BAND-WIDTH-TOO-NARROW" and w.chart == "grouped_chart"
+    ]
+    assert narrow, (
+        "grouped_chart divides 20 categories x 12 series across a real, "
+        "laid-out height, well under the 4px floor per sub-band, but the "
+        f"detector stayed silent: {render_result.warnings}"
+    )
+    assert "12 series" in narrow[0].message
+
+
+def test_no_fire_on_comfortable_grouped_horizontal_bar() -> None:
+    """Same shape, only 2 series: comfortably above the floor, must stay silent."""
+    result = compile(_GROUPED_HORIZONTAL_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(
+        result.board, result.query_registry, _grouped_series_rows(20, 2)
+    )
+
+    render_result = render(result.board, executor, format="svg")
+    assert not render_result.chart_errors, render_result.chart_errors
+
+    codes = {w.code for w in render_result.warnings}
+    assert "WARN-BAR-BAND-WIDTH-TOO-NARROW" not in codes
+
+
+_DENSE_SINGLE_SERIES_HORIZONTAL_YAML = """
+title: Dense single-series horizontal bar
+charts:
+  dense_chart:
+    query: q
+    type: bar
+    height: 80
+    style:
+      orientation: horizontal
+    x: day
+    y: val
+queries:
+  q:
+    sql: SELECT day, val FROM t
+    source: test_source
+"""
+
+
+def test_no_fire_on_dense_single_series_horizontal_bar() -> None:
+    """500 daily categories in an 80px-tall authored slot: no color channel,
+    so there is no yOffset sub-band to collapse. vega_lite.py's own
+    min_height_for_horizontal_bar_categories floor grows the real rendered
+    height well past the authored 80px, exactly the way it would for the
+    live chart, so BAR_BAND_WIDTH_TOO_NARROW must stay silent here (a
+    too-small authored height is WARN-PLOT-HEIGHT-BELOW-MINIMUM's concern,
+    not this detector's).
+    """
+    result = compile(_DENSE_SINGLE_SERIES_HORIZONTAL_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, _daily_rows(500))
+
+    render_result = render(result.board, executor, format="svg")
+    assert not render_result.chart_errors, render_result.chart_errors
+
+    codes = {w.code for w in render_result.warnings}
+    assert "WARN-BAR-BAND-WIDTH-TOO-NARROW" not in codes
+
+
+_LAYOUT_WRAPPER_CLAMPED_HORIZONTAL_YAML = """
+title: Layout-wrapper clamped horizontal bar
+rows:
+  - height: 300
+    rows:
+      - dense_chart
+charts:
+  dense_chart:
+    query: q
+    type: bar
+    style:
+      orientation: horizontal
+    x: day
+    y: val
+queries:
+  q:
+    sql: SELECT day, val FROM t
+    source: test_source
+"""
+
+
+def test_no_fire_on_layout_wrapper_clamped_single_series_horizontal_bar() -> None:
+    """200 daily categories, single series, wrapped in a `rows:` item with
+    its OWN authored `height: 300` -- unlike a chart-root `height:` (see
+    test_no_fire_on_dense_single_series_horizontal_bar), a layout-wrapper
+    height is a ceiling `sizing.py`'s `_clamp_to_authored_ceiling` keeps
+    even when the chart's real content resolves taller, so
+    `ctx.layout_chart_heights` reads the clamped 300px here, not the
+    ~7872px the 200 categories actually need. The chart still paints at
+    ~7872px (WARN-LAYOUT-MIN-EXCEEDS-HEIGHT says so in the same render), so
+    a detector that dropped the floor re-application would report a
+    fabricated ~1.5px band width on bars that actually paint ~39px wide.
+    """
+    result = compile(_LAYOUT_WRAPPER_CLAMPED_HORIZONTAL_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, _daily_rows(200))
+
+    render_result = render(result.board, executor, format="svg")
+    assert not render_result.chart_errors, render_result.chart_errors
+
+    codes = {w.code for w in render_result.warnings}
+    assert "WARN-BAR-BAND-WIDTH-TOO-NARROW" not in codes, render_result.warnings
+    assert "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT" in codes
+
+
+_GENEROUS_HEIGHT_GROUPED_HORIZONTAL_YAML = _GROUPED_HORIZONTAL_YAML.replace(
+    "    type: bar\n    style:",
+    "    type: bar\n    height: 1500\n    style:",
+)
+
+
+def test_no_fire_when_authored_height_clears_the_floor() -> None:
+    """Same 20 categories x 12 series shape as
+    test_bar_band_width_warning_fires_on_grouped_horizontal_bar, but with a
+    generous authored height (1500px): the chart's real laid-out slot is
+    tall enough that the per-series band clears the readability floor, so
+    the detector must stay silent even though the same 12-series shape
+    fires at the default height. Proves ctx.layout_chart_heights (not a
+    fixed authored-shape assumption) is what the verdict actually tracks.
+    """
+    result = compile(_GENEROUS_HEIGHT_GROUPED_HORIZONTAL_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(
+        result.board, result.query_registry, _grouped_series_rows(20, 12)
+    )
+
+    render_result = render(result.board, executor, format="svg")
+    assert not render_result.chart_errors, render_result.chart_errors
+
+    codes = {w.code for w in render_result.warnings}
+    assert "WARN-BAR-BAND-WIDTH-TOO-NARROW" not in codes

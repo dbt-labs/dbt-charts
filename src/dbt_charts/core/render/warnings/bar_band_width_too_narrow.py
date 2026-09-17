@@ -1,13 +1,46 @@
 """Detector: WARN_BAR_BAND_WIDTH_TOO_NARROW — see its `doc` in
 core/diagnostics/codes_render.py for what this fires on.
 
-Detection rule, categorical x (nominal/ordinal — a genuine band scale):
-  chart is a (non-horizontal) ResolvedBarChart AND
-  vega_specs[chart_id].encoding.x.type in {"nominal", "ordinal"} AND
-  the estimated per-bar pixel width < _MIN_BAND_WIDTH_PX, where per-bar width
-  is vega_specs[chart_id].width / (distinct x values), further divided by the
-  series count when the emitted spec subdivides the band with an xOffset
-  channel — see _grouped_series_count below.
+Detection rule, categorical category axis (nominal/ordinal, a genuine band
+scale): chart is a ResolvedBarChart AND the emitted spec's categorical
+channel type is in {"nominal", "ordinal"} AND the estimated per-bar pixel
+width < _MIN_BAND_WIDTH_PX, where per-bar width is the panel's bounding
+pixel extent divided by distinct category values, further divided by the
+series count when the emitted spec subdivides the band with an offset
+channel (see _grouped_series_count below). Orientation changes which VL
+channel names carry this, and, for horizontal, where the bounding extent
+comes from:
+
+* Vertical: category rides VL `x`, subdivides via `xOffset`, and is bounded
+  by the spec's own `width` key (always populated: `renderer.py`'s
+  `_collect_render_warnings` always passes a concrete `width` into
+  `render_resolved_chart`).
+* Horizontal: category rides VL `y` (`chart.x` is still the category
+  *field* on both orientations; orientation flips the VL channel, not the
+  authored field), subdivides via `yOffset`. The bounding extent is NOT the
+  spec's `height` key: `_collect_render_warnings` never passes a `height`
+  into `render_resolved_chart` (only `width`), so `unit.get("height")` is
+  always absent in production and reading it would make this branch dead
+  code. `_horizontal_render_extent` below reads `ctx.layout_chart_heights`
+  instead (`ResolvedLayoutItem.height`), divides it by the row-facet
+  cardinality, and grows the result to the emitter's own single-bar floor
+  (`min_height_for_horizontal_bar_categories`, the same floor
+  `vega_lite.py`'s `effective_height` applies). That growth is usually
+  redundant -- `layout_chart_heights` is normally already past the floor by
+  the time the layout pass records it, because the layout pass's own
+  measure step runs the same floor internally -- EXCEPT when a
+  layout-wrapper `height:` (a `rows:`/`cols:` item's own authored height,
+  not the chart's own) clamps the slot: `sizing.py`'s
+  `_clamp_to_authored_ceiling` keeps that authored ceiling even when the
+  content resolves taller, so `layout_chart_heights` can genuinely read
+  BELOW the floor there. Re-applying the floor here is what keeps this
+  detector's verdict matched to what the chart actually paints in that
+  clamped case, not what a too-small slot claims.
+
+A horizontal bar's categorical axis is always emitted "nominal"
+(`_emit_horizontal` never produces a continuous horizontal-category shape),
+so the continuous branch below is reachable only for a vertical bar's
+x-axis.
 
 Floor rationale: the theme's default bar border stroke is 1px
 (``marks.bar.border.width``) and the fill occupies ``band_width * 0.8``
@@ -44,9 +77,15 @@ from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     raw_wide_series_names,
 )
+from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
+    panel_axis_cardinality,
+)
 from dbt_charts.core.diagnostics import WARN_BAR_BAND_WIDTH_TOO_NARROW, Diagnostic
 from dbt_charts.core.render.chart._types import VLDict
-from dbt_charts.core.render.chart.emitters._cartesian import widest_panel_distinct_count
+from dbt_charts.core.render.chart.emitters._cartesian import (
+    min_height_for_horizontal_bar_categories,
+    widest_panel_distinct_count,
+)
 from dbt_charts.core.render.chart.vl_field_maps import effective_bar_size
 from dbt_charts.core.render.warnings.base import (
     WarningContext,
@@ -73,7 +112,7 @@ _CONTINUOUS_MESSAGE_TEMPLATE = (
 
 
 def _grouped_series_count(
-    unit: VLDict, chart: ResolvedBarChart, rows: list[VLDict]
+    unit: VLDict, chart: ResolvedBarChart, rows: list[VLDict], offset_channel: str
 ) -> int:
     """Bars-per-band from the emitter's own offset decision, or 1 if none.
 
@@ -82,11 +121,13 @@ def _grouped_series_count(
     stack mode, ``overlap: full``, wide-form grouping (``y`` as a measure
     list), and suppressing the offset channel when color is 1:1 with x (that
     would draw one solo sub-band per category, not a genuine group). Reading
-    its emitted ``xOffset`` channel here means this detector reports exactly
-    what renders; re-deriving the same "is this grouped" predicate from
-    resolved fields drifted from that decision in both directions (false
-    positives on colors the emitter doesn't group by, false negatives on
-    wide-form measures it does).
+    its emitted offset channel (``xOffset`` for a vertical bar, ``yOffset``
+    for horizontal — ``offset_channel`` names whichever the caller's
+    orientation emits) here means this detector reports exactly what
+    renders; re-deriving the same "is this grouped" predicate from resolved
+    fields drifted from that decision in both directions (false positives on
+    colors the emitter doesn't group by, false negatives on wide-form
+    measures it does).
 
     Small multiples do NOT get a lower count here: the offset/color scale is
     never one of the channels ``facet_bound_position_channels``
@@ -100,15 +141,20 @@ def _grouped_series_count(
     cardinality in the chart's unpartitioned rows is the correct domain, not
     an overcount.
 
-    The outer x-axis band count is a different story — see ``detect()``'s own
-    check of the emitted ``resolve.scale.x``.
+    The outer category-axis band count is a different story — see
+    ``detect()``'s own check of the emitted ``resolve.scale`` for the same
+    channel.
     """
     encoding = unit.get("encoding")
-    offset = encoding.get("xOffset") if isinstance(encoding, dict) else None
+    offset = encoding.get(offset_channel) if isinstance(encoding, dict) else None
     if not isinstance(offset, dict):
         return 1
-    # A continuous (gradient) offset field isn't a discrete grouping — guard
-    # the same way the x-axis categorical check above does.
+    # A value-mode offset (`{"value": ...}`, no "type" key — e.g. an
+    # endpoint-label anchor or an axis-flush offset) isn't a field-based
+    # discrete grouping — guard the same way the x-axis categorical check
+    # above does. Every field-based offset the emitters produce is already
+    # nominal/ordinal (bar.py clamps the offset channel's own type
+    # regardless of the color channel's).
     if offset.get("type") not in _CATEGORICAL_TYPES:
         return 1
     offset_field = offset.get("field")
@@ -128,6 +174,33 @@ def _grouped_series_count(
     if measures == 0:
         return 1
     return measures
+
+
+def _horizontal_render_extent(
+    ctx: WarningContext, chart_id: str, chart: ResolvedBarChart, distinct: int
+) -> float | None:
+    """The per-panel pixel height a horizontal bar's bands actually divide.
+
+    None when `chart_id`'s laid-out height is zero or absent from
+    `ctx.layout_chart_heights` (a chart the layout pass sized to nothing).
+
+    Divides `ctx.layout_chart_heights` (`ResolvedLayoutItem.height`) by the
+    row-facet cardinality, then grows the result to
+    `min_height_for_horizontal_bar_categories` -- see the module docstring
+    for why that growth matters: a layout-wrapper `height:` can clamp
+    `layout_chart_heights` below the floor even though the chart's real
+    painted height is not clamped, and this `max()` is what recovers the
+    real painted height in exactly that case.
+    """
+    layout_height = ctx.layout_chart_heights.get(chart_id)
+    if not isinstance(layout_height, int | float) or layout_height <= 0:
+        return None
+    row_field = chart.multiples.rows if chart.multiples is not None else None
+    row_cardinality = panel_axis_cardinality(chart.panel_axes, row_field)
+    min_height = min_height_for_horizontal_bar_categories(
+        distinct, chart.style.axis_x, effective_bar_size(chart.style.mark)
+    )
+    return max(layout_height / row_cardinality, min_height)
 
 
 def _detect_continuous_overlap(
@@ -216,18 +289,25 @@ def _detect_continuous_overlap(
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
-    """Return one Diagnostic per bar chart whose bars are too wide for their x spacing."""
+    """Return one Diagnostic per bar chart whose bars are too narrow for their
+    category spacing (vertical and horizontal orientation alike; see the
+    module docstring for how orientation maps to VL channel names and, for
+    horizontal, where the bounding extent comes from)."""
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.board_spec.charts.items():
         if not isinstance(chart, ResolvedBarChart):
             continue
-        if chart.orientation == "horizontal":
-            continue
         if chart.x is None:
             continue
         if chart_id not in ctx.vega_specs or chart_id not in ctx.chart_results:
             continue
+
+        is_horizontal = chart.orientation == "horizontal"
+        # A vertical bar's category rides VL x and subdivides via xOffset; a
+        # horizontal bar flips both to y/yOffset. See the module docstring.
+        cat_channel = "y" if is_horizontal else "x"
+        offset_channel = "yOffset" if is_horizontal else "xOffset"
 
         # Small multiples wrap the unit spec (encoding, per-panel width) under
         # "spec" — the facet root only carries facet/config/data. Unwrap it so
@@ -235,41 +315,46 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         spec = ctx.vega_specs[chart_id]
         unit = spec["spec"] if "facet" in spec else spec
 
-        x_type = encoding_channel_type(unit, "x")
-        render_width = unit.get("width")
-        if not isinstance(render_width, int | float) or render_width <= 0:
-            continue
-
+        cat_type = encoding_channel_type(unit, cat_channel)
         x_field: str = chart.x
         rows = ctx.chart_results[chart_id]
 
-        if x_type == "quantitative":
-            # A histogram's x is quantitative but BINNED: _emit_histogram sizes
-            # its mark as a band fraction of the bin span and installs no
-            # scale.padding, so neither premise of the continuous ladder holds.
-            # Running it over the raw, unbinned rows reports the row spacing as
-            # a bar gap and the row count as a bar count — every number in the
-            # message fictional. Same carve-out, same reason, as the bucketed
-            # -axis detector's own histogram guard.
-            if chart.chart_type == "histogram":
+        render_width: float | None = None
+        if not is_horizontal:
+            candidate = unit.get("width")
+            if not isinstance(candidate, int | float) or candidate <= 0:
                 continue
-            diagnostic = _detect_continuous_overlap(
-                chart_id, chart, render_width, rows, x_field
-            )
-            if diagnostic is not None:
-                warnings.append(diagnostic)
-            continue
-        if x_type not in _CATEGORICAL_TYPES:
+            render_width = candidate
+
+            if cat_type == "quantitative":
+                # A histogram's x is quantitative but BINNED: _emit_histogram
+                # sizes its mark as a band fraction of the bin span and
+                # installs no scale.padding, so neither premise of the
+                # continuous ladder holds. Running it over the raw, unbinned
+                # rows reports the row spacing as a bar gap and the row count
+                # as a bar count — every number in the message fictional.
+                # Same carve-out, same reason, as the bucketed-axis
+                # detector's own histogram guard.
+                if chart.chart_type == "histogram":
+                    continue
+                diagnostic = _detect_continuous_overlap(
+                    chart_id, chart, render_width, rows, x_field
+                )
+                if diagnostic is not None:
+                    warnings.append(diagnostic)
+                continue
+        if cat_type not in _CATEGORICAL_TYPES:
             continue
 
         whole_dataset_distinct = len({row[x_field] for row in rows if x_field in row})
         # facet_bound_position_channels (emitters/_cartesian.py) can resolve
-        # x independently for a panel holding any proper subset of the x
-        # domain, not only the single-value case a name-matched facet field
-        # used to guarantee by construction — read the WIDEST panel's own
-        # count, not the whole-dataset union `rows` would give (and not a
-        # flat 1, which only ever held for that one degenerate shape).
-        if facet_channel_is_independent(spec, "x"):
+        # the category channel independently for a panel holding any proper
+        # subset of its domain, not only the single-value case a name-matched
+        # facet field used to guarantee by construction — read the WIDEST
+        # panel's own count, not the whole-dataset union `rows` would give
+        # (and not a flat 1, which only ever held for that one degenerate
+        # shape).
+        if facet_channel_is_independent(spec, cat_channel):
             distinct = (
                 widest_panel_distinct_count(x_field, chart.panel_axes, rows)
                 or whole_dataset_distinct
@@ -279,8 +364,18 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         if distinct == 0:
             continue
 
-        band_width = render_width / distinct
-        series = _grouped_series_count(unit, chart, rows)
+        if is_horizontal:
+            render_extent = _horizontal_render_extent(ctx, chart_id, chart, distinct)
+            if render_extent is None:
+                continue
+        else:
+            assert render_width is not None, (
+                "render_width resolved above for every vertical, non-continuous branch"
+            )
+            render_extent = render_width
+
+        band_width = render_extent / distinct
+        series = _grouped_series_count(unit, chart, rows, offset_channel)
         bar_width = band_width / series
         if bar_width >= _MIN_BAND_WIDTH_PX:
             continue
@@ -295,7 +390,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                     chart_id=chart_id,
                     distinct=distinct,
                     series=series,
-                    render_width=render_width,
+                    render_width=render_extent,
                     bar_width=bar_width,
                     min_band_width=_MIN_BAND_WIDTH_PX,
                 ),

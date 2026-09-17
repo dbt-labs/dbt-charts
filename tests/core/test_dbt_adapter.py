@@ -686,8 +686,9 @@ class TestParameterizedFilterHelper:
         """Binding a value needs the engine's literal grammar, unknown here.
 
         `get_dialect` answers postgres for anything unregistered, and postgres
-        leaves backslashes alone — the wrong answer on, say, clickhouse, and
-        wrong in the direction that puts part of a value in code position.
+        leaves backslashes alone — the wrong answer on, say, SingleStore (MySQL
+        grammar), and wrong in the direction that puts part of a value in code
+        position.
         """
         adapter = DbtAdapter(
             project=in_memory_project(
@@ -697,7 +698,7 @@ class TestParameterizedFilterHelper:
             target_name="dev",
         )
         adapter._adapter = MagicMock()
-        adapter._dialect = "clickhouse"
+        adapter._dialect = "singlestore"
 
         result = adapter._execute(
             SqlQuery(sql="SELECT {{ filter('region', region) }}", source="s"),
@@ -705,7 +706,7 @@ class TestParameterizedFilterHelper:
         )
 
         assert result.error is not None
-        assert "clickhouse" in result.error
+        assert "singlestore" in result.error
 
     @pytest.mark.parametrize(
         "literal", ["'$1,000+'", "'Really?'", "'https://x.test/a?b=1'"]

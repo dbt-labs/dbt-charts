@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'A grouped bar (style.stack: none) whose color field is numeric or boolean now renders instead of raising ERR-CHART-PAINTED-NO-MARKS; the grouped-bar sub-band channel no longer inherits a continuous scale from the color channel.'
+time: 2026-09-16T12:03:18.756682-07:00
+custom:
+    DbtChartsIssue: "19"

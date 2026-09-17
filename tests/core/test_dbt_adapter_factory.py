@@ -929,3 +929,71 @@ class TestReadsOutsideATransaction:
         RedshiftSourceConfig(
             type="redshift", host="h", dbname="db", user="u", password="p"
         )
+
+
+class TestClickHouseAdapter:
+    """ClickHouse wires through the generic dbt-clickhouse seam (dbt-clickhouse installed).
+
+    Offline: adapter construction opens no socket — dbt-clickhouse connects on
+    the first connection_named/execute — so build_adapter with
+    register_macros=False constructs the real ClickHouseAdapter and lets us
+    assert on the credentials the factory selected, with no live server.
+    """
+
+    _SOURCE = {
+        "type": "clickhouse",
+        "host": "clickhouse.example.com",
+        "port": 8443,
+        "user": "reader",
+        "password": "secret",
+        "schema": "analytics",
+        "secure": True,
+    }
+
+    def test_map_entry_names_dbt_clickhouse(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            _ADAPTER_TYPE_MAP,
+        )
+
+        assert _ADAPTER_TYPE_MAP["clickhouse"] == (
+            "dbt.adapters.clickhouse",
+            "ClickHouseAdapter",
+            "ClickHouseCredentials",
+        )
+
+    def test_build_adapter_selects_clickhouse_credentials(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(self._SOURCE, register_macros=False)
+        creds = adapter.config.credentials
+        assert type(creds).__name__ == "ClickHouseCredentials"
+        assert creds.type == "clickhouse"
+        assert creds.host == "clickhouse.example.com"
+        assert creds.schema == "analytics"
+        assert creds.secure is True
+
+    def test_exchange_probe_is_off_by_default(self) -> None:
+        """dbt-clickhouse's connect-time EXCHANGE TABLES probe creates and drops
+        scratch tables — a write dbt charts never needs and a read-only grant
+        refuses. Off unless the author asked for it."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(self._SOURCE, register_macros=False)
+        assert adapter.config.credentials.check_exchange is False
+
+    def test_an_authored_exchange_probe_is_kept(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(
+            {**self._SOURCE, "check_exchange": True}, register_macros=False
+        )
+        assert adapter.config.credentials.check_exchange is True
+
+    def test_profile_extras_do_not_break_construction(self) -> None:
+        """A dbt_profile target carries threads and the like; from_dict drops them."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(
+            {**self._SOURCE, "threads": 4, "driver": "http"}, register_macros=False
+        )
+        assert adapter.config.credentials.driver == "http"

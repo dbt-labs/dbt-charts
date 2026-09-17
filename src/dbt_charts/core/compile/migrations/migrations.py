@@ -94,7 +94,7 @@ class Move:
     # old_path == new_path is a legal, distinct shape: a value-only remap on a
     # key that never disappears from any grammar (dbt charts' `theme:` sugar,
     # whose legal values narrowed without the key itself being renamed away).
-    # `_validate` requires a value_map on that shape -- an identity Move with
+    # `validate_declarations` requires a value_map on that shape -- an identity Move with
     # none would be a silent no-op.
     value_map: Mapping[MappedScalar, MappedScalar] | None = dataclasses.field(
         default=None, hash=False
@@ -124,7 +124,7 @@ class Deletion:
     # `ConditionalMove.chart_type`'s scoping (`_declares_chart_type`), but for
     # a deletion instead of a relocation. Threaded through both walks
     # (`_delete_tails_recursive`, `_deletion_would_fire`) and
-    # `MigrationRegistry._validate`'s existence checks -- see each for how the
+    # `validate_declarations`'s existence checks -- see each for how the
     # scoping is enforced there. The text rewriter needs no scope of its own:
     # it replays the paths the walk struck.
     chart_type: str | None = None
@@ -159,7 +159,14 @@ class ConditionalMove:
 
 
 class MigrationRegistry:
-    """Validated adjacent transitions assembled from tail-rename tables."""
+    """Adjacent transitions assembled from tail-rename tables.
+
+    Construction is total: it indexes the declarations it is handed and checks
+    nothing. Whether those declarations are *coherent* against ``catalog`` is
+    fixed by the shipped code, so the check for it is
+    ``validate_declarations`` in ``tests/core/compile/_migration_declarations``,
+    run by CI rather than by every process that loads a board.
+    """
 
     def __init__(
         self,
@@ -172,7 +179,7 @@ class MigrationRegistry:
         self.moves = tuple(moves)
         self.deletions = tuple(deletions)
         self.conditional_moves = tuple(conditional_moves)
-        self._catalog = catalog
+        self.catalog = catalog
         self._moves_by_source: dict[str, tuple[Move, ...]] = {}
         for move in self.moves:
             moves_for_schema = self._moves_by_source.setdefault(move.source_schema, ())
@@ -195,7 +202,6 @@ class MigrationRegistry:
                 *existing,
                 cond_move,
             )
-        self._validate()
 
     def transition_from(self, identifier: str) -> tuple[Move, ...]:
         if identifier not in self._moves_by_source:
@@ -211,153 +217,6 @@ class MigrationRegistry:
         if identifier not in self._cond_moves_by_source:
             return ()
         return self._cond_moves_by_source[identifier]
-
-    def _validate(self) -> None:
-        versions = self._catalog.versions
-        positions = {version: index for index, version in enumerate(versions)}
-        for move in self.moves:
-            source_index = positions.get(move.source_schema)
-            if source_index is None:
-                raise MigrationError(
-                    f"Move {_format_path(move.old_path)!r} → "
-                    f"{_format_path(move.new_path)!r} references a schema "
-                    "that is not retained"
-                )
-            target_index = positions.get(move.target_schema)
-            if target_index is None:
-                raise MigrationError(
-                    f"Move {_format_path(move.old_path)!r} → "
-                    f"{_format_path(move.new_path)!r} references a schema "
-                    "that is not retained"
-                )
-            if target_index != source_index - 1:
-                raise MigrationError(
-                    f"Move {_format_path(move.old_path)!r} → "
-                    f"{_format_path(move.new_path)!r} must target the "
-                    "immediately succeeding schema"
-                )
-            target_schema_obj = self._catalog.schema_for(move.target_schema)
-            if not _schema_path_exists(target_schema_obj, move.new_path):
-                raise MigrationError(
-                    f"Move destination path {_format_path(move.new_path)!r} is absent from "
-                    f"{move.target_schema}"
-                )
-            if not _schema_path_exists(
-                self._catalog.schema_for(move.source_schema), move.old_path
-            ):
-                raise MigrationError(
-                    f"Move source path {_format_path(move.old_path)!r} is absent from "
-                    f"{move.source_schema}"
-                )
-            if move.old_path == move.new_path:
-                if move.value_map is None:
-                    raise MigrationError(
-                        f"Move {_format_path(move.old_path)!r} has old_path == "
-                        "new_path with no value_map; it would rewrite nothing. "
-                        "An identity-path Move only makes sense as a value remap "
-                        "on a key that survives the transition unrenamed -- give "
-                        "it a value_map, or remove the declaration."
-                    )
-            elif _schema_path_exists(target_schema_obj, move.old_path):
-                raise MigrationError(
-                    f"Move source path {_format_path(move.old_path)!r} still exists in "
-                    f"{move.target_schema!r}; the field was not renamed away in this "
-                    "transition. Recognition reads a surviving source path as proof "
-                    "that a document predates the transition, so this would migrate "
-                    "current documents. (Not checked when old_path == new_path: a "
-                    "value-only remap on a key that survives unrenamed is exactly "
-                    "the identity-path shape, not a misfire.)"
-                )
-        for deletion in self.deletions:
-            source_index = positions.get(deletion.source_schema)
-            if source_index is None:
-                raise MigrationError(
-                    f"Deletion at {_format_path(deletion.path)!r} references a schema "
-                    "that is not retained"
-                )
-            target_index = positions.get(deletion.target_schema)
-            if target_index is None:
-                raise MigrationError(
-                    f"Deletion at {_format_path(deletion.path)!r} references a schema "
-                    "that is not retained"
-                )
-            if target_index != source_index - 1:
-                raise MigrationError(
-                    f"Deletion at {_format_path(deletion.path)!r} must target the "
-                    "immediately succeeding schema"
-                )
-            target_schema_obj = self._catalog.schema_for(deletion.target_schema)
-            source_schema_obj = self._catalog.schema_for(deletion.source_schema)
-            if not _schema_has_tail(source_schema_obj, deletion.path):
-                raise MigrationError(
-                    f"Deletion source path {_format_path(deletion.path)!r} is absent from "
-                    f"{deletion.source_schema}"
-                )
-            target_still_has_it = (
-                _schema_has_tail_for_chart_type(
-                    target_schema_obj, deletion.path, deletion.chart_type
-                )
-                if deletion.chart_type is not None
-                else _schema_has_tail(target_schema_obj, deletion.path)
-            )
-            # A tail that survives elsewhere can still be genuinely retired at
-            # the document root: the board's own style block lost `color` while
-            # every chart family kept its own. The anchored walk is the proof,
-            # and `_live_declares_tail` confines the firing to the positions
-            # that actually lost it. Not an escape a chart-scoped deletion may
-            # take -- a chart is never at the root, so the root's own retirement
-            # says nothing about the family this one names.
-            retired_at_root = (
-                deletion.chart_type is None
-                and _schema_path_exists(source_schema_obj, deletion.path)
-                and not _schema_path_exists(target_schema_obj, deletion.path)
-            )
-            if target_still_has_it and not retired_at_root:
-                scope = (
-                    f" on chart_type={deletion.chart_type!r}"
-                    if deletion.chart_type is not None
-                    else ""
-                )
-                raise MigrationError(
-                    f"Deletion path {_format_path(deletion.path)!r} still exists in "
-                    f"{deletion.target_schema!r}{scope}, at the document root "
-                    "included; the field was not removed in this transition — use a "
-                    "Move if the field was renamed, or remove the Deletion if the "
-                    "field is still valid"
-                )
-        for cond_move in self.conditional_moves:
-            source_index = positions.get(cond_move.source_schema)
-            if source_index is None:
-                raise MigrationError(
-                    f"ConditionalMove for chart_type={cond_move.chart_type!r} "
-                    f"at {_format_path(cond_move.old_tail)!r} references a schema "
-                    "that is not retained"
-                )
-            target_index = positions.get(cond_move.target_schema)
-            if target_index is None:
-                raise MigrationError(
-                    f"ConditionalMove for chart_type={cond_move.chart_type!r} "
-                    f"at {_format_path(cond_move.old_tail)!r} references a schema "
-                    "that is not retained"
-                )
-            if target_index != source_index - 1:
-                raise MigrationError(
-                    f"ConditionalMove at {_format_path(cond_move.old_tail)!r} "
-                    "must target the immediately succeeding schema"
-                )
-            target_schema_obj = self._catalog.schema_for(cond_move.target_schema)
-            if not _schema_has_tail(
-                self._catalog.schema_for(cond_move.source_schema), cond_move.old_tail
-            ):
-                raise MigrationError(
-                    f"ConditionalMove source tail {_format_path(cond_move.old_tail)!r} "
-                    f"is absent from {cond_move.source_schema}"
-                )
-            if not _schema_has_tail(target_schema_obj, cond_move.new_tail):
-                raise MigrationError(
-                    f"ConditionalMove destination tail {_format_path(cond_move.new_tail)!r} "
-                    f"is absent from {cond_move.target_schema}"
-                )
 
 
 def suffix_rename_moves(
@@ -618,7 +477,7 @@ def migrate_board_yaml_text(yaml_text: str) -> str:
 
 @cache
 def _board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
-    """Load and validate the package's immutable migration metadata once.
+    """Load the package's immutable migration metadata once.
 
     Walks catalog.entries newest-to-oldest, skipping the oldest (predecessor
     is None). For each remaining entry, imports the corresponding version module
@@ -636,26 +495,18 @@ def _board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
     pending yet, same as any other boundary.
 
     ``catalog.current_schema`` is a fully computed live schema (see
-    ``YamlSchemaCatalog``), generated the same way as any frozen snapshot —
-    so a pending ``Move`` validates its destination path against it exactly
-    as a pending ``Deletion`` validates the absence of its path against it,
-    and a pending ``ConditionalMove`` validates both tails the same way.
+    ``YamlSchemaCatalog``), generated the same way as any frozen snapshot, so
+    the DEV boundary's declarations resolve against it exactly as a frozen
+    boundary's resolve against a snapshot.
 
-    This function is itself ``@cache``d, so its ``finally`` clause runs at
-    most once per process -- clearing here only accounts for the entries
-    this one build's ``_schema_path_exists``/``_schema_has_tail`` calls
-    (module ``moves()``/``deletions()`` calls plus ``MigrationRegistry``'s
-    own ``_validate``) leave behind. ``_schema_branches_cached`` is reached
-    again later, at document-migration time, via ``_declared_names``/
-    ``_declares_tail``/``_child_positions``, and those entries are never
-    cleared -- so this is not the boundary that keeps the cache from
-    persisting for the life of the process. Retention stays bounded anyway,
-    same reasoning as ``suffix_rename_moves`` clearing
-    ``_relative_field_paths`` on return: the branch space is finite (this
-    one build alone produces ~12.4k ``(schema, node, seen)`` triples / ~4 MB
-    that the registry no longer needs once it is returned), so clearing here
-    just keeps that one-time cost from sitting unused in memory rather than
-    bounding total growth.
+    The ``finally`` clause drops only what this build left in
+    ``_schema_branches_cached`` (~1.7k entries, reached through the version
+    modules' own ``moves()`` via ``suffix_rename_moves``). It does not bound
+    that cache. Document migration re-enters it through the callers listed on
+    ``_schema_branches`` and never clears it, and one of them
+    (``_plausible_positions`` → ``_without_composition``) hands it a fresh
+    dict per call, so those entries accumulate per board migrated -- measured
+    at ~+59 each. That is a separate leak, untouched here.
     """
     try:
         return _build_board_migration_context()
@@ -1168,7 +1019,7 @@ def _transition_applies(
     A hit is evidence the document predates the transition only while each kind
     of declaration cannot fire on a current document, and the three get there
     differently. ``Move`` and ``Deletion`` are checked structurally: their source
-    path must be gone from the target grammar (``MigrationRegistry._validate``).
+    path must be gone from the target grammar (``validate_declarations``).
     ``ConditionalMove`` is not, and cannot be — ``("style", "tone")`` survives
     into the live grammar on callout charts. What separates it is the
     ``chart_type`` scoping in ``_conditional_move_would_fire``: it fires only
@@ -2164,7 +2015,7 @@ def move_source_locations(
 
     A fourth gate applies only to an identity-path Move (``old_path ==
     new_path``, e.g. dbt charts' ``theme:`` sugar): the structural precondition
-    every other Move relies on for recognition (``MigrationRegistry._validate``
+    every other Move relies on for recognition (``validate_declarations``
     requires the source path be absent from the target grammar) does not hold
     for it by construction -- the key survives every transition unrenamed. Key
     presence is therefore not evidence the document is old; the value is.
@@ -2571,11 +2422,13 @@ def _schema_branches(
     A thin wrapper around ``_schema_branches_cached``, which does the real
     work and is what carries the ``@cache`` -- ``schema``/``node`` are plain
     dicts and can't be cache keys themselves, so this wraps each in ``_ById``
-    (hashable by identity) before delegating. ``_schema_path_exists`` and
-    ``_schema_has_tail`` call this once per path segment for every candidate
-    they check, and those paths share long common prefixes (the same
-    board/chart/style nodes, over and over), so the same
-    ``(schema, node, seen)`` triple recurs constantly within one build.
+    (hashable by identity) before delegating. Both phases call this once per
+    path segment for every candidate they check -- ``_schema_path_exists`` at
+    registry-build time, ``_declared_names``/``_declares_tail``/
+    ``_declares_chart_type``/``_child_positions``/``_item_positions`` at
+    document-migration time -- and those paths share long common prefixes (the
+    same board/chart/style nodes, over and over), so the same
+    ``(schema, node, seen)`` triple recurs constantly.
     """
     return _schema_branches_cached(_ById(schema), _ById(node), seen)
 
@@ -2619,133 +2472,6 @@ def _resolve_ref(root: JsonObject, node: JsonObject) -> JsonObject:
             return node
         target = target[part]
     return target if isinstance(target, dict) else node
-
-
-def _schema_has_tail(schema: JsonObject, tail: YamlKeyPath) -> bool:
-    """True iff tail appears at any position in the JSON schema.
-
-    Walks properties, anyOf, additionalProperties, and items, following $ref
-    pointers. The seen-id guard stops cycles including ``$ref: "#"``
-    self-references (the board schema's nested-board recursion), so every
-    reachable schema node is visited exactly once.  ``schema`` is always the
-    top-level root so $ref resolution stays correct when visiting child nodes.
-    """
-    seen: set[int] = set()
-
-    def tail_exists_from(start: JsonObject) -> bool:
-        """True iff tail is a property chain reachable from start."""
-        nodes: list[JsonObject] = [start]
-        for part in tail:
-            next_nodes: list[JsonObject] = []
-            for node in nodes:
-                for branch in _schema_branches(schema, node):
-                    props = branch.get("properties")
-                    child = props.get(part) if isinstance(props, dict) else None
-                    if isinstance(child, dict):
-                        next_nodes.append(child)
-            nodes = next_nodes
-            if not nodes:
-                return False
-        return True
-
-    def walk(node: JsonObject) -> bool:
-        resolved = _resolve_ref(schema, node)
-        rid = id(resolved)
-        if rid in seen:
-            return False
-        seen.add(rid)
-        if tail_exists_from(resolved):
-            return True
-        branches = resolved.get("anyOf")
-        if isinstance(branches, list):
-            return any(isinstance(b, dict) and walk(b) for b in branches)
-        props = resolved.get("properties")
-        if isinstance(props, dict):
-            for child in props.values():
-                if isinstance(child, dict) and walk(child):
-                    return True
-        add_props = resolved.get("additionalProperties")
-        if isinstance(add_props, dict) and walk(add_props):
-            return True
-        items_node = resolved.get("items")
-        return isinstance(items_node, dict) and walk(items_node)
-
-    return walk(schema)
-
-
-def _schema_has_tail_for_chart_type(
-    schema: JsonObject, tail: YamlKeyPath, chart_type: str
-) -> bool:
-    """True iff *tail* is declared on the branch discriminated as *chart_type*.
-
-    ``_schema_has_tail`` asks "does this tail exist anywhere in the schema" —
-    too coarse for a ``chart_type``-scoped ``Deletion``: once a family loses a
-    field but a sibling family (e.g. ``table``/``kpi``) keeps it, the plain
-    global check still finds it via the sibling and wrongly reports the
-    deletion as not-yet-applied.
-
-    The gate and the tail search must run on the *same single branch* — a
-    naive version that gates on "does any branch in this anyOf group declare
-    chart_type" and then searches "does any branch in this SAME group have
-    the tail" independently is wrong: with bar/table siblings in one anyOf,
-    that reports true whenever *either* sibling matches its own half, so a
-    bar-scoped deletion reads as unsatisfied forever because table (a
-    different branch) still has the field. ``tail_exists_from`` therefore
-    starts from one already-chart_type-confirmed branch and only expands
-    *that branch's own* sub-structure for the remaining segments, never
-    merging back into its unrelated siblings.
-    """
-    seen: set[int] = set()
-
-    def branch_declares_chart_type(branch: JsonObject) -> bool:
-        properties = branch.get("properties")
-        if not isinstance(properties, dict):
-            return False
-        type_schema = properties.get("type")
-        if not isinstance(type_schema, dict):
-            return False
-        enum = type_schema.get("enum")
-        return isinstance(enum, list) and chart_type in enum
-
-    def tail_exists_from(start: JsonObject) -> bool:
-        nodes: list[JsonObject] = [start]
-        for part in tail:
-            next_nodes: list[JsonObject] = []
-            for node in nodes:
-                properties = node.get("properties")
-                child = properties.get(part) if isinstance(properties, dict) else None
-                if isinstance(child, dict):
-                    next_nodes.extend(_schema_branches(schema, child))
-            nodes = next_nodes
-            if not nodes:
-                return False
-        return True
-
-    def walk(node: JsonObject) -> bool:
-        resolved = _resolve_ref(schema, node)
-        rid = id(resolved)
-        if rid in seen:
-            return False
-        seen.add(rid)
-        for branch in _schema_branches(schema, resolved):
-            if branch_declares_chart_type(branch) and tail_exists_from(branch):
-                return True
-        branches = resolved.get("anyOf")
-        if isinstance(branches, list):
-            if any(isinstance(b, dict) and walk(b) for b in branches):
-                return True
-        props = resolved.get("properties")
-        if isinstance(props, dict):
-            for child in props.values():
-                if isinstance(child, dict) and walk(child):
-                    return True
-        add_props = resolved.get("additionalProperties")
-        if isinstance(add_props, dict) and walk(add_props):
-            return True
-        items_node = resolved.get("items")
-        return isinstance(items_node, dict) and walk(items_node)
-
-    return walk(schema)
 
 
 # Matches blank lines and comment-only lines; both are transparent to the

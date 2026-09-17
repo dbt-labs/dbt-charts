@@ -1,10 +1,11 @@
 """Tests for the BAR_BAND_WIDTH_TOO_NARROW render-warning detector.
 
-Detection rule: fires on a (vertical) bar chart when the estimated per-band
-pixel width (the actual rendered spec width / distinct x categories) drops
-below the readability floor — the scenario is daily-granularity bars where
-hundreds of bands are squeezed into one chart width and the fill disappears
-under the bar's own stroke, leaving "ghost bands".
+Detection rule: fires on a bar chart when the estimated per-band pixel width
+(the actual rendered spec extent / distinct category values) drops below the
+readability floor — the scenario is daily-granularity bars where hundreds of
+bands are squeezed into one chart's bounding dimension (width for a vertical
+bar, height for horizontal) and the fill disappears under the bar's own
+stroke, leaving "ghost bands".
 """
 
 from __future__ import annotations
@@ -20,6 +21,10 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 from dbt_charts.core.diagnostics import WARN_BAR_BAND_WIDTH_TOO_NARROW, Diagnostic
+from dbt_charts.core.render.chart.emitters._cartesian import (
+    min_height_for_horizontal_bar_categories,
+)
+from dbt_charts.core.render.chart.vl_field_maps import effective_bar_size
 from dbt_charts.core.render.warnings import (
     WarningContext,
     bar_band_width_too_narrow as detector,
@@ -97,23 +102,160 @@ def test_fires_just_below_floor_boundary() -> None:
     assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
 
 
-def test_no_fire_on_horizontal_bar() -> None:
-    """Horizontal bars band along height, not width — out of scope for this detector."""
+def _horizontal_ctx(
+    chart: Any,
+    rows: list[dict[str, Any]],
+    *,
+    layout_height: float | None,
+    offset_field: str | None = None,
+    offset_type: str = "nominal",
+    facet_row_field: str | None = None,
+) -> WarningContext:
+    """Build a ctx matching what the real warning-detection render pass
+    actually produces for a horizontal bar: the vega_specs entry carries the
+    category/offset encoding (real production populates these; verified by
+    ``test_bar_band_width_warning_fires_on_grouped_horizontal_bar`` in
+    ``tests/core/render/test_renderer.py``) but NO top-level ``height`` key
+    (the detection-pass render call never passes one -- see the module
+    docstring). The real extent instead comes from ``layout_chart_heights``,
+    set here directly rather than through the vega spec.
+
+    ``layout_height=None`` omits the chart's entry from
+    ``layout_chart_heights`` entirely.
+
+    ``facet_row_field`` wraps the unit spec in a ``{"facet": {"row": ...}}``
+    root -- a horizontal bar's category rides VL y, so ROW faceting (not
+    column) is what can narrow it, the mirror of a vertical bar's category
+    on VL x narrowing under COLUMN faceting (``_grouped_ctx``'s
+    ``facet_field``).
+    """
+    resolved = make_test_resolved_chart(chart, rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    encoding: dict[str, Any] = {"y": {"type": "nominal"}}
+    if offset_field is not None:
+        encoding["yOffset"] = {"field": offset_field, "type": offset_type}
+    unit = {"encoding": encoding, "width": 600}
+    spec = (
+        {"facet": {"row": {"field": facet_row_field}}, "spec": unit}
+        if facet_row_field
+        else unit
+    )
+    return WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows},
+        vega_specs={resolved.id: spec},
+        layout_chart_heights=(
+            {} if layout_height is None else {resolved.id: layout_height}
+        ),
+    )
+
+
+def test_no_fire_when_layout_height_is_unavailable() -> None:
+    """A chart id absent from ctx.layout_chart_heights must not fire -- there
+    is no real extent to judge, and this is a diagnostic pass, never the
+    thing that raises on missing layout data.
+    """
     chart = BarChart(
         id="c1",
         type="bar",
         query_name="q",
         x="day",
         y="val",
-        width=580,
-        # model_construct, not the normal constructor: BarChartStylePatch's
-        # TYPE_CHECKING stub aliases the full (non-optional) BarChartStyle, so
-        # pyright demands every theme field here in this strictly-swept dir.
-        # model_construct's **values: Any signature sidesteps that while
-        # producing the identical runtime patch (all unset fields -> None).
         style=BarChartStylePatch.model_construct(orientation="horizontal"),
     )
-    assert detector.detect(_make_ctx(chart, _rows(500))) == []
+    ctx = _horizontal_ctx(chart, _rows(500), layout_height=None)
+    assert detector.detect(ctx) == []
+
+
+def test_no_fire_on_comfortable_horizontal_bar() -> None:
+    """Horizontal mirror of test_no_fire_on_normal_chart: 12 bars at a
+    generous layout height is nowhere near the floor."""
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="day",
+        y="val",
+        style=BarChartStylePatch.model_construct(orientation="horizontal"),
+    )
+    ctx = _horizontal_ctx(chart, _rows(12), layout_height=600.0)
+    assert detector.detect(ctx) == []
+
+
+def test_no_fire_when_the_laid_out_height_clears_the_floor() -> None:
+    """20 categories x 12 series: the emitter's own floor alone
+    (min_height_for_horizontal_bar_categories(20, ...)) gives ~3.55px/bar
+    and would fire, but a laid-out height comfortably taller than that
+    floor means the real per-series band clears the readability floor.
+    Dropping the laid-out-height operand (using the floor alone) would
+    fire a false positive here.
+    """
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="month",
+        y="val",
+        color="series",
+        style=BarChartStylePatch.model_construct(orientation="horizontal"),
+    )
+    n_x, n_series = 20, 12
+    rows = _grouped_rows(n_x=n_x, n_series=n_series)
+    resolved = make_test_resolved_chart(chart, rows)
+    assert isinstance(resolved, ResolvedBarChart)
+
+    min_height = min_height_for_horizontal_bar_categories(
+        n_x, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    assert min_height / n_x / n_series < 4.0, (
+        "test setup must actually cross the floor on the floor side, or "
+        "this cannot discriminate the layout term from the floor term"
+    )
+    layout_height = min_height * 2
+    assert layout_height / n_x / n_series >= 4.0, (
+        "test setup must clear the floor once laid-out height is used, or "
+        "this cannot discriminate the layout term from the floor term"
+    )
+
+    ctx = _horizontal_ctx(
+        chart, rows, layout_height=layout_height, offset_field="series"
+    )
+    assert detector.detect(ctx) == []
+
+
+def test_no_fire_when_a_layout_wrapper_height_clamp_undercounts_the_real_render() -> (
+    None
+):
+    """A layout-wrapper `height:` can clamp `ctx.layout_chart_heights`
+    below the floor (see the module docstring for the mechanism); this
+    pins that a below-floor `layout_height` alone does not fire. Real
+    end-to-end reproduction of this exact state:
+    test_no_fire_on_layout_wrapper_clamped_single_series_horizontal_bar in
+    tests/core/render/test_renderer.py.
+    """
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="day",
+        y="val",
+        style=BarChartStylePatch.model_construct(orientation="horizontal"),
+    )
+    n = 200
+    rows = _rows(n)
+    resolved = make_test_resolved_chart(chart, rows)
+    assert isinstance(resolved, ResolvedBarChart)
+    min_height = min_height_for_horizontal_bar_categories(
+        n, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    layout_height = 300.0
+    assert layout_height < min_height, (
+        "test setup must feed a layout_height genuinely below the floor, "
+        "or this cannot exercise the clamp state at all"
+    )
+
+    ctx = _horizontal_ctx(chart, rows, layout_height=layout_height)
+    assert detector.detect(ctx) == []
 
 
 def test_no_fire_on_temporal_x_encoding() -> None:
@@ -176,8 +318,13 @@ def _grouped_ctx(
     facet_field: str | None = None,
 ) -> WarningContext:
     """Build a ctx whose vega_specs mirrors what render_resolved_chart would
-    actually emit for a grouped bar: an xOffset channel present only when the
-    band is genuinely subdivided (offset_field is not None).
+    actually emit for a grouped (vertical) bar: an xOffset channel present
+    only when the band is genuinely subdivided (offset_field is not None).
+
+    Vertical only -- a horizontal bar's real extent comes from
+    ``ctx.layout_chart_heights``, not a spec key (see the module docstring
+    in ``bar_band_width_too_narrow.py``); its own fixture builder is
+    ``_horizontal_ctx`` above.
     """
     resolved = make_test_resolved_chart(chart, rows)
     board = make_test_resolved_board(charts={resolved.id: resolved})
@@ -226,6 +373,49 @@ def test_fires_on_grouped_bar_subdivided_below_floor() -> None:
     assert "6 series" in warnings[0].message
 
 
+def test_fires_on_grouped_bar_with_numeric_color_subdivided_below_floor() -> None:
+    """Same shape as the string-color case above, but the grouping field is
+    numeric — proven against a real emitted spec, not a hand-built one.
+
+    A numeric/boolean color's ``xOffset`` must still emit a nominal/ordinal
+    VL type (not ``quantitative``): this detector's own categorical guard
+    treats a non-categorical offset the same as "no discrete grouping", so a
+    quantitative offset would silently undercount the true series
+    cardinality (6) as 1 and never fire this warning however narrow the real
+    sub-bars are.
+    """
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="month",
+        y="val",
+        color="series_id",
+        width=600,
+        style=BarChartStylePatch.model_construct(orientation="vertical"),
+    )
+    rows = [
+        {"month": f"m{x}", "series_id": s, "val": x + s}
+        for x in range(30)
+        for s in range(6)
+    ]
+    resolved = resolve(chart, rows, chart_style_context=_default_chart_style_context())
+    vl = generate_vega_lite_spec(chart, rows, width=600.0)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows},
+        vega_specs={resolved.id: vl},
+    )
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
+    assert "6 series" in warnings[0].message
+
+
 def test_no_fire_on_stacked_control_same_data_and_width() -> None:
     """Same 30x6 shape and width, but stacked: the emitter never assigns an
     xOffset channel for a stacked bar, so no encoding key means no subdivision.
@@ -251,6 +441,145 @@ def test_no_fire_on_stacked_control_same_data_and_width() -> None:
     # A real stacked emitter never sets xOffset — mirror that (offset_field=None).
     ctx = _grouped_ctx(chart, rows, width=600, offset_field=None)
     assert detector.detect(ctx) == []
+
+
+def test_fires_on_grouped_horizontal_bar_subdivided_below_floor() -> None:
+    """Horizontal mirror of test_fires_on_grouped_bar_subdivided_below_floor.
+
+    20 y-categories x 12 series, unauthored stack (grouped), with a
+    deliberately tiny laid-out height (1px) so the emitter's own
+    min_height_for_horizontal_bar_categories floor is what actually bounds
+    the render (matching a chart the author never explicitly sized, or one
+    squeezed by a layout-wrapper height clamp -- see the module docstring
+    and test_no_fire_when_a_layout_wrapper_height_clamp_undercounts_the_real_render).
+    That floor budgets room for ONE bar per category; it does not know
+    about the yOffset sub-bands a color channel adds, so the per-series
+    band still collapses under the readability floor. The expected pixel
+    width is computed via the same production helper the detector itself
+    calls, rather than pinned as a literal. Real end-to-end coverage
+    (compile -> execute -> render):
+    test_bar_band_width_warning_fires_on_grouped_horizontal_bar in
+    tests/core/render/test_renderer.py.
+    """
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="month",
+        y="val",
+        color="series",
+        style=BarChartStylePatch.model_construct(orientation="horizontal"),
+    )
+    n_x, n_series = 20, 12
+    rows = _grouped_rows(n_x=n_x, n_series=n_series)
+    resolved = make_test_resolved_chart(chart, rows)
+    assert isinstance(resolved, ResolvedBarChart)
+    assert resolved.stack == "none"  # grouped is bar's unauthored default
+
+    expected_min_height = min_height_for_horizontal_bar_categories(
+        n_x, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    expected_bar_width = expected_min_height / n_x / n_series
+    assert expected_bar_width < 4.0, "test setup must actually cross the floor"
+
+    ctx = _horizontal_ctx(chart, rows, layout_height=1.0, offset_field="series")
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
+    assert f"{expected_bar_width:.2f}px" in warnings[0].message
+    assert "12 series" in warnings[0].message
+
+
+def test_no_fire_on_stacked_horizontal_control_same_data_and_height() -> None:
+    """Horizontal mirror of test_no_fire_on_stacked_control_same_data_and_width.
+
+    Same 20x12 shape and laid-out height, but stacked: the emitter never
+    assigns a yOffset channel for a stacked bar, so no encoding key means
+    no subdivision -- the single-series case cannot cross the floor (the
+    floor alone budgets a full bar per category, well above 4px, and
+    series=1 means no further division).
+    """
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="month",
+        y="val",
+        color="series",
+        style=BarChartStylePatch.model_construct(
+            orientation="horizontal", stack="zero"
+        ),
+    )
+    rows = _grouped_rows(n_x=20, n_series=12)
+    resolved = make_test_resolved_chart(chart, rows)
+    assert isinstance(resolved, ResolvedBarChart)
+    assert resolved.stack == "zero"
+    ctx = _horizontal_ctx(chart, rows, layout_height=1.0, offset_field=None)
+    assert detector.detect(ctx) == []
+
+
+def test_horizontal_bar_row_facet_divides_layout_height_across_panels() -> None:
+    """Row-faceted horizontal bar: the laid-out ``layout_chart_heights``
+    value is the WHOLE card's height, shared by every row panel, so
+    ``_horizontal_render_extent`` must divide it by the row cardinality
+    before judging a single panel's band -- the horizontal mirror of how
+    ``_apply_facet_layout`` divides a vertical chart's spec-stamped width by
+    the column cardinality.
+
+    Numbers are picked so failing to divide gives a DIFFERENT, wrong verdict
+    than dividing correctly: the emitter's own single-bar floor
+    (``min_height_for_horizontal_bar_categories``) dominates the correctly
+    halved height (700 / 2 = 350 < the floor) but not the undivided one
+    (700 > the floor), so this discriminates "divides by row cardinality"
+    from "forgot to", not just "runs without crashing".
+
+    Faceted by ``region`` (not ``month``, the category field), matching
+    ``test_fires_when_faceted_by_the_color_field``'s point: a field
+    unrelated to the category channel does not narrow it, so every panel
+    still paints the full 10-category domain and needs room for all of it.
+    """
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="month",
+        y="val",
+        color="series",
+        style=BarChartStylePatch.model_construct(orientation="horizontal"),
+        multiples=MultiplesConfig(rows="region"),
+    )
+    rows = [
+        {"month": f"m{x}", "series": f"s{s}", "region": r, "val": x + s}
+        for x in range(10)
+        for s in range(12)
+        for r in ("north", "south")
+    ]
+    resolved = make_test_resolved_chart(chart, rows)
+    assert isinstance(resolved, ResolvedBarChart)
+
+    min_height = min_height_for_horizontal_bar_categories(
+        10, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    layout_total = 700.0
+    assert layout_total / 2 < min_height < layout_total, (
+        "test setup must make the correctly halved height floor-dominated "
+        "and the undivided height layout-dominated, or this test cannot "
+        "tell a correct division from a missing one"
+    )
+
+    ctx = _horizontal_ctx(
+        chart,
+        rows,
+        layout_height=layout_total,
+        offset_field="series",
+        facet_row_field="region",
+    )
+    expected_bar_width = min_height / 10 / 12
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
+    assert f"{expected_bar_width:.2f}px" in warnings[0].message
+    assert "12 series" in warnings[0].message
 
 
 def test_no_fire_on_full_overlap_grouped_bar() -> None:
@@ -436,9 +765,11 @@ def test_wide_form_grouped_by_dimension_counts_every_composite() -> None:
 
 
 def test_no_fire_on_gradient_offset_type() -> None:
-    """A continuous (gradient) offset channel isn't a discrete grouping —
-
-    the offset type guard must treat 'quantitative' the same as absent.
+    """No real emitter builds a quantitative field-based offset any more
+    (see ``test_fires_on_grouped_bar_with_numeric_color_subdivided_below_floor``),
+    but the guard defends the shape directly on a hand-built context: a
+    continuous offset isn't a discrete grouping, so the guard must treat
+    'quantitative' the same as absent.
     """
     chart = BarChart(
         id="c1",

@@ -1,0 +1,5 @@
+kind: Features
+body: 'dbt Charts can now connect to ClickHouse. Install `dbt-charts[clickhouse]` and point a source at a ClickHouse target through `type: dbt_profile`, the same path Athena, Databricks and Spark use. Queries are capped by `max_execution_time`, `DESCRIBE` checks columns without running the query, and the read-only user needs `readonly = 2`. `max_query_duration_seconds` is a ceiling: a profile whose own `custom_settings.max_execution_time` is stricter keeps it, and one ClickHouse cannot honor as a cap (fractional, zero, negative) is rejected rather than silently widened.'
+time: 2026-09-15T20:30:00.000000-07:00
+custom:
+    DbtChartsIssue: 26

@@ -2,11 +2,10 @@
 documents the key — area, line and heatmap alongside bar and scatter — and
 every consumer that reads that order back agrees with what Vega-Lite draws.
 
-Area and line default to the query's row order and heatmap to alphabetical;
-both are the right default for an axis the author said nothing about, and both
-are what an authored ``sort:`` overrides. The tests below pin each family's
-unauthored default alongside its authored one, because the fix is exactly the
-line between them.
+Area, line and heatmap all default to the query's own row order for an axis
+the author said nothing about; an authored ``sort:`` overrides that default.
+The tests below pin each family's unauthored default alongside its authored
+one, because the fix is exactly the line between them.
 
 The four orders are deliberately all different, so no assertion here can pass
 by accident:
@@ -82,7 +81,6 @@ _BY_MIN_DESC = ["Mar", "Feb", "Jan"]
 _WIDE_ROWS: list[dict] = [{**row, "target": 1.0} for row in _ROWS]
 
 _QUERY_ORDER = ["Feb", "Mar", "Jan"]
-_ALPHABETICAL = ["Feb", "Jan", "Mar"]
 _ASC = ["Jan", "Feb", "Mar"]
 _DESC = ["Mar", "Feb", "Jan"]
 
@@ -203,13 +201,33 @@ def test_cartesian_x_without_sort_keeps_query_row_order(
     assert _rendered_x_domain(chart, _ROWS) == _QUERY_ORDER
 
 
-def test_heatmap_x_without_sort_emits_no_sort_key() -> None:
-    """Heatmap's unauthored default is a different one from area/line's: no
-    ``sort`` key at all on the x encoding, so Vega-Lite's own alphabetical
-    ordering stands."""
+def test_heatmap_x_without_sort_keeps_query_row_order() -> None:
+    """Heatmap's unauthored default: an explicit ``sort: None`` on the x
+    encoding, the same query-row-order default area/line/bar pin — not
+    Vega-Lite's own alphabetical fallback for a nominal field."""
     chart = _heatmap(None)
-    assert "sort" not in _emit(chart, _HEATMAP_ROWS).encoding["x"]
-    assert _rendered_x_domain(chart, _HEATMAP_ROWS) == _ALPHABETICAL
+    assert _emit(chart, _HEATMAP_ROWS).encoding["x"]["sort"] is None
+    assert _rendered_x_domain(chart, _HEATMAP_ROWS) == _QUERY_ORDER
+
+
+def test_heatmap_y_without_sort_keeps_query_row_order() -> None:
+    """The y-axis twin: heatmap has two categorical dimensions, and both
+    default to query row order now, not just x."""
+    chart = _heatmap(None)
+    spec = _emit(chart, _HEATMAP_ROWS)
+    assert spec.encoding["y"]["sort"] is None
+
+
+def test_heatmap_y_honors_authored_sort() -> None:
+    """An authored ``sort:`` reaches the y encoding the same way it already
+    reaches x."""
+    chart = _heatmap(ChartSort(by="seq", order="desc"))
+    spec = _emit(chart, _HEATMAP_ROWS)
+    assert spec.encoding["y"]["sort"] == {
+        "field": "seq",
+        "order": "descending",
+        "op": "min",
+    }
 
 
 # A bucketed-time x that resolves ORDINAL: rows reach the encoding already

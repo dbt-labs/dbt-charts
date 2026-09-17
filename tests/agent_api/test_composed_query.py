@@ -5,6 +5,14 @@ Root causes fixed here:
    with "Undefined variable: 'queries' is undefined".
 2. `--validate` on a named query passed raw Jinja template text to sqlglot,
    producing false WARN-PARSE-ERROR on working SQL.
+3. `dct query BOARD NAME` failed when the *referenced* query's own SQL still
+   carried a template (a plain variable, `filter()`, or a literal) —
+   `AdapterRegistry._compose_query_refs` inlines `{{ queries.X }}` in one
+   non-recursive Jinja pass, so a template inside X's SQL was never rendered
+   (dbt-labs/dbt-charts#12).
+4. Fixing (3) via `resolve_query_references` also means `query_board` now
+   runs a referenced query's `setup_sql` before the composed query, matching
+   how execution already resolves the same board.
 """
 
 from __future__ import annotations
@@ -284,3 +292,146 @@ charts:
         )
         assert lr.success is True, lr.errors
         assert "{{" not in lr.sql
+
+
+# ---------------------------------------------------------------------------
+# Root cause 3: the *referenced* query's own SQL carries a template
+# ---------------------------------------------------------------------------
+
+_TEMPLATED_REF_BOARD = """\
+title: probe
+source: mem
+variables:
+  n:
+    input: number
+    default: 3
+queries:
+  base:
+    sql: "SELECT 1 AS one, {{ n }} AS n"
+  wrapper:
+    sql: "SELECT one, n FROM {{ queries.base }}"
+charts:
+  k:
+    query: wrapper
+    type: kpi
+    value: one
+"""
+
+
+@pytest.fixture
+def templated_ref_board_path(tmp_path: Path) -> Path:
+    path = tmp_path / "templated_ref.yml"
+    path.write_text(_TEMPLATED_REF_BOARD)
+    return path
+
+
+class TestComposedQueryWithTemplatedReference:
+    """The referenced query's own template must render, not just get inlined."""
+
+    def test_composed_query_renders_referenced_querys_variable(
+        self,
+        tmp_path: Path,
+        probe_registry: AdapterRegistry,
+        templated_ref_board_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        result = query_board(
+            "wrapper",
+            templated_ref_board_path,
+            local_project(tmp_path),
+            adapter_registry=probe_registry,
+        )
+        assert result.success is True, result.errors
+        assert result.data == [{"one": 1, "n": 3}]
+
+    def test_composed_query_var_override_reaches_referenced_query(
+        self,
+        tmp_path: Path,
+        probe_registry: AdapterRegistry,
+        templated_ref_board_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        result = query_board(
+            "wrapper",
+            templated_ref_board_path,
+            local_project(tmp_path),
+            adapter_registry=probe_registry,
+            vars={"n": 9},
+        )
+        assert result.success is True, result.errors
+        assert result.data == [{"one": 1, "n": 9}]
+
+    def test_lookup_board_query_sql_renders_referenced_querys_variable(
+        self,
+        tmp_path: Path,
+        templated_ref_board_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import lookup_board_query_sql
+
+        lr = lookup_board_query_sql(
+            "wrapper", templated_ref_board_path, project=local_project(tmp_path)
+        )
+        assert lr.success is True, lr.errors
+        # Parameterized, not merely absent: "{{" not in lr.sql alone can't tell
+        # a rendered placeholder apart from a vanished template.
+        assert "$1 AS n" in lr.sql
+
+
+# ---------------------------------------------------------------------------
+# Root cause 4: a referenced query's setup_sql must run before composition
+# ---------------------------------------------------------------------------
+
+_SETUP_SQL_BOARD = """\
+title: probe
+source: mem
+queries:
+  base:
+    sql: SELECT 1 AS one
+    setup_sql: "CREATE TEMP TABLE t AS SELECT 5 AS v"
+  wrapper:
+    sql: "SELECT v FROM t, {{ queries.base }}"
+charts:
+  k:
+    query: wrapper
+    type: kpi
+    value: v
+"""
+
+
+@pytest.fixture
+def setup_sql_board_path(tmp_path: Path) -> Path:
+    path = tmp_path / "setup_sql.yml"
+    path.write_text(_SETUP_SQL_BOARD)
+    return path
+
+
+class TestComposedQueryPropagatesSetupSql:
+    """query_board must run a referenced query's setup_sql, same as execution.
+
+    ``wrapper`` selects from ``t``, a temp table only ``base``'s setup_sql
+    creates — resolve_query_references's dependency walk must pull that
+    setup_sql onto ``wrapper`` for the DuckDB adapter to run it first.
+    """
+
+    def test_query_board_runs_referenced_querys_setup_sql(
+        self,
+        tmp_path: Path,
+        probe_registry: AdapterRegistry,
+        setup_sql_board_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        result = query_board(
+            "wrapper",
+            setup_sql_board_path,
+            local_project(tmp_path),
+            adapter_registry=probe_registry,
+        )
+        assert result.success is True, result.errors
+        assert result.data == [{"v": 5}]

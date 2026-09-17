@@ -16,7 +16,7 @@ from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.vl_field_maps import emit_resolved_scale_vl
 from dbt_charts.core.text.format_d3 import is_time_format
-from dbt_charts.core.utils import vega_infers_quantitative
+from dbt_charts.core.utils import CellValue, vega_infers_quantitative
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import (
@@ -143,16 +143,11 @@ def resolve_authored_x_type(axis: ResolvedAxisStyle) -> str | None:
     return authored_type
 
 
-# Matches emitters/_cartesian.py's alias: keeps the Any (and its marker) on one
-# short line, where `ruff format` cannot reflow the marker off it.
-_CellValue = Any  # type-state: explicit_any — raw query result cell value
-
-
 def _paneled_x_values(
     data: list[dict[str, Any]],  # type-state: explicit_any — raw query rows
     x_field: str,
     panel_fields: tuple[str, ...],
-) -> list[list[_CellValue]]:
+) -> list[list[CellValue]]:
     """Group *data*'s x cells by panel key — one inner list per panel.
 
     With no ``panel_fields`` this is the one-panel case and returns a single
@@ -166,7 +161,7 @@ def _paneled_x_values(
     """
     if not panel_fields:
         return [[row.get(x_field) for row in data if x_field in row]]
-    groups: dict[tuple[_CellValue, ...], list[_CellValue]] = {}
+    groups: dict[tuple[CellValue, ...], list[CellValue]] = {}
     for row in data:
         if x_field not in row:
             continue

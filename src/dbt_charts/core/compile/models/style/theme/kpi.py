@@ -44,7 +44,7 @@ class KpiValueStyle(BaseModel):
     # Cascade-managed sentinel: None at theme level; author sets via style.value.format.
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
-        description="Number format for the KPI headline value: D3 format string, preset name, or FormatConfig object.",
+        description="Format for the KPI headline value: D3 format string, preset name, or FormatConfig object. A date value defaults to date_short when unformatted.",
     )
 
 

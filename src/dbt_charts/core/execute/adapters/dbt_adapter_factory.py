@@ -49,6 +49,11 @@ _ADAPTER_TYPE_MAP: dict[str, tuple[str, str, str]] = {
     ),
     "trino": ("dbt.adapters.trino", "TrinoAdapter", "TrinoCredentialsFactory"),
     "athena": ("dbt.adapters.athena", "AthenaAdapter", "AthenaCredentials"),
+    "clickhouse": (
+        "dbt.adapters.clickhouse",
+        "ClickHouseAdapter",
+        "ClickHouseCredentials",
+    ),
 }
 
 
@@ -188,6 +193,13 @@ def build_adapter(
         # only while a connection is live. dbt-duckdb keeps :memory: open
         # regardless — closing an in-memory database would destroy it.
         creds_kwargs.setdefault("keep_open", False)
+    if adapter_type_lower == "clickhouse":
+        # dbt-clickhouse answers "does this server support EXCHANGE TABLES" on
+        # connect by creating two scratch tables, swapping them and dropping
+        # them — a write on a path that only ever SELECTs, which a read-only
+        # grant refuses, taking the connection down with it. Only
+        # materializations need the answer.
+        creds_kwargs.setdefault("check_exchange", False)
     if adapter_type_lower == "bigquery" and "method" not in creds_kwargs:
         creds_kwargs["method"] = infer_bq_method(
             creds_kwargs.get("keyfile"), creds_kwargs.get("keyfile_json")

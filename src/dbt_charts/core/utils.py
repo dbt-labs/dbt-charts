@@ -16,6 +16,11 @@ from dbt_charts.core.font_measure import get_font_measurer
 # Query result rows, as every core layer passes them around.
 Rows = list[dict[str, Any]]
 
+# One raw query-result cell value (str/int/float/date/None), or a fold over
+# such values (sum, min) — dynamic by construction, not a laundered type:
+# the concrete type depends on the board's own query.
+CellValue = Any  # type-state: explicit_any — raw query result cell value
+
 # Breathing room between the widest label's near edge and the tick — purely
 # cosmetic (avoids the label touching the tick line), not a gutter-sizing
 # input. Small and fixed, like the axis label gap in chart-rendering config.
@@ -476,13 +481,8 @@ def normalize_data_for_json(data: Rows) -> Rows:
 # rendered order therefore means knowing which — never assuming.
 VlSortOp = Literal["sum", "min"]
 
-# One of a sort column's cell values as Vega-Lite folds it: a number under
-# ``sum``, whatever the column holds under ``min``. Dynamic by construction,
-# like any other raw query cell.
-_SortValue = Any  # type-state: explicit_any — raw sort-column cell value
 
-
-def _js_min(values: list[_SortValue]) -> _SortValue:
+def _js_min(values: list[CellValue]) -> CellValue:
     """The fold Vega applies for ``op: "min"``, in d3's shape.
 
     Not Python's ``min``: d3 keeps its running minimum unless ``min > value``,
@@ -497,7 +497,7 @@ def _js_min(values: list[_SortValue]) -> _SortValue:
     to Number there, Python does not — which a SQL column, having one type,
     does not produce.
     """
-    result: _SortValue = None
+    result: CellValue = None
     for value in values:
         if result is None:
             result = value
@@ -510,7 +510,7 @@ def _js_min(values: list[_SortValue]) -> _SortValue:
     return result
 
 
-_VL_SORT_AGGREGATE: dict[VlSortOp, Callable[[list[_SortValue]], _SortValue]] = {
+_VL_SORT_AGGREGATE: dict[VlSortOp, Callable[[list[CellValue]], CellValue]] = {
     "sum": sum,
     "min": _js_min,
 }
@@ -521,7 +521,7 @@ def domain_sort_aggregates(
     x_field: str,
     sort_field: str,
     op: VlSortOp,
-) -> dict[Hashable, _SortValue]:
+) -> dict[Hashable, CellValue]:
     """Per-x-category aggregate of ``sort_field`` for domain ordering.
 
     ``x_domain_order`` is the single caller and owns picking ``op``.
@@ -532,7 +532,7 @@ def domain_sort_aggregates(
     and dates natively — a ``sort:`` by a month-start date or a label is an
     ordering, and coercing it to a number first would throw that away.
     """
-    by_category: dict[Hashable, list[_SortValue]] = {}
+    by_category: dict[Hashable, list[CellValue]] = {}
     for row in rows:
         x = row.get(x_field)
         if x is None:

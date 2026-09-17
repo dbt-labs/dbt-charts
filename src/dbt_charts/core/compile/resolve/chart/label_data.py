@@ -25,10 +25,10 @@ from dbt_charts.core.compile.template.output_budget import (
     TemplateOutputBudgetExceeded,
     render_with_budget,
 )
+from dbt_charts.core.utils import CellValue
 
 LABEL_FIELD = "__dbt_label"
-ChartValue = Any
-ChartRow = dict[str, ChartValue]
+ChartRow = dict[str, CellValue]
 ChartRows = list[ChartRow]
 
 
@@ -50,7 +50,7 @@ def project_pie_table_rows(
     theta_field: str,
     row_indices: tuple[int, ...],
     category_colors: tuple[CategoryColorScale, ...],
-) -> list[dict[str, ChartValue]]:
+) -> list[dict[str, CellValue]]:
     """Project frozen row indices into the attached table's mechanical shape.
 
     The table is the pie's legend, so each row's swatch must be the exact
@@ -64,7 +64,7 @@ def project_pie_table_rows(
     paints every wedge ``palette[0]`` uniformly regardless of row position.
     """
 
-    def scalar(value: ChartValue) -> str | int | float | bool:
+    def scalar(value: CellValue) -> str | int | float | bool:
         if isinstance(value, Decimal):
             return float(value)
         if isinstance(value, (str, int, float, bool)):
@@ -95,7 +95,7 @@ def project_pie_table_rows(
     ]
 
 
-def _coerce_numeric(value: ChartValue) -> ChartValue:
+def _coerce_numeric(value: CellValue) -> CellValue:
     if not isinstance(value, str):
         return value
     stripped = value.strip()

@@ -32,7 +32,12 @@ from dbt_charts.core.render.chart.presentation import (
     apply_presentation_defaults,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, EndpointLabelData
-from dbt_charts.core.render.utils import normalize_data_types
+from dbt_charts.core.render.utils import (
+    DomainValue,
+    normalize_data_types,
+    normalize_scalar_for_json,
+)
+from dbt_charts.core.utils import CellValue
 
 # Non-VL families — assemble_final_vl raises ValueError for these.
 _NON_VL_MARKS: frozenset[str] = frozenset({"kpi", "table"})
@@ -764,6 +769,23 @@ def assemble_final_vl(
     return vl
 
 
+def _facet_sort_values(order: tuple[CellValue, ...]) -> list[DomainValue | None]:
+    """An explicit VL sort array from a facet field's query-order domain.
+
+    ``DomainValue | None`` rather than ``DomainValue``: a facet field can
+    carry a real SQL-NULL panel, which ``normalize_scalar_for_json`` passes
+    through unchanged.
+
+    Takes the non-``None`` tuple directly (never ``None``): ``FacetFeature``
+    always pairs ``facet_row``/``facet_column`` with the matching
+    ``*_order`` field, so a faceted spec's order tuple is never absent.
+    Domain values bypass ``normalize_data_types``, so a raw date/Decimal is
+    normalized individually before reaching vl_convert's JSON serialization
+    (``render/utils.py``), same as ``pin_sorted_x_domain``'s x-scale domain.
+    """
+    return [normalize_scalar_for_json(value) for value in order]
+
+
 def _wrap_facet(main_vl: dict[str, Any], spec: ChartSpec) -> dict[str, Any]:
     """Wrap a translated unit spec in a VL ``facet`` operator (small multiples).
 
@@ -789,10 +811,16 @@ def _wrap_facet(main_vl: dict[str, Any], spec: ChartSpec) -> dict[str, Any]:
     """
     facet: dict[str, Any] = {}
     if spec.facet_row is not None:
+        assert spec.facet_row_order is not None  # FacetFeature pairs the two
         facet["row"] = {
             "field": spec.facet_row,
             "type": "nominal",
             "title": None,
+            # A facet field def has no "preserve source order" sort mode
+            # (unlike a position channel's `sort: null`), so the query order
+            # is pinned as an explicit values array, or VL falls back to
+            # its own alphabetical default.
+            "sort": _facet_sort_values(spec.facet_row_order),
             # Left row-header: the facet value sits to the left of each panel.
             "header": {
                 "labelAngle": 0,
@@ -802,10 +830,12 @@ def _wrap_facet(main_vl: dict[str, Any], spec: ChartSpec) -> dict[str, Any]:
             },
         }
     if spec.facet_column is not None:
+        assert spec.facet_column_order is not None  # FacetFeature pairs the two
         facet["column"] = {
             "field": spec.facet_column,
             "type": "nominal",
             "title": None,
+            "sort": _facet_sort_values(spec.facet_column_order),
         }
     hoist_keys = (
         "$schema",

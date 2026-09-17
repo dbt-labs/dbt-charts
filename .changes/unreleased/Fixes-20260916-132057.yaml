@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'WARN-BAR-BAND-WIDTH-TOO-NARROW now fires on horizontal bar charts too: a grouped bar, or a wide-form one with multiple measures, whose sub-bands collapse to hairline height previously rendered with no diagnostic.'
+time: 2026-09-16T13:20:57.000000-07:00

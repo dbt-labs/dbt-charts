@@ -36,7 +36,7 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
             "_assert_vendored_methods_unchanged",
         ),
         # adapters/dbt_adapter.py
-        ("adapters/dbt_adapter.py", "DbtAdapter._get_dbt_adapter"),
+        ("adapters/dbt_adapter.py", "DbtAdapter._resolve_target_dict"),
         ("adapters/dbt_adapter.py", "_read_profiles_yml"),
         ("adapters/dbt_adapter.py", "_read_target_dict"),
         # adapters/dbt_adapter_factory.py

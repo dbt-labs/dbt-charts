@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.style.theme.category_colors import (
@@ -20,7 +20,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     canonicalize_cartesian_x_data,
     dimension_sort_to_vl,
     distinct_series_values,
-    pin_sorted_x_domain,
+    pin_sorted_domain,
     resolve_xy_titles,
     spatial_color_scale,
 )
@@ -49,22 +49,29 @@ from dbt_charts.core.render.utils import normalize_data_types, slug_to_text
 from dbt_charts.core.text.case import format_display_text
 
 
-def _write_x_sort(
-    x_enc: VLDict, chart: ResolvedHeatmapChart, data: ChartRenderData
+def _write_dimension_sort(
+    enc: VLDict,
+    chart: ResolvedHeatmapChart,
+    data: ChartRenderData,
+    axis: Literal["x", "y"],
 ) -> None:
-    """Write an authored dimension sort onto a heatmap's x encoding, in place.
+    """Write a heatmap dimension encoding's ``sort``, in place.
 
-    Only when authored: heatmap's unauthored x is Vega-Lite's own alphabetical
-    order, so a bare ``"sort": None`` would silently switch that default to
-    query row order. Shared by both of the emitter's x-encoding sites — the
-    single-measure path and the multi-measure (``y:`` a list) one, which
-    returns before it.
+    Unauthored: an explicit ``"sort": None`` keeps Vega-Lite's domain in query
+    row order — the same default ``bar``/``line``/``area`` pin, rather than
+    the alphabetical order VL falls back to for a nominal field with no
+    ``sort`` key at all. Authored: maps ``chart.sort`` to a field-based VL
+    sort and pins the resulting category order as an explicit domain.
+
+    A heatmap's authored ``sort`` has no way to name "the x axis" or "the y
+    axis" specifically, so the same sort reaches every dimension identically.
     """
     vl_sort = dimension_sort_to_vl(chart.sort)
     if vl_sort is None:
+        enc["sort"] = None
         return
-    x_enc["sort"] = vl_sort
-    pin_sorted_x_domain(x_enc, data, chart)
+    enc["sort"] = vl_sort
+    pin_sorted_domain(enc, data, chart, axis=axis)
 
 
 @dataclass
@@ -102,7 +109,7 @@ class HeatmapEmitter:
                     "field": chart.x,
                     "type": "nominal",
                 }
-                _write_x_sort(top_encoding["x"], chart, data)
+                _write_dimension_sort(top_encoding["x"], chart, data, axis="x")
                 # No axis dict on this branch, so nothing can merge — but the
                 # band still draws category labels, and the single-measure
                 # path below gates the same authored fields. Validate-only,
@@ -146,6 +153,11 @@ class HeatmapEmitter:
                     },
                     "color": {"datum": slug_to_text(y_field)},
                 }
+                # Layers share one y-position scale (no `resolve.scale.y` is
+                # ever set), so every layer needs the same sort. Where two
+                # layers pin conflicting orders for the same values, VL draws
+                # layer 0's order.
+                _write_dimension_sort(layer_enc["y"], chart, data, axis="y")
                 layers.append(ChartSpec(mark="rect", encoding=layer_enc))
             return ChartSpec(
                 mark="layered", encoding=top_encoding, layers=layers, config=config
@@ -207,7 +219,7 @@ class HeatmapEmitter:
                 "type": x_type,
                 "title": xy.x_title,
             }
-            _write_x_sort(x_enc, chart, data)
+            _write_dimension_sort(x_enc, chart, data, axis="x")
             if x_axis:
                 x_enc["axis"] = x_axis
             encoding["x"] = x_enc
@@ -253,6 +265,7 @@ class HeatmapEmitter:
                 "type": y_type,
                 "title": xy.y_title,
             }
+            _write_dimension_sort(y_enc, chart, data, axis="y")
             if y_axis:
                 y_enc["axis"] = y_axis
             encoding["y"] = y_enc

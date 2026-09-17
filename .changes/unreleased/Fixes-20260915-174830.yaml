@@ -1,0 +1,5 @@
+kind: Fixes
+body: Composing a query via {{ queries.X }} could leave the referenced query's own Jinja template (a plain variable, filter(), or a literal) unrendered — its raw SQL was inlined as text and never re-evaluated, so the template reached the warehouse verbatim. dct query board.yml NAME and the SQL preview (--validate/--describe) now render the {{ queries.X }} spelling correctly.
+time: 2026-09-15T17:48:30.560561-07:00
+custom:
+    DbtChartsIssue: "12"

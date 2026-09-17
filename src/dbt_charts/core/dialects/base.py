@@ -13,6 +13,7 @@ encapsulates its own behavior.
 """
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 # Allowlist of valid SQL operators for filter() method
 # This prevents SQL injection via operator parameter
@@ -174,6 +175,54 @@ class SQLDialect(ABC):
             dialect-native mechanism.
         """
         return None
+
+    def resolve_timeout_seconds(
+        self,
+        creds: dict[str, Any],  # type-state: explicit_any — raw source_config
+        seconds: int,
+    ) -> int:
+        """The cap actually in force, given what the warehouse's own profile asks for.
+
+        ``max_query_duration_seconds`` is a ceiling, so a profile that caps
+        itself harder keeps its own value. Every consumer of the cap reads the
+        number this returns — the statement sent at connect, the credentials
+        :meth:`connect_credentials` writes, and the seconds a
+        ``_QueryDurationExceeded`` reports — so what a timeout error claims
+        stays true by construction.
+
+        The base returns `seconds`: only a profile that can spell the cap itself
+        can narrow it, and ClickHouse's ``custom_settings`` is the one that can.
+
+        Raises:
+            ValueError: the profile's own cap cannot be compared against the
+                ceiling, so neither value can be chosen without guessing.
+        """
+        return seconds
+
+    def connect_credentials(
+        self,
+        creds: dict[str, Any],  # type-state: explicit_any — raw source_config
+        seconds: int,
+    ) -> dict[str, Any]:  # type-state: explicit_any — raw source_config
+        """Return `creds` with the statement cap in it, for a cap that is credential-shaped.
+
+        The third way a dialect can carry the cap, beside
+        :meth:`statement_timeout_sql` (a statement sent at connect) and
+        BigQuery's job config (set on the handle after connect). Used when the
+        cap has to be inside the credentials *before* the adapter is built,
+        because the warehouse has no statement to send that would survive a
+        pooled connection.
+
+        `seconds` is the resolved cap from :meth:`resolve_timeout_seconds`, and
+        is written unconditionally: deciding again here is how the number the
+        warehouse enforces drifts from the number an error reports.
+
+        Never mutates `creds` — the pool hashes the config it was handed to key
+        the connection pool, so an in-place write would fork pools by cap. The
+        base returns it unchanged: for every dialect but ClickHouse the cap is
+        not credential-shaped.
+        """
+        return creds
 
     def is_statement_timeout_error(self, exc: Exception) -> bool:
         """Return True when exc was raised by the warehouse enforcing a statement timeout.

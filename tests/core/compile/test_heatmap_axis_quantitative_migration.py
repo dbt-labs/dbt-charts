@@ -23,13 +23,14 @@ from dbt_charts.core.compile.migrations import (
 )
 from dbt_charts.core.compile.migrations.migrations import (
     _board_migration_context,
-    _schema_has_tail,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._migration_declarations import schema_has_tail
 
 OTHER_CARTESIAN_FAMILIES = ("bar", "line", "area", "scatter", "histogram")
 
@@ -82,8 +83,8 @@ def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
     ``catalog.latest_released.version``, which is 0.6.0 post-freeze and never had it.
     """
     tail = ("charts", "heatmap", "axis_quantitative")
-    assert _schema_has_tail(catalog.schema_for("0.5.0"), tail)
-    assert not _schema_has_tail(catalog.current_schema, tail)
+    assert schema_has_tail(catalog.schema_for("0.5.0"), tail)
+    assert not schema_has_tail(catalog.current_schema, tail)
 
 
 def test_board_level_axis_quantitative_key_stripped(catalog: YamlSchemaCatalog) -> None:
@@ -137,7 +138,7 @@ def test_chart_local_position_migrates_and_bar_keeps_its_own(
     here is silent data loss on a working key -- both sides asserted in one
     board.
     """
-    assert _schema_has_tail(catalog.current_schema, ("style", "axis_quantitative"))
+    assert schema_has_tail(catalog.current_schema, ("style", "axis_quantitative"))
     raw = {
         "charts": {
             "grid": {

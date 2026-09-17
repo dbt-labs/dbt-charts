@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.7.2.dev97",
+  "version": "0.8.1.dev24",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -6650,7 +6650,7 @@
             }
           ],
           "default": null,
-          "description": "How the number is written: a D3 spec, a preset name, or a format block.",
+          "description": "How the value is written: a D3 spec, a preset name, or a format block. A date value defaults to date_short when unformatted.",
           "title": "Format"
         },
         "glyph": {
@@ -6762,7 +6762,7 @@
             }
           ],
           "default": null,
-          "description": "Number format for the KPI headline value: D3 format string, preset name, or FormatConfig object.",
+          "description": "Format for the KPI headline value: D3 format string, preset name, or FormatConfig object. A date value defaults to date_short when unformatted.",
           "title": "Format"
         }
       },

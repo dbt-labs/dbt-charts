@@ -8,6 +8,7 @@ the SQL instead would report failures the real render never produces.
 | Adapter          | Mechanism     | Result             |
 |------------------|---------------|--------------------|
 | duckdb           | ``DESCRIBE``  | validity + columns |
+| clickhouse       | ``DESCRIBE``  | validity + columns |
 | csv/json/parquet | ``DESCRIBE``  | columns only        |
 | bigquery         | dry run       | validity + columns |
 | postgres         | ``EXPLAIN``   | validity only      |
@@ -97,7 +98,11 @@ class _PrefixCheck(NamedTuple):
     """One adapter's prefix-check mechanism: the keyword and what its rows are."""
 
     keyword: str
-    reads_columns: bool
+    # The result columns a row carries the column's name and type under, or
+    # None when the rows are a plan and no schema can be read from them.
+    # DuckDB spells them ``column_name``/``column_type``, ClickHouse ``name``
+    # /``type``. One field so neither invalid pairing is constructable.
+    columns: tuple[str, str] | None
 
 
 # Adapter type → the keyword whose prefix checks a query without executing it,
@@ -106,10 +111,14 @@ class _PrefixCheck(NamedTuple):
 # notably databricks, whose EXPLAIN embeds planner errors in the plan text
 # instead of failing (see the module docstring and the dispatch below).
 _PREFIX_CHECKS: dict[str, _PrefixCheck] = {
-    "duckdb": _PrefixCheck("DESCRIBE", reads_columns=True),
-    "postgres": _PrefixCheck("EXPLAIN", reads_columns=False),
-    "redshift": _PrefixCheck("EXPLAIN", reads_columns=False),
-    "snowflake": _PrefixCheck("EXPLAIN", reads_columns=False),
+    "duckdb": _PrefixCheck("DESCRIBE", ("column_name", "column_type")),
+    # A bare DESCRIBE prefix leads a SELECT in ClickHouse too, and it binds the
+    # query (an unknown column is a rejection, not a plan note), so the row is
+    # the result schema exactly as on DuckDB.
+    "clickhouse": _PrefixCheck("DESCRIBE", ("name", "type")),
+    "postgres": _PrefixCheck("EXPLAIN", None),
+    "redshift": _PrefixCheck("EXPLAIN", None),
+    "snowflake": _PrefixCheck("EXPLAIN", None),
 }
 
 
@@ -178,11 +187,6 @@ def warehouse_check(
     source_config = adapter_registry.resolve_query_source(
         query, board=board, query_name=query_name
     )
-    # None means a source-less *non*-SQL query; source-less SQL raises
-    # ERR-NO-DEFAULT-SOURCE. This takes a SqlQuery, so neither can be None here.
-    assert source_config is not None
-
-    adapter_type = source_config.type
     variables = merge_board_variables(board, {})
 
     # Multi-hop {{ queries.X }} composition and the setup_sql of everything in
@@ -198,7 +202,54 @@ def warehouse_check(
     assert is_sql_query(resolved)
     query = resolved
 
+    # None usually means a source-less *non*-SQL query (source-less SQL raises
+    # ERR-NO-DEFAULT-SOURCE) — but a SqlQuery can land here too: an authored
+    # `source:` that names no board/project source falls through to
+    # DefaultSourceResolver's dbt fallback whenever a dbt project is in scope,
+    # with no ResolvedSourceConfig to read a type off. Must run against the
+    # *composed* `query` above, never the authored one: Executor.execute_query
+    # composes `{{ queries.X }}` before ever calling AdapterRegistry.execute,
+    # so a ref() reachable only through a composed `{{ queries.X }}` still has
+    # to route to DbtAdapter.
+    if source_config is None:
+        fallback_type, fallback_detail = _resolve_dbt_fallback_type(
+            query, adapter_registry
+        )
+        if fallback_type is None:
+            return WarehouseCheck(
+                status="unchecked",
+                adapter_type="none",
+                mechanism="no-source",
+                columns_checked=False,
+                reason=(
+                    fallback_detail  # type-state: silent_fallback — empty string means no adapter claimed it, not a suppressed error
+                    or (
+                        "its source names no board or project source, and dbt "
+                        "charts could not resolve a warehouse type for it "
+                        "ahead of execution"
+                    )
+                ),
+            )
+        adapter_type = fallback_type
+    else:
+        adapter_type = source_config.type
+
     if adapter_type == "bigquery":
+        if source_config is None:
+            # The dbt-fallback branch above only learns the target's `type`
+            # from profiles.yml — a BigQuery dry run needs the full resolved
+            # config (project, keyfile, …), which nothing built here.
+            return WarehouseCheck(
+                status="unchecked",
+                adapter_type="bigquery",
+                mechanism=_BIGQUERY_DRY_RUN,
+                columns_checked=False,
+                reason=(
+                    "its source falls through to dbt's own profile "
+                    "resolution, which this tier cannot dry-run without a "
+                    "resolved BigQuery source config"
+                ),
+            )
         return _check_bigquery(
             query,
             board=board,
@@ -208,7 +259,11 @@ def warehouse_check(
         )
     prefix_check = _PREFIX_CHECKS.get(adapter_type)
     parse_dialect = adapter_type
-    if prefix_check is None and is_file_source(source_config):
+    if (
+        prefix_check is None
+        and source_config is not None
+        and is_file_source(source_config)
+    ):
         # A csv/json/parquet source executes by materializing its files onto
         # an in-process DuckDB (file_source_materializer.py), so DuckDB's own
         # DESCRIBE mechanism answers it too — reusing the duckdb entry rather
@@ -268,6 +323,31 @@ def warehouse_check(
         columns_checked=False,
         reason=reason,
     )
+
+
+def _resolve_dbt_fallback_type(
+    query: SqlQuery, adapter_registry: AdapterRegistry
+) -> tuple[str | None, str]:
+    """The warehouse type this query's *composed* SQL routes to, read off disk.
+
+    Caller must pass the post-composition query — see the call site.
+
+    Returns ``(None, "")`` when no adapter would actually claim the query, and
+    ``(None, <detail>)`` when a claiming ``DbtAdapter``'s profile could not be
+    resolved — the failure detail carries into the caller's ``reason``.
+    """
+    from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+    from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+
+    adapter = adapter_registry.get_adapter(query, None)
+    if isinstance(adapter, DuckDBAdapter):
+        return "duckdb", ""
+    if not isinstance(adapter, DbtAdapter):
+        return None, ""
+    try:
+        return adapter.resolve_target_type(), ""
+    except Exception as exc:  # noqa: BLE001 — any profile fault means unresolvable, not a crash
+        return None, str(exc)
 
 
 def check_ad_hoc_query(
@@ -410,7 +490,7 @@ def _check_via_wrap(
     query, and the wrapped statement's rows are a schema or a plan, never the
     authored result.
 
-    ``check.reads_columns`` says what those rows are: DESCRIBE's are the result
+    ``check.columns`` says what those rows are: DESCRIBE's are the result
     column schema and are read into ``columns``; EXPLAIN's are a plan nobody
     reads, so the check is validity-only, ``columns_checked`` stays False, and
     ``reason`` carries why — it is the whole detail a caller that wanted
@@ -432,7 +512,7 @@ def _check_via_wrap(
             adapter_type=adapter_type,
             mechanism=check.keyword,
         )
-    if not check.reads_columns:
+    if check.columns is None:
         return WarehouseCheck(
             status="valid",
             adapter_type=adapter_type,
@@ -442,13 +522,14 @@ def _check_via_wrap(
                 f"{check.keyword} validated the query but returns no result schema"
             ),
         )
+    name_column, type_column = check.columns
     return WarehouseCheck(
         status="valid",
         adapter_type=adapter_type,
         mechanism=check.keyword,
         columns_checked=True,
         columns=[
-            WarehouseCheckColumn(name=row["column_name"], type=row["column_type"])
+            WarehouseCheckColumn(name=row[name_column], type=row[type_column])
             for row in result.data
         ],
     )

@@ -32,6 +32,7 @@ from dbt_charts.core.diagnostics.codes_render import (
     ERR_MULTIPLES_ROW_MISSING_PARTITION_FIELD,
     ERR_MULTIPLES_ROW_OUTSIDE_PANEL_AXES,
 )
+from dbt_charts.core.utils import CellValue
 
 __all__ = [
     "CartesianChart",
@@ -136,21 +137,33 @@ class ChartDataset:
     def column_values(self, field: str) -> tuple[Any, ...]:
         """Distinct values of ``field``, in first-encounter order.
 
-        A partition field reads straight off the baked axis (in the original,
-        not canonical, values held on each panel's key) — cheaper than
-        re-scanning rows, and correct even though the column itself does not
-        exist inside any single panel's ``rows``.
+        A partition field's order comes from its own baked axis
+        (``PartitionAxis.values``, computed once from the raw query rows in
+        ``partition()``), not from re-deriving order out of panel traversal:
+        panels are ordered by the axes' cartesian product, which for a
+        second-or-later axis in a sparse grid can disagree with that axis's
+        own first-encounter order in the query (a later panel-key value can
+        be that axis's actually-earliest row). Original (non-canonical)
+        values are recovered from panel keys, cheaper than re-scanning rows,
+        and correct even though the column itself does not exist inside any
+        single panel's ``rows``.
+
+        A baked axis value with no panel here is skipped, not an error: the
+        row-truncated render path (``regroup()``) can hold fewer rows than
+        resolve saw, so a value ``partition()`` observed in the full result
+        may have zero panels in this particular ``ChartDataset``.
         """
         for index, axis in enumerate(self.axes):
             if axis.field == field:
-                seen: list[Any] = []
-                seen_set: set[Any] = set()
+                original_by_canonical: dict[str, CellValue] = {}
                 for panel in self.panels:
                     value = panel.key[index]
-                    if value not in seen_set:
-                        seen_set.add(value)
-                        seen.append(value)
-                return tuple(seen)
+                    original_by_canonical.setdefault(canonical_key(value), value)
+                return tuple(
+                    original_by_canonical[canon]
+                    for canon in axis.values
+                    if canon in original_by_canonical
+                )
         seen = []
         seen_set = set()
         for panel in self.panels:

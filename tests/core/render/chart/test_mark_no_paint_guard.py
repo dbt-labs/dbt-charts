@@ -17,6 +17,8 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_yaml
 from dbt_charts.core.compile.config import get_theme_style
@@ -30,7 +32,10 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
-from dbt_charts.core.render.chart.mark_extents import mark_extents
+from dbt_charts.core.render.chart.mark_extents import (
+    all_marks_degenerate,
+    mark_extents,
+)
 from dbt_charts.core.render.chart.rendering import render_chart_item
 
 from ...._paths import DBT_CHARTS_DIR
@@ -258,3 +263,68 @@ def test_grouped_bar_on_quantitative_x_paints_visible_marks(
     wrapped_svg = f'<svg xmlns="http://www.w3.org/2000/svg">{svg}</svg>'
     extents = mark_extents(wrapped_svg)
     assert extents and extents[0].max_height > 0, "bars rendered zero height"
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_grouped_bar_with_numeric_color_paints_visible_marks(
+    make_chart: Callable[..., Any], orientation: str
+) -> None:
+    """A numeric/boolean `color:` resolves to a quantitative VL type, but
+    `xOffset`/`yOffset` (grouped-bar sub-banding) must still get a discrete
+    type — a continuous scale has no band for ``bandwidth(...)`` to size
+    against, which degenerates every bar to zero width/height.
+    """
+    data = [
+        {"cat": "A", "val": 10, "flag": 1},
+        {"cat": "A", "val": 15, "flag": 0},
+        {"cat": "B", "val": 12, "flag": 1},
+        {"cat": "B", "val": 18, "flag": 0},
+    ]
+    svg = _render_chart(
+        make_chart,
+        data,
+        "bar",
+        x="cat",
+        y="val",
+        color="flag",
+        stack="none",
+        style={"orientation": orientation},
+    )
+    assert "ERR-CHART-PAINTED-NO-MARKS" not in svg
+    wrapped_svg = f'<svg xmlns="http://www.w3.org/2000/svg">{svg}</svg>'
+    assert not all_marks_degenerate(wrapped_svg), "bars rendered zero width/height"
+    extents = mark_extents(wrapped_svg)
+    assert extents and extents[0].max_width > 0, "bars rendered zero width"
+    assert extents[0].max_height > 0, "bars rendered zero height"
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_grouped_bar_with_boolean_color_paints_visible_marks(
+    make_chart: Callable[..., Any], orientation: str
+) -> None:
+    """Same as above for a boolean color column — `bool` is an `int`
+    subclass, so it hits the same quantitative-color-scale path as a numeric
+    field (see ``is_vega_numeric_value`` in ``core/utils.py``).
+    """
+    data = [
+        {"cat": "A", "val": 10, "flag": True},
+        {"cat": "A", "val": 15, "flag": False},
+        {"cat": "B", "val": 12, "flag": True},
+        {"cat": "B", "val": 18, "flag": False},
+    ]
+    svg = _render_chart(
+        make_chart,
+        data,
+        "bar",
+        x="cat",
+        y="val",
+        color="flag",
+        stack="none",
+        style={"orientation": orientation},
+    )
+    assert "ERR-CHART-PAINTED-NO-MARKS" not in svg
+    wrapped_svg = f'<svg xmlns="http://www.w3.org/2000/svg">{svg}</svg>'
+    assert not all_marks_degenerate(wrapped_svg), "bars rendered zero width/height"
+    extents = mark_extents(wrapped_svg)
+    assert extents and extents[0].max_width > 0, "bars rendered zero width"
+    assert extents[0].max_height > 0, "bars rendered zero height"

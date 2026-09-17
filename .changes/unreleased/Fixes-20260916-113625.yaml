@@ -1,0 +1,5 @@
+kind: Fixes
+body: Panels created with `multiples:` always sorted alphabetically, ignoring the query's row order. Panels now render in query order by default, matching how the x/y axis already behaves.
+time: 2026-09-16T11:36:25.000000-07:00
+custom:
+  DbtChartsIssue: 18

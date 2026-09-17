@@ -159,6 +159,19 @@ class FacetFeature:
         spec.facet_row = multiples.rows
         spec.facet_column = multiples.columns
         spec.facet_scale = multiples.scale
+        dataset = chart_rows(chart, datasets)
+        # ChartDataset.column_values() reads a partition field's order off its
+        # own baked PartitionAxis (query first-encounter order), not off panel
+        # traversal; see its docstring. Known gap: a chart whose x IS the
+        # facet field can have its x column rewritten in place by the emitter
+        # (e.g. year-shaped-to-temporal normalization) after this dataset was
+        # built from the raw pre-emit rows. The sort array then names
+        # pre-rewrite values Vega-Lite can't match in data.values, and that
+        # one shape falls back to alphabetical order.
+        if multiples.rows is not None:
+            spec.facet_row_order = dataset.column_values(multiples.rows)
+        if multiples.columns is not None:
+            spec.facet_column_order = dataset.column_values(multiples.columns)
         # A horizontal bar flips its axes — the measure rides VL x, the category
         # y — so an independent facet scale has to free x there. Decided here
         # rather than in the emitter because an authored `layers:` overlay
@@ -185,7 +198,7 @@ class FacetFeature:
             facet_bound_position_channels(
                 chart,
                 multiples,
-                chart_rows(chart, datasets).all_rows(),
+                dataset.all_rows(),
                 box.facet_unnarrowed_panel_width,
             ),
         )

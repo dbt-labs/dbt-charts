@@ -1,0 +1,5 @@
+kind: Fixes
+body: "A KPI whose value is a date now honors a date_short format (or a strftime spec via a style.formats alias) instead of rendering the raw ISO string; an unformatted date value defaults to date_short too. A KPI's headline format can be a board-wide default shared across every KPI on the board, so a non-date format that doesn't fit a date-valued headline falls back to date_short instead of raising the way a table column would; a mismatched support format now raises instead, since it's always authored for that one chart. Separately, a time directive (time_short, or an explicit %H:%M-style spec) on any date/table column or KPI value now reflects the value's actual time-of-day instead of always reading midnight."
+time: 2026-09-16T11:47:12.790576-07:00
+custom:
+    DbtChartsIssue: "15"

@@ -93,6 +93,9 @@ queries:
   composed:
     sql: "SELECT * FROM {{ queries.sub }}"
     source: db
+  composed_nospace:
+    sql: "SELECT * FROM {{queries.sub}}"
+    source: db
 charts:
   c:
     type: table
@@ -136,9 +139,27 @@ def test_preview_resolves_dbt_refs(
 def test_preview_resolves_refs_inlined_by_a_query_reference(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """`{{ queries.X }}` inlines X's raw SQL after the first resolve pass."""
+    """`{{ queries.X }}` is expanded to X's raw SQL by `resolve_query_references`
+    before the first `dbt_refs.resolve` pass, so a `ref()` inside X resolves in
+    that single pass."""
     project = _ref_project(tmp_path, local_project, with_manifest=True)
     result = lookup_board_query_sql("composed", Path("charts/b.yml"), project=project)
+    assert result.success, result.errors
+    assert '"sample"."main"."stg_orders"' in result.sql
+
+
+def test_preview_resolves_refs_inlined_by_a_nospace_query_reference(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """`{{queries.X}}` (no space) isn't recognized by `resolve_query_references`'s
+    dependency-graph short-circuit, so X's raw SQL — and any `ref()` inside it —
+    only gets inlined by `render_parameterized_with_queries`'s own `{{ queries.* }}`
+    handling. The second `dbt_refs.resolve` pass after that render is what
+    resolves the ref() in this case; removing it regresses this exact query."""
+    project = _ref_project(tmp_path, local_project, with_manifest=True)
+    result = lookup_board_query_sql(
+        "composed_nospace", Path("charts/b.yml"), project=project
+    )
     assert result.success, result.errors
     assert '"sample"."main"."stg_orders"' in result.sql
 

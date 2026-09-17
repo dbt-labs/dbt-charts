@@ -1,0 +1,5 @@
+kind: Fixes
+body: '`grid: {columns: 0}` passed `dct validate` and crashed `dct render` with a float division by zero. A negative `col_span`/`row_span`/`width`/`height` also passed `dct validate`, but rendered broken (negative) geometry instead of crashing. `grid.columns` now requires a positive value; the span/alias fields require zero or a positive value (0 keeps normalizing to a span of 1, as it always has; only a negative span is now rejected).'
+time: 2026-09-16T11:53:47.593525-07:00
+custom:
+    DbtChartsIssue: "17"

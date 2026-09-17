@@ -59,7 +59,6 @@ manufacturing crossings and remedies no single panel actually paints.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
@@ -86,12 +85,11 @@ from dbt_charts.core.render.warnings.base import (
     WarningContext,
     chart_series,
 )
-from dbt_charts.core.utils import Rows, coerce_numeric_cell
+from dbt_charts.core.utils import CellValue, Rows, coerce_numeric_cell
 
 _UNSTACKED = (None, "none")
 
-_Cell = Any  # type-state: explicit_any — raw query cell value: a dict key, coerced numerically before use
-_SeriesValues = dict[_Cell, dict[_Cell, _Cell]]
+_SeriesValues = dict[CellValue, dict[CellValue, CellValue]]
 
 # Discernibility threshold, a fraction of the y-domain span rather than a
 # pixel count -- see the module docstring for why area has no baked plot
@@ -237,7 +235,7 @@ def _hidden_fraction(panels: Iterable[_SeriesValues]) -> float:
     total_of_totals = 0.0
     total_of_tops = 0.0
     for series_values in panels:
-        per_x: dict[_Cell, list[float]] = {}
+        per_x: dict[CellValue, list[float]] = {}
         for values in series_values.values():
             for x, raw in values.items():
                 coerced = coerce_numeric_cell(raw)
@@ -410,7 +408,7 @@ def _series_values(
 
 def _any_pair_crossed(
     series_values: _SeriesValues, span: float
-) -> tuple[bool | None, frozenset[_Cell]]:
+) -> tuple[bool | None, frozenset[CellValue]]:
     """The crossing verdict, plus (only on a False verdict) the names that
     shared at least one real (same-side, coercible) comparison with another
     series -- a name that never does (a disjoint x, the opposite side of the
@@ -425,7 +423,7 @@ def _any_pair_crossed(
     compare, and the returned name set is empty."""
     names = list(series_values)
     compared_any = False
-    judged: set[_Cell] = set()
+    judged: set[CellValue] = set()
     for i, a_name in enumerate(names):
         a = series_values[a_name]
         for b_name in names[i + 1 :]:
@@ -442,7 +440,7 @@ def _any_pair_crossed(
 
 
 def _pair_crossed(
-    a: dict[_Cell, _Cell], b: dict[_Cell, _Cell], span: float
+    a: dict[CellValue, CellValue], b: dict[CellValue, CellValue], span: float
 ) -> bool | None:
     """None when this pair shares no coercible-numeric x, or when the two
     bands do not paint on one common side of the zero baseline -- neither is a

@@ -48,8 +48,7 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("chart/table.py", "_render_spark_cell"),
         # chart/table_support.py
         ("chart/table_support.py", "_validate_strftime_spec"),
-        ("chart/table_support.py", "_format_temporal_value"),
-        ("chart/table_support.py", "format_table_cell_value"),
+        ("chart/table_support.py", "format_temporal_value"),
         ("chart/table_support.py", "resolve_cell_link._sub"),
         ("chart/table_support.py", "resolve_palette_stops"),
         ("chart/table_support.py", "interpolate_scale_color"),

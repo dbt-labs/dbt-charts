@@ -3728,7 +3728,7 @@ def _pin_sorted_category_domain(
     a layer's own diverging query -- exactly what that function's own
     docstring warns a narrower pin does to its union. Two other writers can
     also reach this ``scale.domain`` first -- ``pin_categorical_domain_order``
-    (a sign-split bar's sub-layers) and ``pin_sorted_x_domain`` (line/area/
+    (a sign-split bar's sub-layers) and ``pin_sorted_domain`` (line/area/
     heatmap) -- and the invariant that makes deferring to any of the three
     safe is the same one: each reads the identical compiled ``sort`` this
     function would.

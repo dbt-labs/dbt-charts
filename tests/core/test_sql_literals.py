@@ -309,6 +309,7 @@ EXPECTED_CLASSIFICATION = {
     "athena": False,
     "presto": False,
     "trino": False,
+    "clickhouse": True,
 }
 BACKSLASH_ESCAPING = sorted(k for k, v in EXPECTED_CLASSIFICATION.items() if v)
 ANSI_LITERALS = sorted(k for k, v in EXPECTED_CLASSIFICATION.items() if not v)
@@ -436,14 +437,14 @@ class TestLiteralEscaping:
         """A new dialect that forgets the answer must not get a quiet one."""
         from dbt_charts.core.dialects import SQLDialect
 
-        class ClickHouseDialect(SQLDialect):
-            name = "clickhouse"
+        class UndeclaredDialect(SQLDialect):
+            name = "undeclared"
 
             def param(self, index: int) -> str:
                 return f"${index}"
 
         with pytest.raises(AttributeError, match="escapes_backslashes"):
-            inline_params("c = $1", ["\\' OR 1=1 -- "], ClickHouseDialect())
+            inline_params("c = $1", ["\\' OR 1=1 -- "], UndeclaredDialect())
 
 
 class TestNulGuard:

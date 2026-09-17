@@ -1,6 +1,7 @@
 """ERR-* and WARN-* codes for the render domain.
 
-Error codes: KPI multirow, bar duplicate rows, map key mismatch, format
+Error codes: KPI multirow, KPI format kind mismatch, KPI temporal format
+invalid, bar duplicate rows, map key mismatch, format
 unsupported, format converter unavailable, format conversion failed, no
 layout, input invalid, Vega-Lite unsupported type, histogram
 non-numeric, histogram pre-aggregated, label/ticks validation, percent range,
@@ -35,6 +36,50 @@ ERR_KPI_MULTIROW = REGISTRY.register(
             "display exactly one value; use a query that returns a single row "
             "(e.g. SELECT SUM(...) or LIMIT 1)."
         ),
+        docs_topic="charts",
+    )
+)
+
+ERR_KPI_FORMAT_KIND_MISMATCH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-KPI-FORMAT-KIND-MISMATCH",
+        domain="render",
+        title="KPI support format does not match a temporal value",
+        message_template=(
+            "KPI chart {chart_id!r} support value is a date/time, but its "
+            "format {spec!r} is not a date format. Use date_short, a "
+            "strftime spec via a style.formats alias, or remove format: to "
+            "use date_short."
+        ),
+        doc=(
+            "Fired when a KPI's support.format is a number format (not "
+            "date_short, time_short, or a style.formats alias resolving to "
+            "a strftime spec) and support.value is a date/datetime column. "
+            "support.format is always authored for that one chart, unlike "
+            "the headline value's format, which can be a board-wide cascade "
+            "default -- so a mismatch here is never ambiguous."
+        ),
+        summary="Fired when a KPI support format doesn't match a temporal value.",
+        docs_topic="charts",
+    )
+)
+
+ERR_KPI_TEMPORAL_FORMAT_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-KPI-TEMPORAL-FORMAT-INVALID",
+        domain="render",
+        title="KPI temporal format spec could not be applied",
+        message_template=(
+            "KPI chart {chart_id!r} could not format value {cell!r} with "
+            "spec {spec!r}: {reason}"
+        ),
+        doc=(
+            "Fired when a KPI's resolved date/time format spec is itself "
+            "invalid (an unknown strftime directive) or the cell's value "
+            "cannot be parsed as a calendar date/time (e.g. an out-of-range "
+            "hour in an ISO timestamp string)."
+        ),
+        summary="Fired when a KPI's date/time format spec can't be applied.",
         docs_topic="charts",
     )
 )
@@ -1276,19 +1321,23 @@ WARN_BAR_BAND_WIDTH_TOO_NARROW = REGISTRY.register(
             "so bars will read as a merged block instead of separate marks."
         ),
         fix_template=(
-            "Widen the chart, reduce the number of categories, "
-            "or (for time series) roll up to a coarser grain "
-            "(e.g. day -> week or month)."
+            "Widen the chart (or, for a horizontal bar, make it taller), reduce "
+            "the number of categories, or (for time series) roll up to a coarser "
+            "grain (e.g. day -> week or month)."
         ),
         doc=(
-            "Fires when a (vertical) bar chart packs so many bands into its plot "
-            "width that each band's fill drops below a readability floor: the fill "
-            "disappears and the bar's own border stroke merges neighbors into a "
-            '"ghost band" smear. Classic trigger: daily-granularity data (hundreds '
-            "of distinct days) rendered as bars at a normal chart width. Also fires "
-            "on a numeric x (no band scale) when the bar's width, authored or "
-            "computed from gap/min_size/max_size, exceeds the gap between the "
-            "closest two x values, so adjacent bars visually overlap."
+            "Fires on bar (vertical + horizontal) charts that pack so many bands "
+            "into the plot's bounding dimension (width for vertical, height for "
+            "horizontal) that each band's fill drops below a readability floor: "
+            "the fill disappears and the bar's own border stroke merges "
+            'neighbors into a "ghost band" smear. Classic trigger: daily-'
+            "granularity data (hundreds of distinct days) rendered as bars at a "
+            "normal chart size, or a grouped/wide bar whose per-series sub-band "
+            "is too thin even though the outer band is not. Also fires on a "
+            "numeric x (no band scale, vertical bars only) when the bar's "
+            "width, authored or computed from gap/min_size/max_size, exceeds "
+            "the gap between the closest two x values, so adjacent bars "
+            "visually overlap."
         ),
         docs_topic="charts",
     )
@@ -2681,6 +2730,29 @@ WARN_AREA_UNSTACKED_READS_AS_STACKED = REGISTRY.register(
             "repeats the same x value on two or more rows within one panel "
             "abstains the whole panel, since there is no principled way to "
             "pick which of the repeated values the chart actually paints."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_FORMAT_KIND_MISMATCH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-FORMAT-KIND-MISMATCH",
+        domain="render",
+        title="a table column's format spec does not match its cell values",
+        message_template=(
+            "table column format {fmt!r} does not match its cell values. {remedy}"
+        ),
+        doc=(
+            "Fired when a table column's `format:` spec is the wrong kind "
+            "for the values it formats: a strftime-style time spec (a "
+            "predefined name like `time_short`, or an explicit string "
+            "containing a `%`-prefixed directive such as `%B` or `%W`) "
+            "applied to a numeric value, or a d3 numeric spec applied to a "
+            "date/datetime value. `format:` is kind-agnostic at compile "
+            "time, so `dct validate` accepts either mismatch; this is "
+            "caught per cell at render time instead, once the actual value "
+            "kind is known."
         ),
         docs_topic="charts",
     )

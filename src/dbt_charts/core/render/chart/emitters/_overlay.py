@@ -235,7 +235,7 @@ def _reconcile_x_domain(
     sort on the base x encoding and a layer-only category interact (see its own
     docstring); this function only writes its result. That result also has to
     overwrite the narrower domain the base may already have pinned from its own
-    rows alone (``pin_categorical_domain_order``, ``pin_sorted_x_domain``), or
+    rows alone (``pin_categorical_domain_order``, ``pin_sorted_domain``), or
     a layer-only category is silently dropped from the shared scale.
 
     No-op when the base x scale isn't categorical (nominal/ordinal). Every

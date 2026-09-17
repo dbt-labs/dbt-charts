@@ -175,13 +175,28 @@ class _SourcePool:
         self, source_config: dict[str, Any], max_workers: int, timeout_seconds: int
     ) -> None:
         self._source_config = source_config
-        self._timeout_seconds = timeout_seconds
         self._dialect = get_dialect(source_config["type"])
+        # The cap in force, after a profile that caps itself harder narrows the
+        # ceiling. Everything downstream reads this one number — the statement
+        # sent at connect, the credentials below, and the seconds a
+        # _QueryDurationExceeded reports — so a timeout error cannot name a
+        # limit that is not the one the warehouse enforced.
+        self._timeout_seconds = self._dialect.resolve_timeout_seconds(
+            source_config, timeout_seconds
+        )
         # Precomputed once per pool (dialect + cap are both fixed per source):
         # the timeout SQL to run once at connection setup, or None when the
         # dialect has no server-side SQL mechanism (DuckDB returns None;
-        # BigQuery's cap is a job-level setting applied below instead).
-        self._timeout_sql = self._dialect.statement_timeout_sql(timeout_seconds)
+        # BigQuery's cap is a job-level setting applied in _ensure_connected,
+        # ClickHouse's a credential applied just below).
+        self._timeout_sql = self._dialect.statement_timeout_sql(self._timeout_seconds)
+        # The config every worker thread hands build_adapter: `source_config`
+        # itself unless the dialect's cap is credential-shaped and it put the
+        # cap inside. Precomputed for the same reason _timeout_sql is — both
+        # inputs are frozen per pool.
+        self._connect_config = self._dialect.connect_credentials(
+            source_config, self._timeout_seconds
+        )
         self._tls: threading.local = threading.local()
         # Track every per-thread adapter so close() can release them all.
         self._adapters: list[Any] = []
@@ -335,7 +350,7 @@ class _SourcePool:
             # SQLite are owned by their own adapters. Every query entering this
             # adapter is SELECT-only.
             adapter = build_adapter(
-                self._source_config,
+                self._connect_config,
                 read_only=False,
                 register_macros=False,
             )
@@ -350,9 +365,9 @@ class _SourcePool:
             # via the statement_timeout_sql send below; BigQuery needs the
             # handle itself to attach default_query_job_config. Without this,
             # a dialect with neither (databricks, spark, mysql, athena,
-            # sqlserver — redshift inherits statement_timeout_sql from
-            # PostgresDialect) never touches the handle here, so its connect
-            # failure leaks past this classification entirely.
+            # clickhouse, sqlserver — redshift inherits statement_timeout_sql
+            # from PostgresDialect) never touches the handle here, so its
+            # connect failure leaks past this classification entirely.
             handle = adapter.connections.get_thread_connection().handle
 
             # Must follow ctx.__enter__() so get_thread_connection() returns the live

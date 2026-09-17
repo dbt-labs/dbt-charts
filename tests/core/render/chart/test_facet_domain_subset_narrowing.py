@@ -120,6 +120,44 @@ class TestReproduction:
         assert len(japan_values) < len(domain)
 
 
+class TestSortedYAxisRespectsNarrowing:
+    """An authored `sort:` on a heatmap's narrowed y axis must not repaint the
+    domain per-panel narrowing removed. `pin_sorted_domain`'s `axis`
+    parameter is what lets heatmap's y-encoding pin defer to the same
+    narrowing check the unsorted case already gets — hardcoding the check to
+    `"x"` would pin y's domain back on every panel regardless."""
+
+    def test_authored_sort_leaves_narrowed_y_domain_unpinned(self):
+        products = ["Widgets", "Gadgets", "Doodads", "Doohickeys", "Sprockets"]
+        data = _sparse_region_data(products)
+        chart = HeatmapChart.model_validate(
+            {
+                "id": "t",
+                "type": "heatmap",
+                "query_name": "q",
+                "x": "week",
+                "y": "product",
+                "color": "value",
+                "multiples": {"columns": "region"},
+                "sort": {"by": "value", "order": "desc"},
+            }
+        )
+        board_rs, ctx = _board()
+        vl = generate_vega_lite_spec(
+            chart, data, width=1200.0, board_style=board_rs, chart_style_context=ctx
+        )
+        assert vl.get("resolve", {}).get("scale", {}).get("y") == "independent"
+        y_enc = vl["spec"]["encoding"]["y"]
+        x_enc = vl["spec"]["encoding"]["x"]
+        assert "domain" not in y_enc.get("scale", {}), (
+            "a narrowed y must not get a pinned scale.domain -- that repaints "
+            "the empty category slots per-panel narrowing exists to remove"
+        )
+        # x is NOT a narrowing candidate here (every panel carries both
+        # weeks), so its authored sort still pins an explicit domain.
+        assert x_enc["scale"]["domain"]
+
+
 class TestDomainSubsetPredicate:
     """`facet_bound_position_channels` fires on the panel's actual data, never
     on whether the field name matches a facet field."""

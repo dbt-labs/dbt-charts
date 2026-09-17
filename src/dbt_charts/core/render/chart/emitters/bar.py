@@ -1142,9 +1142,20 @@ def _emit_vertical(
             if color_field and not _is_color_1to1_with_x(
                 cat_field, color_field, dataset
             ):
+                # xOffset always needs a discrete (band) scale to split each
+                # x category into sub-bars — a quantitative or temporal
+                # color type would give it a continuous scale instead, and
+                # bandwidth('xOffset') then evaluates to 0
+                # (ERR-CHART-PAINTED-NO-MARKS). The color paint scale can
+                # legitimately be continuous; the offset scale never can.
+                offset_enc_type = (
+                    color_enc_type
+                    if color_enc_type in ("nominal", "ordinal")
+                    else "nominal"
+                )
                 encoding["xOffset"] = {
                     "field": color_field,
-                    "type": color_enc_type,
+                    "type": offset_enc_type,
                     "title": color_title,
                 }
             # Grouped bars have no display-order to pin (no stack, no
@@ -1589,9 +1600,17 @@ def _emit_horizontal(
             if color_field_h and not _is_color_1to1_with_x(
                 cat_field, color_field_h, dataset
             ):
+                # yOffset always needs a discrete (band) scale to split each
+                # category into sub-bars — see the vertical branch above for
+                # why a quantitative/temporal color type must not leak into it.
+                offset_enc_type_h = (
+                    color_enc_type_h
+                    if color_enc_type_h in ("nominal", "ordinal")
+                    else "nominal"
+                )
                 encoding["yOffset"] = {
                     "field": color_field_h,
-                    "type": color_enc_type_h,
+                    "type": offset_enc_type_h,
                     "title": color_title_h,
                 }
             # See the vertical branch above: a bound field still owes

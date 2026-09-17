@@ -1,0 +1,5 @@
+kind: Fixes
+body: "`dct validate --warehouse` crashed with an uncaught `AssertionError` when a board's `source:` named no board/project source and a dbt project was auto-detected (no `sources:` block needed) — the same setup `dct render` handles fine by resolving the query straight through dbt's own manifest. The warehouse-check tier now resolves the dbt target's warehouse type from `profiles.yml` and runs the same DESCRIBE/EXPLAIN check it would for a registered source, falling back to an `unchecked` diagnostic only when the type truly can't be determined ahead of execution."
+time: 2026-09-15T17:32:33.964844-07:00
+custom:
+  DbtChartsIssue: 11

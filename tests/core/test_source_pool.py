@@ -723,3 +723,152 @@ class TestAttributionReachesTheWorker:
 
         assert seen["dbt_charts_board"] == "revenue"
         assert seen["team"] == "finance"
+
+
+# ---------------------------------------------------------------------------
+# ClickHouse: the statement cap rides on the connection's settings
+# ---------------------------------------------------------------------------
+
+_CLICKHOUSE_SOURCE: dict[str, Any] = {
+    "type": "clickhouse",
+    "host": "h",
+    "user": "u",
+    "password": "p",
+    "schema": "analytics",
+}
+
+
+class TestClickHouseQueryTimeout:
+    def test_max_execution_time_is_set_on_the_connection(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """The cap is a per-request setting, not a session SET: a pooled HTTP
+        session expires idle between renders and would silently drop a SET."""
+        sa = _make_sql_adapter(tmp_path, local_project)
+        mock_adapter = _make_adapter_mock()
+
+        with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
+            pool = sa._get_source_pool(_CLICKHOUSE_SOURCE)
+            pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        built = build.call_args.args[0]
+        assert built["custom_settings"] == {
+            "max_execution_time": get_execution_config().max_query_duration_seconds
+        }
+        # No SET is sent: the only statement the worker ran is the query.
+        sent = [c.args[0] for c in mock_adapter.execute.call_args_list]
+        assert sent == ["SELECT 1"]
+
+    def test_a_looser_profile_setting_is_capped_at_the_ceiling(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        sa = _make_sql_adapter(tmp_path, local_project)
+        source = {
+            **_CLICKHOUSE_SOURCE,
+            "custom_settings": {"max_execution_time": 9999, "max_threads": 2},
+        }
+
+        with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
+            pool = sa._get_source_pool(source)
+            pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        built = build.call_args.args[0]
+        assert built["custom_settings"] == {
+            "max_threads": 2,
+            "max_execution_time": get_execution_config().max_query_duration_seconds,
+        }
+        # The source config the pool is keyed on is untouched.
+        assert "custom_settings" not in _CLICKHOUSE_SOURCE
+        assert source["custom_settings"]["max_execution_time"] == 9999
+
+    def test_a_stricter_profile_setting_is_not_loosened_to_the_ceiling(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """max_query_duration_seconds is a ceiling, so a profile that caps
+        itself harder keeps its own value — the shipped 120s default is not a
+        value anyone chose, and writing it over an authored 5s would loosen the
+        cap rather than enforce one."""
+        sa = _make_sql_adapter(tmp_path, local_project)
+        source = {**_CLICKHOUSE_SOURCE, "custom_settings": {"max_execution_time": 5}}
+
+        with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
+            pool = sa._get_source_pool(source)
+            pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert build.call_args.args[0]["custom_settings"] == {"max_execution_time": 5}
+
+    def test_the_timeout_error_reports_the_cap_that_actually_fired(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A stricter profile narrows the cap, so the pool must report 5s — not
+        the 120s ceiling, whose remediation ("raise the limit") cannot help."""
+        from dbt_charts.core.execute.adapters.sql_adapter import (
+            _QueryDurationExceeded,
+            _SourcePool,
+        )
+
+        mock_adapter = _make_adapter_mock()
+        mock_adapter.execute.side_effect = RuntimeError(
+            "Code: 159. DB::Exception: Timeout exceeded (TIMEOUT_EXCEEDED)"
+        )
+        source = {**_CLICKHOUSE_SOURCE, "custom_settings": {"max_execution_time": 5}}
+
+        with patch(_BUILD_ADAPTER, return_value=mock_adapter):
+            pool = _SourcePool(source, max_workers=1, timeout_seconds=120)
+            with pytest.raises(_QueryDurationExceeded) as excinfo:
+                pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert excinfo.value.seconds == 5
+
+    def test_an_unusable_profile_setting_raises_rather_than_picking_a_side(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Neither answer is safe: keeping it runs uncapped, overwriting it caps
+        a query the author never asked to cap."""
+        sa = _make_sql_adapter(tmp_path, local_project)
+        source = {
+            **_CLICKHOUSE_SOURCE,
+            "custom_settings": {"max_execution_time": "soon"},
+        }
+
+        with pytest.raises(ValueError, match="max_execution_time"):
+            sa._get_source_pool(source)
+
+    def test_the_cap_follows_the_source_override(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.core.execute.adapters.sql_adapter import _SourcePool
+
+        with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
+            pool = _SourcePool(_CLICKHOUSE_SOURCE, max_workers=1, timeout_seconds=7)
+            pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert build.call_args.args[0]["custom_settings"] == {"max_execution_time": 7}
+
+    def test_a_timeout_is_classified_and_not_retried(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Error 159 is the warehouse canceling the statement, not the session."""
+        from dbt_charts.core.execute.adapters.sql_adapter import (
+            _QueryDurationExceeded,
+        )
+
+        sa = _make_sql_adapter(tmp_path, local_project)
+        mock_adapter = _make_adapter_mock()
+        mock_adapter.execute.side_effect = RuntimeError(
+            "ClickHouse exception:  Code: 159. DB::Exception: Timeout exceeded: "
+            "elapsed 30.0 seconds, maximum: 30. (TIMEOUT_EXCEEDED)"
+        )
+
+        with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
+            pool = sa._get_source_pool(_CLICKHOUSE_SOURCE)
+            with pytest.raises(_QueryDurationExceeded):
+                pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert build.call_count == 1

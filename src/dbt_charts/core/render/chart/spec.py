@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from dbt_charts.core.utils import CellValue
+
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
     from dbt_charts.core.compile.models.style.theme import TitleStyle
@@ -281,3 +283,12 @@ class ChartSpec:
     # deliberately never added here — cross-panel color identity stays
     # shared; only positional band/axis space narrows.
     facet_independent_channels: frozenset[Literal["x", "y"]] = frozenset()
+    # Query order of facet_row's / facet_column's distinct values (first
+    # encounter in the query rows), read via ChartDataset.column_values().
+    # A VL facet field def has no "preserve source order" sort mode (unlike
+    # a position channel's `sort: null`), so the row-order domain must be
+    # pinned as an explicit values array or VL falls back to alphabetical.
+    # None only for a non-faceted spec (no facet_row/facet_column set). See
+    # FacetFeature.apply() for the one known gap this order can miss.
+    facet_row_order: tuple[CellValue, ...] | None = None
+    facet_column_order: tuple[CellValue, ...] | None = None

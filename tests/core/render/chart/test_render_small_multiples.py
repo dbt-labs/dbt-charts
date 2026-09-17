@@ -264,6 +264,58 @@ class TestFacetStructure:
         assert facet.get("row", {}).get("field") == "region"
         assert facet.get("column", {}).get("field") == "product"
 
+    def test_row_facet_sort_is_query_order_not_alphabetical(self):
+        """`_row_data()` orders regions West, East, North. Alphabetical would
+        read East, North, West. A VL facet field def has no "preserve source
+        order" sort mode, so query order is pinned as an explicit values
+        array."""
+        spec = _v2_vl(_area({"rows": "region"}), _row_data())
+        assert spec["facet"]["row"]["sort"] == ["West", "East", "North"]
+
+    def test_column_facet_sort_is_query_order_not_alphabetical(self):
+        spec = _v2_vl(_area({"columns": "region"}), _row_data())
+        assert spec["facet"]["column"]["sort"] == ["West", "East", "North"]
+
+    def test_facet_sort_matches_data_values_for_a_non_string_field(self):
+        """Pins the invariant the fix rests on: `normalize_data_types`
+        (`data.values`) and `normalize_scalar_for_json` (the sort array) must
+        agree on an int facet value's JSON form, or the two could diverge."""
+        data = [
+            {"month": m, "region": r, "revenue": 100 + m}
+            for r in (3, 1, 2)
+            for m in range(2)
+        ]
+        spec = _v2_vl(_area({"rows": "region"}), data)
+        assert spec["facet"]["row"]["sort"] == [3, 1, 2]
+
+    def test_grid_sort_is_query_order_on_both_axes(self):
+        spec = _v2_vl(_area({"rows": "region", "columns": "product"}), _grid_data())
+        assert spec["facet"]["row"]["sort"] == ["West", "East", "North"]
+        assert spec["facet"]["column"]["sort"] == ["Widgets", "Gadgets"]
+
+    def test_row_facet_renders_panels_in_query_order(self):
+        """The spec-level `sort` assertion above only proves the VL key is
+        set correctly. VL's own default sort for a facet field is
+        alphabetical regardless of `sort: null`, unlike a position channel,
+        so only an end-to-end render through vl_convert proves panel order."""
+        import re
+
+        from dbt_charts.core.render.chart.vega_lite import render_chart
+
+        board_rs, board_ctx = _board()
+        svg = render_chart(
+            _area({"rows": "region"}),
+            board_rs,
+            board_ctx,
+            _row_data(),
+            format="svg",
+        )
+        first_seen = []
+        for match in re.finditer(r"West|East|North", svg):
+            if match.group() not in first_seen:
+                first_seen.append(match.group())
+        assert first_seen == ["West", "East", "North"]
+
     def test_row_header_label_is_left(self):
         """The row facet value reads as a left row-header, not a per-panel title."""
         spec = _v2_vl(_area({"rows": "region"}), _row_data())

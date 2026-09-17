@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'A `type: heatmap`''s x and y category axes always rendered alphabetically and ignored the query''s row order; an authored `sort:` reached only the x axis. Both axes now default to query row order, and an authored `sort:` reaches y the same way it already reached x.'
+time: 2026-09-16T18:35:46Z
+custom:
+  DbtChartsIssue: 13

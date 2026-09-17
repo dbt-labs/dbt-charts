@@ -93,6 +93,7 @@ from dbt_charts.core.text.predefined_formats import (
 )
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
+    CellValue,
     Rows,
     bar_sort_op,
     numeric_column_values,
@@ -264,14 +265,18 @@ ResolvedCartesianChart = (
     ResolvedAreaChart | ResolvedLineChart | ResolvedHeatmapChart | ResolvedBarChart
 )
 
-_CATEGORICAL_X_TYPES = ("nominal", "ordinal")
+_CATEGORICAL_TYPES = ("nominal", "ordinal")
 
 
-def pin_sorted_x_domain(
-    x_enc: VLDict, data: ChartRenderData, chart: ResolvedCartesianChart
+def pin_sorted_domain(
+    enc: VLDict,
+    data: ChartRenderData,
+    chart: ResolvedCartesianChart,
+    axis: Literal["x", "y"],
 ) -> None:
     """Pin the authored sort's category order as an explicit ``scale.domain``,
-    in place. No-op on an unsorted or continuous x.
+    in place, on the position channel named by ``axis``. No-op on an unsorted
+    or continuous channel.
 
     Vega-Lite applies a field sort AFTER the transforms an emitter puts on the
     sub-layers: a stacked area's ``impute`` injects a 0 for every series a
@@ -286,18 +291,21 @@ def pin_sorted_x_domain(
     an explicit domain outranks ``sort`` in Vega-Lite, so VL draws the order
     ``x_domain_order`` computed, and the prediction is the drawing.
 
-    A small-multiples x resolved per panel is the exception: narrowing trims
-    each panel's scale to its own rows, and one explicit domain applies to
-    every independent scale, so pinning would paint back the empty category
-    slots narrowing exists to remove.
+    A small-multiples channel resolved per panel is the exception: narrowing
+    trims each panel's scale to its own rows, and one explicit domain applies
+    to every independent scale, so pinning would paint back the empty
+    category slots narrowing exists to remove.
+
+    ``axis`` is required, not defaulted: a chart with more than one
+    categorical dimension (heatmap) needs to say which one ``enc`` is.
     """
-    sort = x_enc.get("sort")
-    if not isinstance(sort, dict) or x_enc.get("type") not in _CATEGORICAL_X_TYPES:
+    sort = enc.get("sort")
+    if not isinstance(sort, dict) or enc.get("type") not in _CATEGORICAL_TYPES:
         return
-    field = x_enc.get("field")
+    field = enc.get("field")
     if not isinstance(field, str):
         return
-    if chart.multiples is not None and "x" in _domain_subset_narrowing_candidates(
+    if chart.multiples is not None and axis in _domain_subset_narrowing_candidates(
         chart, chart.multiples, data
     ):
         return
@@ -312,7 +320,7 @@ def pin_sorted_x_domain(
         # Domain values land in the spec without passing through
         # `normalize_data_types`, so a raw date/Decimal would reach
         # vl_convert's JSON serialization unconverted (`render/utils.py`).
-        x_enc.setdefault("scale", {})["domain"] = [
+        enc.setdefault("scale", {})["domain"] = [
             normalize_scalar_for_json(value) for value in domain
         ]
 
@@ -739,13 +747,9 @@ def build_x_enc(
 _LAYOUT_CHROME_PX = 72.0
 
 
-# A raw query-result cell value (str/int/float/date/None) — dynamic by
-# construction, not a laundered type: the concrete type depends on the
-# board's own query.
-_CellValue = Any  # type-state: explicit_any — raw query result cell value
 # Facet panel key (one cell value per active facet dimension) -> distinct
 # values of one field seen within that panel.
-_PanelDomains = dict[tuple[_CellValue, ...], set[_CellValue]]
+_PanelDomains = dict[tuple[CellValue, ...], set[CellValue]]
 
 
 def _panel_domains(
@@ -1816,7 +1820,7 @@ __all__ = [
     "cartesian_x_scale_domain",
     "chart_sort_to_vl",
     "dimension_sort_to_vl",
-    "pin_sorted_x_domain",
+    "pin_sorted_domain",
     "companion_color_for_fill",
     "emitted_categorical_color_scale",
     "distinct_series_values",

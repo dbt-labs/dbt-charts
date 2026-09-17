@@ -22,7 +22,6 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
 from dbt_charts.core.compile.resolve.chart.label_data import (
     LABEL_FIELD,
     ChartRows,
-    ChartValue,
     prepare_pie_label_data,
     project_pie_table_rows,
 )
@@ -33,6 +32,7 @@ from dbt_charts.core.diagnostics.codes_render import (
 )
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.fonts import font_is_tabular
+from dbt_charts.core.utils import CellValue
 
 ArcRenderMode = Literal["direct", "hybrid", "full_table"]
 
@@ -173,7 +173,7 @@ class AttachmentPlan(NamedTuple):
     """The companion table a mode implies, plus the widths it leaves behind."""
 
     row_indices: tuple[int, ...]
-    rows: list[dict[str, ChartValue]]
+    rows: list[dict[str, CellValue]]
     columns: dict[str, TableColumnConfig]
     placement: Literal["below", "right"]
     table_width: float
@@ -256,7 +256,7 @@ def _format_value_for_width(
 
 
 def build_attached_table_columns(
-    rows: list[dict[str, ChartValue]],
+    rows: list[dict[str, CellValue]],
     value_format: FormatState,
     table_style: TableChartStyle,
 ) -> tuple[dict[str, TableColumnConfig], float]:

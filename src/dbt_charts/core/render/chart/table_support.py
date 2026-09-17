@@ -18,6 +18,8 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedTableColumnCon
 from dbt_charts.core.compile.models.style.theme import (
     font_weight_as_css,
 )
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_TABLE_FORMAT_KIND_MISMATCH
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
 from dbt_charts.core.render.chart.title_overflow import (
     TitleOverflowMode,
@@ -30,7 +32,11 @@ from dbt_charts.core.render.format_utils import (
 )
 from dbt_charts.core.render.utils import resolve_tone_color, slug_to_text
 from dbt_charts.core.text.case import CaseValue, apply_case
-from dbt_charts.core.text.format_d3 import NULL_DISPLAY, portable_strftime
+from dbt_charts.core.text.format_d3 import (
+    NULL_DISPLAY,
+    is_time_format,
+    portable_strftime,
+)
 from dbt_charts.core.text.numeral_scale import decimal_pad_for
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_TIME_SPECS,
@@ -139,7 +145,25 @@ def _validate_strftime_spec(format_spec: str) -> None:
             )
 
 
-def _format_temporal_value(
+def _raise_if_time_format_on_numeric(resolved: str) -> None:
+    """Raise ``ChartDataError`` when a resolved format is a strftime spec.
+
+    A strftime spec has no meaning against a numeric value; without this
+    check, ``format_value``/``format_d3`` forwards it straight into the
+    d3-format parser, which raises an opaque, uncoded parse error.
+    """
+    if is_time_format(resolved):
+        raise ChartDataError.from_code(
+            ERR_TABLE_FORMAT_KIND_MISMATCH,
+            fmt=resolved,
+            remedy=(
+                "use a d3-format numeric spec (e.g. '.1f') or remove format: "
+                "to use the theme default"
+            ),
+        )
+
+
+def format_temporal_value(
     value: datetime.date | datetime.datetime | str,
     format_spec: str,
 ) -> str:
@@ -158,7 +182,7 @@ def _format_temporal_value(
     _validate_strftime_spec(format_spec)
 
     if isinstance(value, str):
-        # Parse ISO string to a date object so strftime works uniformly.
+        # Parse ISO string to a date/datetime so strftime works uniformly.
         # fromisoformat() on 3.10 doesn't handle the "Z" suffix — normalize it first.
         # Space-separated Postgres timestamps ("YYYY-MM-DD HH:MM:SS") are normalized
         # to ISO T-separator before parsing.
@@ -168,18 +192,21 @@ def _format_temporal_value(
             stripped = stripped[:10] + "T" + stripped[11:]
         if "T" in stripped:
             dt = datetime.datetime.fromisoformat(stripped)
-            if dt.tzinfo is not None:
-                d: datetime.date = dt.astimezone(datetime.timezone.utc).date()
-            else:
-                d = dt.date()
+            # A timestamp carries a time component -- keep it (portable_strftime
+            # accepts date or datetime) so a time directive in format_spec sees
+            # the real time, not midnight. Aware values still normalize to UTC.
+            d: datetime.date | datetime.datetime = (
+                dt.astimezone(datetime.timezone.utc) if dt.tzinfo is not None else dt
+            )
         else:
             d = datetime.date.fromisoformat(stripped[:10])
     elif isinstance(value, datetime.datetime):
         # Aware datetime: convert to UTC first to match ISO string behavior.
-        if value.tzinfo is not None:
-            d = value.astimezone(datetime.timezone.utc).date()
-        else:
-            d = value.date()
+        d = (
+            value.astimezone(datetime.timezone.utc)
+            if value.tzinfo is not None
+            else value
+        )
     else:
         d = value
 
@@ -229,9 +256,10 @@ def format_table_cell_value(
     human-readable dates without SQL-side strftime. The default format is the
     engine-predefined ``date_short`` spec from ``PREDEFINED_TIME_SPECS``.
 
-    Explicit column ``format:`` strings containing ``%`` are treated as
-    strftime specs and applied to temporal values directly. Non-temporal
-    ``format:`` strings (numeric d3 specs) raise ValueError.
+    Explicit column ``format:`` strings recognized as strftime specs (see
+    ``is_time_format``) are applied to temporal values directly. A format of
+    the wrong kind -- a numeric d3 spec on a temporal value, or a strftime
+    spec on a numeric value -- raises ``ChartDataError``.
     """
     if value is None or (isinstance(value, str) and not value.strip()):
         return NULL_DISPLAY
@@ -248,35 +276,51 @@ def format_table_cell_value(
     if is_temporal_value(value):
         if format_config is not None:
             resolved = resolve_format(format_config, formats)
-            # A strftime spec starts with (or solely contains) %-style directives.
-            # Distinguish from d3/numeric specs by requiring a leading % or %- modifier.
-            # d3 percent specs like ".0%" end with %, so a leading check is accurate.
-            if resolved.startswith("%"):
+            if is_time_format(resolved):
                 # Author-provided strftime spec — raises ValueError for bad directives.
-                return _format_temporal_value(value, resolved)
-            raise ValueError(
-                f"non-temporal format spec {resolved!r} applied to a temporal column; "
-                f"use a strftime spec (e.g. '%-d %b %Y') or remove format: to use date_short"
+                return format_temporal_value(value, resolved)
+            raise ChartDataError.from_code(
+                ERR_TABLE_FORMAT_KIND_MISMATCH,
+                fmt=resolved,
+                remedy=(
+                    "use a strftime spec (e.g. '%-d %b %Y') or remove format: "
+                    "to use date_short"
+                ),
             )
         date_format = PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
-        return _format_temporal_value(value, date_format)
+        return format_temporal_value(value, date_format)
 
     if isinstance(value, (int, float)):
         if format_config is not None:
+            resolved = resolve_format(format_config, formats)
+            _raise_if_time_format_on_numeric(resolved)
             return format_value(value, format_config, formats)
         return format_value(value, default_number_format(), formats=formats)
 
     if isinstance(value, dict):
         return str(value)
     if format_config is not None:
+        resolved = resolve_format(format_config, formats)
         try:
-            return format_value(float(value), format_config, formats)
+            numeric = float(value)
         except (ValueError, TypeError):
             pass
+        else:
+            # A date-like numeric string (e.g. a bare year "2024" in an
+            # otherwise-temporal column) is not the mismatch this guards
+            # against -- render it like any other date-like cell instead of
+            # feeding a strftime spec into the numeric formatter.
+            if is_date_like(value) and is_time_format(resolved):
+                return str(value)
+            _raise_if_time_format_on_numeric(resolved)
+            try:
+                return format_value(numeric, format_config, formats)
+            except (ValueError, TypeError):
+                pass
     # No explicit format: a numeric-looking string (CSV/warehouse adapters
     # deliver numbers as strings) gets the theme default. Date-like strings
     # (e.g. a bare year "2024") and genuinely non-numeric strings pass through
-    # verbatim — the same values the numeric-lane branch excludes upstream.
+    # verbatim -- the same values the numeric-lane branch excludes upstream.
     if is_date_like(value):
         return str(value)
     try:

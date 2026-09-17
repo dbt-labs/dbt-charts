@@ -140,7 +140,7 @@ def _read_target_dict(
             (source_resolver._expand_dbt_profile, via DbtTargetSourceConfig's
             validator). True renders it here, reusing the same render already
             computed for validation below — for a caller with no render step of
-            its own (DbtAdapter._get_dbt_adapter). Never pass True from a caller
+            its own (DbtAdapter._resolve_target_dict). Never pass True from a caller
             that also renders the result, or an env_var() value that itself
             contains Jinja delimiters would be evaluated a second time.
     """
@@ -394,15 +394,13 @@ class DbtAdapter(BaseAdapter):
             data=data, columns=columns, truncated_reason=truncated_reason
         )
 
-    def _get_dbt_adapter(self) -> Any:
-        """Get dbt adapter instance (lazy-loaded).
+    def _resolve_target_dict(
+        self,
+    ) -> dict[str, Any]:  # type-state: explicit_any — mirrors _read_target_dict's dict
+        """Read this adapter's profile+target connection dict from profiles.yml.
 
-        Delegates adapter construction to build_adapter() in the factory —
-        single point of truth for source_config → dbt adapter.
+        See ``resolve_target_type()`` for the exceptions this can raise.
         """
-        if self._adapter is not None:
-            return self._adapter
-
         if not self.profile_name:
             project_config_path = self.dbt_project_path / "dbt_project.yml"
             if project_config_path.exists():
@@ -422,12 +420,34 @@ class DbtAdapter(BaseAdapter):
 
         # This path has no render step of its own downstream, unlike
         # source_resolver._expand_dbt_profile — see the `render` arg.
-        target_dict = _read_target_dict(
+        return _read_target_dict(
             self.dbt_project_path,
             self.profile_name,
             self.target_name,
             render=True,
         )
+
+    def resolve_target_type(self) -> str:
+        """The dbt target's warehouse type, read from profiles.yml without connecting.
+
+        Raises:
+            FileNotFoundError: no dbt_project.yml at dbt_project_path and no
+                profile_name was provided.
+            ValueError: dbt_project.yml has no 'profile:' key, or the
+                resolved profile/target is missing or invalid.
+        """
+        return str(self._resolve_target_dict()["type"])
+
+    def _get_dbt_adapter(self) -> Any:  # type-state: explicit_any — untyped dbt adapter
+        """Get dbt adapter instance (lazy-loaded).
+
+        Delegates adapter construction to build_adapter() in the factory —
+        single point of truth for source_config → dbt adapter.
+        """
+        if self._adapter is not None:
+            return self._adapter
+
+        target_dict = self._resolve_target_dict()
         from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
 
         # Dialect first, adapter second, and not the other way round: workers run

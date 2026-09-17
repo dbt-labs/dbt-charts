@@ -31,6 +31,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
 )
 
 from ._migration_catalogs import flat_schema, synthetic_catalog
+from ._migration_declarations import checked_registry, validate_declarations
 
 V1 = "0.1.0"
 V2 = "0.2.0"
@@ -95,7 +96,7 @@ def test_rejects_a_move_whose_source_path_survives_the_transition() -> None:
     catalog = synthetic_catalog({V1: flat_schema("old"), V2: flat_schema("old", "new")})
 
     with pytest.raises(MigrationError, match="still exists in"):
-        MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
+        checked_registry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
 
 
 def _enum_schema(field: str, values: list[str]) -> JsonObject:
@@ -148,7 +149,7 @@ def test_identity_path_move_requires_a_value_map() -> None:
     catalog = synthetic_catalog({V1: flat_schema("color"), V2: flat_schema("color")})
 
     with pytest.raises(MigrationError, match="value_map"):
-        MigrationRegistry([Move(V1, V2, ("color",), ("color",))], catalog=catalog)
+        checked_registry([Move(V1, V2, ("color",), ("color",))], catalog=catalog)
 
 
 def test_identity_path_move_rewrites_yaml_text_in_place() -> None:
@@ -705,7 +706,7 @@ def test_deletion_validates_source_path_must_exist() -> None:
     catalog = _deletion_catalog()
 
     with pytest.raises(MigrationError, match="absent from"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [Deletion(V1, V2, ("nonexistent",))],
             catalog=catalog,
@@ -718,7 +719,7 @@ def test_deletion_validates_adjacent_schema() -> None:
     )
 
     with pytest.raises(MigrationError, match="immediately succeeding"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [Deletion(V1, V3, ("a",))],
             catalog=catalog,
@@ -790,7 +791,7 @@ def test_deletion_target_path_must_be_absent_from_target_schema() -> None:
 
     # "live" exists in both V1 and V2 — declaring a deletion is wrong
     with pytest.raises(MigrationError, match="still exists in"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [Deletion(V1, V2, ("legend", "live"))],
             catalog=catalog,
@@ -803,7 +804,7 @@ def test_deletion_current_target_path_must_be_absent_from_current_schema() -> No
 
     # "live" still exists in the current schema — declaring a deletion is wrong
     with pytest.raises(MigrationError, match="still exists in"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [Deletion(V2, catalog.dev.version, ("live",))],
             catalog=catalog,
@@ -815,7 +816,7 @@ def test_deletion_valid_current_target_accepts_absent_tail() -> None:
     catalog = _current_boundary_catalog()
 
     # "dead" is in V2 (source) but not in current_schema — valid deletion
-    registry = MigrationRegistry(
+    registry = checked_registry(
         [],
         [Deletion(V2, catalog.dev.version, ("dead",))],
         catalog=catalog,
@@ -828,7 +829,7 @@ def test_deletion_current_source_must_be_latest_schema() -> None:
     catalog = _current_boundary_catalog()
 
     with pytest.raises(MigrationError, match="immediately succeeding"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [Deletion(V1, catalog.dev.version, ("ancient",))],
             catalog=catalog,
@@ -840,7 +841,7 @@ def test_deletion_unretained_source_raises() -> None:
     catalog = _deletion_catalog()
 
     with pytest.raises(MigrationError, match="not retained"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [Deletion("9.9.9", V2, ("dead",))],
             catalog=catalog,
@@ -1882,15 +1883,16 @@ def test_a_pending_move_is_validated_against_the_real_catalog(
     import sys
     import types
 
-    from dbt_charts.core.compile.migrations.migrations import _board_migration_context
+    from dbt_charts.core.compile.migrations.migrations import (
+        _build_board_migration_context,
+    )
     from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
         load_yaml_schema_catalog,
     )
 
-    catalog = load_yaml_schema_catalog()
     pending_dotted = (
         "dbt_charts.core.compile.migrations.versions."
-        f"v{catalog.dev.version.replace('.', '_')}"
+        f"v{load_yaml_schema_catalog().dev.version.replace('.', '_')}"
     )
     fake_pending = types.ModuleType(pending_dotted)
     vars(fake_pending).update(
@@ -1900,12 +1902,10 @@ def test_a_pending_move_is_validated_against_the_real_catalog(
     )
 
     monkeypatch.setitem(sys.modules, pending_dotted, fake_pending)
-    _board_migration_context.cache_clear()
-    try:
-        with pytest.raises(MigrationError, match="still exists in"):
-            _board_migration_context()
-    finally:
-        _board_migration_context.cache_clear()
+    _, registry = _build_board_migration_context()
+
+    with pytest.raises(MigrationError, match="still exists in"):
+        validate_declarations(registry)
 
 
 def _current_boundary_move_catalog() -> YamlSchemaCatalog:
@@ -1920,7 +1920,7 @@ def test_move_current_target_accepts_present_new_path() -> None:
     """A Move to the DEV version validates when the new path exists in current_schema."""
     catalog = _current_boundary_move_catalog()
 
-    registry = MigrationRegistry(
+    registry = checked_registry(
         [Move(V2, catalog.dev.version, ("old",), ("new",))],
         catalog=catalog,
     )
@@ -1933,7 +1933,7 @@ def test_move_current_target_path_must_be_present_in_current_schema() -> None:
     catalog = _current_boundary_move_catalog()
 
     with pytest.raises(MigrationError, match="absent from"):
-        MigrationRegistry(
+        checked_registry(
             [Move(V2, catalog.dev.version, ("old",), ("missing",))],
             catalog=catalog,
         )
@@ -1944,7 +1944,7 @@ def test_move_current_source_must_be_latest_schema() -> None:
     catalog = _current_boundary_move_catalog()
 
     with pytest.raises(MigrationError, match="immediately succeeding"):
-        MigrationRegistry(
+        checked_registry(
             [Move(V1, catalog.dev.version, ("ancient",), ("new",))],
             catalog=catalog,
         )
@@ -2061,7 +2061,7 @@ def _cond_move(catalog: YamlSchemaCatalog) -> ConditionalMove:
 
 def test_conditional_move_validates_and_accepts_correctly() -> None:
     catalog = _conditional_move_catalog()
-    registry = MigrationRegistry([], [], [_cond_move(catalog)], catalog=catalog)
+    registry = checked_registry([], [], [_cond_move(catalog)], catalog=catalog)
     assert registry.conditional_moves_from(V1)
 
 
@@ -2174,7 +2174,7 @@ def test_conditional_move_validates_wrong_adjacency_raises() -> None:
     )
 
     with pytest.raises(MigrationError, match="immediately succeeding"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [],
             [
@@ -2197,7 +2197,7 @@ def test_conditional_move_current_target_source_must_be_latest() -> None:
     catalog = _current_boundary_catalog()
 
     with pytest.raises(MigrationError, match="immediately succeeding"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [],
             [
@@ -2219,7 +2219,7 @@ def test_conditional_move_validates_source_tail_must_exist() -> None:
     catalog = _conditional_move_catalog()
 
     with pytest.raises(MigrationError, match="absent from"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [],
             [
@@ -2241,7 +2241,7 @@ def test_conditional_move_validates_destination_tail_must_exist() -> None:
     catalog = _conditional_move_catalog()
 
     with pytest.raises(MigrationError, match="absent from"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [],
             [
@@ -2514,7 +2514,7 @@ def test_chart_type_scoped_deletion_validates_against_only_its_own_branch() -> N
     exists on `table`'s branch in V2, but a `chart_type="bar"`-scoped
     Deletion only needs it gone from bar's own branch, which it is."""
     catalog = _scoped_deletion_catalog()
-    MigrationRegistry(
+    checked_registry(
         [],
         [Deletion(V1, V2, ("some_field",), chart_type="bar")],
         catalog=catalog,
@@ -2524,7 +2524,7 @@ def test_chart_type_scoped_deletion_validates_against_only_its_own_branch() -> N
 def test_chart_type_scoped_deletion_still_raises_if_not_actually_removed() -> None:
     catalog = _scoped_deletion_catalog()
     with pytest.raises(MigrationError, match="still exists"):
-        MigrationRegistry(
+        checked_registry(
             [],
             [Deletion(V1, V2, ("some_field",), chart_type="table")],
             catalog=catalog,

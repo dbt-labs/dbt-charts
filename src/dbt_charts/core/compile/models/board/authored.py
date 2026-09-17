@@ -195,16 +195,40 @@ class GridItem(BaseModel):
         default=None, description="Row position (0-indexed). Auto-placed if omitted."
     )
     col_span: int | None = Field(
-        default=None, description="Number of columns to span (width in grid units)."
+        default=None,
+        ge=0,
+        description=(
+            "Number of columns to span (width in grid units). Zero or a "
+            "positive number; 0 is treated as unset and falls back to "
+            "width, then to 1."
+        ),
     )
     row_span: int | None = Field(
-        default=None, description="Number of rows to span (height in grid units)."
+        default=None,
+        ge=0,
+        description=(
+            "Number of rows to span (height in grid units). Zero or a "
+            "positive number; 0 is treated as unset and falls back to "
+            "height, then to 1."
+        ),
     )
     width: int | None = Field(
-        default=None, description="Alias for col_span (more intuitive name)."
+        default=None,
+        ge=0,
+        description=(
+            "Alias for col_span (more intuitive name). Zero or a positive "
+            "number; used only when col_span is unset or 0, and 0 here "
+            "also falls back to 1."
+        ),
     )
     height: int | None = Field(
-        default=None, description="Alias for row_span (more intuitive name)."
+        default=None,
+        ge=0,
+        description=(
+            "Alias for row_span (more intuitive name). Zero or a positive "
+            "number; used only when row_span is unset or 0, and 0 here "
+            "also falls back to 1."
+        ),
     )
     notes: Annotated[str | None, DisplayText()] = Field(
         default=None,
@@ -222,7 +246,9 @@ class GridLayout(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     columns: int = Field(
-        default=24, description="Number of grid columns (default: 24)."
+        default=24,
+        gt=0,
+        description="Number of grid columns (default: 24). Positive number only.",
     )
     items: list[GridItem] = Field(
         description="Cells of this grid, each pairing content with its placement."

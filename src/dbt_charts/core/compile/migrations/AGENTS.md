@@ -36,7 +36,9 @@ previous grammar still renders, not that the models validate.
 **Prove it with a test, both ways.** A migration claim is a test; so is a
 claim that something *cannot* be migrated. Twice now an untested "this would
 corrupt open-map keys" has stood in for the fixture that would have settled
-it.
+it. Building a `MigrationRegistry` checks nothing: whether your declaration
+is coherent against the schemas it names is decided by `validate_declarations`
+(`tests/core/compile/_migration_declarations.py`), in CI.
 
 **Prefer a change recognition can see.** `_recognize` reads the document, not
 a version marker. Renaming a key or retiring a value leaves evidence;

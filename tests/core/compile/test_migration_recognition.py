@@ -28,8 +28,6 @@ from dbt_charts.core.compile.migrations import (
 from dbt_charts.core.compile.migrations.migrations import (
     _board_migration_context,
     _recognize,
-    _schema_has_tail,
-    _schema_has_tail_for_chart_type,
     _schema_path_exists,
     move_source_locations,
 )
@@ -40,6 +38,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
 )
 
 from ._migration_catalogs import flat_schema, released, synthetic_catalog
+from ._migration_declarations import schema_has_tail, schema_has_tail_for_chart_type
 
 V1 = "0.1.0"
 V2 = "0.2.0"
@@ -543,10 +542,10 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
     A declared retired path is treated as proof that a document predates the
     current grammar. That inference is only sound while no retired path is
     also a live one -- checked structurally here for an ordinary rename
-    (``MigrationRegistry._validate``'s precondition: old_path must be absent
+    (``validate_declarations``'s precondition: old_path must be absent
     from the target grammar). A ``chart_type``-scoped ``Deletion`` narrows
-    that precondition to its own family's branch (``_schema_has_tail_for_chart_type``,
-    mirroring ``_validate``'s own scoped check) -- a path can legitimately
+    that precondition to its own family's branch (``schema_has_tail_for_chart_type``,
+    mirroring ``validate_declarations``'s own scoped check) -- a path can legitimately
     still exist globally (e.g. ``conditional_formatting`` on ``table``/``kpi``)
     as long as it is gone from the scoped family's own branch.
 
@@ -582,11 +581,11 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
         deletion.path
         for deletion in registry.deletions
         if (
-            _schema_has_tail_for_chart_type(
+            schema_has_tail_for_chart_type(
                 catalog.current_schema, deletion.path, deletion.chart_type
             )
             if deletion.chart_type is not None
-            else _schema_has_tail(catalog.current_schema, deletion.path)
+            else schema_has_tail(catalog.current_schema, deletion.path)
         )
         and _schema_path_exists(catalog.current_schema, deletion.path)
     ]
@@ -598,7 +597,7 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
     for move in identity_moves:
         assert move.value_map is not None, (
             f"identity-path Move for {move.old_path!r} has no value_map -- "
-            "MigrationRegistry._validate should have already rejected this"
+            "validate_declarations should have already rejected this"
         )
         current_values = [
             value for value, mapped in move.value_map.items() if mapped == value

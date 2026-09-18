@@ -132,7 +132,7 @@ queries:
         ON date_trunc('month', o.close_at)::DATE = grid.m
        AND o.lead_source = grid.lead_source
        AND o.is_closed
-      WHERE {{ filter('lead_source', lead_source) }}
+      WHERE {{ filter('grid.lead_source', lead_source) }}
       GROUP BY 1, 2
       ORDER BY 1, 2
 
@@ -208,7 +208,7 @@ queries:
           ON date_trunc('month', o.close_at)::DATE = grid.m
          AND o.lead_source = grid.lead_source
          AND o.is_closed
-        WHERE {{ filter('lead_source', lead_source) }}
+        WHERE {{ filter('grid.lead_source', lead_source) }}
         GROUP BY 1, 2
       )
       -- 3-month trailing window smooths the per-source monthly choppiness

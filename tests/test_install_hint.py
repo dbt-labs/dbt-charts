@@ -5,7 +5,7 @@ extras" or "missing optional dependency" error tells the customer to
 type. This helper only ever runs from an install that already exists, so
 its signal is how the running dbt-charts got here — not whether ``uv``
 happens to be on ``PATH``. The extension-side mirror
-(``apps/ide/vscode-extension/src/utils/install-hint.ts``) uses ``uv`` on
+(``apps/vscode-extension/src/utils/install-hint.ts``) uses ``uv`` on
 ``PATH`` instead, because at that call site nothing is installed yet to
 inspect. See ``install-hint.test.ts`` for that half.
 """

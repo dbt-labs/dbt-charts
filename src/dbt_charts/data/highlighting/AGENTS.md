@@ -6,7 +6,7 @@ of truth every dbt charts editor surface derives its highlighting from:
 
 | Surface | Consumes | Derived artifact |
 |---|---|---|
-| VS Code extension | `top_level_keys`, `enum_values_by_key`, `sql_block_scalar_keys`, `sql_block_scalar_parents` | `apps/ide/vscode-extension/syntaxes/dbt-charts.tmLanguage.json` (generated) |
+| VS Code extension | `top_level_keys`, `enum_values_by_key`, `sql_block_scalar_keys`, `sql_block_scalar_parents` | `apps/vscode-extension/syntaxes/dbt-charts.tmLanguage.json` (generated) |
 | Cloud + Playground web editors | `sql_block_scalar_keys`, `sql_block_scalar_parents` | `libs/codemirror-dbt-charts/src/{language,highlight}.ts` (hand-written, manifest passed in) |
 | Docs site (Pygments) | `sql_block_scalar_keys`, `sql_block_scalar_parents` | `src/dbt_charts/integrations/highlighting.py` (hand-written, reads the manifest) |
 

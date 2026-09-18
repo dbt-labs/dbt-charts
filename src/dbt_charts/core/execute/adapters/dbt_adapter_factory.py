@@ -167,6 +167,16 @@ def build_adapter(
 
     adapter_cls = getattr(mod, adapter_name)
     creds_cls = getattr(mod, creds_name)
+    if adapter_type_lower == "databricks":
+        # Constructed instead of DatabricksAdapter so the GlobalState write in its
+        # __init__ (see databricks_connection_manager.py) never runs — swapping the
+        # class after construction would be too late, since the harmful write
+        # happens during __init__ itself.
+        from dbt_charts.core.execute.adapters.databricks_connection_manager import (
+            DbtChartsDatabricksAdapter,
+        )
+
+        adapter_cls = DbtChartsDatabricksAdapter
 
     # Strip 'type' and 'attribution' (dbt charts cost metadata, not a dbt credential),
     # translate profile-style aliases (e.g. BigQuery project→database), then use
@@ -284,14 +294,6 @@ def build_adapter(
         )
 
         adapter.connections = autocommit_connections(adapter_cls.ConnectionManager)(
-            adapter.config, mp_context
-        )
-    if adapter_type_lower == "databricks":
-        from dbt_charts.core.execute.adapters.databricks_connection_manager import (
-            DbtChartsDatabricksConnectionManager,
-        )
-
-        adapter.connections = DbtChartsDatabricksConnectionManager(
             adapter.config, mp_context
         )
     # Must follow any connection-manager replacement above: a fresh manager starts

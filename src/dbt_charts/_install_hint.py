@@ -15,7 +15,7 @@ interpreter* (a different question); this helper is the canonical
 reinstall hint.
 
 The TypeScript mirror at
-``apps/ide/vscode-extension/src/utils/install-hint.ts`` uses a
+``apps/vscode-extension/src/utils/install-hint.ts`` uses a
 *different* signal (is `uv` on PATH) because it runs before anything is
 installed — there is no existing install to inspect there. If you
 change one file, check whether the other's signal still applies before

@@ -2,7 +2,7 @@
 
 Writes two committed files:
   dbt-charts/src/dbt_charts/data/highlighting/board.json
-  apps/ide/vscode-extension/syntaxes/dbt-charts.tmLanguage.json
+  apps/vscode-extension/syntaxes/dbt-charts.tmLanguage.json
 
 Run via: just gen-highlight-artifacts
 """
@@ -26,7 +26,6 @@ MANIFEST_PATH = (
 _TM_GRAMMAR_PATH: Path | None = (
     _MONOREPO_ROOT
     / "apps"
-    / "ide"
     / "vscode-extension"
     / "syntaxes"
     / "dbt-charts.tmLanguage.json"

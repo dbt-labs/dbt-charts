@@ -66,7 +66,7 @@ A description is not an engineering note — it ships verbatim to users, across 
 
 Banned: Python symbols, module/file paths, compile-stage jargon, change narrative, review rationale. The test: **would this sentence help someone who has only ever seen the YAML?** If it only lands for someone holding the diff, move it to a `#` comment, the PR body, or the task worksheet — none of those ship. Hold internal-tier models (`normalized.py`, `resolved.py`) to the same standard; tiers get promoted.
 
-Regenerating after a description edit takes five commands, each gated by its own drift test: `just gen-yaml-reference`, `just gen-highlight-artifacts`, `just ide schema`, `just playground gen-completion-schema`, `just gen-board-resolved-schema`. Three of those are monorepo-only: `gen-yaml-reference` and the `ide` / `playground` legs, the latter two regenerating other packages' artifacts. Standalone, `just gen-references` replaces `gen-yaml-reference` and writes the yaml, error, and warning references in one pass.
+Regenerating after a description edit takes five commands, each gated by its own drift test: `just gen-yaml-reference`, `just gen-highlight-artifacts`, `just vscode_extension schema`, `just playground gen-completion-schema`, `just gen-board-resolved-schema`. Three of those are monorepo-only: `gen-yaml-reference` and the `vscode_extension` / `playground` legs, the latter two regenerating other packages' artifacts. Standalone, `just gen-references` replaces `gen-yaml-reference` and writes the yaml, error, and warning references in one pass.
 
 ### Design + coding patterns
 

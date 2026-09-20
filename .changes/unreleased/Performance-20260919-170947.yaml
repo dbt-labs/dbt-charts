@@ -1,0 +1,3 @@
+kind: Performance
+body: 'A long-running host can now call `dbt_charts.agent_api.warmup.warm_process()` once at startup to build the migration registry, the authorable schema, and the built-in theme, so the first board a process loads does not pay for them.'
+time: 2026-09-19T17:10:01.889069-07:00

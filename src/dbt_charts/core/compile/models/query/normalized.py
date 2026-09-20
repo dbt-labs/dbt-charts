@@ -39,6 +39,7 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.cache import NEVER_CACHED, CachePolicy
+from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredQuery,
     RestMethod,
@@ -122,7 +123,7 @@ class Query(BaseModel, ABC):
     )
 
     # Variable dependencies - computed during normalization
-    variable_dependencies: frozenset[str] = Field(
+    variable_dependencies: VariableDependencies = Field(
         default_factory=frozenset,
         description="Variable names this query references in SQL (computed during normalization).",
     )

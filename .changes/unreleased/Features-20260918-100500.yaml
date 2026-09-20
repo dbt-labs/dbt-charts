@@ -1,0 +1,3 @@
+kind: Features
+body: A compile result can be dumped to and loaded from a `board-compiled` JSON artifact (`dump_compiled_board_artifact`/`load_compiled_board_artifact`), the pinned shape the Rust compile-stage port's differential sweep is checked against.
+time: 2026-09-18T10:05:00.000000-00:00

@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
 
 
@@ -43,7 +44,7 @@ class CalloutChart(BaseModel):
             "deliberately does not extend _BaseChartFields."
         ),
     )
-    variable_dependencies: frozenset[str] = Field(
+    variable_dependencies: VariableDependencies = Field(
         default_factory=frozenset,
         description="Variable names this chart depends on.",
     )

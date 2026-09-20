@@ -27,7 +27,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     PartitionAxis,
     ResolvedStyleChannel,
 )
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import FormatConfig, VariableDependencies
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedLegendStyle,
@@ -75,7 +75,7 @@ class _BaseResolvedChartFields(BaseModel):
         default=None,
         description="String name when query is a named reference.",
     )
-    variable_dependencies: frozenset[str] = Field(
+    variable_dependencies: VariableDependencies = Field(
         description="Variable names this chart depends on.",
     )
     notes: str = Field(

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A `tabs.items[]` entry with no `rows:`/`cols:`/`grid:`/`tabs:` of its own (a content-only or empty leaf tab) now gets the same `compiled_at`/`version` metadata as every other nested board, instead of an empty `meta: {}`.
+time: 2026-09-18T09:22:32.000000-00:00

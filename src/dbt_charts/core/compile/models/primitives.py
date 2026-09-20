@@ -10,7 +10,14 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    field_validator,
+    model_validator,
+)
 
 from dbt_charts.core.compile.models.factories import (
     _PatchBase,
@@ -31,6 +38,13 @@ from dbt_charts.core.compile.models.schema_names import (
     StopsPaletteName,
 )
 from dbt_charts.core.text.format_d3 import Notation
+
+# A frozenset dumps in Python's per-process hash-seed order, so two otherwise-
+# identical processes emit different orderings for the same set. Every model
+# carrying variable names dumps them sorted for a deterministic wire shape.
+VariableDependencies = Annotated[
+    frozenset[str], PlainSerializer(sorted, return_type=list[str])
+]
 
 # Within-group spacing for grouped bars. Keywords resolve to an overlap fraction
 # of bar width at render time; a number is that fraction directly (>0 overlaps,

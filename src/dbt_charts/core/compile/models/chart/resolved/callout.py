@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyleChannel
+from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.style.resolved.callout import ResolvedCalloutStyle
 from dbt_charts.core.compile.models.style.theme.board import PaddingStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
@@ -63,7 +64,7 @@ class ResolvedCalloutChart(BaseModel):
             "and render/chart/session.py can read chart.subtitle directly."
         ),
     )
-    variable_dependencies: frozenset[str] = Field(
+    variable_dependencies: VariableDependencies = Field(
         description="Variable names this callout depends on.",
     )
     style: ResolvedCalloutStyle = Field(

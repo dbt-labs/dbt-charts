@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.8.1.dev24",
+  "version": "0.0.1.dev96",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -6233,8 +6233,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "incremental": {
           "anyOf": [
@@ -8794,8 +8793,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -10158,8 +10156,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -11092,8 +11089,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "style": {
           "$ref": "#/$defs/ResolvedCalloutStyle",
@@ -11724,8 +11720,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -12305,8 +12300,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -12805,8 +12799,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -13567,8 +13560,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -14541,8 +14533,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -14989,8 +14980,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -16000,8 +15990,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -16686,8 +16675,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -17337,8 +17325,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "notes": {
           "default": "",
@@ -19133,8 +19120,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "incremental": {
           "anyOf": [
@@ -20312,8 +20298,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "incremental": {
           "anyOf": [
@@ -22951,8 +22936,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         },
         "incremental": {
           "anyOf": [
@@ -23293,8 +23277,7 @@
             "type": "string"
           },
           "title": "Variable Dependencies",
-          "type": "array",
-          "uniqueItems": true
+          "type": "array"
         }
       },
       "title": "Variable",

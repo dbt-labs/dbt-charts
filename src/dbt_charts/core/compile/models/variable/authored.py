@@ -10,9 +10,16 @@ user inputs (select, slider, etc.) or have static default values.
 import math
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 from dbt_charts.core.compile.models.markers import DisplayText
+from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import infer_query_type_from_keys
 
@@ -281,7 +288,7 @@ class Variable(BaseModel):
             "another file, so the importing document holds only the name."
         ),
     )
-    variable_dependencies: frozenset[str] = Field(
+    variable_dependencies: VariableDependencies = Field(
         default_factory=frozenset,
         json_schema_extra={"internal": True},
         description="Other variable names this variable's options query depends on (computed during compilation).",

@@ -23,6 +23,18 @@ names the schema this document conforms to
 ``dbt-charts`` release — metadata a non-Python consumer needs to interpret the
 ``$style_ref`` markers correctly, since ``ResolvedBoard``/``ResolvedStyle``
 themselves are unchanged and know nothing about hoisting.
+
+``dump_compiled_board_artifact`` / ``load_compiled_board_artifact`` are the
+same codec for the COMPILED (normalized) ``Board`` — the output of
+``compile()``/``compile_file()``, one stage earlier than ``ResolvedBoard``.
+That board carries two repeated trees per nested board, ``resolved_style``
+and ``chart_style_context`` (the latter ~71 KB on its own); both hoist into
+the *same* style table, since content-addressing means two different keys
+sharing one table is free — a distinct table per key would only add
+bookkeeping for no benefit. The envelope also carries ``diagnostics``
+(errors then warnings), since a compiled artifact is the one that travels to
+a consumer — like the planned Rust compile stage — that never runs the
+Python compiler and has no other way to see them.
 """
 
 from __future__ import annotations
@@ -31,11 +43,15 @@ import hashlib
 import json
 from collections.abc import Callable
 from importlib.metadata import version as _installed_version
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import TypeAdapter
 
+from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
+
+if TYPE_CHECKING:
+    from dbt_charts.core.compile.compiler import CompileResult
 
 _STYLE_REF = "$style_ref"
 
@@ -43,6 +59,9 @@ _STYLE_REF = "$style_ref"
 # artifact declares the schema it conforms to using the same URI the schema
 # publishes itself under.
 SCHEMA_ID = "https://dbtcharts.com/schemas/board-resolved.schema.json"
+
+# No JSON Schema renderer exists for the compiled artifact yet.
+COMPILED_SCHEMA_ID = "https://dbtcharts.com/schemas/board-compiled.schema.json"
 
 # One decoded JSON object. `Any` at the leaf is the accurate type — these
 # functions move already-serialized documents around and never interpret the
@@ -53,6 +72,7 @@ JsonObject: TypeAlias = dict[str, Any]
 StyleTable: TypeAlias = dict[str, JsonObject]
 
 _BOARD_ADAPTER: TypeAdapter[ResolvedBoard] = TypeAdapter(ResolvedBoard)
+_COMPILED_BOARD_ADAPTER: TypeAdapter[Board] = TypeAdapter(Board)
 
 
 class DanglingStyleRefError(ValueError):
@@ -84,17 +104,20 @@ def _style_key(style: JsonObject) -> str:
 
 def _rewrite_boards(
     board: JsonObject,
+    style_key: str,
     rewrite_style: Callable[[JsonObject], JsonObject],
 ) -> JsonObject:
-    """Rebuild a board tree, applying ``rewrite_style`` to every board's style.
+    """Rebuild a board tree, applying ``rewrite_style`` to every board's
+    ``style_key`` field (``"style"`` on a resolved board, ``"resolved_style"``
+    or ``"chart_style_context"`` on a compiled one).
 
     Walks the root plus every nested board reachable through
     ``layout.items[].board``. Copies rather than mutating: the caller's JSON is
     left untouched, so a failed transform can never leave a half-rewritten tree.
     """
     out = dict(board)
-    if "style" in out:
-        out["style"] = rewrite_style(out["style"])
+    if style_key in out:
+        out[style_key] = rewrite_style(out[style_key])
 
     # `layout` and its `items` are both required on their models, so a KeyError
     # here means a malformed artifact — which should fail loudly rather than
@@ -105,7 +128,9 @@ def _rewrite_boards(
     for item in layout["items"]:
         new_item = dict(item)
         if new_item.get("board"):
-            new_item["board"] = _rewrite_boards(new_item["board"], rewrite_style)
+            new_item["board"] = _rewrite_boards(
+                new_item["board"], style_key, rewrite_style
+            )
         items.append(new_item)
     new_layout["items"] = items
     out["layout"] = new_layout
@@ -131,7 +156,7 @@ def hoist_styles(board: JsonObject) -> tuple[JsonObject, StyleTable]:
         styles[key] = style
         return {_STYLE_REF: key}
 
-    return _rewrite_boards(board, to_ref), styles
+    return _rewrite_boards(board, "style", to_ref), styles
 
 
 def inline_styles(board: JsonObject, styles: StyleTable) -> JsonObject:
@@ -162,7 +187,56 @@ def inline_styles(board: JsonObject, styles: StyleTable) -> JsonObject:
             )
         return styles[key]
 
-    return _rewrite_boards(board, from_ref)
+    return _rewrite_boards(board, "style", from_ref)
+
+
+def hoist_compiled_styles(board: JsonObject) -> tuple[JsonObject, StyleTable]:
+    """Like :func:`hoist_styles`, for a compiled ``Board`` — hoists both
+    ``resolved_style`` and ``chart_style_context`` into one shared table.
+
+    Args:
+        board: A serialized ``Board`` (as produced by
+            ``TypeAdapter(Board).dump_python``).
+
+    Returns:
+        ``(board, styles)`` where every board in ``board`` carries a
+        ``$style_ref`` marker in place of each of its two style fields, and
+        ``styles`` maps each hash to the style document. Inverse of
+        :func:`inline_compiled_styles`.
+    """
+    styles: StyleTable = {}
+
+    def to_ref(style: JsonObject) -> dict[str, str]:
+        key = _style_key(style)
+        styles[key] = style
+        return {_STYLE_REF: key}
+
+    board = _rewrite_boards(board, "resolved_style", to_ref)
+    board = _rewrite_boards(board, "chart_style_context", to_ref)
+    return board, styles
+
+
+def inline_compiled_styles(board: JsonObject, styles: StyleTable) -> JsonObject:
+    """Reverse of :func:`hoist_compiled_styles`.
+
+    Raises:
+        DanglingStyleRefError: If a marker has no entry in ``styles``.
+    """
+
+    def from_ref(style: JsonObject) -> JsonObject:
+        key = style.get(_STYLE_REF)
+        if key is None:
+            return style
+        if key not in styles:
+            raise DanglingStyleRefError(
+                f"Style reference {key!r} is not in the style table "
+                f"({len(styles)} entries). The artifact is incomplete: its "
+                "board and style table came from different emits."
+            )
+        return styles[key]
+
+    board = _rewrite_boards(board, "resolved_style", from_ref)
+    return _rewrite_boards(board, "chart_style_context", from_ref)
 
 
 def dump_resolved_board_artifact(board: ResolvedBoard) -> JsonObject:
@@ -200,3 +274,60 @@ def load_resolved_board_artifact(artifact: JsonObject) -> ResolvedBoard:
     """
     board_json = inline_styles(artifact["board"], artifact["styles"])
     return _BOARD_ADAPTER.validate_python(board_json)
+
+
+def dump_compiled_board_artifact(result: CompileResult) -> JsonObject:
+    """Serialize a ``compile()``/``compile_file()`` result into the
+    publishable, deduplicated compiled artifact.
+
+    Args:
+        result: A ``CompileResult`` with ``board`` set — i.e. ``result.success``.
+
+    Returns:
+        ``{"$id": COMPILED_SCHEMA_ID, "version": <dbt-charts release>,
+        "styles": <table>, "board": <hoisted Board JSON>, "diagnostics":
+        [<errors...>, <warnings...>]}``.
+
+    Raises:
+        ValueError: If ``result.board`` is ``None`` (compile failed) — there
+            is no board to serialize.
+    """
+    if result.board is None:
+        raise ValueError(
+            "cannot build a board-compiled artifact from a failed compile "
+            "(CompileResult.board is None); inspect result.errors instead"
+        )
+    board_json = _COMPILED_BOARD_ADAPTER.dump_python(
+        result.board, mode="json", warnings="error"
+    )
+    hoisted, styles = hoist_compiled_styles(board_json)
+    diagnostics = [
+        diagnostic.model_dump(mode="json")
+        for diagnostic in (*result.errors, *result.warnings)
+    ]
+    return {
+        "$id": COMPILED_SCHEMA_ID,
+        "version": _installed_version("dbt-charts"),
+        "styles": styles,
+        "board": hoisted,
+        "diagnostics": diagnostics,
+    }
+
+
+def load_compiled_board_artifact(artifact: JsonObject) -> Board:
+    """Reverse of :func:`dump_compiled_board_artifact`'s board half.
+
+    Diagnostics are not reloaded — there is no ``CompileResult`` to rebuild
+    them into, only the ``Board``.
+
+    Args:
+        artifact: An envelope as produced by :func:`dump_compiled_board_artifact`.
+
+    Returns:
+        The reconstructed ``Board``, equal to ``result.board`` originally dumped.
+
+    Raises:
+        DanglingStyleRefError: If the artifact's board and style table don't match.
+    """
+    board_json = inline_compiled_styles(artifact["board"], artifact["styles"])
+    return _COMPILED_BOARD_ADAPTER.validate_python(board_json)

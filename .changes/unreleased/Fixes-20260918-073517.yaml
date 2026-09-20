@@ -1,0 +1,3 @@
+kind: Fixes
+body: A query's, variable's, or chart's `variable_dependencies` could dump in a different order across otherwise-identical processes (Python's per-process hash seed ordering a `frozenset`). The field now always serializes as a sorted list.
+time: 2026-09-18T07:35:17.000000-07:00

@@ -843,7 +843,10 @@ def _resolve_tab_items(
     Returns:
         Tuple of (items, tab_titles)
     """
-    from dbt_charts.core.compile.normalize.dispatch import normalize_board
+    from dbt_charts.core.compile.normalize.dispatch import (
+        compiled_meta,
+        normalize_board,
+    )
 
     resolved: list[LayoutItem] = []
     titles: list[str] = []
@@ -908,6 +911,7 @@ def _resolve_tab_items(
                 resolved_style=resolved_style,
                 chart_style_context=chart_style_context,
                 level=parent_level + 1,
+                meta=compiled_meta(),
             )
             resolved.append(
                 LayoutItem(
@@ -931,6 +935,7 @@ def _resolve_tab_items(
                 resolved_style=resolved_style,
                 chart_style_context=chart_style_context,
                 level=parent_level + 1,
+                meta=compiled_meta(),
             )
             resolved.append(
                 LayoutItem(

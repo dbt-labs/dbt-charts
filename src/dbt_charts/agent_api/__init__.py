@@ -93,6 +93,7 @@ if TYPE_CHECKING:
         ValidateResult as ValidateResult,
     )
     from dbt_charts.agent_api.validate_query import QueryDiagnostic as QueryDiagnostic
+    from dbt_charts.agent_api.warmup import warm_process as warm_process
     from dbt_charts.core.attribution import set_surface as set_surface
     from dbt_charts.core.board import (
         BoardRenderResult as BoardRenderResult,
@@ -189,6 +190,7 @@ __all__ = [
     "board_import_closure",
     "compile_editor_buffer",
     "EditorCompileResult",
+    "warm_process",
 ]
 
 # `schema_hints` and `validate_query` (the functions) are deliberately NOT
@@ -207,6 +209,7 @@ __all__ = [
 # instead of importing every submodule (and the compile/execute/dbt_common
 # stack several of them drag in) eagerly at `import dbt_charts.agent_api` time.
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
+    "warm_process": ("dbt_charts.agent_api.warmup", "warm_process"),
     "board_import_closure": (
         "dbt_charts.agent_api.import_closure",
         "board_import_closure",

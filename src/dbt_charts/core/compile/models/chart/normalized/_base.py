@@ -24,7 +24,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     FieldConditionalFormatting,
     MultiplesConfig,
 )
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import FormatConfig, VariableDependencies
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.vega_lite.contracts import Projection
 
@@ -48,7 +48,7 @@ class _BaseChartFields(BaseModel):
         default=None,
         description="String name for executor lookup. None for blank/placeholder charts.",
     )
-    variable_dependencies: frozenset[str] = Field(
+    variable_dependencies: VariableDependencies = Field(
         default_factory=frozenset,
         description="Variable names this chart depends on.",
     )

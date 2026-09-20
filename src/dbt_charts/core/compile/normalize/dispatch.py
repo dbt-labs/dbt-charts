@@ -108,6 +108,19 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.diagnostics.codes_compile import ERR_VALIDATION_FIELD
 
 
+def compiled_meta() -> dict[str, str]:
+    """Compilation metadata stamp every compiled ``Board`` carries.
+
+    Every `Board` in the tree gets this stamp: `normalize_board` below for
+    boards it builds, and the leaf-tab branches in `layout._resolve_tab_items`
+    that construct a `Board` directly without going through `normalize_board`.
+    """
+    return {
+        "compiled_at": datetime.now(timezone.utc).isoformat(),
+        "version": "0.1.0",
+    }
+
+
 def _theme_from_extends(extends: str | list[str] | None) -> str | None:
     """Extract the effective theme name from an extends spec.
 
@@ -850,10 +863,7 @@ def normalize_board(
         resolved_style=resolved_style,
         chart_style_context=chart_style_context,
         level=this_level,
-        meta={
-            "compiled_at": datetime.now(timezone.utc).isoformat(),
-            "version": "0.1.0",
-        },
+        meta=compiled_meta(),
     )
 
     # Single-series rhythm allocation — root-only pass that walks the entire

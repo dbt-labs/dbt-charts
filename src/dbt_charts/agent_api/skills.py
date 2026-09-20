@@ -63,8 +63,7 @@ PROJECT_SKILLS_DIRS: tuple[str, ...] = ("skills", ".claude/skills", ".agents/ski
 INSTALL_NAME_PREFIX = "dct-"
 
 # Cap on an authored (project- or user-written) skill body (chars). Guards
-# against an untrusted body flooding the model's context — via get_skill or the
-# bulk list_skills dump, which returns every authored body unfiltered.
+# against an untrusted body flooding the model's context via get_skill.
 # Truncated with a visible notice, never silently dropped. Looser than
 # PROJECT_INSTRUCTIONS_MAX_CHARS on purpose: AGENTS.md is loaded every turn,
 # skills only when fetched, so bounding legitimate authored content is not the
@@ -164,6 +163,10 @@ class Skill(BaseModel):
 # these on dump so they share one definition of "internal" instead of two
 # independently-drifting copies.
 SKILL_WIRE_EXCLUDE_FIELDS = {"surfaces", "rendered_for"}
+
+# The list form is an index; get_skill is how a caller reads a body.
+# `dct skills --json` is not a tool surface and still dumps the full SkillList.
+SKILL_LIST_EXCLUDE_FIELDS = SKILL_WIRE_EXCLUDE_FIELDS | {"body"}
 
 
 class SkillList(BaseModel):

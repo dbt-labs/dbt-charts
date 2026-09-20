@@ -30,6 +30,16 @@ go.
 > "Cloud" here is dbt charts Cloud (dbtcharts.com), not dbt Labs' dbt Cloud
 > (getdbt.com). Local-only charts need no account — `dct serve` renders them.
 
+## Get consent up front
+
+This run needs the user four times: approving `dct cloud login` (Step 1),
+picking the repository for the GitHub App (Step 3), agreeing that a read-only
+warehouse credential is minted and handed to Cloud (Step 5), and agreeing that
+dbt charts files are committed and pushed to this repository's default branch
+(Steps 4 and 8). The first two are browser clicks that arrive when they
+arrive. The last two are decisions: if the user's request did not already
+grant them, ask for both once, before Step 1.
+
 ## Before you start
 
 Confirm the tools and access exist before relying on them:
@@ -46,6 +56,14 @@ Confirm the tools and access exist before relying on them:
   this repo, and only when neither `--org` nor `--project` is passed), then
   falls back to matching `git remote`. Run it from the repo you're
   connecting once one exists.
+- **`status` is org-scoped, not repo-scoped.** Before trusting a `done`
+  report, confirm one of the org's projects is actually this directory:
+  compare `git remote -v`'s URL against the `REPOSITORY` column in
+  `dct cloud projects`. An org with an unrelated, already-finished project
+  reports `done` too — that is not this repository's setup. If this
+  directory isn't a git checkout, or has no remote yet, say so and name what
+  setup actually needs — a GitHub repository to push to — instead of
+  adopting the org's existing project.
 - Warehouse CLI detection, so you know which credential-minting path applies
   later: `gcloud auth list` (BigQuery), `which snowsql` (Snowflake), `which
   psql` (Postgres/Redshift). Missing tooling isn't fatal — it just means the
@@ -85,6 +103,14 @@ authenticate — don't silently scaffold one:
 
 Whichever it is, the repo must be on GitHub with at least one commit pushed
 before Step 3; boards can follow, every push syncs.
+
+## Sandbox note
+
+Under a sandboxed agent (Codex's workspace-write sandbox, for one) the first
+network call may fail on DNS, and `gh`/`gcloud` may report missing or invalid
+credentials because the sandbox hides the host keyring and `~/.config` — not
+because the credential is actually gone. Re-run with network/host access
+before concluding otherwise.
 
 ## Step 1: Authenticate
 
@@ -153,11 +179,15 @@ them into a dead end.
 
 Two paths, both naming the org from Step 2 with `--org <org>`:
 
-- **Public GitHub repo**: connect headlessly with
+- **Public GitHub repo, with a working `gh` token**: connect headlessly with
   `dct cloud project connect --org <org> --git-url
-  https://github.com/<owner>/<repo>`. No browser hop.
-- **Otherwise**: connect without a URL. `--start` prints an install/pick URL
-  and returns immediately, no backgrounding needed. `--start` and `--wait`
+  https://github.com/<owner>/<repo>`. No browser hop. A `--git-url`
+  connection can never use `dct cloud project scaffold` later — that verb
+  needs a GitHub-connected project.
+- **Otherwise**: connect without a URL. Take this path too when
+  `gh auth status` fails — without it you can't confirm the repo is public,
+  and Cloud rejects a private `--git-url`. `--start` prints an install/pick
+  URL and returns immediately, no backgrounding needed. `--start` and `--wait`
   are one inseparable unit, not two steps split across other work: hand over
   the URL, then immediately run `--wait` in the same turn, before Step 4 and
   before any board authoring. The project does not exist in Cloud until
@@ -230,9 +260,18 @@ process list, so the connect verb refuses it).
 
 | Warehouse | Minting | If you can't mint one |
 |---|---|---|
-| BigQuery | Create a service account scoped to the target dataset, grant it read access, mint a JSON key into a temp file, delete the file once the connection call reads it. | Ask the user's admin to grant the IAM role, or to hand you a key. |
+| BigQuery | Create a service account scoped to the target dataset, grant it read access. If the dataset-level grant is blocked and you fall back to a project-level *conditional* binding, the condition must cover both the `Dataset` and `Table` resource types — `Dataset` alone renders `Access Denied` on the first board. Mint a JSON key into a temp file, delete the file once the connection call reads it. | Ask the user's admin to grant the IAM role, or to hand you a key. |
 | Snowflake | Generate a key pair, register the public half on a role-scoped user via `snowsql`, use the private key file. | Ask the user to type a password at a stdin prompt — never on the command line. |
 | Postgres / Redshift | If your own credentials allow it, create a read-only role via `psql` and use its password. | Ask the user to supply or approve a read-only credential. |
+
+**The remote BigQuery key outlives the local file.** Cloud stores the key's
+contents (encrypted) and rebuilds the warehouse credential from them at every
+render, not only at the connection test — deleting the temp file removes
+nothing on GCP's side. The IAM key must stay valid for as long as the
+connection uses it; list and delete it with `gcloud iam service-accounts keys
+list --iam-account <sa-email>` and `gcloud iam service-accounts keys delete
+<key-id> --iam-account <sa-email>` only once the connection is removed or the
+credential is rotated, never right after the test passes.
 
 Create the connection with the minted (or user-supplied) credential. The
 create call also tests it, and a test that fails outright saves nothing: the

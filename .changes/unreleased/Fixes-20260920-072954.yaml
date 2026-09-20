@@ -1,0 +1,10 @@
+kind: Fixes
+body: 'The `cloud-setup` skill and the Cloud getting-started prompt now name up front
+  what setup requires: pushing commits to the repository''s default branch and handing
+  a read-only warehouse credential to Cloud. A reviewer-gated agent previously discovered
+  each of these mid-run and stopped for separate approval every time. The skill also
+  warns that `dct cloud status` is org-scoped, so a `done` project in the same org
+  does not mean this repository is connected; that a conditional BigQuery IAM binding
+  must cover tables as well as the dataset; and that the minted IAM key must stay
+  valid for as long as the connection uses it.'
+time: 2026-09-20T07:29:54.000000-00:00

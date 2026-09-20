@@ -61,6 +61,18 @@ _SKILL_TARGET_DIRS: dict[str, Path] = {
 SKILL_INSTALL_TARGETS: frozenset[str] = frozenset(_SKILL_TARGET_DIRS)
 
 
+class SkillInstallError(Exception):
+    """Installing skills into a target directory failed on the filesystem."""
+
+    def __init__(self, target_dir: Path, reason: OSError) -> None:
+        self.target_dir = target_dir
+        super().__init__(
+            f"{target_dir}: could not install skills ({reason}).\n"
+            "Install somewhere else: dct init skills --dir <dir>\n"
+            "Or read a skill without installing: dct skills <name>"
+        )
+
+
 class InstallSkillsResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -238,23 +250,26 @@ def install_skills(
     legacy = detect_legacy_skill_dirs(project_root, wheel_names)
     installed: list[str] = []
 
-    if not check:
-        target_dir.mkdir(parents=True, exist_ok=True)
-    retired_removed = _sweep_stale_install_dirs(target_dir, check=check)
+    try:
+        if not check:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        retired_removed = _sweep_stale_install_dirs(target_dir, check=check)
 
-    for skill in skills_for_file_install():
-        install_name = prefixed_install_name(skill.name)
-        dest_dir = target_dir / install_name
-        dest_md = dest_dir / "SKILL.md"
-        content = _rendered_skill_md(skill)
-        if check:
+        for skill in skills_for_file_install():
+            install_name = prefixed_install_name(skill.name)
+            dest_dir = target_dir / install_name
+            dest_md = dest_dir / "SKILL.md"
+            content = _rendered_skill_md(skill)
+            if check:
+                installed.append(install_name)
+                continue
+            if dest_dir.is_dir() or dest_dir.is_symlink():
+                _remove_install_dir(dest_dir)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_md.write_text(content, encoding="utf-8")
             installed.append(install_name)
-            continue
-        if dest_dir.is_dir() or dest_dir.is_symlink():
-            _remove_install_dir(dest_dir)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_md.write_text(content, encoding="utf-8")
-        installed.append(install_name)
+    except OSError as exc:
+        raise SkillInstallError(target_dir, exc) from exc
 
     return InstallSkillsResult(
         installed=installed,

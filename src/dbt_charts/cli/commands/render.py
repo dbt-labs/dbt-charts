@@ -416,6 +416,7 @@ def _write_output(
         output_path = Path(output)
         if not output_path.is_absolute():
             output_path = output_dir / output_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
     else:
         renders_dir = output_dir / "renders"
         renders_dir.mkdir(exist_ok=True)

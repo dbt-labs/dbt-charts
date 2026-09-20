@@ -169,12 +169,18 @@ def run_init_skills(
 
     prefix = "Would install" if check else "Installed"
     any_legacy = False
+    had_error = False
     for target_dir in target_dirs:
-        result = skill_install.install_skills(
-            target_dir=target_dir,
-            project_root=repo_root,
-            check=check,
-        )
+        try:
+            result = skill_install.install_skills(
+                target_dir=target_dir,
+                project_root=repo_root,
+                check=check,
+            )
+        except skill_install.SkillInstallError as exc:
+            typer.echo(f"  Error: {exc}", err=True)
+            had_error = True
+            continue
         rel = _display_path(target_dir, repo_root, global_install)
         if result.installed:
             typer.echo(f"  {prefix} workflow skills ({len(result.installed)}) → {rel}/")
@@ -200,3 +206,6 @@ def run_init_skills(
         typer.echo(
             "  Re-run after removing legacy .cursor/skills or .codex/skills dirs."
         )
+
+    if had_error:
+        raise typer.Exit(1)

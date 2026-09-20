@@ -121,7 +121,7 @@ class TestResolveProject:
             )
         assert (context.org, context.project) == ("acme-data", "analytics")
 
-    def test_the_stored_default_answers_when_the_repo_matches_nothing(
+    def test_the_stored_default_answers_when_therepo_matches_nothing(
         self, tmp_path: Path
     ) -> None:
         with cloud() as client:
@@ -135,7 +135,7 @@ class TestResolveProject:
             )
         assert (context.org, context.project) == ("other-co", "elsewhere")
 
-    def test_a_refusing_verb_never_gets_the_stored_default_when_the_repo_matches_nothing(
+    def test_a_refusing_verb_never_gets_the_stored_default_when_therepo_matches_nothing(
         self,
         tmp_path: Path,
     ) -> None:

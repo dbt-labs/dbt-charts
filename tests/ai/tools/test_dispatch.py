@@ -365,6 +365,21 @@ class TestProjectSkillsDispatch:
         by_name = {s["name"]: s for s in result["skills"]}
         assert by_name["my-metric"]["source"] == "project"
 
+    def test_list_skills_is_an_index_without_bodies(
+        self, context: DbtChartsAIContext, tmp_path: Path
+    ) -> None:
+        skill_dir = tmp_path / "skills" / "my-metric"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-metric\ndescription: Project metric guidance.\n"
+            "kind: pattern\n---\nSpecial project body.\n"
+        )
+
+        result = dispatch_tool_call("list_skills", {}, context=context)
+
+        assert "my-metric" in {s["name"] for s in result["skills"]}
+        assert [s["name"] for s in result["skills"] if "body" in s] == []
+
     def test_get_skill_loads_project_skill(
         self, context: DbtChartsAIContext, tmp_path: Path
     ) -> None:

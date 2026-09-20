@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from dbt_charts.agent_api.skill_install import (
     PRE_NAMESPACE_SKILL_NAMES,
+    SkillInstallError,
     detect_global_skill_targets,
     detect_legacy_skill_dirs,
     detect_skill_targets,
@@ -16,6 +18,11 @@ from dbt_charts.agent_api.skill_install import (
     target_dir_for,
 )
 from dbt_charts.agent_api.skills import all_skill_names
+
+_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+_needs_non_root = pytest.mark.skipif(
+    _AS_ROOT, reason="root bypasses directory permission bits"
+)
 
 
 @pytest.fixture
@@ -331,3 +338,35 @@ def test_detect_global_skill_targets_none(
     monkeypatch.setenv("HOME", str(tmp_path))
 
     assert detect_global_skill_targets() == []
+
+
+@_needs_non_root
+def test_install_unwritable_target_raises_named_error(install_root: Path) -> None:
+    """An unwritable target dir (e.g. a sandboxed agent's read-only `.agents/`)
+    must surface a clean, named error instead of a raw PermissionError
+    traceback."""
+    locked_parent = install_root / ".agents"
+    locked_parent.mkdir()
+    target = locked_parent / "skills"
+    locked_parent.chmod(0o555)
+    try:
+        with pytest.raises(SkillInstallError, match=str(target)):
+            install_skills(target_dir=target, project_root=install_root)
+    finally:
+        locked_parent.chmod(0o755)
+
+
+@_needs_non_root
+def test_reinstall_into_a_read_only_target_raises_the_install_error(
+    install_root: Path,
+) -> None:
+    """The second run is the common one: the target already holds an install,
+    so `mkdir(exist_ok=True)` succeeds and the failure comes from replacing it."""
+    target = install_root / ".agents" / "skills"
+    install_skills(target_dir=target, project_root=install_root)
+    target.chmod(0o555)
+    try:
+        with pytest.raises(SkillInstallError, match=str(target)):
+            install_skills(target_dir=target, project_root=install_root)
+    finally:
+        target.chmod(0o755)

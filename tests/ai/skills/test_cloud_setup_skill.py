@@ -315,3 +315,29 @@ def test_states_that_pushing_does_not_publish(body: str) -> None:
     lowered = body.lower()
     assert "dct cloud project sync" in body
     assert "does not publish" in lowered
+
+
+def test_collects_the_two_decisions_before_step_one(body: str) -> None:
+    """A reviewer-gated agent stops per push and per credential unless both
+    were granted before the run started."""
+    consent = body.split("## Get consent up front")[1].split("\n## ")[0]
+    assert "credential" in consent
+    assert "default branch" in consent
+    assert "before Step 1" in consent
+
+
+def test_done_is_checked_against_this_repository(body: str) -> None:
+    """`status` is org-scoped: another project's `done` is not this repo's."""
+    assert "org-scoped" in body
+    assert "git remote -v" in body
+
+
+def test_conditional_bigquery_binding_covers_tables(body: str) -> None:
+    """The grant stays dataset-scoped; only the conditional fallback needs
+    the Table resource type spelled out."""
+    assert "scoped to the target dataset" in body
+    assert "`Dataset` and `Table`" in body
+
+
+def test_revoking_the_bigquery_key_waits_for_the_connection(body: str) -> None:
+    assert "never right after the test passes" in body

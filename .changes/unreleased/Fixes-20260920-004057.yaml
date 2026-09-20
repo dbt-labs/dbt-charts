@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`dct init skills` no longer crashes with a raw `PermissionError` traceback when its target directory is unwritable — it now names the path and the two working alternatives (`--dir <dir>`, `dct skills <name>`), on a first install and on a re-install alike. `dct cloud status` now says on stderr when neither `published_to` nor a git remote ties the working directory to one of the org''s projects, so another project''s `done` is not read as this repository''s. `dct render --output <path>` now creates a missing parent directory instead of failing with a bare `[Errno 2]`. `dct cloud project connect --git-url` on a github.com URL now warns up front that scaffold PRs and private repositories need the GitHub App flow.'
+time: 2026-09-20T00:40:57-07:00

@@ -82,6 +82,7 @@ from dbt_charts.cloud_client.context import (
     CloudContext,
     git_remotes,
     repo_key,
+    repo_matches,
     resolve_org,
     resolve_project,
 )
@@ -642,10 +643,40 @@ def status(
     with _cloud(host, as_json) as (client, config):
         org_slug = _org(client, config, org)
         result = client.org_status(org_slug)
+        unconfirmed = _checkout_unconfirmed(client, org_slug, result)
     if as_json:
         print_json_result(result)
-        return
-    _print_status(org_slug, result)
+    else:
+        _print_status(org_slug, result)
+    if unconfirmed:
+        # stderr in both modes: `--json` stdout is Cloud's own OrgStatus shape,
+        # and this is a fact about the local directory, not about the org.
+        err_console.print(
+            f"None of {escape(org_slug)}'s projects match this directory's"
+            " published_to or git remotes. If this repository is not connected"
+            " yet, the status above is for other projects -- connect it:"
+            f" dct cloud project connect --org {org_slug}",
+            soft_wrap=True,
+        )
+
+
+def _checkout_unconfirmed(
+    client: CloudClient, org: str, status_result: OrgStatus
+) -> bool:
+    """Whether nothing ties this directory to one of *org*'s projects.
+
+    False when the org has no projects yet: `status` already names
+    `project connect` as the next step then. An advisory, so a failed
+    project listing drops it rather than failing a status already in hand.
+    """
+    if not status_result.projects:
+        return False
+    here, _note = _published_here(client.host, Path.cwd())
+    if here is not None and here[0] == org:
+        return False
+    with suppress(CloudError):
+        return not repo_matches(client, org, git_remotes(Path.cwd()))
+    return False
 
 
 @cloud_app.command("orgs")
@@ -1004,6 +1035,12 @@ def project_connect(
             f" (trunk: {project.trunk_branch}, work: {project.work_branch})"
         )
         typer.echo(_connect_next_step(org_slug, project))
+        if git_url and repo_key(git_url).startswith("github.com/"):
+            typer.echo(
+                "Note: scaffold PRs and private repositories need the GitHub App"
+                f" flow, not a plain git URL: dct cloud project connect --org"
+                f" {org_slug} --start"
+            )
     _record_published_to(client.host, org_slug, project, git_url)
 
 

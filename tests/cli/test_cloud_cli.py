@@ -940,6 +940,66 @@ class TestStatus:
         assert result.exit_code == 0, out(result)
         assert OrgStatus.model_validate_json(result.stdout).next_step is None
 
+    def test_checkout_not_connected_to_the_org_gets_a_trailing_warning(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`status` must not read as if this checkout were part of an
+        org whose projects' git remotes it does not match."""
+        monkeypatch.setattr(
+            cloud_cmd, "git_remotes", _remotes("https://github.com/someone/else")
+        )
+        api.add("GET", "/api/orgs/acme-data/status", self._status("done", None))
+        api.add("GET", "/api/orgs/acme-data/projects", {"projects": [_project()]})
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "match this directory" in out(result)
+        assert "dct cloud project connect --org acme-data" in out(result)
+
+    def test_checkout_connected_to_the_org_prints_no_warning(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            cloud_cmd, "git_remotes", _remotes("https://github.com/acme/analytics")
+        )
+        api.add("GET", "/api/orgs/acme-data/status", self._status("done", None))
+        api.add("GET", "/api/orgs/acme-data/projects", {"projects": [_project()]})
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "match this directory" not in out(result)
+
+    def test_json_stdout_stays_the_org_status_shape_and_the_warning_goes_to_stderr(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            cloud_cmd, "git_remotes", _remotes("https://github.com/someone/else")
+        )
+        body = self._status("done", None)
+        api.add("GET", "/api/orgs/acme-data/status", body)
+        api.add("GET", "/api/orgs/acme-data/projects", {"projects": [_project()]})
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data", "--json"])
+
+        assert result.exit_code == 0, out(result)
+        assert json.loads(result.stdout).keys() == body.keys()
+        assert "match this directory" in result.stderr
+
+    def test_no_remote_checkout_still_warns_when_the_org_has_projects(
+        self, api: FakeApi
+    ) -> None:
+        """The no-remote / not-a-git-repo case: `git_remotes` already returns
+        `[]` by default in the `api` fixture -- this must not skip the
+        mismatch check and must not call `list_projects` to answer it."""
+        api.add("GET", "/api/orgs/acme-data/status", self._status("done", None))
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "match this directory" in out(result)
+
     def test_no_projects_points_at_connect_with_the_org_named(
         self, api: FakeApi
     ) -> None:
@@ -951,6 +1011,41 @@ class TestStatus:
         result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
         assert result.exit_code == 0, out(result)
         assert "dct cloud project connect --org acme-data" in out(result)
+        assert "match this directory" not in out(result)
+
+    def test_published_to_this_org_counts_as_connected(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A renamed repository or an `insteadOf` remote never key-matches;
+        the checkout's own published_to record outranks the remote."""
+        monkeypatch.setattr(
+            cloud_cmd, "git_remotes", _remotes("https://github.com/someone/else")
+        )
+        (tmp_path / "dbt_charts.yml").write_text(
+            'published_to: "https://cloud.example/acme-data/analytics/"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        api.add("GET", "/api/orgs/acme-data/status", self._status("done", None))
+        api.add("GET", "/api/orgs/acme-data/projects", {"projects": [_project()]})
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "match this directory" not in out(result)
+
+    def test_a_failed_project_listing_drops_the_advisory_not_the_status(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            cloud_cmd, "git_remotes", _remotes("https://github.com/someone/else")
+        )
+        api.add("GET", "/api/orgs/acme-data/status", self._status("done", None))
+        api.add("GET", "/api/orgs/acme-data/projects", {"detail": "boom"}, status=503)
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "match this directory" not in out(result)
 
     def test_a_principal_with_no_org_is_told_to_create_one(self, api: FakeApi) -> None:
         api.add("GET", "/api/orgs", {"organizations": []})
@@ -1161,6 +1256,50 @@ class TestProjects:
         assert body["git_remote_url"] == "https://github.com/acme/analytics"
         assert body["slug"] == "analytics"
         assert body["trunk_branch"] == "main"
+
+    def test_connect_with_a_github_git_url_hints_the_app_flow_for_scaffold(
+        self, api: FakeApi
+    ) -> None:
+        """`--git-url` on a github.com URL succeeds, but `project
+        scaffold` later refuses it server-side ("Scaffold PRs need a
+        GitHub-connected project; this one uses a plain git URL."). Warn at
+        connect time, before the agent commits to the URL path."""
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--org",
+                "acme-data",
+                "--git-url",
+                "https://github.com/acme/analytics",
+            ],
+        )
+        assert result.exit_code == 0, out(result)
+        assert "scaffold" in result.output.lower()
+        assert "private" in result.output.lower()
+        assert "dct cloud project connect --org acme-data --start" in result.output
+
+    def test_connect_with_a_non_github_git_url_gets_no_app_hint(
+        self, api: FakeApi
+    ) -> None:
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--org",
+                "acme-data",
+                "--git-url",
+                "https://gitlab.com/acme/analytics",
+            ],
+        )
+        assert result.exit_code == 0, out(result)
+        assert "GitHub App" not in result.output
 
     def test_connect_sends_the_root_override(self, api: FakeApi) -> None:
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)

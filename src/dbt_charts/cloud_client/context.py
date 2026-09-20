@@ -135,7 +135,7 @@ def resolve_org(
         published = _published_context(client, start)
         if published is not None:
             return published[0]
-    matches = _repo_matches(client, None, remotes)
+    matches = repo_matches(client, None, remotes)
     orgs = {org for org, _project in matches}
     if len(orgs) == 1:
         return matches[0][0]
@@ -178,7 +178,7 @@ def resolve_project(
         if published is not None:
             return CloudContext(*published)
 
-    matches = _repo_matches(client, org_flag, remotes)
+    matches = repo_matches(client, org_flag, remotes)
     if project_flag:
         matches = [match for match in matches if match[1] == project_flag]
     if len(matches) > 1:
@@ -224,7 +224,7 @@ def _published_context(client: CloudClient, start: Path) -> tuple[str, str] | No
     return published.org, published.project
 
 
-def _repo_matches(
+def repo_matches(
     client: CloudClient, org_flag: str | None, remotes: list[str]
 ) -> list[tuple[str, str]]:
     """Every (org, project) whose repository is the one we are standing in."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,11 @@ from dbt_charts.agent_api.skill_install import PRE_NAMESPACE_SKILL_NAMES
 from dbt_charts.cli import main as cli_main
 
 runner = CliRunner()
+
+_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+_needs_non_root = pytest.mark.skipif(
+    _AS_ROOT, reason="root bypasses directory permission bits"
+)
 
 
 def _seed_project() -> None:
@@ -477,3 +483,28 @@ def test_init_skills_global_ignores_dct_project_dir(
         assert (home / ".claude/skills/dct-board-build/SKILL.md").exists()
         assert not (project / ".claude").exists()
         assert not (project / ".agents").exists()
+
+
+@_needs_non_root
+def test_init_skills_unwritable_target_errors_cleanly(tmp_path: Path) -> None:
+    """A sandboxed agent's read-only `.agents/` must not surface a raw
+    PermissionError traceback — a clean, named error pointing at the two
+    working alternatives instead."""
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        locked = Path(".agents")
+        locked.mkdir()
+        locked.chmod(0o555)
+        try:
+            result = runner.invoke(cli_main.app, ["init", "skills", "agents"])
+        finally:
+            locked.chmod(0o755)
+
+        assert result.exit_code == 1, result.output
+        assert result.exception is None or isinstance(result.exception, SystemExit), (
+            "must not raise an uncaught exception (no traceback)"
+        )
+        assert "Traceback" not in result.output
+        assert str(locked / "skills") in result.output
+        assert "dct init skills --dir <dir>" in result.output
+        assert "dct skills <name>" in result.output

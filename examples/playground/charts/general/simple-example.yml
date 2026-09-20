@@ -2,22 +2,36 @@ title: "Simple Example"
 notes: "Minimal example showing SQL data source usage"
 source: examples_db
 
+# Variables become controls on the board and are readable in any query.
+# Each starts unset, which filter() below treats as "no filter".
+variables:
+  region:
+    input: select
+    options:
+      static: [North, South, East, West]
+
+# Named SQL, run against `source`. Queries own the data: grain,
+# aggregation and ordering all live here.
 queries:
-  revenue_by_date: |
+  revenue_by_week: |
     SELECT
-      date,
+      date_trunc('week', date) AS week,
       SUM(revenue) AS revenue
     FROM ecommerce_orders
-    GROUP BY date
-    ORDER BY date
+    WHERE {{ filter('region', region) }}
+    GROUP BY week
+    ORDER BY week
 
+# A chart names a query and maps its columns to visual channels.
+# Charts never contain SQL.
 charts:
   revenue_trend:
-    query: revenue_by_date
+    query: revenue_by_week
     type: line
-    x: date
+    x: week
     y: revenue
 
+# A bare name here is one of the charts above, placed in that slot.
 rows:
   - cols:
       - revenue_trend

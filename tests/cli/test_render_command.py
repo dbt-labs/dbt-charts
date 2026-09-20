@@ -354,6 +354,30 @@ class TestDftRenderFormatValueClass:
             f"--format {fmt}: expected output path on stdout, got {result.stdout!r}"
         )
 
+    def test_render_output_creates_missing_parent_directories(
+        self, tmp_path: Path
+    ) -> None:
+        """`--output` pointing at a path whose parent directory does not yet
+        exist must create it, not fail with a bare `[Errno 2]`."""
+        shutil.copytree(_FIXTURE_DIR / "no-warehouse-board", tmp_path / "project")
+        (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
+        out = tmp_path / "nested" / "dir" / "out.html"
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "charts/board.yml",
+                "--format",
+                "html",
+                "--output",
+                str(out),
+                "--project-dir",
+                str(tmp_path / "project"),
+            ],
+        )
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert out.exists()
+
     def test_render_terminal_format_always_goes_to_stdout(self, tmp_path: Path) -> None:
         """--format terminal ignores --output (terminal is a stdout-only format)."""
         shutil.copytree(_FIXTURE_DIR / "no-warehouse-board", tmp_path / "project")

@@ -49,6 +49,7 @@ class TestSkillsList:
         kpi = next(s for s in data["skills"] if s["name"] == "kpi-row")
         assert kpi["kind"] == "pattern"
         assert kpi["has_examples"] is True
+        assert kpi["body"]
 
     def test_lists_workflows_and_patterns_sections(self) -> None:
         result = runner.invoke(app, ["skills"])

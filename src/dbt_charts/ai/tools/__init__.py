@@ -164,7 +164,7 @@ def _handle_list_skills(
     ).model_dump(
         mode="json",
         exclude_none=True,
-        exclude={"skills": {"__all__": _skills.SKILL_WIRE_EXCLUDE_FIELDS}},
+        exclude={"skills": {"__all__": _skills.SKILL_LIST_EXCLUDE_FIELDS}},
     )
 
 

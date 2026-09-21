@@ -36,6 +36,13 @@ class ProjectNotFoundError(Exception):
     """No `--project-dir` given and no dbt_charts.yml found walking up from cwd."""
 
 
+def _marker_hint(directory: Path) -> str:
+    return (
+        f"To make this directory a project, create {directory / 'dbt_charts.yml'} "
+        "(an empty file is enough) or run `dct init`."
+    )
+
+
 def resolve_project_dir(project_dir: Path | None) -> Path:
     """Resolve the caller's `project_dir`, walking up from cwd when omitted.
 
@@ -50,7 +57,7 @@ def resolve_project_dir(project_dir: Path | None) -> Path:
         if find_dct_root(root) is None:
             raise ProjectNotFoundError(
                 f"--project-dir {root} is not a dbt charts project (no dbt_charts.yml "
-                "or dbt_project.yml here or in any parent)."
+                f"or dbt_project.yml here or in any parent). {_marker_hint(root)}"
             )
         return root
     cwd = Path.cwd().resolve()
@@ -58,7 +65,8 @@ def resolve_project_dir(project_dir: Path | None) -> Path:
     if found is None:
         raise ProjectNotFoundError(
             "No dbt charts project found in the current directory or any parent "
-            "(no dbt_charts.yml). Run from inside your project, or pass --project-dir."
+            "(no dbt_charts.yml). Run from inside your project, or pass "
+            f"--project-dir. {_marker_hint(cwd)}"
         )
     return found
 

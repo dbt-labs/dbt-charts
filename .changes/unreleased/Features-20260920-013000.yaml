@@ -1,0 +1,3 @@
+kind: Features
+body: "ProjectSession.render_board accepts compile_result= so a host that already compiled a board (e.g. to authorize it before rendering) can render from that same result instead of compiling again."
+time: 2026-09-20T01:30:00.000000-07:00

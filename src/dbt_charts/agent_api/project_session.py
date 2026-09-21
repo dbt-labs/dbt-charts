@@ -31,6 +31,7 @@ from dbt_charts.agent_api.validate import (
     ValidateResult,
 )
 from dbt_charts.core import board as _core_board
+from dbt_charts.core.compile.compiler import CompileResult
 from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
     get_export_config,
@@ -494,8 +495,23 @@ class ProjectSession:
         link_context: LinkContext | None = None,
         standalone: bool = False,
         svg_cache: RenderedSvgCache | None = None,
+        compile_result: CompileResult | None = None,
         **render_options: Any,
     ) -> BoardRenderResult:
+        """Compile (or reuse) *board* and render it.
+
+        Pass ``compile_result`` when the caller has already compiled *board*
+        -- e.g. to authorize a yaml_content render's touched sources before
+        executing it -- so this call renders from that SAME result instead
+        of compiling again. A second, independent compile is not a redundant
+        safety net: it can be anchored differently (a pathless compile has a
+        different relative-ref base than a located one) and so can genuinely
+        disagree with the first, which makes "compile once to authorize,
+        compile again to execute" an attacker-controllable gap, not just
+        wasted work. Pass ``board`` alongside it regardless -- it still
+        supplies error-file stamping, dir-navigation variables, and the
+        preview URL (see ``core.board.render_dashboard``'s own docstring).
+        """
         # When the caller does not supply a link_context, derive origin from the
         # project's public_url config so dct render exports carry fully-qualified links.
         if link_context is None:
@@ -525,5 +541,6 @@ class ProjectSession:
                 link_context=link_context,
                 standalone=standalone,
                 file_materializer=self._file_materializer,
+                compile_result=compile_result,
                 **render_options,
             )

@@ -145,7 +145,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/_paths.py", 319): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
-    ("agent_api/project_session.py", 299): (
+    ("agent_api/project_session.py", 300): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
     ("agent_api/serve.py", 78): (

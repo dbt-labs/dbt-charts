@@ -11,6 +11,7 @@ import typer
 
 from dbt_charts.agent_api import Diagnostic, RenderFormat
 from dbt_charts.cli._error_format import emit_diagnostics_jsonl, print_diagnostics
+from dbt_charts.cli._parsing import cwd_first
 from dbt_charts.cli._project import with_project
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
@@ -221,7 +222,9 @@ def render_command(
     if ignore_codes:
         _validate_ignore_codes(ignore_codes)
 
-    ctx = build_board_render_context(board_path, project.root)
+    # Resolved here rather than on the argument: `--output` templates and the
+    # "Rendered …" line both read the board path as typed.
+    ctx = build_board_render_context(cwd_first(board_path), project.root)
     output_dir = ctx.output_dir
 
     with (

@@ -16,8 +16,9 @@ Bare 'value'/'amount'/'rate'/'cost'/'spend' do NOT match (no unit meaning on
 their own) — only their `_`-prefixed suffix form does.
 
 Skip: charts whose type implies no y-axis (kpi, table, callout, text, markdown, pivot).
-For layered charts the shared y-axis format is checked once per layer; one warning
-fires per layer whose y field matches a signal and whose format is unfit.
+Once any layer pins axis_y.position the y axes resolve independently: a layer is
+then checked against its own axis_y.labels.format when it sets one, else the
+chart's. With no side pinned every layer is checked against the chart's format.
 """
 
 from __future__ import annotations
@@ -291,3 +292,55 @@ def test_bare_generic_metric_names_no_warning() -> None:
         chart = _make_chart(y=name)
         ctx = _make_ctx(chart)
         assert detector.detect(ctx) == [], f"{name!r} must not fire bare"
+
+
+def _combo(layer_axis_y: dict[str, Any], **base: Any) -> WarningContext:
+    layer = {"type": "line", "y": "open_rate", "axis_y": layer_axis_y}
+    return _make_ctx(_make_chart(type="bar", y="sends", layers=[layer], **base))
+
+
+def test_dual_axis_layer_with_own_format_no_warning() -> None:
+    ctx = _combo({"position": "right", "labels": {"format": ".0%"}})
+    assert detector.detect(ctx) == []
+
+
+def test_dual_axis_layer_without_format_fires_at_the_layer() -> None:
+    (warning,) = detector.detect(_combo({"position": "right"}))
+    assert warning.field == "open_rate"
+    assert warning.path == "charts.c1.layers.0.axis_y.labels.format"
+    assert "layers[0].axis_y.labels.format" in (warning.fix or "")
+
+
+def test_dual_axis_layer_with_unfit_own_format_fires() -> None:
+    (warning,) = detector.detect(
+        _combo({"position": "right", "labels": {"format": "$,.0f"}})
+    )
+    assert warning.field == "open_rate"
+
+
+def test_layer_format_without_a_pinned_side_is_not_rendered_so_still_fires() -> None:
+    (warning,) = detector.detect(_combo({"labels": {"format": ".0%"}}))
+    assert warning.field == "open_rate"
+    assert warning.path == "charts.c1.style.axis_y.labels.format"
+    assert "`style.axis_y.labels.format`" in (warning.fix or "")
+
+
+def test_dual_axis_layer_without_format_inherits_a_fit_chart_format() -> None:
+    layer = {"type": "line", "y": "refund_amount", "axis_y": {"position": "right"}}
+    chart = _make_chart(
+        type="bar",
+        y="sends",
+        layers=[layer],
+        style={"axis_y": {"labels": {"format": "$,.0f"}}},
+    )
+    assert detector.detect(_make_ctx(chart)) == []
+
+
+def test_dual_axis_base_warns_while_formatted_layer_does_not() -> None:
+    layer = {
+        "type": "line",
+        "y": "open_rate",
+        "axis_y": {"position": "right", "labels": {"format": ".0%"}},
+    }
+    chart = _make_chart(type="bar", y="revenue_usd", layers=[layer])
+    assert [w.field for w in detector.detect(_make_ctx(chart))] == ["revenue_usd"]

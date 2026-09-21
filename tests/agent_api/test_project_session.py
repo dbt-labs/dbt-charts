@@ -188,6 +188,39 @@ def test_project_render_board_forwards_cache_and_project_root(
     assert captured["link_context"] is ctx
 
 
+def test_project_render_board_forwards_compile_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_project: Callable[..., FilesystemProject],
+) -> None:
+    """A caller that already compiled (e.g. to authorize a yaml_content
+    render before executing it) must be able to render from that SAME
+    CompileResult -- passing compile_result= is the seam that lets one
+    compile govern both the authorization answer and the executed rows,
+    instead of a second, differently-anchored compile disagreeing with the
+    first."""
+    from dbt_charts.core.compile.compiler import CompileResult
+
+    project = ProjectSession(project=local_project(tmp_path))
+    captured: dict[str, Any] = {}
+
+    def fake_render(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "sentinel-result"
+
+    monkeypatch.setattr(_core_dashboard_module, "render_dashboard", fake_render)
+
+    compile_result = CompileResult()
+    board = InMemoryBoard("", path=project.project.path("charts/x.yml"))
+    result = project.render_board(
+        board=board, format="json", compile_result=compile_result
+    )
+
+    assert result == "sentinel-result"
+    assert captured["compile_result"] is compile_result
+    assert captured["board"] is board
+
+
 def test_project_render_board_binds_the_svg_cache_for_the_render(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

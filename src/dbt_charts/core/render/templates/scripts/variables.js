@@ -887,8 +887,7 @@
 
             var input = document.createElement('input');
             input.className = 'dbt-variable-overlay';
-            input.type = inputType === 'number' ? 'number'
-                : (inputType === 'date' || inputType === 'datepicker') ? 'date' : 'text';
+            input.type = inputType === 'number' ? 'number' : 'text';
             input.value = el.getAttribute('data-dbt-value') || '';
             var hint = el.getAttribute('data-dbt-placeholder');
             if (hint) input.placeholder = hint;
@@ -1204,6 +1203,95 @@
         return 'custom';
     }
 
+    /*{# Shared calendar chrome: header (prev/month-name/next), DOW row, and a #}*/
+    /*{# bare 42-cell month grid (today/other-month marked, one click handler #}*/
+    /*{# per cell, an optional hover handler). Callers paint selection state #}*/
+    /*{# themselves afterward -- range vs. single-day selection differ, and this #}*/
+    /*{# builder doesn't need to know which. Month nav rebuilds this same #}*/
+    /*{# chrome, but the caller's footer and painted selection sit in `calEl` #}*/
+    /*{# too and would be wiped by that rebuild -- so nav hands the new month #}*/
+    /*{# back to `onNav` rather than redrawing itself, and the caller's own #}*/
+    /*{# rebuild (which also repaints the footer) runs instead. #}*/
+    function _buildCalendarGrid(calEl, viewMonth, onPickDay, onNav, onHoverDay) {
+        var year      = viewMonth.getFullYear();
+        var month     = viewMonth.getMonth();
+        var firstDay  = new Date(year, month, 1);
+        var startWeek = firstDay.getDay();
+        var monthName = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        /*{# Per rebuild, not per bind: a popover opened after midnight in a #}*/
+        /*{# long-lived tab must bold the actual today. #}*/
+        var now   = new Date();
+        var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        calEl.innerHTML = '';
+
+        var header = document.createElement('div');
+        header.className = 'dbt-cal-header';
+
+        var prevBtn = document.createElement('button');
+        prevBtn.type = 'button';
+        prevBtn.className = 'dbt-cal-nav';
+        prevBtn.setAttribute('aria-label', 'Previous month');
+        prevBtn.textContent = '‹';
+        prevBtn.addEventListener('click', function() {
+            onNav(new Date(year, month - 1, 1));
+        });
+
+        var monthSpan = document.createElement('span');
+        monthSpan.className = 'dbt-cal-month';
+        monthSpan.textContent = monthName;
+
+        var nextBtn = document.createElement('button');
+        nextBtn.type = 'button';
+        nextBtn.className = 'dbt-cal-nav';
+        nextBtn.setAttribute('aria-label', 'Next month');
+        nextBtn.textContent = '›';
+        nextBtn.addEventListener('click', function() {
+            onNav(new Date(year, month + 1, 1));
+        });
+
+        header.appendChild(prevBtn);
+        header.appendChild(monthSpan);
+        header.appendChild(nextBtn);
+        calEl.appendChild(header);
+
+        var grid = document.createElement('div');
+        grid.className = 'dbt-cal-grid';
+
+        ['S','M','T','W','T','F','S'].forEach(function(d) {
+            var dow = document.createElement('div');
+            dow.className = 'dbt-cal-dow';
+            dow.textContent = d;
+            grid.appendChild(dow);
+        });
+
+        var cursor = new Date(year, month, 1 - startWeek);
+        for (var i = 0; i < 42; i++) {
+            var dt      = new Date(cursor);
+            var isOther = dt.getMonth() !== month;
+            var isToday = dt.getTime() === today.getTime();
+            var cell    = document.createElement('button');
+            cell.type      = 'button';
+            cell.className = 'dbt-cal-cell';
+            if (isOther) { cell.classList.add('dbt-other-month'); cell.tabIndex = -1; }
+            if (isToday) cell.classList.add('dbt-today');
+            cell.textContent = dt.getDate();
+            cell.dataset.day = String(dt.getTime());
+            cell.setAttribute('aria-label', dt.toLocaleDateString('en-US', {
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+            }));
+            (function(cellEl, cellDate) {
+                cellEl.addEventListener('click', function() { onPickDay(cellDate); });
+                if (onHoverDay) {
+                    cellEl.addEventListener('mouseenter', function() { onHoverDay(cellDate); });
+                }
+            }(cell, dt));
+            grid.appendChild(cell);
+            cursor.setDate(cursor.getDate() + 1);
+        }
+        calEl.appendChild(grid);
+    }
+
     /*{# Build the daterange popover once at bind time and append to document.body. #}*/
     /*{# Follows _buildSelectPopover: page-level, never inside the board. #}*/
     /*{# Returns the popover element; the calendar state lives in the closure. #}*/
@@ -1270,88 +1358,16 @@
         popover.addEventListener('click', function(e) { e.stopPropagation(); });
 
         function rebuildCalendar() {
-            var year      = viewMonth.getFullYear();
-            var month     = viewMonth.getMonth();
-            var firstDay  = new Date(year, month, 1);
-            var startWeek = firstDay.getDay();
-            var monthName = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-            /*{# Per rebuild, not per bind: a popover opened after midnight in a #}*/
-            /*{# long-lived tab must bold the actual today. #}*/
-            var now   = new Date();
-            var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-            calEl.innerHTML = '';
-
-            var header = document.createElement('div');
-            header.className = 'dbt-cal-header';
-
-            var prevBtn = document.createElement('button');
-            prevBtn.type = 'button';
-            prevBtn.className = 'dbt-cal-nav';
-            prevBtn.setAttribute('aria-label', 'Previous month');
-            prevBtn.textContent = '‹';
-            prevBtn.addEventListener('click', function() {
-                viewMonth = new Date(year, month - 1, 1);
-                rebuildCalendar();
-            });
-
-            var monthSpan = document.createElement('span');
-            monthSpan.className = 'dbt-cal-month';
-            monthSpan.textContent = monthName;
-
-            var nextBtn = document.createElement('button');
-            nextBtn.type = 'button';
-            nextBtn.className = 'dbt-cal-nav';
-            nextBtn.setAttribute('aria-label', 'Next month');
-            nextBtn.textContent = '›';
-            nextBtn.addEventListener('click', function() {
-                viewMonth = new Date(year, month + 1, 1);
-                rebuildCalendar();
-            });
-
-            header.appendChild(prevBtn);
-            header.appendChild(monthSpan);
-            header.appendChild(nextBtn);
-            calEl.appendChild(header);
-
-            var grid = document.createElement('div');
-            grid.className = 'dbt-cal-grid';
-
-            ['S','M','T','W','T','F','S'].forEach(function(d) {
-                var dow = document.createElement('div');
-                dow.className = 'dbt-cal-dow';
-                dow.textContent = d;
-                grid.appendChild(dow);
-            });
-
-            var cursor = new Date(year, month, 1 - startWeek);
-            for (var i = 0; i < 42; i++) {
-                var dt      = new Date(cursor);
-                var isOther = dt.getMonth() !== month;
-                var isToday = dt.getTime() === today.getTime();
-                var cell    = document.createElement('button');
-                cell.type      = 'button';
-                cell.className = 'dbt-cal-cell';
-                if (isOther) { cell.classList.add('dbt-other-month'); cell.tabIndex = -1; }
-                if (isToday) cell.classList.add('dbt-today');
-                cell.textContent = dt.getDate();
-                cell.dataset.day = String(dt.getTime());
-                cell.setAttribute('aria-label', dt.toLocaleDateString('en-US', {
-                    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-                }));
-                (function(cellEl, cellDate) {
-                    cellEl.addEventListener('click', function() { pickDay(cellDate.getTime()); });
-                    cellEl.addEventListener('mouseenter', function() {
-                        if (range[0] && !range[1]) {
-                            hoverDate = new Date(cellDate.getTime());
-                            paintCalendarState();
-                        }
-                    });
-                }(cell, dt));
-                grid.appendChild(cell);
-                cursor.setDate(cursor.getDate() + 1);
-            }
-            calEl.appendChild(grid);
+            _buildCalendarGrid(calEl, viewMonth,
+                function(dt) { pickDay(dt.getTime()); },
+                function(newMonth) { viewMonth = newMonth; rebuildCalendar(); },
+                function(dt) {
+                    if (range[0] && !range[1]) {
+                        hoverDate = new Date(dt.getTime());
+                        paintCalendarState();
+                    }
+                }
+            );
 
             /*{# Lingering-popover pattern: auto-commit on second pick; Apply only #}*/
             /*{# closes. Clear is gated on canUnset — a required control must never #}*/
@@ -1465,6 +1481,99 @@
         _registerPopover({trigger: el, popover: popover, isOpen: isOpen, open: open, close: close});
     }
 
+    /*{# Single-date popover: daterange's own calendar in one-endpoint mode. No #}*/
+    /*{# preset rail (a preset like "Last 7 days" names a range, not a day) and #}*/
+    /*{# no Apply — there is only one endpoint to pick, so a click commits and #}*/
+    /*{# closes immediately rather than waiting for a second gesture. #}*/
+    function _bindDate(el, name) {
+        var canUnset = el.getAttribute('data-dbt-can-unset') === 'true';
+
+        var selected  = null;
+        var viewMonth = new Date();
+
+        var popover = document.createElement('div');
+        popover.className = 'dbt-popover';
+
+        var calEl = document.createElement('div');
+        calEl.className = 'dbt-calendar-area';
+        popover.appendChild(calEl);
+
+        document.body.appendChild(popover);
+
+        function isOpen() { return popover.classList.contains('dbt-popover-open'); }
+        function open() {
+            /*{# Re-seed every open so a commit from elsewhere (publishCommitted #}*/
+            /*{# writes back data-dbt-value) is reflected in the popover's state. #}*/
+            var raw = el.getAttribute('data-dbt-value') || '';
+            selected = fromISO(raw);
+            viewMonth = selected ? new Date(selected.getFullYear(), selected.getMonth(), 1) : new Date();
+            rebuildCalendar();
+            _floatPopover(popover);
+            popover.classList.add('dbt-popover-open');
+            _positionPopoverFixed(el, popover);
+            el.setAttribute('aria-expanded', 'true');
+        }
+        function close() {
+            popover.classList.remove('dbt-popover-open');
+            _unfloatPopover(popover);
+            el.setAttribute('aria-expanded', 'false');
+        }
+        el.setAttribute('aria-expanded', 'false');
+        _onValueGesture(el, function() {
+            if (isOpen()) close(); else open();
+        });
+        el.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+        });
+
+        /*{# Same reason as _bindDateRange: a month-nav or day-pick rebuild #}*/
+        /*{# replaces the clicked node, and without this the document #}*/
+        /*{# outside-click handler would see the click land outside the trigger #}*/
+        /*{# and close the popover it just landed in. #}*/
+        popover.addEventListener('click', function(e) { e.stopPropagation(); });
+
+        function rebuildCalendar() {
+            _buildCalendarGrid(calEl, viewMonth,
+                function(dt) { pickDay(dt.getTime()); },
+                function(newMonth) { viewMonth = newMonth; rebuildCalendar(); }
+            );
+
+            if (selected) {
+                var picked = calEl.querySelector('[data-day="' + selected.getTime() + '"]');
+                if (picked) picked.classList.add('dbt-selected');
+            }
+
+            /*{# Clear only — gated on canUnset, same rule as daterange's. No #}*/
+            /*{# Apply: a single day commits on its own click, there is no #}*/
+            /*{# second endpoint to wait for. #}*/
+            if (canUnset && selected !== null) {
+                var footer = document.createElement('div');
+                footer.className = 'dbt-cal-footer';
+                var clearAction = document.createElement('button');
+                clearAction.type = 'button';
+                clearAction.className = 'dbt-cal-action';
+                clearAction.setAttribute('data-action', 'clear');
+                clearAction.textContent = 'Clear';
+                footer.appendChild(clearAction);
+                footer.addEventListener('click', function(e) {
+                    if (!e.target.closest('[data-action="clear"]')) return;
+                    close();
+                    updateVariable(name, '');
+                });
+                calEl.appendChild(footer);
+            }
+        }
+
+        function pickDay(timestamp) {
+            var dt = new Date(timestamp);
+            selected = dt;
+            close();
+            updateVariable(name, toISO(dt));
+        }
+
+        _registerPopover({trigger: el, popover: popover, isOpen: isOpen, open: open, close: close});
+    }
+
     function _bindCheckbox(el, name) {
         function toggle() {
             var checked = el.getAttribute('data-dbt-checked') === 'true';
@@ -1505,9 +1614,10 @@
         else if (input === 'select' || input === 'multiselect' || input === 'radio') {
             _bindSelect(el, name);
         } else if (input === 'daterange') _bindDateRange(el, name);
+        else if (input === 'date' || input === 'datepicker') _bindDate(el, name);
         else if (input === 'slider' || input === 'range') _bindSlider(el, name);
         else if (input === 'text' || input === 'input' || input === 'textarea'
-                 || input === 'number' || input === 'date' || input === 'datepicker') {
+                 || input === 'number') {
             _bindTextEntry(el, name, input);
         }
 

@@ -20,7 +20,11 @@ from dbt_charts.core.compile.models.variable.authored import Variable, VariableO
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.controls import controls_stylesheet, interactive_controls
 from dbt_charts.core.render.variables_layout import lay_out_variables
-from dbt_charts.core.render.variables_resolve import resolve_controls
+from dbt_charts.core.render.variables_resolve import (
+    UNSET_DATE_LABEL,
+    format_date_label,
+    resolve_controls,
+)
 from dbt_charts.core.render.variables_strip import (
     _committed_value,
     render_variables_strip_svg,
@@ -599,9 +603,17 @@ def test_the_drawn_value_never_reaches_its_drawn_ornament(
     svg, _ = _strip({"v": Variable(input=input_type, label="When")}, committed)
     root = ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{svg}</svg>")
 
-    text = next(e for e in root.iter() if (e.text or "") == value)
+    # A committed date draws its human label (format_date_label), not the raw
+    # ISO string committed above — the unset case ("Any date") is unaffected.
+    drawn_value = (
+        format_date_label(value) if input_type == "date" and committed else value
+    )
+
+    text = next(e for e in root.iter() if (e.text or "") == drawn_value)
     font_size = float(text.get("font-size"))
-    text_right = float(text.get("x")) + get_font_measurer().measure(value, font_size)
+    text_right = float(text.get("x")) + get_font_measurer().measure(
+        drawn_value, font_size
+    )
 
     # Bare non-overlap is too weak to be a regression pin: with the gap deleted
     # the glyph lands 0.08 units clear of the text here, which passes `>` while
@@ -1024,6 +1036,23 @@ def test_every_chooser_publishes_the_chooser_unset_label(
     group = _groups(svg)[0]
     assert group.get("data-dbt-can-unset") == "true"
     assert group.get("data-dbt-unset-label") == label
+
+
+@pytest.mark.parametrize("input_type", ["date", "datepicker"])
+def test_a_non_required_date_publishes_the_date_unset_label(input_type: str) -> None:
+    """`date`/`datepicker` offer a way back to unset too, same as a chooser.
+
+    Regression: `_INPUT_TRAITS` classified both as `unset="none"`, so a
+    non-required date/datepicker never published `data-dbt-can-unset` — the
+    calendar popover's Clear footer never rendered, and it was the only way
+    left to unset the control once the native lifted input (whose own
+    empty-and-blur path did the same job) was replaced by that popover.
+    """
+    svg, _ = _strip({"since": Variable(input=input_type)})
+
+    group = _groups(svg)[0]
+    assert group.get("data-dbt-can-unset") == "true"
+    assert group.get("data-dbt-unset-label") == UNSET_DATE_LABEL
 
 
 @pytest.mark.parametrize("input_type", ["text", "number", "checkbox", "slider"])

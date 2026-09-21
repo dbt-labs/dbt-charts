@@ -20,7 +20,7 @@ from dbt_charts.agent_api import RenderFormat, set_surface
 from dbt_charts.cli._console import is_plain_output
 from dbt_charts.cli._error_format import print_warning
 from dbt_charts.cli._extras import require_extras
-from dbt_charts.cli._parsing import parse_kv_pairs
+from dbt_charts.cli._parsing import cwd_first_all, parse_kv_pairs
 from dbt_charts.cli._project import has_charts_marker, project_dir_was_typed
 from dbt_charts.cli._workspace_guard import detect_workspace_mismatch
 from dbt_charts.cli.commands import (
@@ -723,6 +723,7 @@ def describe(
         typer.Argument(
             metavar="[PATH]...",
             help="Path(s) to board YAML files or directories to describe.",
+            callback=cwd_first_all,
         ),
     ],
     json_output: Annotated[
@@ -1308,6 +1309,7 @@ def validate(
         typer.Argument(
             metavar="[PATH]...",
             help="Board YAML files or directories (default: charts/)",
+            callback=cwd_first_all,
         ),
     ] = None,
     project_dir: ProjectDirOption = None,

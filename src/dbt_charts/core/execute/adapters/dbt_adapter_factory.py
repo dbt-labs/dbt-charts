@@ -22,7 +22,6 @@ from dbt_charts.core.compile.models.source import infer_bq_method
 from dbt_charts.core.execute.adapters.native_attribution import (
     native_attribution_credential,
 )
-from dbt_charts.core.execute.adapters.query_header import QueryHeader
 
 if TYPE_CHECKING:
     from dbt.config import RuntimeConfig
@@ -306,6 +305,10 @@ def build_adapter(
     # the comment — Snowflake and Databricks also key result reuse on query text, so
     # two *different* boards running identical SQL no longer share a cached result
     # there; repeats of the same board still do, which is the case that matters.
+    # Function-local like every dbt import here: query_header subclasses dbt-core
+    # at import, and the executor imports this module for boards that never use it.
+    from dbt_charts.core.execute.adapters.query_header import QueryHeader
+
     adapter.connections.query_header = QueryHeader(
         emit_sql_comment=adapter_type_lower != "bigquery"
     )

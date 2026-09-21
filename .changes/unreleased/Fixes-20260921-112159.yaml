@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`render_dashboard` no longer mutates a caller-supplied `compile_result`, so rendering one compile result more than once returns the same status each time and no longer duplicates compile warnings.'
+time: 2026-09-21T11:21:59.971569-07:00

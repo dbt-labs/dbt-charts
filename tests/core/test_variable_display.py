@@ -8,6 +8,7 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.variables_resolve import (
+    format_date_label,
     format_daterange_label,
     format_variable_display_value,
 )
@@ -89,6 +90,23 @@ class TestFormatVariableDisplayValue:
         var = Variable(input="daterange")
         with pytest.raises(ValueError, match="exactly 2 elements"):
             format_variable_display_value(var, ["2026-01-01"])
+
+    def test_date_formats_like_daterange_endpoint(self) -> None:
+        var = Variable(input="date")
+        assert format_variable_display_value(var, "2025-11-19") == "19 Nov 2025"
+
+    def test_datepicker_formats_like_daterange_endpoint(self) -> None:
+        var = Variable(input="datepicker")
+        assert format_variable_display_value(var, "2025-11-19") == "19 Nov 2025"
+
+    def test_date_unset(self) -> None:
+        var = Variable(input="date")
+        assert format_variable_display_value(var, None) == "Any date"
+        assert format_variable_display_value(var, "") == "Any date"
+
+    def test_format_date_label_falls_back_to_raw_on_parse_error(self) -> None:
+        assert format_date_label("2025-11-19") == "19 Nov 2025"
+        assert format_date_label("not-a-date") == "not-a-date"
 
     def test_never_python_list_repr_in_readonly_svg(self) -> None:
         svg, height = render_strip_for(

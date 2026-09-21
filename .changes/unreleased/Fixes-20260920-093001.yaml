@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`dct render`, `dct validate`, and `dct describe` now read a relative board path from the working directory first, so `dct render proj/board.yml --project-dir proj` works from the parent directory.'
+time: 2026-09-20T09:30:01.000000-07:00

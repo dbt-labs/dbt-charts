@@ -18,6 +18,7 @@ Python 3.10 (a real CI failure we hit when this module lived at
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import importlib.util as _importlib_util
 import logging
@@ -364,7 +365,20 @@ def render_dashboard(
 
     _t_start = time.perf_counter()
     if compile_result is not None:
-        result = compile_result
+        # validate_compiled_queries/check_manifest_refs below append to
+        # errors/warnings/suppressed_warnings/diagnostics in place. A caller
+        # that renders the same compile_result more than once (one compile
+        # authorizing several renders off it) must get the same answer every
+        # time, so this copies the four mutable lists rather than working on
+        # the caller's object directly -- board/query_registry/source_map
+        # etc. are frozen data every call reads, never appends to.
+        result = dataclasses.replace(
+            compile_result,
+            errors=list(compile_result.errors),
+            warnings=list(compile_result.warnings),
+            suppressed_warnings=list(compile_result.suppressed_warnings),
+            diagnostics=list(compile_result.diagnostics),
+        )
     else:
         assert board is not None  # guaranteed by the check above
         if board.path is not None:

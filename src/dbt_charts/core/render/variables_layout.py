@@ -48,7 +48,7 @@ class InputTraits:
 
     sizing: Literal["content", "text", "number", "daterange", "checkbox", "slider"]
     ornament: Literal["arrow", "calendar", "none"]
-    unset: Literal["chooser", "range", "none"]
+    unset: Literal["chooser", "range", "date", "none"]
 
 
 # Every member of `VariableInputType`, and the gate is that it *is* every member
@@ -70,8 +70,8 @@ _INPUT_TRAITS: dict[VariableInputType, InputTraits] = {
     "select": InputTraits("content", "arrow", "chooser"),
     "multiselect": InputTraits("content", "arrow", "chooser"),
     "radio": InputTraits("content", "arrow", "chooser"),
-    "date": InputTraits("content", "calendar", "none"),
-    "datepicker": InputTraits("content", "calendar", "none"),
+    "date": InputTraits("content", "calendar", "date"),
+    "datepicker": InputTraits("content", "calendar", "date"),
     "daterange": InputTraits("daterange", "calendar", "range"),
     "input": InputTraits("text", "none", "none"),
     "text": InputTraits("text", "none", "none"),

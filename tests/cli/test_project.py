@@ -48,6 +48,22 @@ def test_resolve_project_dir_explicit_requires_marker(tmp_path: Path) -> None:
         resolve_project_dir(tmp_path)
 
 
+def test_project_not_found_names_the_minimal_marker_to_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both failures say what satisfies them: an empty dbt_charts.yml in that dir."""
+    monkeypatch.chdir(tmp_path)
+    marker = str(tmp_path.resolve() / "dbt_charts.yml")
+
+    for project_dir in (None, tmp_path):
+        with pytest.raises(ProjectNotFoundError) as exc:
+            resolve_project_dir(project_dir)
+        message = str(exc.value)
+        assert marker in message
+        assert "empty" in message
+        assert "dct init" in message
+
+
 def test_resolve_project_dir_explicit_accepts_project(tmp_path: Path) -> None:
     """Explicit --project-dir with a project marker resolves to that dir."""
     (tmp_path / "dbt_charts.yml").write_text("# project marker\n")

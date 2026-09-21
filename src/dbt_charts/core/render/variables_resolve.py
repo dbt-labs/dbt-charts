@@ -404,7 +404,7 @@ def format_variable_display_value(
         # failed to render.
         if value is None or value == "":
             return read_only_unset_label(var_def, UNSET_DATE_LABEL)
-        return str(value)
+        return format_date_label(str(value))
 
     if input_type in (
         "text",
@@ -440,6 +440,22 @@ _MONTHS_SHORT = [
 ]
 
 
+def _format_date(d: datetime.date) -> str:
+    return f"{d.day} {_MONTHS_SHORT[d.month - 1]} {d.year}"
+
+
+def format_date_label(iso: str) -> str:
+    """Human-readable single-date label from an ISO date string.
+
+    Falls back to the raw ISO string on parse error.
+    """
+    try:
+        d = datetime.date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    return _format_date(d)
+
+
 def format_daterange_label(start_iso: str, end_iso: str) -> str:
     """Human-readable chip label from ISO date strings.
 
@@ -452,16 +468,13 @@ def format_daterange_label(start_iso: str, end_iso: str) -> str:
     except ValueError:
         return f"{start_iso} – {end_iso}"
 
-    def fmt(d: datetime.date) -> str:
-        return f"{d.day} {_MONTHS_SHORT[d.month - 1]} {d.year}"
-
     def fmt_no_yr(d: datetime.date) -> str:
         return f"{d.day} {_MONTHS_SHORT[d.month - 1]}"
 
     if s == e:
-        return fmt(s)
+        return _format_date(s)
     if s.year == e.year and s.month == e.month:
         return f"{s.day}–{e.day} {_MONTHS_SHORT[s.month - 1]} {s.year}"
     if s.year == e.year:
-        return f"{fmt_no_yr(s)} – {fmt(e)}"
-    return f"{fmt(s)} – {fmt(e)}"
+        return f"{fmt_no_yr(s)} – {_format_date(e)}"
+    return f"{_format_date(s)} – {_format_date(e)}"

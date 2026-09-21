@@ -38,6 +38,7 @@ from dbt_charts.core.render.variables_layout import (
 )
 from dbt_charts.core.render.variables_resolve import (
     FREE_ENTRY_INPUTS,
+    UNSET_DATE_LABEL,
     UNSET_DATERANGE_LABEL,
     UNSET_SELECT_LABEL,
     read_only_unset_label,
@@ -262,7 +263,11 @@ def _draw_control(
     unset_style = traits_of(box.input).unset
     if unset_style != "none":
         default_label = (
-            UNSET_SELECT_LABEL if unset_style == "chooser" else UNSET_DATERANGE_LABEL
+            UNSET_SELECT_LABEL
+            if unset_style == "chooser"
+            else UNSET_DATE_LABEL
+            if unset_style == "date"
+            else UNSET_DATERANGE_LABEL
         )
         unset = f' data-dbt-can-unset="{"true" if control.can_unset else "false"}"'
         if control.can_unset:

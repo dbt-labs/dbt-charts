@@ -26,9 +26,13 @@ Detection rule (v1, name-match only):
   percent format carries ``%``; a currency format carries ``$``; the generic SI
   default (``.3~s``) suits neither.
   - Cartesian charts: check the chart's ``style.axis_y.labels.format``.
-  - Layered charts share one y-axis, so its format is checked once per layer;
-    a warning is emitted per layer whose y field matches a signal and whose
-    shared format is unfit.
+  - Overlay layers: once any layer pins ``axis_y.position`` the chart resolves
+    its y axes independently, and a layer that sets its own
+    ``axis_y.labels.format`` (a dual-axis combo's percent line) renders against
+    it; a layer that sets none inherits the chart's. With no side pinned there
+    is one shared axis and the chart's format wins, whatever a layer authors.
+    One warning per layer whose y field matches a signal and whose rendered
+    format is unfit.
 
   Skip: charts with no y-axis encoding (kpi, table, callout, text, markdown,
   pivot, pie/donut, map families) that do not carry a layer list.
@@ -52,9 +56,8 @@ from dbt_charts.core.diagnostics import (
 )
 from dbt_charts.core.render.warnings.base import WarningContext
 
-# Cartesian chart types whose y-axis renders and may need a format. Layered
-# charts are handled separately in `_y_axis_check` (they share one y-axis), so
-# "layered" is intentionally not listed here.
+# Cartesian chart types whose y-axis renders and may need a format. Overlay
+# layers ride on one of these base types, so they need no entry of their own.
 _Y_AXIS_TYPES = frozenset(
     {
         "bar",
@@ -140,38 +143,47 @@ def _format_suits_kind(fmt: str | None, kind: str) -> bool:
     return "%" in fmt if kind == "percent" else "$" in fmt
 
 
-def _warn(chart_id: str, field: str, kind: str, axis_format: str | None) -> Diagnostic:
+def _warn(
+    chart_id: str, field: str, kind: str, axis_format: str | None, layer: int | None
+) -> Diagnostic:
+    """``layer`` is the index of the layer whose own axis needs the format, if any."""
+    axis = "style.axis_y" if layer is None else f"layers.{layer}.axis_y"
+    key = "style.axis_y" if layer is None else f"layers[{layer}].axis_y"
     return Diagnostic.from_code(
         WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
         chart=chart_id,
         # `format` lives on `axis_y.labels`, not on `axis_y` — the bare
         # `axis_y.format` spelling is pre-0.4.0 and now emits a migration
-        # warning. This is the spelling `fix_template` tells authors to set.
-        # Usually an *absent* key (that is the complaint), so it leans on the
-        # candidate walk to land on `axis_y`, then `style`, then the chart.
-        path=f"charts.{chart_id}.style.axis_y.labels.format",
+        # warning. Usually an *absent* key (that is the complaint), so it leans
+        # on the candidate walk to land on `axis_y`, then its parent, then the
+        # chart.
+        path=f"charts.{chart_id}.{axis}.labels.format",
         field=field,
         message=WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.message_template.format(
             chart_id=chart_id, field=field, kind=kind, format=axis_format
         ),
-        fix=WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.fix_template,
+        fix=WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.fix_template.format(
+            format_key=f"{key}.labels.format"
+        ),
     )
 
 
-def _y_axis_check(chart: ResolvedChart) -> tuple[str | None, list[str]]:
-    """The chart's shared y-axis format and the y fields that render against it.
+def _y_axis_checks(chart: ResolvedChart) -> list[tuple[str, str | None, int | None]]:
+    """``(y field, the format its axis renders with, own-axis layer index)`` per y field.
 
-    A bar/line/area/scatter chart's own y field(s) and any typed overlay
-    ``chart.layers`` entries' y fields all share the SAME resolved y-axis
-    format — layers are an overlay on the base chart, not a separate
-    container — so both contribute fields checked against one format.
+    Mirrors the overlay emitter: a layer's own ``axis_y`` is rendered only when
+    some layer pins ``axis_y.position``, which resolves every layer's y axis
+    independently — each seeded from the chart's axis, so a layer without its
+    own format still renders the chart's. Otherwise all layers share the
+    chart's axis and format.
     Everything else (kpi, table, pie, maps, …) has no y-axis to format and
-    yields no fields.
+    yields nothing.
     """
     if not isinstance(chart, _CartesianResolvedChartFields):
-        return None, []
+        return []
     if chart.chart_type not in _Y_AXIS_TYPES:
-        return None, []
+        return []
+    base_format = chart.style.axis_y.labels.format
     fields: list[str] = []
     if chart.y:
         # Wide charts fold y: list via VL's transform; check the authored measures,
@@ -182,27 +194,37 @@ def _y_axis_check(chart: ResolvedChart) -> tuple[str | None, list[str]]:
             # Heatmap is the only remaining family that can still carry a
             # list y (its own multi-measure render path, not the fold).
             fields.extend(chart.y if isinstance(chart.y, list) else [chart.y])
+    checks: list[tuple[str, str | None, int | None]] = [
+        (field, base_format, None) for field in fields
+    ]
     if isinstance(chart, LayeredResolvedChart):
-        fields.extend(layer.y for layer in chart.layers if layer.y)
-    if not fields:
-        return None, []
-    return chart.style.axis_y.labels.format, fields
+        independent = any(layer.axis_y.position for layer in chart.layers)
+        for idx, layer in enumerate(chart.layers):
+            if not layer.y:
+                continue
+            if not independent:
+                checks.append((layer.y, base_format, None))
+                continue
+            labels = layer.axis_y.labels
+            own_format = labels.format if labels is not None else None
+            checks.append(
+                (layer.y, own_format if own_format is not None else base_format, idx)
+            )
+    return checks
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
-    """Return one Diagnostic per y field whose baked format is unfit for its kind.
+    """Return one Diagnostic per y field whose axis format is unfit for its kind.
 
-    A currency/percent-named y field warns unless the chart's resolved y-axis
-    format suits that kind (see ``_format_suits_kind``). Layered charts share one
-    y-axis, so its format is checked once per matching layer.
+    A currency/percent-named y field warns unless the format of the axis it
+    renders on suits that kind (see ``_format_suits_kind``).
     """
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.board_spec.charts.items():
-        axis_format, fields = _y_axis_check(chart)
-        for field in fields:
+        for field, axis_format, layer in _y_axis_checks(chart):
             kind = _classify(field)
             if kind is not None and not _format_suits_kind(axis_format, kind):
-                warnings.append(_warn(chart_id, field, kind, axis_format))
+                warnings.append(_warn(chart_id, field, kind, axis_format, layer))
 
     return warnings

@@ -1660,7 +1660,7 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
             "but the y-axis format is {format!r}."
         ),
         fix_template=(
-            "Set `style.axis_y.labels.format` to a currency format (e.g. `$,.2f`) "
+            "Set `{format_key}` to a currency format (e.g. `$,.2f`) "
             "or a percent format (e.g. `.1%`) to match the field's meaning."
         ),
         doc=(

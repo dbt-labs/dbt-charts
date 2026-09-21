@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'date/datepicker variable controls now draw their own calendar popover and format their closed label the same way daterange does, instead of lifting a native date input that rendered in the browser''s locale format.'
+time: 2026-09-18T16:50:07.239638-07:00

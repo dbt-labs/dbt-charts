@@ -422,7 +422,7 @@ Fires when `style.legend.values` names an entry that matches none of the chart's
 Chart {chart_id!r}: field {field!r} looks like {kind} but the y-axis format is {format!r}.
 ```
 
-**Fix:** Set `style.axis_y.labels.format` to a currency format (e.g. `$,.2f`) or a percent format (e.g. `.1%`) to match the field's meaning.
+**Fix:** Set `{format_key}` to a currency format (e.g. `$,.2f`) or a percent format (e.g. `.1%`) to match the field's meaning.
 
 Fires when a chart's y-encoding field name looks like money or a percentage but the chart's baked y-axis format is unfit to render that kind. Detection is name-based: fields ending in _usd, _revenue, _amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) trigger when the resolved y-axis format does not carry the matching symbol (`$` for money, `%` for a percentage).
 

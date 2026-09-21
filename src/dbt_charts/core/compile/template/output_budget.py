@@ -38,8 +38,12 @@ live for anything that only compiles or validates a board — `dct serve`'s
 own pre-render compile step (including a nested board's `file:` path,
 itself a `resolve_jinja_template()` call in `compile/normalize/layout.py`),
 Cloud's compile-only request paths (`apps/cloud/apps/dashboards/service.py`,
-`board_index.py`), and `agent_api/query.py`'s `lookup_board_query_sql` —
-nor for the registered-view template pipeline
+`board_index.py`), a host's own authorizing compile run before it ever hands
+a `compile_result` to `render_dashboard()` (Cloud's
+`yaml_content_render.authorize_yaml_content_render`, whose compile templates
+the same board text `render_dashboard()` goes on to render from that same
+result), and `agent_api/query.py`'s `lookup_board_query_sql` — nor for the
+registered-view template pipeline
 (`registered_views/render_pipeline.py`), a separate top-level entry point
 that never calls `render_dashboard` at all. This list is not exhaustive;
 none of these are a regression — they were exactly as unbounded before this

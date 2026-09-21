@@ -124,10 +124,10 @@
   transform: translateY(-62%) rotate(45deg);
 }
 
-{# The transient native input a text, number, date, or daterange control lifts
-   on focus. Sized and positioned inline from the drawn field's client rect, so
-   only appearance is set here — never geometry, which would fight the runtime
-   for where it sits. #}
+{# The transient native input a text or number control lifts on focus. Sized
+   and positioned inline from the drawn field's client rect, so only
+   appearance is set here — never geometry, which would fight the runtime for
+   where it sits. #}
 {# No browser ring: focus is the border color, set with the drawn field's in
    svg/styles.css so both modes read one rule. Left alone the browser would add
    its default on top — a square ring in the OS accent color. #}

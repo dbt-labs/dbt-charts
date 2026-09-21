@@ -52,6 +52,17 @@ def test_importing_cli_main_does_not_load_dbt_common_or_core_compile() -> None:
     assert not heavy, f"import dbt_charts.cli.main eagerly loaded: {sorted(heavy)}"
 
 
+def test_importing_the_executor_does_not_load_dbt_core() -> None:
+    """A board of inline `values` renders through the executor without dbt-core."""
+    modules = _sys_modules_after("import dbt_charts.core.execute.executor")
+    heavy = {
+        m
+        for m in modules
+        if m in ("dbt", "dbt_common") or m.startswith(("dbt.", "dbt_common."))
+    }
+    assert not heavy, f"importing the executor eagerly loaded: {sorted(heavy)[:10]}"
+
+
 def _lazy_attrs_of(module_path: str) -> dict[str, tuple[str, str]]:
     import importlib
 

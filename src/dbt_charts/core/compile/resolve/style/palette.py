@@ -53,11 +53,15 @@ from typing import Any, Literal
 import yaml
 
 from dbt_charts.core.colors import (
+    ensure_readable_ink,
     hex_to_oklch,
+    is_light_canvas,
     oklch_to_hex,
     relative_luminance,
     wcag_contrast,
 )
+from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.compile.models.config import ChartRenderingConfig
 from dbt_charts.core.compile.models.palette import Palette
 
 # ============================================================================
@@ -913,6 +917,107 @@ def color_from_theme(
         roles=effective_roles,
         _visited_roles=visited | {token},
     )
+
+
+# ============================================================================
+# Public API — variant() / label_ink() — literal tiers, canvas-aware ink
+# ============================================================================
+
+# A literal tier of a base color: `dark` is never lighter than its base and
+# `light` never darker, on every theme. Which variant a role uses on a dark
+# canvas is the theme's decision, not the engine's -- see label_ink() for the
+# one automatic, canvas-aware derivation.
+Variant = Literal["dark", "light", "pale", "deep"]
+
+
+@functools.lru_cache(maxsize=4096)
+def _variant_cached(
+    color: str, kind: Variant, config: ChartRenderingConfig.ColorVariantsConfig
+) -> str:
+    L, C, H = hex_to_oklch(color)
+    if kind == "light":
+        Ln = L + (1.0 - L) * config.light_k
+        # Two competing clamps: capped under the pale band (light_pale_gap),
+        # floored at least light_min_gap above base. Above base L 0.80 (at
+        # the shipped constants) the two conflict -- the floor wins (max is
+        # outermost), so `light` can end up level with or above `pale` for a
+        # very light base rather than strictly under it. The floor itself
+        # stops at white: an OKLCH L above 1.0 is outside sRGB at every
+        # chroma.
+        Ln = min(
+            1.0,
+            max(
+                min(Ln, config.pale_l - config.light_pale_gap), L + config.light_min_gap
+            ),
+        )
+        return oklch_to_hex(Ln, C * config.light_chroma, H)
+    if kind == "dark":
+        # min(L, ...) clamps to darkening only -- unclamped, a base below the
+        # pole would move up toward it.
+        return oklch_to_hex(min(L, L + (config.dark_pole - L) * config.dark_k), C, H)
+    if kind == "pale":
+        # k = 1: the band itself is the pole, uniform regardless of base L.
+        return oklch_to_hex(config.pale_l, C * config.pale_chroma, H)
+    if kind == "deep":
+        return oklch_to_hex(min(L, L + (config.deep_pole - L) * config.deep_k), C, H)
+    raise ValueError(
+        f"unknown variant {kind!r}; expected one of dark, light, pale, deep"
+    )
+
+
+def variant(color: str, kind: Variant) -> str:
+    """A literal tier of `color`, no canvas.
+
+    Moves OKLCH lightness a fraction of the way toward a fixed pole (hue
+    held, chroma scaled, gamut-clipped): `light` toward white, `dark` toward
+    a near-black pole, `pale` onto a flat pale band, `deep` toward a near-
+    black pole further than `dark`. `dark` and `deep` are clamped so they
+    never come out lighter than `color` itself. Constants live in
+    `chart_rendering.color_variants` (`ColorVariantsConfig`).
+    """
+    return _variant_cached(color, kind, get_chart_rendering().color_variants)
+
+
+def _label_ink_step(
+    color: str, canvas: str, config: ChartRenderingConfig.ColorVariantsConfig
+) -> str:
+    """The pre-floor move `label_ink` makes: `color`'s dark step, away from
+    `canvas`, before the legibility floor is applied. Exposed as its own
+    function so callers (including tests) can inspect the move without
+    duplicating the arithmetic.
+
+    On a light canvas a base already darker than `dark_pole` would step
+    *up*, toward the canvas, so the step is clamped to the base there;
+    the floor (`ensure_readable_ink`) is then the only thing that can
+    move it. The white pole needs no clamp: no base sits above L 1.0.
+    """
+    L, C, H = hex_to_oklch(color)
+    if is_light_canvas(canvas):
+        return oklch_to_hex(min(L, L + (config.dark_pole - L) * config.dark_k), C, H)
+    return oklch_to_hex(L + (1.0 - L) * config.dark_k, C, H)
+
+
+@functools.lru_cache(maxsize=4096)
+def _label_ink_cached(
+    color: str, canvas: str, config: ChartRenderingConfig.ColorVariantsConfig
+) -> str:
+    stepped = _label_ink_step(color, canvas, config)
+    return ensure_readable_ink(stepped, canvas, config.label_ink_min_contrast)
+
+
+def label_ink(color: str, canvas: str) -> str:
+    """Ink for text painted on `canvas` about a mark of `color`.
+
+    The dark move away from `canvas` (toward `dark_pole` on a light canvas,
+    toward white on a dark one), then nudged the rest of the way to legible
+    against `canvas` if the move alone doesn't clear the floor
+    (`ensure_readable_ink`, floor is `label_ink_min_contrast`). Unlike
+    `variant(..., "dark")`, this is the engine's one automatic, canvas-aware
+    color derivation -- the contrast floor costs hue separation, which
+    belongs on ink an author never sees as a literal color, not on `dark`
+    itself.
+    """
+    return _label_ink_cached(color, canvas, get_chart_rendering().color_variants)
 
 
 # ============================================================================

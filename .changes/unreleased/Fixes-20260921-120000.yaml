@@ -1,0 +1,5 @@
+kind: Fixes
+body: A `support_table` `aggregate:` row no longer inherits the base chart's structured-tooltip description on a colored bar/line/area chart, so hovering no longer shows a phantom "undefined NaN" row alongside the real series in the x-unified tooltip.
+time: 2026-09-21T12:00:00Z
+custom:
+  DbtChartsIssue: 29

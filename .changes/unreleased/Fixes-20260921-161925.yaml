@@ -1,0 +1,5 @@
+kind: Fixes
+body: A role-indirected color token (e.g. `category[1]`) in a `conditional_formatting` rule no longer raises an uncaught UnknownColorError; it now resolves against the active theme like every other color-bearing field.
+time: 2026-09-21T16:19:25.406789-00:00
+custom:
+    DbtChartsIssue: "34"

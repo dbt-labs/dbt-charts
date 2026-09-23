@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'A stacked bar''s nominal color legend ignored query row order and `sort:`, instead ranking series by their stacked total -- the only workaround was manually enumerating `style.legend.values`. When color maps 1:1 with the x category (each bar has exactly one segment, so a total ranking is meaningless), the legend and stack z-order now follow the x category''s own rendered order instead: `chart.sort` when authored, otherwise the query''s own row order. On a vertical bar this is restricted to a categorical (not date/number) x; never fires when an explicit `style.bar.stack_order` is authored. Applies to both vertical and horizontal bars, and to a per-series support-table strip attached to the same chart, so the strip''s swatches keep lining up with the bars.'
+time: 2026-09-21T16:03:47.000000-00:00
+custom:
+  DbtChartsIssue: 28

@@ -609,6 +609,45 @@ class TestConditionalFormattingRendering:
 
         assert svg.count('font-style="italic"') == 1
 
+    def test_category_role_token_resolves_in_conditional_formatting(self, make_chart):
+        """A ``category[n]`` role token in conditional_formatting resolves against
+        the theme cascade instead of raising UnknownColorError.
+
+        Role-indirected tokens like ``category[1]`` need theme palettes/roles
+        context to resolve — context that only exists at style-resolution time,
+        not at normalize time. Regression test for GH dbt-labs/dbt-charts#34.
+        """
+        from dbt_charts.core.compile.resolve.style.tokens import (
+            _resolve_one_color_token,
+        )
+        from dbt_charts.core.render.chart.table import (
+            render_table_svg as render_table_svg,
+        )
+
+        chart = make_chart(
+            "table",
+            x=None,
+            y=None,
+            conditional_formatting={
+                "status": {
+                    "when": [{"eq": "open", "font": {"color": "category[1]"}}],
+                }
+            },
+        )
+        data = [{"status": "open"}, {"status": "closed"}]
+        chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        svg = render_table_svg(
+            chart,
+            data,
+            width=400,
+            board_style=resolve_style(get_theme_style()),
+        )
+
+        expected_hex = _resolve_one_color_token(
+            "category[1]", _BOARD_STYLE.palettes, _BOARD_STYLE.roles
+        )
+        assert f'fill="{expected_hex}"' in svg
+
     def test_conditional_strikethrough_renders_in_svg(self, make_chart):
         """font.decoration=line-through emits text-decoration on matching rows."""
         from dbt_charts.core.render.chart.table import (

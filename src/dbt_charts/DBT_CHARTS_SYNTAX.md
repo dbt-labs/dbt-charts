@@ -1221,11 +1221,10 @@ Colors are palette tokens, not hex — the theme resolves a token, so a board re
 | A ramp for a continuous scale | `dbt-seq-blue`, `dbt-div-blue-red`; `:N` stops and `_r` reversed — `dbt-seq-blue:5_r` |
 | A pin that must survive a theme switch | `vivid-10.1`, `dbt-seq-blue.3` |
 
-Indices are 1-based, and two scopes take less than the table above implies:
-`palette:` wants a palette name or a list of stops, never a single scalar hex;
-and `conditional_formatting` takes the dotted tokens (`negative.bg`) but not the
-bracket ones (`category[1]`). Author hex in those. Everywhere else a hex literal
-is accepted too — the right choice only for a brand color that must not move.
+Indices are 1-based, and one scope takes less than the table above implies:
+`palette:` wants a palette name or a list of stops, never a single scalar hex.
+Everywhere else — including `conditional_formatting` — a hex literal is
+accepted too, the right choice only for a brand color that must not move.
 
 ```yaml
 style:

@@ -1,0 +1,5 @@
+kind: Fixes
+body: A `support_table` row's `source:` failed to render when the column name wasn't a valid JavaScript identifier (a space, hyphen, or other special character), raising `ERR-INTERNAL Vega-Lite to SVG conversion failed`. The generated expression now accesses the column via bracket notation, matching the `aggregate:` path.
+time: 2026-09-21T15:59:33.000000-00:00
+custom:
+  DbtChartsIssue: 32

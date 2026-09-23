@@ -220,6 +220,136 @@ def test_bar_ordering_non_presorted_matches_oracle() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Degenerate-stack legend order must not fire on gap-filled data
+# (https://github.com/dbt-labs/dbt-charts/issues/28 regression).
+#
+# Pre-fill: one color per month (mango/Jan, apple/Mar, cherry/Apr) -- looks
+# degenerate (color 1:1 with x). But Feb is missing, so gap_fill_ordinal_time
+# cross-joins every bucket x every color seen anywhere, synthesizing null
+# rows for every OTHER color at every bucket -- post-fill, the stack is a
+# genuine multi-segment one (most segments null), not degenerate at all.
+# The legend must fall back to the ordinary sum-ranked (and reversed) order,
+# never the degenerate x-domain order the pre-fill rows alone would suggest.
+# ---------------------------------------------------------------------------
+
+_BAR_GAP_FILL_DEGENERATE_CHART = {
+    "type": "bar",
+    "query": "q",
+    "x": "month",
+    "y": "revenue",
+    "color": "fruit",
+    "style": {"stack": "zero"},
+}
+
+_BAR_GAP_FILL_DEGENERATE_QUERY = {
+    "q": {
+        "columns": ["month", "fruit", "revenue"],
+        "values": [
+            ["2024-01-01", "mango", 10],
+            ["2024-03-01", "apple", 90],
+            ["2024-04-01", "cherry", 50],
+        ],
+    }
+}
+
+_BAR_GAP_FILL_DEGENERATE_DATA: list[dict[str, Any]] = [
+    {"month": "2024-01-01", "fruit": "mango", "revenue": 10},
+    {"month": "2024-03-01", "fruit": "apple", "revenue": 90},
+    {"month": "2024-04-01", "fruit": "cherry", "revenue": 50},
+]
+
+
+def test_bar_degenerate_stack_order_skipped_on_gap_filled_data() -> None:
+    """A gap-filled stacked bar must use sum-ranked order, not the
+    degenerate x-domain order -- see the module docstring above."""
+    v2 = _v2_vl(
+        "c",
+        _BAR_GAP_FILL_DEGENERATE_CHART,
+        _BAR_GAP_FILL_DEGENERATE_QUERY,
+        _BAR_GAP_FILL_DEGENERATE_DATA,
+    )
+
+    v2_rows: list[Any] = v2.get("data", {}).get("values", [])
+    # 4 months (Jan-Apr, Feb filled) x 3 colors = 12 rows -- confirms
+    # gap-fill's cross-join actually ran, or the rest of this assertion
+    # would be exercising the wrong code path.
+    assert len(v2_rows) == 12, (
+        f"expected the 4-bucket x 3-color cross-join (12 rows), got "
+        f"{len(v2_rows)} -- gap-fill did not fire as this test assumes"
+    )
+
+    legend = v2["encoding"]["color"]["legend"]
+    # Sum-ranked descending (apple=90, cherry=50, mango=10), reversed for
+    # the legend: mango, cherry, apple. The degenerate (buggy) order would
+    # instead read mango, apple, cherry -- first-occurrence query order,
+    # unreversed.
+    assert legend["values"] == ["mango", "cherry", "apple"]
+
+
+# ---------------------------------------------------------------------------
+# Degenerate-stack legend order on a FACETED gap-filled chart -- a distinct
+# failure mode from the single-panel test above. gap_fill_ordinal_time_per_
+# panel cross-joins each panel over only that panel's own [min, max] bucket
+# range and its own dim values, so the pooled per-panel-synthesized rows can
+# cover every series exactly once (one panel per series here) and pass
+# degenerate_or_stacked_series_order's coverage check on an order that is an
+# artifact of which rows gap-fill invented for that panel, not a genuine
+# degenerate-stack order. `not gap_fired` is the only thing that stops the
+# single-panel test's coverage-check argument from silently mis-firing here.
+# ---------------------------------------------------------------------------
+
+_BAR_FACETED_GAP_FILL_DEGENERATE_CHART = {
+    "type": "bar",
+    "query": "q",
+    "x": "month",
+    "y": "revenue",
+    "color": "fruit",
+    "style": {"stack": "zero"},
+    "multiples": {"rows": "region"},
+}
+
+_BAR_FACETED_GAP_FILL_DEGENERATE_QUERY = {
+    "q": {
+        "columns": ["region", "month", "fruit", "revenue"],
+        "values": [
+            ["East", "2024-01-01", "apple", 60],
+            ["East", "2024-03-01", "apple", 40],
+            ["West", "2024-04-01", "banana", 20],
+            ["West", "2024-06-01", "banana", 10],
+        ],
+    }
+}
+
+_BAR_FACETED_GAP_FILL_DEGENERATE_DATA: list[dict[str, Any]] = [
+    {"region": "East", "month": "2024-01-01", "fruit": "apple", "revenue": 60},
+    {"region": "East", "month": "2024-03-01", "fruit": "apple", "revenue": 40},
+    {"region": "West", "month": "2024-04-01", "fruit": "banana", "revenue": 20},
+    {"region": "West", "month": "2024-06-01", "fruit": "banana", "revenue": 10},
+]
+
+
+def test_bar_degenerate_stack_order_skipped_on_faceted_gap_filled_data() -> None:
+    """See the module docstring above."""
+    v2 = _v2_vl(
+        "c",
+        _BAR_FACETED_GAP_FILL_DEGENERATE_CHART,
+        _BAR_FACETED_GAP_FILL_DEGENERATE_QUERY,
+        _BAR_FACETED_GAP_FILL_DEGENERATE_DATA,
+    )
+
+    assert "facet" in v2, "expected a faceted spec -- multiples did not fire"
+    # 2 panels x 3 buckets each (Jan-Mar, Apr-Jun) = 6 rows -- confirms
+    # gap-fill fired *and* left x ordinal (not temporal), which is what
+    # keeps `not gap_fired` the only discriminating term below.
+    assert len(v2["data"]["values"]) == 6
+    legend = v2["spec"]["encoding"]["color"]["legend"]
+    # Sum-ranked descending (apple=100, banana=30), reversed for the legend:
+    # banana, apple. The faceted-degenerate artifact would instead read
+    # apple, banana -- each panel's own gap-fill first row, unreversed.
+    assert legend["values"] == ["banana", "apple"]
+
+
+# ---------------------------------------------------------------------------
 # Fix 2a: legend title on horizontal bar with color channel
 #
 # _emit_horizontal calls channel_to_encoding without title= → legend has no

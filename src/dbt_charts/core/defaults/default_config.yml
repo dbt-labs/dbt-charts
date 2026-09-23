@@ -425,6 +425,29 @@ chart_rendering:
     # the plot at 0.3 would show. That background weight of 0.3 was chosen
     # from a rendered comparison at 0.15 / 0.25 / 0.35 / 0.5.
     dimmed_opacity: 0.7
+  color_variants:
+    # Constants for variant()/label_ink()'s move-toward-a-pole color
+    # derivation (compile/resolve/style/palette.py). Engine config, not a
+    # theme value -- same reason as hover_emphasis.dimmed_opacity above:
+    # there is no wide range of settings that reads well, so we tune it
+    # rather than the author. One rule shape for all four tiers:
+    # L' = L + (pole - L) * k, hue held, chroma scaled, gamut-clipped.
+    light_k: 0.30
+    light_chroma: 0.60
+    light_min_gap: 0.03
+    light_pale_gap: 0.03
+    dark_pole: 0.20
+    dark_k: 0.30
+    pale_l: 0.86
+    pale_chroma: 0.32
+    deep_pole: 0.28
+    deep_k: 0.85
+    # WCAG contrast floor label_ink guarantees against its canvas.
+    # No hard ceiling in the config model, but above roughly 4.6 a
+    # mid-gray canvas (where black and white give near-equal contrast)
+    # cannot clear the floor from either ink direction -- raising this
+    # much past 4.5 needs a check against the canvases it will run on.
+    label_ink_min_contrast: 4.5
 
 
 # ============================================================================

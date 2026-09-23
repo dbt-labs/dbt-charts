@@ -670,6 +670,93 @@ def sorted_series_by_stack_order(
     return sorted(series, key=_global_sum_rank)
 
 
+def is_1to1(
+    rows: Rows,
+    key_field: str,
+    value_field: str,
+) -> bool | None:
+    """Whether every row's *value_field* is determined by its *key_field*
+    -- no two rows share a *key_field* value but differ on *value_field*
+    (the "does every x category carry exactly one series" question a
+    degenerate stacked bar asks). ``None`` when no row carries both fields
+    at all -- there is nothing to judge, distinct from a real ``False``
+    verdict; the one caller (``emitters.bar._is_color_1to1_with_x``, folded
+    per panel) skips a ``None`` panel rather than counting it as a
+    violation.
+    """
+    unique_keys: set[Any] = set()  # type-state: explicit_any — raw query cell value
+    unique_pairs: set[Any] = set()  # type-state: explicit_any — raw (key, value) pair
+    for row in rows:
+        if key_field in row and value_field in row:
+            unique_keys.add(row[key_field])
+            unique_pairs.add((row[key_field], row[value_field]))
+    if not unique_keys:
+        return None
+    return len(unique_keys) == len(unique_pairs)
+
+
+def degenerate_or_stacked_series_order(
+    series: list[str],
+    data: Rows,
+    x_field: str,
+    series_field: str,
+    stack_order: str | None,
+    *,
+    y_field: str,
+    is_degenerate: bool,
+    x_sort_by: str,
+    x_sort_descending: bool,
+    x_sort_op: VlSortOp,
+) -> tuple[list[str], bool]:
+    """Baseline-first series order for a stacked chart, degenerate-stack aware.
+
+    Returns ``(order, degenerate)``. Delegates to ``sorted_series_by_stack_order``
+    (global-sum descending, or the caller's own *stack_order*) with
+    ``degenerate=False`` -- except when *is_degenerate* (the caller's own
+    "does every x category carry exactly one series" verdict, e.g.
+    ``emitters.bar._is_color_1to1_with_x``) holds and *stack_order* is
+    unauthored. There, ranking series by total compares each series only
+    against itself (every "stack" is really one unstacked segment) and
+    scrambles the query's own row order into a ranking nobody asked for. In
+    that case this follows the x category's own rendered order instead
+    (*x_sort_by* when the caller's chart authored a categorical sort, else
+    first-occurrence query order) via ``x_domain_order`` -- the same
+    domain-ordering rule the categorical axis itself renders by -- and
+    reports ``degenerate=True`` so a caller with a "reverse baseline order
+    for display" convention (a real stack's legend reads top-of-stack
+    first) knows to skip it: a degenerate stack has no visual top/bottom to
+    reverse against.
+
+    A degenerate stack can still repeat a series value across several x
+    categories (the same status recurring on different days) --
+    ``dict.fromkeys`` collapses the one-entry-per-x domain mapping to one
+    entry per series before the coverage check, or a repeated value would
+    read as a size mismatch against *series* and silently fall through to
+    the total-ranked default.
+    """
+    if stack_order is None and is_degenerate:
+        domain = x_domain_order(
+            data, x_field, x_sort_by, x_sort_descending, op=x_sort_op
+        )
+        # x_val keeps its native cell type (date/int/str), never coerced.
+        first_series: dict[Any, str] = {}  # type-state: explicit_any — x-domain cell
+        for row in data:
+            x_val, s_val = row.get(x_field), row.get(series_field)
+            if x_val is not None and s_val is not None:
+                first_series.setdefault(x_val, str(s_val))
+        ordered = list(
+            dict.fromkeys(first_series[x] for x in domain if x in first_series)
+        )
+        if sorted(ordered) == sorted(series):
+            return ordered, True
+    return (
+        sorted_series_by_stack_order(
+            series, data, series_field, stack_order, y_field=y_field
+        ),
+        False,
+    )
+
+
 def cumulative_stack_midpoints(
     data: Rows,
     x_field: str,

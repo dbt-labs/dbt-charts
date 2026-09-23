@@ -224,17 +224,13 @@ def normalize_chart(
     if query is not None and query.variable_dependencies:
         chart_deps |= query.variable_dependencies
 
-    # --- CF color resolution ---
+    # conditional_formatting is carried through unresolved: role-indirected
+    # color tokens (e.g. category[1]) need theme palettes/roles context that
+    # only exists at style-resolution time, not here. Resolution happens in
+    # resolve/chart/_kwargs.py's _base_kwargs, against chart_style_context.
     # Absent-by-design on families with no CF lowering path (structurally
     # narrowed off the authored model), same rationale as title/subtitle above.
     conditional_formatting = getattr(authored, "conditional_formatting", None)
-    if conditional_formatting:
-        from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
-
-        conditional_formatting = {
-            col: _resolve_color_tokens(entry)
-            for col, entry in conditional_formatting.items()
-        }
 
     # --- Common base fields ---
     base: dict[str, Any] = {

@@ -336,6 +336,63 @@ class ChartRenderingConfig(ConfigNode):
         # both surfaces.
         dimmed_opacity: float = Field(gt=0, lt=1)
 
+    class ColorVariantsConfig(ConfigNode):
+        """Constants for ``variant()``/``label_ink()``'s color derivation.
+
+        Engine config, not a theme value -- same reason as
+        HoverEmphasisConfig.dimmed_opacity: there is no wide range of
+        settings that read well, so we tune it rather than the author.
+        One rule shape for all four tiers: ``L' = L + (pole - L) * k``, hue
+        held, chroma scaled, gamut-clipped (compile/resolve/style/palette.py).
+
+        ``frozen=True`` (``ConfigNode`` is not frozen by default) blocks
+        mutation; pydantic auto-generates a matching ``__hash__`` at runtime,
+        but only when the class doesn't already define one -- and pyright
+        can't see that dynamic step (dataclass_transform here only tracks a
+        `frozen=True` class-keyword argument, and `ConfigNode` itself isn't
+        frozen, so that spelling is unavailable). Declaring ``__hash__``
+        explicitly, the same field-tuple hash pydantic would have generated,
+        keeps this statically ``Hashable`` for the ``lru_cache`` the two
+        functions key on.
+        """
+
+        model_config = ConfigDict(frozen=True)
+
+        def __hash__(self) -> int:
+            return hash(tuple(self.__dict__.values()))
+
+        # Fraction of the remaining distance to white the light tier moves.
+        light_k: float = Field(gt=0, le=1)
+        # Chroma multiplier applied to the light tier.
+        light_chroma: float = Field(gt=0, le=1)
+        # Minimum lightness gap light keeps above its base, even when the
+        # pale cap below would otherwise pull it closer -- above roughly
+        # base L 0.80 this floor wins over that cap (see palette.py).
+        light_min_gap: float = Field(ge=0, lt=1)
+        # Gap light targets keeping under pale's flat band, when the
+        # light_min_gap floor above doesn't win instead.
+        light_pale_gap: float = Field(ge=0, lt=1)
+        # Lightness pole the dark tier moves toward, and the pole label ink
+        # steps toward on a light canvas.
+        dark_pole: float = Field(gt=0, lt=1)
+        # Fraction of the remaining distance to dark_pole the dark tier --
+        # and label ink's pre-floor step -- moves.
+        dark_k: float = Field(gt=0, le=1)
+        # Flat lightness the pale tier is set to -- the band itself is the
+        # pole (its own move fraction is fixed at 1).
+        pale_l: float = Field(gt=0, lt=1)
+        # Chroma multiplier applied to the pale tier.
+        pale_chroma: float = Field(gt=0, le=1)
+        # Lightness pole the deep tier moves toward.
+        deep_pole: float = Field(gt=0, lt=1)
+        # Fraction of the remaining distance to deep_pole the deep tier
+        # moves.
+        deep_k: float = Field(gt=0, le=1)
+        # WCAG contrast floor label ink guarantees against its canvas,
+        # applied after the dark-tier step. No upper bound here -- see the
+        # default_config.yml comment for the practical ceiling.
+        label_ink_min_contrast: float = Field(ge=1)
+
     pie: PieConfig
     bar: BarConfig
     plot_height_floor: PlotHeightFloorConfig
@@ -349,6 +406,7 @@ class ChartRenderingConfig(ConfigNode):
     gradient: GradientConfig
     legend: LegendConfig
     hover_emphasis: HoverEmphasisConfig
+    color_variants: ColorVariantsConfig
 
 
 class InspectorConfig(ConfigNode):

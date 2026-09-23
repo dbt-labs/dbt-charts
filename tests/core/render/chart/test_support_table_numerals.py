@@ -120,12 +120,12 @@ def test_anchor_declares_the_magnitude_once_in_narrative_form():
     assert '" M"' not in calc
     # The suffix is gated on the anchor, so it cannot reach a bare cell.
     assert (
-        "(datum.goal !== 0 && datum.__support_table_carries === 1 "
+        '(datum["goal"] !== 0 && datum.__support_table_carries === 1 '
         "&& datum.__support_table_drawn_index === 1 ? \"mn\" : '')" in calc
     )
     # The magnitude is divided out once, rather than each cell re-picking a
     # tier through d3's own `s` type.
-    assert "abs(datum.goal) / 1000000.0" in calc
+    assert 'abs(datum["goal"]) / 1000000.0' in calc
     assert "$,.3s" not in calc
 
 
@@ -155,7 +155,7 @@ def test_repeat_mode_puts_the_suffix_on_every_non_zero_cell():
         )
     )
 
-    assert "(datum.goal !== 0 ? \"mn\" : '')" in calc
+    assert '(datum["goal"] !== 0 ? "mn" : \'\')' in calc
     assert (
         "(datum.__support_table_carries === 1 "
         "&& datum.__support_table_drawn_index === 1 ? \"$\" : '')" in calc
@@ -180,8 +180,8 @@ def test_no_shared_scale_leaves_the_cell_formatting_untouched():
     )
 
     assert calc == (
-        "isValid(datum.goal) && (!isNumber(datum.goal) || isFinite(datum.goal)) "
-        "? format(datum.goal, ',.0f') : '-'"
+        'isValid(datum["goal"]) && (!isNumber(datum["goal"]) || isFinite(datum["goal"])) '
+        "? format(datum[\"goal\"], ',.0f') : '-'"
     )
 
 
@@ -210,9 +210,9 @@ def test_plain_trim_format_appends_a_decimal_pad_to_the_cell_expression():
 
     pad_table = decimal_pad_table_for(",.2~f", "Inter")
     assert pad_table, "a trim-enabled fixed-point spec must produce a pad table"
-    expected_text_e = _apply_decimal_pad("format(datum.goal, ',.2~f')", pad_table)
+    expected_text_e = _apply_decimal_pad("format(datum[\"goal\"], ',.2~f')", pad_table)
     assert calc == (
-        "isValid(datum.goal) && (!isNumber(datum.goal) || isFinite(datum.goal)) "
+        'isValid(datum["goal"]) && (!isNumber(datum["goal"]) || isFinite(datum["goal"])) '
         f"? {expected_text_e} : '-'"
     )
 
@@ -472,7 +472,7 @@ def test_si_shared_scale_column_gets_a_decimal_pad_on_its_digit_portion():
     assert strip.bare_text(44.6e6) == "44.6"
 
     calc = _cell_calc(_attach(table, entry_numerals=[strip]))
-    scaled_value_e = f"abs(datum.goal) / {strip.divisor!r}"
+    scaled_value_e = f'abs(datum["goal"]) / {strip.divisor!r}'
     expected_digits = _apply_decimal_pad(
         f"format({scaled_value_e}, '{strip.digit_spec}')",
         strip.decimal_pad_table,
@@ -652,8 +652,8 @@ def test_percent_sign_survives_a_zero_cell():
 
     calc = _cell_calc(_attach(_goal_table(), entry_numerals=[numerals]))
 
-    assert "replace(format(datum.goal, ',.1%'), \"%\", '')" in calc
-    assert "datum.goal !== 0" not in calc
+    assert "replace(format(datum[\"goal\"], ',.1%'), \"%\", '')" in calc
+    assert 'datum["goal"] !== 0' not in calc
 
 
 def test_currency_without_a_magnitude_still_anchors_its_symbol():
@@ -842,10 +842,10 @@ def test_a_negative_magnitude_cell_signs_before_the_currency_symbol():
     calc = _cell_calc(_attach(_goal_table(), entry_numerals=[_MILLIONS]))
 
     # sign expr precedes the anchored prefix in the concatenation
-    sign_at = calc.index("datum.goal < 0 ? '−'")
+    sign_at = calc.index("datum[\"goal\"] < 0 ? '−'")
     prefix_at = calc.index('? "$"')
     assert sign_at < prefix_at
-    assert "abs(datum.goal)" in calc
+    assert 'abs(datum["goal"])' in calc
 
 
 def test_the_painted_text_and_the_measured_text_agree_exactly():
@@ -1015,7 +1015,7 @@ def test_left_axis_currency_prefix_routes_to_nowhere_expression():
     """A predefined currency format on a left axis emits a plain per-cell expression.
 
     With StripAnchor.nowhere(), every cell formats through its own spec unchanged
-    -- no replace(), no anchor_test, just format(datum.goal, '$~s').
+    -- no replace(), no anchor_test, just format(datum["goal"], '$~s').
     """
     from dbt_charts.core.render.chart.support_table_attachment import _entry_numerals
 
@@ -1030,7 +1030,7 @@ def test_left_axis_currency_prefix_routes_to_nowhere_expression():
 
     assert "replace(" not in calc
     assert "__support_table_drawn_index" not in calc
-    assert "format(datum.goal, '$.3~s')" in calc
+    assert "format(datum[\"goal\"], '$.3~s')" in calc
 
 
 # --- Fix 3: tier_distance refusal parity with table ---

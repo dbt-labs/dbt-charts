@@ -8,7 +8,7 @@ kindFormat: '### {{.Kind}}'
 # dbt-labs/dbt-charts below must track the Copybara export destination
 # (dbt-charts/oss/copy.bara.sky) -- a rename on either side silently stops
 # every marker from matching, closing nothing.
-changeFormat: '- {{.Body}}{{if and .Custom.DbtChartsIssue (ne .Custom.DbtChartsIssue "0")}} <!-- closes dbt-labs/dbt-charts#{{.Custom.DbtChartsIssue}} -->{{end}}'
+changeFormat: '- {{.Body}}{{if and .Custom.DbtChartsIssue (ne .Custom.DbtChartsIssue "0")}} [Closes dbt-labs/dbt-charts#{{.Custom.DbtChartsIssue}}](https://github.com/dbt-labs/dbt-charts/issues/{{.Custom.DbtChartsIssue}}){{end}}'
 custom:
   - key: DbtChartsIssue
     label: "dbt-labs/dbt-charts (OSS) issue number this closes, if any (leave blank otherwise)"

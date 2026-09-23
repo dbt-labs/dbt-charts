@@ -100,11 +100,14 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     emit_resolved_scale_vl,
     measure_axis_to_vl,
 )
+from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import format_display_text
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
     cap_padding_to_label_limit,
+    degenerate_or_stacked_series_order,
+    is_1to1,
     layered_endpoint_rail_fires,
     layered_endpoint_rail_shape,
     measured_label_padding,
@@ -164,18 +167,42 @@ def _is_color_1to1_with_x(
     dataset = restamp(restamp(dataset, x_field), color_field)
     checked = False
     for panel in dataset.panels:
-        unique_x = set()
-        unique_pairs = set()
-        for row in panel.rows:
-            if x_field in row and color_field in row:
-                unique_x.add(row[x_field])
-                unique_pairs.add((row[x_field], row[color_field]))
-        if not unique_x:
+        verdict = is_1to1(panel.rows, x_field, color_field)
+        if verdict is None:
             continue
         checked = True
-        if len(unique_x) != len(unique_pairs):
+        if not verdict:
             return False
     return checked
+
+
+def _stacked_series_order(
+    chart: ResolvedBarChart,
+    series: list[str],
+    data: list[dict[str, Any]],  # type-state: explicit_any — query rows
+    color_field: str,
+    cat_field: str,
+    measure_field: str,
+    is_degenerate_stack: bool,
+    cat_sort: VLDict | None,
+) -> tuple[list[str], bool]:
+    """Bar's own ``cat_sort`` (a VL sort dict) unpacked for
+    ``degenerate_or_stacked_series_order`` -- see that function for the
+    degenerate-stack rule this applies (index 0 = bottom/left, unreversed;
+    the caller reverses for display where a real stack needs it).
+    """
+    return degenerate_or_stacked_series_order(
+        series,
+        data,
+        cat_field,
+        color_field,
+        chart.style.stack_order,
+        y_field=measure_field,
+        is_degenerate=is_degenerate_stack,
+        x_sort_by=cat_sort["field"] if cat_sort else "",
+        x_sort_descending=cat_sort["order"] == "descending" if cat_sort else False,
+        x_sort_op=vl_sort_op(cat_sort),
+    )
 
 
 # Grouped-bar overlap keyword → fraction of bar width.
@@ -635,6 +662,7 @@ class BarEmitter:
                 config,
                 box,
                 mutated_dataset,
+                gap_fired=gap_fired,
             )
         else:
             # Overlay layers may carry x buckets the base series doesn't (a
@@ -672,6 +700,7 @@ class BarEmitter:
                 # band edges to stay the same float (see
                 # nudge_band_scale_off_range_start).
                 band_doubled=overlay_uses_band_step(chart.layers),
+                gap_fired=gap_fired,
             )
 
         if gap_fired:
@@ -747,10 +776,15 @@ def _emit_wide_bar(
     # the humanized display text.
     raw_series = raw_wide_series_names(measures, dimension, data)
     if chart.stack not in (None, "none"):
-        # Same order computation bar's authored-color stacked path uses
-        # (see the `elif color_ch.mode == "series" ...` branch below), fed a
-        # long-form view of the wide data — a wide bar's series order must
-        # match what an authored color: field of the same data would produce.
+        # Same sorted_series_by_stack_order() call bar's authored-color
+        # stacked path falls back to (see the `elif color_ch.mode ==
+        # "series" ...` branch below), fed a long-form view of the wide
+        # data — a wide bar's series order should still match what an
+        # authored color: field of the same data would produce for the
+        # ordinary (non-degenerate) case; the degenerate-stack override
+        # that branch can also take doesn't apply here, since a wide
+        # chart's "series" are measure names, not query-row values to
+        # follow the x-domain's own order.
         # `folded`'s own WIDE_LABEL_FIELD is RAW (unfold_wide_rows never
         # humanizes), so the stack-order grouping has to run against the
         # matching raw identity, not `series` (already humanized) -- humanize
@@ -833,6 +867,7 @@ def _emit_vertical(
     wide: FoldedMeasures | Literal[False] = False,
     x_domain: list[Any] | None = None,
     band_doubled: bool = False,
+    gap_fired: bool = False,
 ) -> ChartSpec:
     """Emit a full vertical bar spec matching the oracle."""
     bar_mark = chart.style.mark
@@ -1107,6 +1142,9 @@ def _emit_vertical(
         list(wide.transforms) if wide is not False else []
     )
     color_enc_type: str = "nominal"
+    # Set only by the nominal-color stacked branch below -- see
+    # ChartSpec.stacked_series_order for why it's stamped onto the spec.
+    stacked_series_order: list[str] | None = None
 
     if wide is not False:
         encoding["color"] = wide.color
@@ -1198,29 +1236,60 @@ def _emit_vertical(
             series = distinct_series_values(data, color_field)
             if series:
                 # Baseline-first order (index 0 = bottom of stack).
-                order = sorted_series_by_stack_order(
+                #
+                # The degenerate-stack override only fires for a plain
+                # nominal/ordinal x, never temporal/quantitative: a
+                # continuous x renders by VALUE, not row order, and a
+                # bucketed-calendar (timeUnit) x collapses several raw rows
+                # into one rendered band -- `_is_color_1to1_with_x`'s
+                # raw-cell read can't see that, so it would misjudge a real
+                # multi-segment stack as degenerate. `not gap_fired` closes
+                # a separate hole the coverage check alone doesn't: on a
+                # FACETED chart, gap-fill cross-joins each panel over only
+                # that panel's own bucket range and dim values, so the
+                # pooled, per-panel-synthesized rows can happen to cover
+                # every series once each -- passing the coverage check with
+                # an order that is an artifact of which rows gap-fill
+                # invented, not a real degenerate-stack order. `dataset`
+                # (pre-fill, what `_is_color_1to1_with_x` reads) and `data`
+                # (post-fill, what the order would be computed over) must
+                # simply never both feed this path.
+                is_degenerate = (
+                    not gap_fired
+                    and x_vl_type in ("nominal", "ordinal")
+                    and _is_color_1to1_with_x(cat_field, color_field, dataset)
+                )
+                order, degenerate = _stacked_series_order(
+                    chart,
                     series,
                     data,
                     color_field,
-                    chart.style.stack_order,
-                    y_field=measure_field,
+                    cat_field,
+                    measure_field,
+                    is_degenerate,
+                    x_enc["sort"],
                 )
+                stacked_series_order = order
                 # `chart.palette` can legally be authored empty; it
                 # governs the scale's range only, never the legend's
                 # entry set, so resolution runs unconditionally. The
                 # mark order below needs no palette either.
-                display_order = list(reversed(order))
+                #
+                # The reversal reads a real stack's baseline order back to
+                # front so the legend's top entry is the visual top of the
+                # stack. A degenerate stack (one segment per bar) has no
+                # visual top/bottom to anchor that reversal to -- `order`
+                # already follows the x category's own rendered order, and
+                # reversing it would just re-scramble the very order this
+                # exists to preserve.
+                display_order = order if degenerate else list(reversed(order))
                 apply_legend_entry_order(
                     encoding["color"],
                     display_order,
                     authored=chart.legend.values,
                 )
                 if chart.palette:
-                    palette_order = (
-                        series
-                        if _is_color_1to1_with_x(cat_field, color_field, dataset)
-                        else order
-                    )
+                    palette_order = series if is_degenerate else order
                     encoding["color"]["scale"] = spatial_color_scale(
                         palette_order,
                         chart.palette,
@@ -1266,6 +1335,7 @@ def _emit_vertical(
     )
     spec.base_series_label = titles.y_plain
     spec.x_label_block_height = label_layout.label_block_height
+    spec.stacked_series_order = stacked_series_order
     return spec
 
 
@@ -1278,6 +1348,7 @@ def _emit_horizontal(
     box: RenderBox,
     dataset: ChartDataset,
     wide: FoldedMeasures | Literal[False] = False,
+    gap_fired: bool = False,
 ) -> ChartSpec:
     """Emit a full horizontal bar spec matching the oracle."""
     bar_mark = chart.style.mark
@@ -1573,6 +1644,8 @@ def _emit_horizontal(
         list(wide.transforms) if wide is not False else []
     )
     color_enc_type_h: str = "nominal"
+    # See _emit_vertical's twin declaration above.
+    stacked_series_order: list[str] | None = None
     if wide is not False:
         encoding["color"] = wide.color
         if chart.stack == "none":
@@ -1649,14 +1722,26 @@ def _emit_horizontal(
             if series:
                 # Baseline-first order (index 0 = left edge for horizontal
                 # bars) — the "left-first" convention IS baseline-first,
-                # no reversal needed.
-                order = sorted_series_by_stack_order(
+                # no reversal needed (degenerate or real stack alike). A
+                # horizontal bar's categorical axis is always emitted
+                # nominal regardless of the underlying column's type, so —
+                # unlike vertical — there is no x_vl_type to gate on here;
+                # see the vertical branch above for why a gap-filled x
+                # still needs its own `not gap_fired` term.
+                is_degenerate_h = not gap_fired and _is_color_1to1_with_x(
+                    cat_field, color_field_h, dataset
+                )
+                order, _degenerate_h = _stacked_series_order(
+                    chart,
                     series,
                     data,
                     color_field_h,
-                    chart.style.stack_order,
-                    y_field=measure_field,
+                    cat_field,
+                    measure_field,
+                    is_degenerate_h,
+                    y_sort,
                 )
+                stacked_series_order = order
                 # See the vertical branch above: `chart.palette` can
                 # legally be authored empty, so resolution runs
                 # unconditionally -- it governs `scale`'s range only.
@@ -1666,11 +1751,7 @@ def _emit_horizontal(
                     authored=chart.legend.values,
                 )
                 if chart.palette:
-                    palette_order = (
-                        series
-                        if _is_color_1to1_with_x(cat_field, color_field_h, dataset)
-                        else order
-                    )
+                    palette_order = series if is_degenerate_h else order
                     encoding["color"]["scale"] = spatial_color_scale(
                         palette_order,
                         chart.palette,
@@ -1720,4 +1801,5 @@ def _emit_horizontal(
     # The base series' legend label is its MEASURE, which this orientation
     # draws on VL x — `y_plain` here is the category title.
     spec.base_series_label = titles.x_plain
+    spec.stacked_series_order = stacked_series_order
     return spec

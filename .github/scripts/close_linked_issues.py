@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Close GitHub issues a just-shipped release's changelog says it fixes.
 
-`.changie.yaml`'s `changeFormat` appends `<!-- closes <repo>#N -->` to a
-changelog entry whenever the fragment that produced it set
+`.changie.yaml`'s `changeFormat` appends a `[Closes <repo>#N](<issue URL>)`
+link to a changelog entry whenever the fragment that produced it set
 `custom: {DbtChartsIssue: N}`. `build_marker` compiles the match pattern from
 `--repo` at runtime, so this only ever matches a marker naming the exact
 repo this script was invoked for.
@@ -31,7 +31,10 @@ _TAG_PREFIX = "dbt-charts-v"
 
 
 def build_marker(repo: str) -> re.Pattern[str]:
-    return re.compile(rf"<!--\s*closes\s+{re.escape(repo)}#(\d+)\s*-->")
+    return re.compile(
+        rf"\[Closes\s+{re.escape(repo)}#(\d+)\]"
+        rf"\(https://github\.com/{re.escape(repo)}/issues/\1\)"
+    )
 
 
 def issues_closed_by(text: str, marker: re.Pattern[str]) -> list[int]:

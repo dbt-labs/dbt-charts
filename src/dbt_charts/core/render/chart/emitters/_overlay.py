@@ -2041,4 +2041,9 @@ def render_cartesian_overlay(
         # rather than dropped, or a layered chart would lose the tilt
         # reservation its unlayered twin gets.
         x_label_block_height=base_spec.x_label_block_height,
+        # Same carry-across for the base's own computed stacked-series order
+        # — dropping it here would leave a layered stacked bar's per-series
+        # support-table strip re-deriving its own (possibly disagreeing)
+        # verdict instead of reading the one the base layer actually paints.
+        stacked_series_order=base_spec.stacked_series_order,
     )

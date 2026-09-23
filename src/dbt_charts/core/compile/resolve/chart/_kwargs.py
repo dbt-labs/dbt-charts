@@ -41,6 +41,7 @@ from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
 )
 from dbt_charts.core.compile.resolve.style.palette import substitute_for_alias
+from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 from dbt_charts.core.text.predefined_formats import (
@@ -212,6 +213,25 @@ def _base_kwargs(
     if normalized.link is None:
         link = automatic_link_candidate
     effective_palette = palette if palette is not None else chart_style_context.palette
+    # Color tokens in conditional_formatting (including role-indirected ones
+    # like category[1]) resolve here, against the active theme's
+    # palettes/roles — normalize time has no theme context available yet.
+    # Passed as a dict (not per-entry) so the walk's keyed-collection guard
+    # applies: only background/font.color/glyph_color are color-bearing, so a
+    # scalar predicate value or glyph text that happens to look like a token
+    # (e.g. eq: "category[1]") is left alone rather than silently rewritten
+    # to hex. The guard is field-name-based, not type-based, so a
+    # token-shaped string inside a list field (e.g. `in: [...]`) is not
+    # covered — lists carry no field name to check.
+    conditional_formatting = (
+        _resolve_color_tokens(
+            normalized.conditional_formatting,
+            chart_style_context.palettes,
+            chart_style_context.roles,
+        )
+        if normalized.conditional_formatting
+        else None
+    )
     return {
         "id": normalized.id,
         "source_path": normalized.source_path,
@@ -221,7 +241,7 @@ def _base_kwargs(
         "variable_dependencies": normalized.variable_dependencies,
         "notes": normalized.notes,
         "link": link,
-        "conditional_formatting": normalized.conditional_formatting,
+        "conditional_formatting": conditional_formatting,
         "palette": tuple(effective_palette),
         "requested_alias_palette": requested_alias_palette,
         "requested_alias_substitute": (

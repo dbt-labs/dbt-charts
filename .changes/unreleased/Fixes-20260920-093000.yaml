@@ -1,3 +1,5 @@
 kind: Fixes
 body: 'On a dual-axis combo chart, a layer that sets its own `axis_y.labels.format` (such as a percent line on the right axis) no longer triggers `WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER`. When the warning does fire for such a layer, its fix now names the layer''s own key.'
 time: 2026-09-20T09:30:00.000000-07:00
+custom:
+  DbtChartsIssue: 30

@@ -1098,6 +1098,354 @@ def test_horizontal_grouped_bar_no_stack_order(bar_style: ResolvedBarStyle) -> N
     assert spec.transforms == []
 
 
+def test_vertical_stacked_bar_degenerate_stack_follows_query_order(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """When color maps 1:1 with x (each bar has exactly one segment), the
+    legend/z-order follows the query's own row order instead of ranking
+    series by their (here meaningless, since each series appears in only
+    one category) stacked total.
+
+    Regression for https://github.com/dbt-labs/dbt-charts/issues/28: sorting
+    by global sum turned query order "mango, apple, cherry, banana" into
+    "apple, mango, banana, cherry".
+    """
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.emitters.bar import (
+        _DF_SERIES_ORDER_KEY,
+        BarEmitter,
+    )
+
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="fruit")
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="degenerate",
+        chart_type="bar",
+        x="quarter",
+        y="revenue",
+        stack="zero",
+        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{
+            **_C,
+            "resolved_channels": {"color": ch},
+            "legend": _default_legend().model_copy(update={"visible": True}),
+        },
+    )
+    data = [
+        {"quarter": "Q1", "fruit": "mango", "revenue": 30},
+        {"quarter": "Q2", "fruit": "apple", "revenue": 50},
+        {"quarter": "Q3", "fruit": "cherry", "revenue": 10},
+        {"quarter": "Q4", "fruit": "banana", "revenue": 20},
+    ]
+    spec = BarEmitter().emit(bar, _DEFAULT_BOX, regroup((), data))
+
+    # Global-sum order would be apple, mango, banana, cherry. A degenerate
+    # (one-segment-per-bar) stack has no visual top/bottom to reverse against,
+    # so -- unlike a real stack -- the legend reads query order directly,
+    # matching the bars left to right (mango, apple, cherry, banana).
+    assert spec.encoding["color"]["legend"]["values"] == [
+        "mango",
+        "apple",
+        "cherry",
+        "banana",
+    ]
+    order_expr = next(
+        t["calculate"] for t in spec.transforms if t.get("as") == _DF_SERIES_ORDER_KEY
+    )
+    # Baseline (stack bottom, index 0) is the first query row's series.
+    assert order_expr.index('"mango"') < order_expr.index('"apple"')
+    assert order_expr.index('"apple"') < order_expr.index('"cherry"')
+    assert order_expr.index('"cherry"') < order_expr.index('"banana"')
+
+
+def test_horizontal_stacked_bar_degenerate_stack_follows_query_order(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """Mirrors the vertical case: a horizontal degenerate stack (one segment
+    per category) also preserves query order instead of ranking by total."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="fruit")
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="degenerate-h",
+        chart_type="bar",
+        x="quarter",
+        y="revenue",
+        stack="zero",
+        orientation="horizontal",
+        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{
+            **_C,
+            "resolved_channels": {"color": ch},
+            "legend": _default_legend().model_copy(update={"visible": True}),
+        },
+    )
+    data = [
+        {"quarter": "Q1", "fruit": "mango", "revenue": 30},
+        {"quarter": "Q2", "fruit": "apple", "revenue": 50},
+        {"quarter": "Q3", "fruit": "cherry", "revenue": 10},
+        {"quarter": "Q4", "fruit": "banana", "revenue": 20},
+    ]
+    spec = BarEmitter().emit(bar, _DEFAULT_BOX, regroup((), data))
+
+    # Horizontal's "left-first" legend convention is baseline-first, unreversed.
+    assert spec.encoding["color"]["legend"]["values"] == [
+        "mango",
+        "apple",
+        "cherry",
+        "banana",
+    ]
+
+
+def test_support_table_series_order_strip_returns_stacked_order_verbatim(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """A stacked bar's per-series support-table strip must return the
+    emitter's OWN already-computed order verbatim -- never re-derive it from
+    raw rows, which risks disagreeing with what the chart actually renders
+    (see ``degenerate_or_stacked_series_order`` and the pipeline-level
+    chart<->strip agreement test in ``test_chart_support_table_pipeline.py``,
+    which exercises the real ``ChartSpec.stacked_series_order`` threading
+    this unit test stands in for)."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        _series_order_strip,
+    )
+
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="fruit")
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="strip-degenerate",
+        chart_type="bar",
+        x="quarter",
+        y="revenue",
+        stack="zero",
+        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{**_C, "resolved_channels": {"color": ch}},
+    )
+    data = [{"quarter": "Q1", "fruit": "mango", "revenue": 30}]
+    order = _series_order_strip(
+        "bar", bar, data, "fruit", {"mango"}, ["mango", "apple", "cherry"]
+    )
+    assert order == ["mango", "apple", "cherry"]
+
+
+def test_support_table_series_order_strip_falls_back_when_chart_pins_none(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """When the emitter pins no definite order for a stacked-bar shape (an
+    ordinal color column, a wide-measure bar, ...), the strip reproduces
+    the same total-ranked (sum-descending) order VL itself uses with no
+    order channel present -- matching this function's own pre-existing
+    behavior for those shapes -- rather than falling back to an unrelated
+    alphabetical constant."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        _series_order_strip,
+    )
+
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="fruit")
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="strip-no-pinned-order",
+        chart_type="bar",
+        x="quarter",
+        y="revenue",
+        stack="zero",
+        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{**_C, "resolved_channels": {"color": ch}},
+    )
+    # Deliberately NOT alphabetical-order-equivalent: sum-ranked descending
+    # (apple=90, mango=30, cherry=10) must read differently from
+    # alphabetical (apple, cherry, mango) to actually pin which one this is.
+    data = [
+        {"quarter": "Q1", "fruit": "mango", "revenue": 30},
+        {"quarter": "Q2", "fruit": "apple", "revenue": 90},
+        {"quarter": "Q3", "fruit": "cherry", "revenue": 10},
+    ]
+    order = _series_order_strip(
+        "bar", bar, data, "fruit", {"cherry", "apple", "mango"}, None
+    )
+    assert order == ["apple", "mango", "cherry"]
+
+
+def test_vertical_stacked_bar_degenerate_stack_honors_authored_stack_order(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """An explicit ``style.bar.stack_order`` is never overridden by the
+    degenerate-stack query-order default -- the author asked for a specific
+    order and gets it."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="fruit")
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="degenerate-explicit",
+        chart_type="bar",
+        x="quarter",
+        y="revenue",
+        stack="zero",
+        style=bar_style.model_copy(
+            update={"axis_x": ax, "axis_y": ay, "stack_order": "alphabetical"}
+        ),
+        **{
+            **_C,
+            "resolved_channels": {"color": ch},
+            "legend": _default_legend().model_copy(update={"visible": True}),
+        },
+    )
+    data = [
+        {"quarter": "Q1", "fruit": "mango", "revenue": 30},
+        {"quarter": "Q2", "fruit": "apple", "revenue": 50},
+        {"quarter": "Q3", "fruit": "cherry", "revenue": 10},
+    ]
+    spec = BarEmitter().emit(bar, _DEFAULT_BOX, regroup((), data))
+
+    # Alphabetical baseline-first: apple, cherry, mango -- reversed for the
+    # legend. Query order (what dropping this guard would produce instead,
+    # unreversed since the degenerate branch never reverses) is mango,
+    # apple, cherry -- a different list, so this actually pins the guard.
+    assert spec.encoding["color"]["legend"]["values"] == ["mango", "cherry", "apple"]
+
+
+def test_vertical_stacked_bar_degenerate_stack_skipped_on_quantitative_x(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """The degenerate-stack override never fires for a continuous
+    (quantitative) x, even when color is 1:1 with it -- a continuous scale
+    renders bars ordered by VALUE, not row order, so the x-domain
+    first-occurrence fallback would draw a legend the axis doesn't match."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+
+    ax, ay = _make_resolved_axes("bar", "quantitative", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="fruit")
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="degenerate-quantitative-x",
+        chart_type="bar",
+        x="code",
+        y="revenue",
+        stack="zero",
+        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{
+            **_C,
+            "resolved_channels": {"color": ch},
+            "legend": _default_legend().model_copy(update={"visible": True}),
+        },
+    )
+    data = [
+        {"code": 1, "fruit": "mango", "revenue": 30},
+        {"code": 2, "fruit": "apple", "revenue": 50},
+        {"code": 3, "fruit": "cherry", "revenue": 10},
+    ]
+    spec = BarEmitter().emit(bar, _DEFAULT_BOX, regroup((), data))
+
+    # Sum-ranked descending (apple=50, mango=30, cherry=10), reversed for the
+    # legend: cherry, mango, apple. The degenerate (buggy) order would
+    # instead read mango, apple, cherry -- query order, unreversed.
+    assert spec.encoding["color"]["legend"]["values"] == ["cherry", "mango", "apple"]
+
+
+def test_horizontal_stacked_bar_degenerate_stack_honors_authored_sort(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """The degenerate-stack override must reproduce an authored ``chart.sort``
+    by a non-numeric column, not just the unsorted (first-occurrence) case --
+    that only ranks correctly under the same ``min``-aggregate op the
+    chart's own category encoding uses (``bar_sort_to_vl``/``bar_sort_op``).
+    The wrong op (``sum``) drops every row under numeric coercion and
+    silently falls back to raw query order instead -- see
+    _stacked_series_order's ``bar_sort_to_vl`` call."""
+    from dbt_charts.core.compile.models.chart.authored import ChartSort
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="fruit")
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="degenerate-sorted",
+        chart_type="bar",
+        x="quarter",
+        y="revenue",
+        stack="zero",
+        orientation="horizontal",
+        sort=ChartSort(by="tier", order="asc"),
+        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{
+            **_C,
+            "resolved_channels": {"color": ch},
+            "legend": _default_legend().model_copy(update={"visible": True}),
+        },
+    )
+    data = [
+        {"quarter": "Q1", "fruit": "mango", "revenue": 30, "tier": "C"},
+        {"quarter": "Q2", "fruit": "apple", "revenue": 50, "tier": "A"},
+        {"quarter": "Q3", "fruit": "cherry", "revenue": 10, "tier": "D"},
+        {"quarter": "Q4", "fruit": "banana", "revenue": 20, "tier": "B"},
+    ]
+    spec = BarEmitter().emit(bar, _DEFAULT_BOX, regroup((), data))
+
+    # Tier-ascending x order is Q2(A), Q4(B), Q1(C), Q3(D) -> apple, banana,
+    # mango, cherry. Falling back to first-occurrence order (the "sum" op
+    # bug) would instead give mango, apple, cherry, banana.
+    assert spec.encoding["color"]["legend"]["values"] == [
+        "apple",
+        "banana",
+        "mango",
+        "cherry",
+    ]
+
+
+def test_vertical_stacked_bar_degenerate_stack_with_repeated_color(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """A degenerate stack (color 1:1 with x) can still repeat a color across
+    several x categories -- e.g. the same status recurring on different days.
+    Each x still carries exactly one color, so ``_is_color_1to1_with_x``
+    still holds; the fix must not silently fall back to the stacked-total
+    default just because a color value repeats."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="status")
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="degenerate-repeat",
+        chart_type="bar",
+        x="day",
+        y="count",
+        stack="zero",
+        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{
+            **_C,
+            "resolved_channels": {"color": ch},
+            "legend": _default_legend().model_copy(update={"visible": True}),
+        },
+    )
+    data = [
+        {"day": "Mon", "status": "C", "count": 5},
+        {"day": "Tue", "status": "A", "count": 50},
+        {"day": "Wed", "status": "B", "count": 1},
+        {"day": "Thu", "status": "C", "count": 5},
+    ]
+    spec = BarEmitter().emit(bar, _DEFAULT_BOX, regroup((), data))
+
+    # Global-sum order (A=50, C=10, B=1) would give a legend of B, C, A.
+    # Query first-occurrence order (C, A, B) is what the fix must produce.
+    assert spec.encoding["color"]["legend"]["values"] == ["C", "A", "B"]
+
+
 def test_vertical_stacked_bar_with_gradient_color_emits_no_order(
     bar_style: ResolvedBarStyle,
 ) -> None:

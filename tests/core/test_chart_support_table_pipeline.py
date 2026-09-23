@@ -2154,6 +2154,99 @@ def test_per_series_stacked_bar_strip_ink_follows_stack_palette_slots() -> None:
     }
 
 
+def test_per_series_degenerate_stacked_bar_strip_matches_chart_order() -> None:
+    """https://github.com/dbt-labs/dbt-charts/issues/28 regression, chart<->strip
+    agreement: a genuinely degenerate stacked bar (color 1:1 with a
+    CATEGORICAL x, no authored sort/stack_order) takes the x-domain-order
+    override (query row order), NOT the ordinary sum-ranked total. The
+    per-series strip must read that SAME order -- threaded via
+    ``ChartSpec.stacked_series_order`` / ``$df_stacked_series_order`` --
+    rather than re-deriving its own sum-ranked verdict from raw rows, which
+    (before this fix, or if the stamp is ever dropped) disagrees with the
+    chart's own query-order legend.
+    """
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    payload: dict[str, Any] = {
+        "id": "test_chart",
+        "type": "bar",
+        "x": "quarter",
+        "y": "revenue",
+        # "category" (not "fruit") because _per_series_layer_order's filter
+        # regex hardcodes that field name (see its own callers above).
+        "color": "category",
+        "query": SqlQuery(sql="SELECT 1", source="test_db"),
+        "query_name": "q",
+        "stack": "zero",
+        "style": {"orientation": "vertical"},
+        "support_table": {"entries": [{"per_series": "revenue", "format": "$,.0f"}]},
+    }
+    chart = TypeAdapter(Chart).validate_python(payload)
+    # Deliberately NOT sum-rank-order-equivalent: query order is mango,
+    # apple, cherry, but sum-ranked descending (mango=90, cherry=50,
+    # apple=10) is mango, cherry, apple -- a dropped stamp falling back to
+    # the strip's OWN sum-ranked re-derivation must read differently from
+    # the correct, threaded, query-order answer.
+    data = [
+        {"quarter": "Q1", "category": "mango", "revenue": 90},
+        {"quarter": "Q2", "category": "apple", "revenue": 10},
+        {"quarter": "Q3", "category": "cherry", "revenue": 50},
+    ]
+    spec = generate_vega_lite_spec(chart, data, width=400, height=200)
+
+    # Query-order baseline (mango, apple, cherry) -- both the strip and the
+    # chart's own paint-scale domain read it unreversed (a degenerate stack
+    # has no visual top/bottom to reverse against). Sum-ranked (mango,
+    # cherry, apple on either side) would mean the stamp never reached the
+    # strip.
+    chart_display_order = spec["encoding"]["color"]["scale"]["domain"]
+    assert chart_display_order == ["mango", "apple", "cherry"]
+    assert _per_series_layer_order(spec) == ["mango", "apple", "cherry"]
+
+
+def test_per_series_degenerate_stacked_bar_strip_matches_chart_order_when_layered() -> (
+    None
+):
+    """Same regression as the unlayered test above, with an overlay
+    ``chart.layers`` line -- ``render_cartesian_overlay`` wraps the base
+    spec into a NEW ``ChartSpec(mark="layered", ...)``, which must carry
+    the base's own ``stacked_series_order`` across (the way it already
+    carries ``base_series_label`` and ``x_label_block_height``) or a
+    layered stacked bar's strip silently reverts to re-deriving its own,
+    possibly-disagreeing (sum-ranked) verdict."""
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    payload: dict[str, Any] = {
+        "id": "test_chart",
+        "type": "bar",
+        "x": "quarter",
+        "y": "revenue",
+        "color": "category",
+        "query": SqlQuery(sql="SELECT 1", source="test_db"),
+        "query_name": "q",
+        "stack": "zero",
+        "style": {"orientation": "vertical"},
+        "support_table": {"entries": [{"per_series": "revenue", "format": "$,.0f"}]},
+    }
+    chart = TypeAdapter(Chart).validate_python(payload)
+    chart.layers = [LineLayer(type="line", y="target", label="Target")]
+    # Same non-sum-rank-order-equivalent values as the unlayered test above.
+    data = [
+        {"quarter": "Q1", "category": "mango", "revenue": 90, "target": 50},
+        {"quarter": "Q2", "category": "apple", "revenue": 10, "target": 50},
+        {"quarter": "Q3", "category": "cherry", "revenue": 50, "target": 50},
+    ]
+    spec = generate_vega_lite_spec(chart, data, width=400, height=200)
+
+    # Query-order baseline (mango, apple, cherry), unreversed on the paint
+    # domain (same degenerate-stack rule as the unlayered test above), with
+    # the overlay line's own "Target" label appended.
+    chart_display_order = spec["layer"][0]["encoding"]["color"]["scale"]["domain"]
+    assert chart_display_order == ["mango", "apple", "cherry", "Target"]
+    assert _per_series_layer_order(spec) == ["mango", "apple", "cherry"]
+
+
 def test_layered_stacked_bar_strip_ink_reads_base_layer_color_scale() -> None:
     from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
@@ -2857,7 +2950,7 @@ def test_support_table_strip_renders_inherited_chart_format():
         for t in layer.get("transform", [])
         if "calculate" in t
     ]
-    assert any("format(datum.revenue, '~s')" in expr for expr in calc_exprs), (
+    assert any("format(datum[\"revenue\"], '~s')" in expr for expr in calc_exprs), (
         "A support_table entry with format set must produce a formatted strip cell. "
         f"Got calculate transforms: {calc_exprs}"
     )
@@ -3591,8 +3684,8 @@ def test_pipeline_percent_strip_declares_its_sign_once(monkeypatch):
     # The author's own percent spec formats every cell — nothing is rebuilt —
     # and the cells that don't declare the unit have the "%" removed.
     # "percent" resolves to ".1%", so the emitted spec is the resolved form.
-    assert "format(datum.goal, '.1%')" in calc
-    assert "replace(format(datum.goal, '.1%'), \"%\", '')" in calc
+    assert "format(datum[\"goal\"], '.1%')" in calc
+    assert "replace(format(datum[\"goal\"], '.1%'), \"%\", '')" in calc
     assert "datum.__support_table_drawn_index === 1" in calc
 
 
@@ -3733,8 +3826,8 @@ def test_pipeline_negative_magnitude_signs_before_the_symbol(monkeypatch):
 
     calc = _goal_row_calc(spec)
     assert calc is not None
-    assert calc.index("datum.goal < 0 ? '−'") < calc.index('? "$"')
-    assert "abs(datum.goal)" in calc
+    assert calc.index("datum[\"goal\"] < 0 ? '−'") < calc.index('? "$"')
+    assert 'abs(datum["goal"])' in calc
 
 
 def test_pipeline_raw_literal_format_is_not_anchored(monkeypatch):

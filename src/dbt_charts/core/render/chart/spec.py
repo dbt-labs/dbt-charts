@@ -226,6 +226,15 @@ class ChartSpec:
     # for this — it becomes a list[str] once wrapped, and VL's color.datum and
     # scale domain take primitives.
     base_series_label: str | None = None
+    # A stacked nominal-color bar's own baseline-first series order (index 0
+    # = bottom/left; degenerate-stack-aware — see
+    # core.utils.degenerate_or_stacked_series_order), when the emitter
+    # computed one. Support_table's per-series strip reads this instead of
+    # re-deriving its own verdict from raw rows, so the strip can never
+    # disagree with the chart it annotates on an input the two would
+    # otherwise classify differently (a gap-filled or non-categorical x).
+    # None for every chart that doesn't stack a nominal color series.
+    stacked_series_order: list[str] | None = None
     background: str | None = None
     title_style: TitleStyle | None = None
     geo_data: dict[str, Any] | None = None

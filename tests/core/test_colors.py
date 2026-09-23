@@ -16,6 +16,7 @@ import pytest
 from dbt_charts.core.colors import (
     InvalidColorError,
     ensure_readable_ink,
+    is_light_canvas,
     is_sanitizable_color,
     sanitize_color,
     wcag_contrast,
@@ -92,6 +93,37 @@ def test_ensure_readable_ink_picks_the_higher_contrast_endpoint_for_a_midtone_ba
         assert hex_to_oklch(ink)[0] < 0.5, (bg, ink)
 
 
+def test_is_light_canvas_crossover_below_0_18_luminance_is_dark():
+    """#727272 sits just below the ~0.18-luminance crossover: white still
+    wins the contrast race, so the canvas reads as dark (not light)."""
+    assert is_light_canvas("#727272") is False
+    assert wcag_contrast("#ffffff", "#727272") > wcag_contrast("#000000", "#727272")
+
+
+def test_is_light_canvas_crossover_above_0_18_luminance_is_light():
+    """#7a7a7a sits just above the crossover: black now wins, so the canvas
+    reads as light -- one shade lighter than #727272 flips the verdict."""
+    assert is_light_canvas("#7a7a7a") is True
+    assert wcag_contrast("#000000", "#7a7a7a") > wcag_contrast("#ffffff", "#7a7a7a")
+
+
+def test_is_light_canvas_white_and_near_black():
+    assert is_light_canvas("#ffffff") is True
+    assert is_light_canvas("#161616") is False
+
+
+def test_is_light_canvas_agrees_with_ensure_readable_ink_direction():
+    """ensure_readable_ink must move toward the SAME endpoint is_light_canvas
+    picks -- a regression here means extracting the shared predicate
+    silently changed which direction ensure_readable_ink searches."""
+    for canvas in ("#727272", "#7a7a7a", "#ffffff", "#161616", "#faf7f0"):
+        ink = ensure_readable_ink("#808080", canvas, min_ratio=4.6)
+        from dbt_charts.core.colors import hex_to_oklch
+
+        moved_dark = hex_to_oklch(ink)[0] < hex_to_oklch("#808080")[0]
+        assert moved_dark == is_light_canvas(canvas), canvas
+
+
 def test_ensure_readable_ink_raises_when_no_ink_clears_the_floor():
     """HIGH regression: a background where NEITHER black nor white can
     clear an unreasonably high ratio must raise, not silently return ink
@@ -100,3 +132,13 @@ def test_ensure_readable_ink_raises_when_no_ink_clears_the_floor():
     """
     with pytest.raises(ValueError, match="no ink clears"):
         ensure_readable_ink("#808080", "#808080", min_ratio=21.0)
+
+
+@pytest.mark.parametrize("lightness", [1.05, -0.01])
+def test_oklch_to_hex_refuses_a_lightness_outside_the_unit_range(
+    lightness: float,
+) -> None:
+    from dbt_charts.core.colors import oklch_to_hex
+
+    with pytest.raises(ValueError, match="outside"):
+        oklch_to_hex(lightness, 0.1, 90)

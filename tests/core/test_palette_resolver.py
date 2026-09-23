@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import math
 import sys
 import warnings
 from collections.abc import Callable
@@ -17,20 +18,31 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.colors import hex_to_oklch, oklch_to_hex
+from dbt_charts.core.compile.config import (
+    get_chart_rendering,
+    load_config,
+    reset_config,
+)
 from dbt_charts.core.compile.resolve.style.palette import (
     CategoricalOverrequestError,
     SurfaceUnsupportedError,
     ToneAsPaletteError,
     UnknownColorError,
     UnknownPaletteError,
+    Variant,
     _downsample,
+    _label_ink_step,
     _parse_palette_reference,
     color,
+    label_ink,
     list_palettes,
     palette,
     palette_metadata,
     resolve_palette_alias,
     select_default_palette,
+    variant,
 )
 
 from .._paths import DBT_CHARTS_DIR
@@ -341,12 +353,12 @@ class TestVividTenLight:
                 f"slot {slot}: dark companion {d!r} OKLCH C={d_c:.3f} may bump "
                 f"chroma only slightly over base {b!r} OKLCH C={b_c:.3f}"
             )
-            for variant, v_h in (("dark", d_h), ("light", lt_h), ("ghost", gh_h)):
+            for tier_name, v_h in (("dark", d_h), ("light", lt_h), ("ghost", gh_h)):
                 hue_diff = abs(b_h - v_h)
                 hue_diff = min(hue_diff, 360 - hue_diff)
                 assert hue_diff < 8, (
-                    f"slot {slot}: {variant} companion drifted in hue from base "
-                    f"{b!r} (base H={b_h:.1f}°, {variant} H={v_h:.1f}°, "
+                    f"slot {slot}: {tier_name} companion drifted in hue from base "
+                    f"{b!r} (base H={b_h:.1f}°, {tier_name} H={v_h:.1f}°, "
                     f"Δ={hue_diff:.1f}°) — pairing is hue-carried"
                 )
 
@@ -725,6 +737,545 @@ class TestSelectDefault:
 
     def test_discrete_enum(self):
         assert select_default_palette("discrete_enum") == "vivid-10"
+
+
+# ============================================================================
+# variant() / label_ink() — literal tiers, canvas-aware ink
+# ============================================================================
+
+# Every built-in categorical palette that isn't itself one of the hand-tuned
+# companion palettes variant()/label_ink() reproduce (the eight
+# -dark/-light/-ghost/-ink files), plus four inline user palettes with no
+# companion file at all -- the case these two functions exist to serve.
+_BASE_PALETTE_NAMES = (
+    "vivid-10",
+    "editorial-10",
+    "tableau",
+    "hero-6",
+    "category-6-tonal-blue",
+    "category-6-tonal-brown",
+    "category-6-tonal-green",
+    "category-6-tonal-orange",
+    "category-6-tonal-purple",
+)
+
+# tableau-10 classic (D3/Tableau's own hexes -- distinct from the shipped
+# "tableau" built-in, which is a retune).
+_USER_TABLEAU_10 = [
+    "#4e79a7",
+    "#f28e2b",
+    "#e15759",
+    "#76b7b2",
+    "#59a14f",
+    "#edc949",
+    "#af7aa1",
+    "#ff9da7",
+    "#9c755f",
+    "#bab0ab",
+]
+# A saturated brand palette with two neutrals -- the shape a user with no
+# design-system chroma discipline actually ships.
+_USER_BRAND = [
+    "#e4002b",
+    "#0057b8",
+    "#ffb81c",
+    "#00a651",
+    "#6f2c91",
+    "#333333",
+    "#999999",
+]
+# An all-pastel palette, six stops at OKLCH L 0.80-0.90 -- the stress case
+# for `light`'s under-pale clamp and for label_ink's floor (base marks this
+# light leave label_ink almost nothing to work with).
+_USER_PASTEL = [
+    oklch_to_hex(0.80, 0.09, 20),
+    oklch_to_hex(0.82, 0.09, 80),
+    oklch_to_hex(0.84, 0.09, 140),
+    oklch_to_hex(0.86, 0.09, 200),
+    oklch_to_hex(0.88, 0.09, 260),
+    oklch_to_hex(0.90, 0.07, 320),
+    # Two near-white stops: the light tier's floor must stop at white
+    # rather than ask for an OKLCH L above 1.0 (which is outside sRGB at
+    # every chroma, achromatic included).
+    "#fafafa",
+    "#ffff66",
+]
+# A mostly-dark corporate palette: six stops at OKLCH L 0.25-0.45, plus one
+# light stop -- the shape where `dark`/`deep` have little room left to move.
+# The near-black navy stop (L ~0.15, below dark_pole 0.20) is the one base
+# in the whole corpus dark enough to exercise the "never lighter than base"
+# clamp on dark/deep -- every other palette's darkest stop sits at L >= 0.25.
+_USER_CORPORATE = [
+    oklch_to_hex(0.25, 0.05, 20),
+    oklch_to_hex(0.30, 0.06, 80),
+    oklch_to_hex(0.33, 0.06, 140),
+    oklch_to_hex(0.38, 0.07, 200),
+    oklch_to_hex(0.42, 0.08, 260),
+    oklch_to_hex(0.45, 0.08, 320),
+    oklch_to_hex(0.78, 0.03, 100),
+    oklch_to_hex(0.15, 0.06, 260),
+]
+
+_USER_PALETTES: dict[str, list[str]] = {
+    "user-tableau-10": _USER_TABLEAU_10,
+    "user-brand": _USER_BRAND,
+    "user-pastel": _USER_PASTEL,
+    "user-corporate": _USER_CORPORATE,
+}
+
+
+def _all_palettes() -> dict[str, list[str]]:
+    stops = {name: palette(name) for name in _BASE_PALETTE_NAMES}
+    stops.update(_USER_PALETTES)
+    return stops
+
+
+# Companion hexes copied from the hand-tuned palette files these tiers
+# reproduce (vivid-10-{dark,light,ghost,ink}.yml,
+# editorial-10-{dark,light,ghost,ink}.yml) -- committed-hex regression data.
+# Read here as literals, not from the files, so this test still passes once
+# those files are retired.
+_VIVID_10_DARK_COMMITTED = [
+    "#005998",
+    "#00a1c0",
+    "#008055",
+    "#a07400",
+    "#b03e00",
+    "#82568d",
+    "#4a6c00",
+    "#5f3a12",
+    "#6c7685",
+    "#404852",
+]
+_VIVID_10_LIGHT_COMMITTED = [
+    "#628eba",
+    "#8cd2e7",
+    "#8cccab",
+    "#e0bf83",
+    "#d0896f",
+    "#b698be",
+    "#9ab27e",
+    "#917459",
+    "#b3b8bf",
+    "#686e78",
+]
+_VIVID_10_INK_COMMITTED = [
+    "#003761",
+    "#004554",
+    "#00442b",
+    "#503900",
+    "#621f00",
+    "#4d1c5a",
+    "#2a4000",
+    "#54310b",
+    "#2e3641",
+    "#252e3d",
+]
+_EDITORIAL_10_DARK_COMMITTED = [
+    "#23467f",
+    "#476b98",
+    "#3d614e",
+    "#5b3b55",
+    "#955902",
+    "#8a3f24",
+    "#586e6f",
+    "#77664a",
+    "#54626f",
+    "#424c4e",
+]
+_EDITORIAL_10_LIGHT_COMMITTED = [
+    "#7990b6",
+    "#a3bad7",
+    "#8ea598",
+    "#9a8595",
+    "#e0b993",
+    "#c29180",
+    "#bdcacb",
+    "#c7bcaa",
+    "#a0a9b1",
+    "#8a9092",
+]
+_EDITORIAL_10_INK_COMMITTED = [
+    "#0f2c5a",
+    "#1c395c",
+    "#1f3d2d",
+    "#3d2438",
+    "#563000",
+    "#591d05",
+    "#2b3c3c",
+    "#43361f",
+    "#29343e",
+    "#252d2f",
+]
+_VIVID_10_GHOST_COMMITTED = [
+    "#b9d4f0",
+    "#b2d9e5",
+    "#b6dbc7",
+    "#e2cfad",
+    "#f2c6b6",
+    "#dccae1",
+    "#c8d7b8",
+    "#dccec2",
+    "#ced1d6",
+    "#babec4",
+]
+_EDITORIAL_10_GHOST_COMMITTED = [
+    "#c5d2e7",
+    "#cdd9e8",
+    "#c5d1ca",
+    "#d6cad2",
+    "#e8d3c0",
+    "#e2c7be",
+    "#d8e0e0",
+    "#dcd7cd",
+    "#caced3",
+    "#c8cbcc",
+]
+
+
+def _is_multi_hue(stops: list[str]) -> bool:
+    """Whether two chromatic stops sit more than 30 degrees of hue apart.
+
+    The separation gate is the rule's guarantee for hue-separated palettes;
+    a single-hue tonal family carries its separation in lightness alone,
+    the move-shrinks-by-exactly-(1 - dark_k) case -- and CIEDE2000's S_L
+    weighting is not linear in that coordinate, so the bound isn't exact
+    there (measured shortfall on two of them: tonal-brown 10.07 vs 10.08,
+    tonal-purple 9.35 vs 9.86). All five category-6-tonal-* families are
+    single-hue and return False here, not just those two -- they carry the
+    same lightness-only separation whether or not their own numbers happen
+    to clear the bound. Single-hue families are reported, not gated; every
+    other palette in the corpus (the four multi-hue built-ins plus the four
+    inline user palettes, eight of the thirteen total) is gated.
+    """
+    hues = [H for L, C, H in map(hex_to_oklch, stops) if C > 0.04]
+    return any(_hue_delta(a, b) > 30 for a in hues for b in hues)
+
+
+def _hue_delta(h1: float, h2: float) -> float:
+    d = abs(h1 - h2) % 360
+    return min(d, 360 - d)
+
+
+def _oklab(hex_color: str) -> tuple[float, float, float]:
+    L, C, H = hex_to_oklch(hex_color)
+    return L, C * math.cos(math.radians(H)), C * math.sin(math.radians(H))
+
+
+def _oklab_delta_e_x100(hex_a: str, hex_b: str) -> float:
+    La, aa, ba = _oklab(hex_a)
+    Lb, ab, bb = _oklab(hex_b)
+    return 100 * math.sqrt((La - Lb) ** 2 + (aa - ab) ** 2 + (ba - bb) ** 2)
+
+
+def _checker_lab(hex_color: str) -> tuple[float, float, float]:
+    r, g, b = _checker.hex_to_rgb01(hex_color)
+    linear = (
+        _checker.srgb_to_linear(r),
+        _checker.srgb_to_linear(g),
+        _checker.srgb_to_linear(b),
+    )
+    return _checker.linear_rgb_to_lab(linear)
+
+
+def _worst_pair_delta_e(hexes: list[str]) -> float:
+    labs = [_checker_lab(h) for h in hexes]
+    return min(
+        _checker.delta_e_ciede2000(a, b) for a, b in itertools.combinations(labs, 2)
+    )
+
+
+class TestVariant:
+    """`variant()`'s four literal tiers and `label_ink()`'s canvas-aware ink,
+    over every built-in categorical palette plus four inline user palettes
+    with no companion file."""
+
+    @pytest.mark.parametrize("name", sorted(_all_palettes()))
+    def test_ordering_per_stop(self, name: str) -> None:
+        """Per stop with base chroma > 0.04: light strictly above base, dark
+        never above base, dark above deep once base clears L 0.33 (below
+        that the two converge by construction -- the category-6-tonal-*
+        slot-3 anchors at L 0.25 are the shipped case), pale above light
+        whenever base doesn't already sit above the pale band, and light
+        lifts at least light_min_gap above base."""
+        stops = _all_palettes()[name]
+        for i, base in enumerate(stops):
+            L, C, _H = hex_to_oklch(base)
+            if C <= 0.04:
+                continue
+            light_l = hex_to_oklch(variant(base, "light"))[0]
+            dark_l = hex_to_oklch(variant(base, "dark"))[0]
+            pale_l = hex_to_oklch(variant(base, "pale"))[0]
+            deep_l = hex_to_oklch(variant(base, "deep"))[0]
+
+            assert light_l > L, (name, i, "light must be strictly lighter")
+            assert dark_l - 1e-6 <= L, (name, i, "dark must never be lighter than base")
+            if L >= 0.33:
+                assert dark_l > deep_l - 1e-6, (name, i, "dark must sit above deep")
+            else:
+                assert deep_l <= L + 1e-6, (
+                    name,
+                    i,
+                    "deep must never lighten a base < L 0.33",
+                )
+            if L <= 0.80:
+                assert pale_l > light_l - 1e-6, (name, i, "pale must sit above light")
+            assert light_l >= min(1.0, L + 0.03) - 2e-3, (
+                name,
+                i,
+                "light must lift at least light_min_gap above base",
+            )
+
+    @pytest.mark.parametrize("name", sorted(_all_palettes()))
+    def test_hue_held_within_2_degrees(self, name: str) -> None:
+        """Hue drift stays under 2 degrees for every tier -- gated only when
+        BOTH the base and the derived tier keep chroma > 0.03: below that,
+        hue is not perceptually meaningful (a near-gray's hue angle is
+        numerically unstable through the sRGB 8-bit round trip), the same
+        floor test_ordering_per_stop already applies to the base."""
+        stops = _all_palettes()[name]
+        for base in stops:
+            L, C, H = hex_to_oklch(base)
+            if C <= 0.04:
+                continue
+            for kind in ("light", "dark", "pale", "deep"):
+                Lv, Cv, Hv = hex_to_oklch(variant(base, kind))
+                if Cv <= 0.03:
+                    continue
+                assert _hue_delta(H, Hv) <= 2.0, (name, base, kind, H, Hv)
+
+    @pytest.mark.parametrize("name", sorted(_all_palettes()))
+    def test_light_and_pale_chroma_never_exceed_base(self, name: str) -> None:
+        stops = _all_palettes()[name]
+        for base in stops:
+            _L, C, _H = hex_to_oklch(base)
+            if C <= 0.04:
+                continue
+            assert hex_to_oklch(variant(base, "light"))[1] <= C + 1e-6
+            assert hex_to_oklch(variant(base, "pale"))[1] <= C + 1e-6
+
+    def test_dark_and_deep_never_lighten_a_near_black_stop(self) -> None:
+        """The corpus' next-darkest base sits at L 0.25 -- above both
+        dark_pole (0.20) and deep_pole (0.28) close enough that the "never
+        lighter than base" clamp on dark/deep is never exercised by
+        test_ordering_per_stop alone. A base darker than both poles
+        (L ~0.15) is the case the clamp exists for: unclamped, the pole
+        arithmetic would pull it UP toward the pole instead of leaving it
+        alone."""
+        base = "#0a0a12"
+        base_l = hex_to_oklch(base)[0]
+        dark_l = hex_to_oklch(variant(base, "dark"))[0]
+        deep_l = hex_to_oklch(variant(base, "deep"))[0]
+        assert dark_l <= base_l + 1e-9, "dark must not lighten a near-black stop"
+        assert deep_l <= base_l + 1e-9, "deep must not lighten a near-black stop"
+
+    def test_proportional_move_shrinks_toward_the_pole(self) -> None:
+        """Two bases at the same hue, different L: the lighter one's `dark`
+        and `deep` drop further in absolute L (it started farther from the
+        dark/deep pole near black), and its `light` lift is smaller (it
+        started closer to the light pole, white)."""
+        hue, chroma = 250.0, 0.12
+        darker_base = oklch_to_hex(0.40, chroma, hue)
+        lighter_base = oklch_to_hex(0.65, chroma, hue)
+        darker_l = hex_to_oklch(darker_base)[0]
+        lighter_l = hex_to_oklch(lighter_base)[0]
+
+        for kind in ("dark", "deep"):
+            drop_darker = darker_l - hex_to_oklch(variant(darker_base, kind))[0]
+            drop_lighter = lighter_l - hex_to_oklch(variant(lighter_base, kind))[0]
+            assert drop_lighter > drop_darker, kind
+
+        lift_darker = hex_to_oklch(variant(darker_base, "light"))[0] - darker_l
+        lift_lighter = hex_to_oklch(variant(lighter_base, "light"))[0] - lighter_l
+        assert lift_lighter < lift_darker
+
+    @pytest.mark.parametrize(
+        ("family", "base_name", "committed", "kind", "threshold"),
+        [
+            ("vivid-10", "vivid-10", _VIVID_10_LIGHT_COMMITTED, "light", 4.0),
+            ("vivid-10", "vivid-10", _VIVID_10_DARK_COMMITTED, "dark", 4.0),
+            ("vivid-10", "vivid-10", _VIVID_10_INK_COMMITTED, "deep", 4.0),
+            (
+                "editorial-10",
+                "editorial-10",
+                _EDITORIAL_10_LIGHT_COMMITTED,
+                "light",
+                2.5,
+            ),
+            ("editorial-10", "editorial-10", _EDITORIAL_10_DARK_COMMITTED, "dark", 2.5),
+            ("editorial-10", "editorial-10", _EDITORIAL_10_INK_COMMITTED, "deep", 2.5),
+            ("vivid-10", "vivid-10", _VIVID_10_GHOST_COMMITTED, "pale", 4.0),
+            (
+                "editorial-10",
+                "editorial-10",
+                _EDITORIAL_10_GHOST_COMMITTED,
+                "pale",
+                2.5,
+            ),
+        ],
+    )
+    def test_committed_hex_regression(
+        self,
+        family: str,
+        base_name: str,
+        committed: list[str],
+        kind: Variant,
+        threshold: float,
+    ) -> None:
+        """Pinned as a regression, not a golden: mean OKLab ΔE x100 between
+        the derived tier and the hand-tuned companion hexes it replaces
+        stays under the fitted threshold, so a constant tweak that drifts
+        the two families away from their prior hand-tuning is caught.
+        Measured at authoring time: vivid light/dark/deep/pale
+        3.2/1.9/1.2/0.6, editorial light/dark/deep/pale 0.5/2.1/1.1/1.6 --
+        all comfortably under their thresholds (4.0 vivid, 2.5 editorial)."""
+        base = palette(base_name)
+        deltas = [
+            _oklab_delta_e_x100(variant(b, kind), c)
+            for b, c in zip(base, committed, strict=True)
+        ]
+        mean = sum(deltas) / len(deltas)
+        print(f"{family} {kind}: mean ΔE×100={mean:.2f} max={max(deltas):.2f}")
+        assert mean < threshold, f"{family} {kind}: mean {mean:.2f} >= {threshold}"
+
+    @pytest.mark.parametrize("name", sorted(_all_palettes()))
+    def test_label_ink_clears_contrast_floor_on_every_canvas(self, name: str) -> None:
+        from dbt_charts.core.colors import wcag_contrast
+
+        stops = _all_palettes()[name]
+        min_contrast = get_chart_rendering().color_variants.label_ink_min_contrast
+        for base in stops:
+            for canvas in ("#ffffff", "#fafafa", "#faf7f0", "#161616"):
+                ink = label_ink(base, canvas)
+                assert wcag_contrast(ink, canvas) >= min_contrast - 1e-6, (
+                    name,
+                    base,
+                    canvas,
+                )
+
+    @pytest.mark.parametrize("name", sorted(_all_palettes()))
+    def test_label_ink_is_lighter_than_base_on_a_dark_canvas(self, name: str) -> None:
+        stops = _all_palettes()[name]
+        for base in stops:
+            ink = label_ink(base, "#161616")
+            assert hex_to_oklch(ink)[0] > hex_to_oklch(base)[0], (name, base)
+
+    def test_label_ink_step_matches_dark_k_times_pole_distance(self) -> None:
+        """The pre-floor move (`_label_ink_step`) shifts L by
+        `dark_k * |pole - L|` -- exercised directly (not through the
+        ensure_readable_ink floor) so the rule's own arithmetic is pinned,
+        not just its downstream contrast outcome."""
+        from dbt_charts.core.colors import is_light_canvas
+
+        config = get_chart_rendering().color_variants
+        for base in (palette("vivid-10")[0], palette("editorial-10")[4]):
+            L = hex_to_oklch(base)[0]
+            for canvas in ("#ffffff", "#161616"):
+                pole = config.dark_pole if is_light_canvas(canvas) else 1.0
+                stepped_l = hex_to_oklch(_label_ink_step(base, canvas, config))[0]
+                expected_move = config.dark_k * abs(pole - L)
+                assert abs(abs(L - stepped_l) - expected_move) < 2e-3, (base, canvas)
+
+    def test_label_ink_step_never_moves_toward_the_canvas(self) -> None:
+        """Regression: unclamped, a base darker than dark_pole on a light
+        canvas stepped UP toward the pole -- i.e. toward the canvas,
+        backwards from what the docstring promises. Clamped, the step is a
+        no-op for that base (`#0a0a12`, L ~0.149, below dark_pole 0.20):
+        it clears white's contrast floor on its own, so `label_ink` returns
+        it unmoved rather than lightened.
+
+        `#f4f4f4` (L ~0.967) on `#161616` pins the unclamped dark-canvas
+        step: the pole is white, at or above any base L, so the step
+        always moves away from the canvas and needs no clamp.
+        """
+        from dbt_charts.core.colors import wcag_contrast
+
+        config = get_chart_rendering().color_variants
+
+        near_black, light_canvas = "#0a0a12", "#ffffff"
+        base_l = hex_to_oklch(near_black)[0]
+        stepped_l = hex_to_oklch(_label_ink_step(near_black, light_canvas, config))[0]
+        assert abs(stepped_l - base_l) < 1e-9, "clamp must hold the step at base L"
+        ink = label_ink(near_black, light_canvas)
+        assert wcag_contrast(ink, light_canvas) >= config.label_ink_min_contrast - 1e-6
+
+        near_white, dark_canvas = "#f4f4f4", "#161616"
+        base_l = hex_to_oklch(near_white)[0]
+        stepped_l = hex_to_oklch(_label_ink_step(near_white, dark_canvas, config))[0]
+        assert stepped_l >= base_l - 1e-9, (
+            "the dark-canvas step is unclamped and moves away from the canvas"
+        )
+        ink = label_ink(near_white, dark_canvas)
+        assert wcag_contrast(ink, dark_canvas) >= config.label_ink_min_contrast - 1e-6
+
+    @pytest.mark.parametrize("base", ["#ffffff", "#fafafa", "#faf7f0", "#ffff66"])
+    def test_light_of_a_near_white_base_stays_in_gamut(self, base: str) -> None:
+        """A base within light_min_gap of white cannot lift by the full gap;
+        the floor stops at L 1.0 instead of asking for a lightness no sRGB
+        color has (which used to come back as black)."""
+        light = variant(base, "light")
+        assert light != "#000000", base
+        assert hex_to_oklch(light)[0] >= hex_to_oklch(base)[0] - 1e-6, base
+
+    def test_variant_raises_on_an_unknown_kind(self) -> None:
+        with pytest.raises(ValueError, match="unknown variant"):
+            variant("#0073c2", "darker")  # intentionally not a valid Variant
+
+    @pytest.mark.parametrize("name", sorted(_all_palettes()))
+    def test_separation_gate_dark_tier(self, name: str) -> None:
+        """The move-only `dark` tier's worst CIEDE2000 pair never drops
+        below `(1 - dark_k)` of the base palette's own worst pair -- the
+        rule's own guarantee: an unclamped move shrinks every pairwise
+        OKLab lightness gap by exactly that factor. `light`/`pale`/`deep`
+        compress separation by construction (chroma scaling, a flat band)
+        and are reported, never gated -- see
+        test_other_tiers_worst_pair_is_reported_not_gated.
+
+        Gated for multi-hue palettes only; single-hue tonal families are
+        printed -- see _is_multi_hue.
+        """
+        stops = _all_palettes()[name]
+        config = get_chart_rendering().color_variants
+        base_worst = _worst_pair_delta_e(stops)
+        dark_worst = _worst_pair_delta_e([variant(s, "dark") for s in stops])
+        required = (1 - config.dark_k) * base_worst
+        print(
+            f"{name}: base={base_worst:.2f} dark={dark_worst:.2f} required={required:.2f}"
+        )
+        if not _is_multi_hue(stops):
+            return
+        assert dark_worst >= required - 1e-6
+
+    @pytest.mark.parametrize("name", sorted(_all_palettes()))
+    def test_other_tiers_worst_pair_is_reported_not_gated(self, name: str) -> None:
+        stops = _all_palettes()[name]
+        for kind in ("light", "pale", "deep"):
+            worst = _worst_pair_delta_e([variant(s, kind) for s in stops])
+            print(f"{name} {kind}: worst pair={worst:.2f}")
+        ink_worst = _worst_pair_delta_e([label_ink(s, "#ffffff") for s in stops])
+        print(f"{name} label_ink(white): worst pair={ink_worst:.2f}")
+
+    def test_reloading_config_changes_the_derived_color(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Reloading with a different color_variants constant must change
+        variant()'s output color -- asserts the color changes, not that the
+        cache invalidates (it doesn't need to: the frozen config is the
+        cache key)."""
+        reset_config()
+        try:
+            base = palette("vivid-10")[0]
+            before = variant(base, "dark")
+
+            (tmp_path / "dbt_charts.yml").write_text(
+                "chart_rendering:\n  color_variants:\n    dark_k: 0.6\n"
+            )
+            load_config(local_project(tmp_path))
+            after = variant(base, "dark")
+
+            assert after != before
+        finally:
+            reset_config()
 
 
 # ============================================================================

@@ -169,6 +169,51 @@ def _per_series_layered_spec():
     }
 
 
+def _multi_base_layer_spec():
+    """Mimics a real line chart's multi-layer base -- halo, foreground stroke,
+    and an overlay that carries its OWN explicit ``description`` (the shape
+    ``emitters/_layers.py``'s ``emit_line_layer`` and a combo overlay
+    actually produce). ``_wrap_base_as_layer`` returns an already-layered
+    spec like this one UNCHANGED, so all three entries below are base
+    layers ``attach_support_table`` must never touch -- only layers it
+    itself appends afterward may lose ``description``.
+    """
+    return {
+        "layer": [
+            {
+                "mark": {"type": "line", "opacity": 0.3},
+                "encoding": {
+                    "x": {"field": "month", "type": "temporal"},
+                    "y": {"field": "revenue", "type": "quantitative"},
+                },
+            },
+            {
+                "mark": {"type": "line"},
+                "encoding": {
+                    "x": {"field": "month", "type": "temporal"},
+                    "y": {"field": "revenue", "type": "quantitative"},
+                },
+            },
+            {
+                "mark": {"type": "point", "opacity": 0},
+                "encoding": {
+                    "x": {"field": "month", "type": "temporal"},
+                    "y": {"field": "revenue", "type": "quantitative"},
+                    "description": {"value": {"expr": "'overlay-own-description'"}},
+                },
+            },
+        ],
+        "encoding": {
+            "x": {"field": "month", "type": "temporal"},
+            "y": {"field": "revenue", "type": "quantitative"},
+            "color": {"field": "series", "type": "nominal"},
+            "description": {"value": {"expr": "'shared-base-description'"}},
+        },
+        "height": 300,
+        "width": 600,
+    }
+
+
 def _per_series_spec():
     """Base spec for a stacked bar with color encoding."""
     return {
@@ -246,7 +291,7 @@ def test_attach_source_row_emits_format_calculate_transform():
     # There is exactly one calculate transform referencing format() on the source.
     calcs = [t for t in transforms if "calculate" in t]
     assert len(calcs) == 1
-    assert "format(datum.revenue" in calcs[0]["calculate"]
+    assert 'format(datum["revenue"]' in calcs[0]["calculate"]
     # Inline d3 spec passes verbatim (three-way contract: no trim for inline d3).
     assert "'$.2s'" in calcs[0]["calculate"]
 
@@ -258,8 +303,8 @@ def test_attach_source_row_format_calculate_renders_invalid_values_as_dash():
     text_layers = _cell_text_layers(out)
     tl = text_layers[0]
     calc = next(t["calculate"] for t in tl.get("transform", []) if "calculate" in t)
-    assert "isValid(datum.revenue)" in calc
-    assert "isFinite(datum.revenue)" in calc
+    assert 'isValid(datum["revenue"])' in calc
+    assert 'isFinite(datum["revenue"])' in calc
     assert "'-'" in calc
 
 
@@ -272,8 +317,22 @@ def test_attach_source_row_without_format_uses_raw_value():
     # No format: the value still flows through the missing-cell guard.
     assert tl["encoding"]["text"]["field"].startswith("__support_table_")
     calc = next(t["calculate"] for t in tl.get("transform", []) if "calculate" in t)
-    assert "datum.sample_size" in calc
+    assert 'datum["sample_size"]' in calc
     assert "'-'" in calc
+
+
+def test_attach_source_row_with_non_identifier_source_uses_bracket_access():
+    spec = _base_spec()
+    table = _table([ChartSupportTableSource(source="acted upon")])
+    out = _attach(spec, table)
+    text_layers = _cell_text_layers(out)
+    tl = text_layers[0]
+    calc = next(t["calculate"] for t in tl.get("transform", []) if "calculate" in t)
+    # Dot access on a space-containing field name is invalid JS
+    # (`datum.acted upon` is not parseable); bracket access with a JSON-escaped
+    # field name works for any source column name, identifier or not.
+    assert 'datum["acted upon"]' in calc
+    assert "datum.acted upon" not in calc
 
 
 def test_attach_source_row_without_label_uses_source_display_name():
@@ -318,8 +377,8 @@ def test_attach_aggregate_row_format_calculate_renders_invalid_values_as_dash():
     text_layers = _cell_text_layers(out)
     tl = text_layers[0]
     calc = next(t["calculate"] for t in tl.get("transform", []) if "calculate" in t)
-    assert "isValid(datum.__support_table_0_val)" in calc
-    assert "isFinite(datum.__support_table_0_val)" in calc
+    assert 'isValid(datum["__support_table_0_val"])' in calc
+    assert 'isFinite(datum["__support_table_0_val"])' in calc
     assert "'-'" in calc
 
 
@@ -1301,8 +1360,8 @@ def test_per_series_format_calculate_renders_invalid_values_as_dash():
     calc = next(
         t["calculate"] for t in text_layers[0].get("transform", []) if "calculate" in t
     )
-    assert "isValid(datum.__support_table_0_val)" in calc
-    assert "isFinite(datum.__support_table_0_val)" in calc
+    assert 'isValid(datum["__support_table_0_val"])' in calc
+    assert 'isFinite(datum["__support_table_0_val"])' in calc
     assert "'-'" in calc
 
 
@@ -1323,8 +1382,8 @@ def test_per_series_no_format_calculate_renders_invalid_values_as_dash():
     calc = next(
         t["calculate"] for t in text_layers[0].get("transform", []) if "calculate" in t
     )
-    assert "isValid(datum.__support_table_0_val)" in calc
-    assert "isFinite(datum.__support_table_0_val)" in calc
+    assert 'isValid(datum["__support_table_0_val"])' in calc
+    assert 'isFinite(datum["__support_table_0_val"])' in calc
     assert "'-'" in calc
 
 
@@ -1384,8 +1443,8 @@ def test_by_measure_format_calculate_renders_invalid_values_as_dash():
     calc = next(
         t["calculate"] for t in text_layers[0].get("transform", []) if "calculate" in t
     )
-    assert "isValid(datum.quarterly_revenue)" in calc
-    assert "isFinite(datum.quarterly_revenue)" in calc
+    assert 'isValid(datum["quarterly_revenue"])' in calc
+    assert 'isFinite(datum["quarterly_revenue"])' in calc
     assert "'-'" in calc
 
 
@@ -1746,6 +1805,115 @@ def test_aggregate_cell_layers_have_color_none_in_encoding():
         assert encoding_color is None, (
             f"aggregate cell layer must have encoding.color=None to prevent VL "
             f"from adding null to the categorical color domain; got {encoding_color!r}"
+        )
+
+
+def test_attached_layers_have_description_none_in_encoding():
+    """Regression: dbt-labs/dbt-charts#29.
+
+    ``attach_support_table`` runs as a post-pass on the already-assembled
+    Vega-Lite spec. When the base chart is already multi-layered by the time
+    it gets there (line/area's halo/hover-point trio, a combo overlay, ...),
+    the structured tooltip feature has already stamped ``description`` on
+    the shared OUTER encoding sibling to ``layer:`` — every sibling layer
+    inherits it. A support_table cell's own transform (aggregate/window/
+    calculate) produces a datum shaped nothing like the base chart's own
+    row, so the inherited description expr reads undefined color/series/
+    value fields off it, rendering a phantom "undefined NaN" row in the
+    x-unified tooltip on hover.
+    """
+    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+
+    spec = _per_series_layered_spec()
+    spec["encoding"]["description"] = {
+        "value": {"expr": "'⁡' + datum.month + ';⁢' + datum.series"}
+    }
+    table = ChartSupportTable.model_validate(
+        {"entries": [{"aggregate": "sum", "source": "revenue", "label": "Total"}]}
+    )
+    out = attach_support_table(
+        spec,
+        support_table=table,
+        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        style=get_theme_style().charts.support_table,
+        charts_style=_charts_style(),
+        axis_label_padding=_axis_label_padding(_charts_style()),
+        axis_y_orient="right",
+    )
+    all_layers = out.get("layer", [])
+    assert len(all_layers) > 1, "expected support_table attachment to append layers"
+    # This fixture's base is a single layer, so layer 0 is the base chart's
+    # own wrapped mark and every layer after it is a strip decoration --
+    # see test_multi_layer_base_chart_keeps_its_own_description_untouched
+    # for the multi-base-layer case, where that split is NOT by index 1.
+    for layer in all_layers[1:]:
+        encoding_description = layer.get("encoding", {}).get(
+            "description", "__missing__"
+        )
+        assert encoding_description is None, (
+            "support_table-attached layer must have encoding.description=None "
+            "to prevent it from inheriting the chart's structured-tooltip "
+            "description and showing a phantom undefined/NaN row on hover "
+            f"(dbt-labs/dbt-charts#29); got {encoding_description!r}"
+        )
+
+
+def test_multi_layer_base_chart_keeps_its_own_description_untouched():
+    """Regression: dbt-labs/dbt-charts#29 follow-up.
+
+    ``_wrap_base_as_layer`` returns an already-layered spec UNCHANGED (see
+    its own docstring), so a real line/area chart's multi-layer base (halo,
+    foreground stroke, invisible hover-point overlay -- see
+    ``emitters/_layers.py``'s ``emit_line_layer``) arrives at
+    ``attach_support_table`` as MULTIPLE pre-existing layers, not just one.
+    A fix that scopes its ``description: None`` override by *index* (e.g.
+    "every layer but the first") instead of by *which layers this module
+    itself appended* strips the real, correct description off the base
+    chart's own 2nd/3rd layers too -- deleting real x-unified tooltip rows,
+    not just the phantom one. This asserts every ORIGINAL base layer is
+    returned untouched: one relying on the inherited shared description (no
+    ``description`` key of its own) keeps relying on it, and one carrying
+    its OWN explicit description (a combo overlay -- see
+    ``translate.py``'s ``_translate_layer``) keeps that value verbatim.
+    """
+    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+
+    spec = _multi_base_layer_spec()
+    table = ChartSupportTable.model_validate(
+        {"entries": [{"aggregate": "sum", "source": "revenue", "label": "Total"}]}
+    )
+    out = attach_support_table(
+        spec,
+        support_table=table,
+        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        style=get_theme_style().charts.support_table,
+        charts_style=_charts_style(),
+        axis_label_padding=_axis_label_padding(_charts_style()),
+        axis_y_orient="right",
+    )
+    all_layers = out.get("layer", [])
+    assert len(all_layers) > 3, "expected support_table attachment to append layers"
+
+    halo, foreground, overlay = all_layers[0], all_layers[1], all_layers[2]
+    for base_layer in (halo, foreground):
+        assert "description" not in base_layer.get("encoding", {}), (
+            "a base layer relying on the inherited shared description must "
+            f"not gain its own encoding.description override; got {base_layer}"
+        )
+    overlay_description = overlay.get("encoding", {}).get("description")
+    assert overlay_description == {"value": {"expr": "'overlay-own-description'"}}, (
+        "a base layer's OWN explicit description (e.g. a combo overlay) must "
+        f"survive unchanged; got {overlay_description!r}"
+    )
+
+    # Every layer support_table attachment itself appended still opts out.
+    for appended_layer in all_layers[3:]:
+        appended_description = appended_layer.get("encoding", {}).get(
+            "description", "__missing__"
+        )
+        assert appended_description is None, (
+            "support_table-attached layer must have encoding.description=None; "
+            f"got {appended_description!r}"
         )
 
 

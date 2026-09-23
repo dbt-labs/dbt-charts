@@ -299,7 +299,8 @@
   font-weight: 700;
 }
 
-{# Footer: shown when range has content; Clear sits left, Apply pins right. #}
+{# Footer: Clear (when offered) sits left via its own margin rule below; #}
+{# whatever else is present (Apply, Today) pins right by default. #}
 .dbt-cal-footer {
   display: flex;
   gap: 8px;

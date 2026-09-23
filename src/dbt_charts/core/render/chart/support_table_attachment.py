@@ -982,7 +982,7 @@ def _vl_format_calc(
     numerals: StripNumerals,
 ) -> dict[str, Any]:
     """Build a Vega-Lite calculate transform that formats or dashes invalid values."""
-    value_expr = f"datum.{source}"
+    value_expr = f"datum[{json.dumps(source)}]"
     valid_expr = (
         f"isValid({value_expr}) && (!isNumber({value_expr}) || isFinite({value_expr}))"
     )
@@ -1064,6 +1064,53 @@ def _wrap_base_as_layer(spec: dict[str, Any]) -> dict[str, Any]:
                 new_spec["encoding"] = {"tooltip": spec_tooltip}
     new_spec["layer"] = [base_layer]
     return new_spec
+
+
+def _disable_inherited_tooltip_description(
+    layers: list[VLDict], base_layer_count: int
+) -> list[VLDict]:
+    """Opt every strip/column layer THIS MODULE appends out of the base
+    chart's inherited structured-tooltip ``description`` encoding.
+
+    ``attach_support_table``/``attach_support_table_columns`` run as a
+    post-pass on the already-assembled Vega-Lite spec, so when the base
+    chart is already multi-layered before attachment (line/area's halo/
+    foreground/hover-point trio, a combo overlay, ...) the structured
+    tooltip feature has already stamped ``description`` -- correctly -- on
+    those base layers (``translate.py``'s ``_apply_structured_tooltip``,
+    which runs inside ``assemble_final_vl``, before this post-pass). Every
+    layer appended here shares that same outer ``layer:`` array and would
+    silently inherit it too, but a strip cell's own transform (aggregate/
+    window/calculate, grouped only by x for a bare ``aggregate:`` entry)
+    produces a datum shaped nothing like any base layer's row, so the
+    inherited expr reads undefined color/series/value fields off it,
+    producing an aria-label chart_interactivity.js's x-unified tooltip
+    collector cannot tell apart from a real series sharing the same x,
+    rendering a phantom "undefined NaN" row on hover
+    (dbt-labs/dbt-charts#29).
+
+    ``base_layer_count`` is ``len(layers)`` captured right after
+    ``list(out["layer"])`` in the caller, before anything is appended --
+    every layer at or past that index is one this module built and gets an
+    explicit ``description: None`` override (Vega-Lite's own "explicit None
+    disables an inherited channel" convention); every layer before it is
+    the base chart's own and is returned untouched, keeping whichever
+    description (inherited or, for a combo overlay, its own explicit one)
+    it already carried.
+    """
+    disabled: list[VLDict] = list(layers[:base_layer_count])
+    for layer in layers[base_layer_count:]:
+        encoding = layer.get("encoding")
+        disabled.append(
+            {
+                **layer,
+                "encoding": {
+                    **(encoding if encoding is not None else {}),
+                    "description": None,
+                },
+            }
+        )
+    return disabled
 
 
 def _shared_x_encoding(
@@ -1869,6 +1916,7 @@ def attach_support_table(
 
     out = _wrap_base_as_layer(spec)
     layers: list[dict[str, Any]] = list(out["layer"])
+    base_layer_count = len(layers)
 
     if style.divider.width > 0:
         layers.append(_divider_rule_layer(style, axis_offset_value, spec_height))
@@ -2041,7 +2089,7 @@ def attach_support_table(
                 )
             visual_row_idx += 1
 
-    out["layer"] = layers
+    out["layer"] = _disable_inherited_tooltip_description(layers, base_layer_count)
     # Strip rows live outside the plot area (pixel y > spec.height for bottom;
     # pixel y < 0 for top). Override the chart-wide `autosize: fit` default with
     # `pad` so the outer SVG grows to include the strip rather than shrinking the plot. Trade-off: under
@@ -2646,6 +2694,7 @@ def _series_order_strip(
     data: list[dict[str, Any]],
     color_field: str,
     distinct: set[str],
+    stacked_series_order: list[str] | None,
 ) -> list[str]:
     """Return series names for the support table strip in row-index order.
 
@@ -2661,9 +2710,31 @@ def _series_order_strip(
     Bar (stacked, value order): series_order[0] = largest global sum (baseline).
     Bar (stacked, alphabetical): series_order[0] = alpha-FIRST (A, at baseline).
     Bar (stacked, data): series_order[0] = first-encountered (at baseline).
+    Bar (stacked, degenerate -- color 1:1 with x, unauthored stack_order):
+      series_order[0] = the x category's own rendered order (``chart.sort``
+      when authored, else first-encountered), matching the same override
+      ``emitters.bar`` applies to the chart's own legend/z-order -- a
+      one-segment-per-bar "stack" has no real total to rank by, so the strip
+      must not disagree with the chart it annotates. Sourced from
+      ``stacked_series_order`` (below), never computed in this function.
     Bar (non-stacked / grouped): alphabetical ascending.
     Line / non-stacked area: series_order[0] = lowest last-x y (bottom of chart).
     Stacked area: series_order[0] = largest global sum (baseline).
+
+    ``stacked_series_order`` is the emitter's OWN already-computed baseline
+    order for a stacked bar (``ChartSpec.stacked_series_order``, stamped
+    through as ``$df_stacked_series_order`` -- see ``vega_lite.py``),
+    returned verbatim when present: computing that verdict a SECOND time
+    here, from this function's own (possibly differently-shaped, e.g.
+    pre-gap-fill) ``data``, is exactly the two-predicates-can-disagree
+    failure this parameter exists to close. None for a stacked-bar shape
+    the emitter doesn't stamp one for (an ordinal color column -- VL sorts
+    that itself, no order channel is ever emitted; a wide-measure bar,
+    which computes a baseline order but doesn't yet carry it onto the
+    spec) -- there the value-order computation below reproduces the same
+    total-ranked default VL itself applies with no order channel present
+    (see ``sorted_series_by_stack_order``), matching this function's own
+    pre-existing behavior for those shapes.
     """
     x_field = resolved_chart.x
     raw_y = resolved_chart.y
@@ -2679,11 +2750,13 @@ def _series_order_strip(
         is_stacked = stack != "none" and not is_gb
         if not is_stacked:
             return sorted(distinct)
+        if stacked_series_order is not None:
+            return stacked_series_order
         assert isinstance(resolved_chart, ResolvedBarChart)
         if y_field is None:
             return sorted(distinct)
         return sorted_series_by_stack_order(
-            list(distinct),
+            sorted(distinct),
             data,
             color_field,
             resolved_chart.style.stack_order,
@@ -3508,6 +3581,7 @@ def attach_support_table_columns(
     layers: list[dict[str, Any]] = list(  # type-state: explicit_any — VL fragment
         out["layer"]
     )
+    base_layer_count = len(layers)
 
     edges = _column_edges(column_widths, position, spec_width, plot_gutter)
     # The header band is one row tall.
@@ -3621,7 +3695,7 @@ def attach_support_table_columns(
             if style.row.rule.width > 0 and visual_idx < len(column_widths):
                 layers.append(_column_rule_layer(style, right))
 
-    out["layer"] = layers
+    out["layer"] = _disable_inherited_tooltip_description(layers, base_layer_count)
     out["autosize"] = {"type": "pad", "contains": "padding"}
     return out
 
@@ -3812,6 +3886,7 @@ def _apply_support_table_columns_post_pass(
     dt_style: SupportTableStyle,
     axis_y_orient: Literal["left", "right"],
     axis_label_padding: float,
+    stacked_series_order: list[str] | None,
 ) -> tuple[
     dict[str, Any],  # type-state: explicit_any — VL fragment
     dict[str, Any] | None,  # type-state: explicit_any — VL fragment
@@ -3919,7 +3994,12 @@ def _apply_support_table_columns_post_pass(
                 if s is not None:
                     distinct.add(str(s))
             series_order = _series_order_strip(
-                "bar", resolved_chart, data, color_field, distinct
+                "bar",
+                resolved_chart,
+                data,
+                color_field,
+                distinct,
+                stacked_series_order,
             )
             # Column order reads left to right in the chart's own stack
             # order, on both placements: _column_edges lists every column in
@@ -4103,6 +4183,7 @@ def apply_chart_support_table_post_pass(
     padding: dict[str, Any] | None,
     chart_type: str,
     x_label_block_px: float | None,
+    stacked_series_order: list[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Post-pass: attach the support_table strip when the chart authors one.
 
@@ -4118,6 +4199,14 @@ def apply_chart_support_table_post_pass(
     ``x_label_block_px`` is the emitted spec's own x-label block height,
     stashed by the emitter and handed over by the caller — see
     ``_tilted_label_axis_offset``. None when the chart resolved no x labels.
+
+    ``stacked_series_order`` is a stacked bar's own already-computed
+    baseline series order (``ChartSpec.stacked_series_order``, handed over
+    by the caller from the ``$df_stacked_series_order`` stamp) — see
+    ``_series_order_strip``'s docstring for why the strip must use this
+    instead of re-deriving its own verdict. None for every other chart
+    shape, and for a bar the caller couldn't stamp one for (no per-series
+    entry, or called from a test without going through the real emitter).
     """
     support_table = resolved_chart.support_table
     if support_table is None:
@@ -4174,6 +4263,7 @@ def apply_chart_support_table_post_pass(
             dt_style,
             axis_y_orient,
             axis_label_padding,
+            stacked_series_order,
         )
     # spec["width"] is the unreduced card width — for an hconcat spec (chart
     # + endpoint-label rail pane) the rail's shrink is applied later, by the
@@ -4419,7 +4509,12 @@ def apply_chart_support_table_post_pass(
                 if s is not None:
                     distinct.add(str(s))
             series_order = _series_order_strip(
-                chart_type, resolved_chart, data, color_field, distinct
+                chart_type,
+                resolved_chart,
+                data,
+                color_field,
+                distinct,
+                stacked_series_order,
             )
             dark_palette = list(
                 _chart_dark_companion_palette(resolved_chart, charts_style)

@@ -1125,8 +1125,7 @@
 
     /*{# All date math relative to local midnight so tests stay deterministic. #}*/
     function resolvePreset(id) {
-        var now = new Date();
-        var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var today = _startOfToday();
         var end = new Date(today);
         var start = new Date(today);
         switch (id) {
@@ -1143,6 +1142,12 @@
             default:               return null;
         }
         return [start, end];
+    }
+
+    /*{# Local midnight for today. #}*/
+    function _startOfToday() {
+        var now = new Date();
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate());
     }
 
     /*{# ISO YYYY-MM-DD from a Date (local time). #}*/
@@ -1220,8 +1225,7 @@
         var monthName = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
         /*{# Per rebuild, not per bind: a popover opened after midnight in a #}*/
         /*{# long-lived tab must bold the actual today. #}*/
-        var now   = new Date();
-        var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var today = _startOfToday();
 
         calEl.innerHTML = '';
 
@@ -1543,25 +1547,37 @@
                 if (picked) picked.classList.add('dbt-selected');
             }
 
-            /*{# Clear only — gated on canUnset, same rule as daterange's. No #}*/
-            /*{# Apply: a single day commits on its own click, there is no #}*/
-            /*{# second endpoint to wait for. #}*/
+            /*{# Today always renders, unlike Clear (gated on canUnset) — do #}*/
+            /*{# not add that gate here, a required field still needs a way #}*/
+            /*{# to reach today. No Apply: a single day commits on its own #}*/
+            /*{# click, there is no second endpoint to wait for. #}*/
+            var footer = document.createElement('div');
+            footer.className = 'dbt-cal-footer';
             if (canUnset && selected !== null) {
-                var footer = document.createElement('div');
-                footer.className = 'dbt-cal-footer';
                 var clearAction = document.createElement('button');
                 clearAction.type = 'button';
                 clearAction.className = 'dbt-cal-action';
                 clearAction.setAttribute('data-action', 'clear');
                 clearAction.textContent = 'Clear';
                 footer.appendChild(clearAction);
-                footer.addEventListener('click', function(e) {
-                    if (!e.target.closest('[data-action="clear"]')) return;
+            }
+            var todayAction = document.createElement('button');
+            todayAction.type = 'button';
+            todayAction.className = 'dbt-cal-action';
+            todayAction.setAttribute('data-action', 'today');
+            todayAction.textContent = 'Today';
+            footer.appendChild(todayAction);
+            footer.addEventListener('click', function(e) {
+                var action = e.target.closest('[data-action]');
+                if (!action) return;
+                if (action.getAttribute('data-action') === 'clear') {
                     close();
                     updateVariable(name, '');
-                });
-                calEl.appendChild(footer);
-            }
+                } else if (action.getAttribute('data-action') === 'today') {
+                    pickDay(_startOfToday().getTime());
+                }
+            });
+            calEl.appendChild(footer);
         }
 
         function pickDay(timestamp) {

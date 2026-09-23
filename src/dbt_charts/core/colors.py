@@ -143,6 +143,8 @@ def hex_to_oklch(hex_str: str) -> tuple[float, float, float]:
 
 def oklch_to_hex(L: float, C: float, H: float) -> str:
     """Convert OKLCH to sRGB hex, gamut-clipping via binary search on C."""
+    if not 0.0 <= L <= 1.0:
+        raise ValueError(f"OKLCH lightness {L} is outside [0, 1]")
 
     def _try_c(cc: float) -> tuple[float, float, float] | None:
         a = cc * math.cos(math.radians(H))
@@ -167,9 +169,9 @@ def oklch_to_hex(L: float, C: float, H: float) -> str:
                 lo = mid
             else:
                 hi = mid
-        # _try_c(lo) is unreachable-None in practice: lo starts at chroma 0,
-        # which always keeps the OKLCH point within sRGB gamut. The fallback
-        # only satisfies the type checker.
+        # _try_c(lo) is unreachable-None: lo starts at chroma 0, which keeps
+        # the OKLCH point within sRGB gamut for every L in [0, 1] (guarded
+        # above). The fallback only satisfies the type checker.
         result = _try_c(lo) or (
             0.0,
             0.0,
@@ -196,6 +198,19 @@ def wcag_contrast(hex_a: str, hex_b: str) -> float:
     if l1 < l2:
         l1, l2 = l2, l1
     return (l1 + 0.05) / (l2 + 0.05)
+
+
+def is_light_canvas(canvas: str) -> bool:
+    """True when black ink has more contrast against `canvas` than white does.
+
+    The crossover is WCAG relative luminance ~0.18, not 0.5: WCAG relative
+    luminance and contrast are both nonlinear, so black and white give equal
+    contrast well below the midpoint. Any caller that has to pick an ink
+    direction from a canvas color (``ensure_readable_ink``, ``label_ink``)
+    needs this predicate rather than a luminance-vs-0.5 test -- see
+    ``ensure_readable_ink``'s docstring for the failure a 0.5 pivot causes.
+    """
+    return wcag_contrast("#000000", canvas) >= wcag_contrast("#ffffff", canvas)
 
 
 def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> str:
@@ -236,7 +251,7 @@ def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> 
             f"{max(black_contrast, white_contrast):.2f}:1)"
         )
     L, C, H = hex_to_oklch(color)
-    pass_l, fail_l = (0.0, L) if black_contrast >= white_contrast else (1.0, L)
+    pass_l, fail_l = (0.0, L) if is_light_canvas(background) else (1.0, L)
     for _ in range(30):
         mid = (pass_l + fail_l) / 2
         if wcag_contrast(oklch_to_hex(mid, C, H), background) >= min_ratio:

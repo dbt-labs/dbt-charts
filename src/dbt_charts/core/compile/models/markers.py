@@ -246,6 +246,16 @@ class Palette(Facet):
     ``<enum> | list[str] | str`` — the same shape as a chart's ``y`` — and the
     list arm wins, which is how the categorical palettes drew as text boxes
     full of hex while their vocabulary sat unused beside them.
+
+    The named-palette vocabulary answers only "what can the whole field be
+    written as" — never "what can one item of the list be". A palette *name*
+    inside the list (``palette: ["editorial-10", "#4e79a7"]``) is not a color
+    or a token dbt Charts can read as one: a list is already literal stops,
+    not a name to expand, so the name is painted as authored rather than
+    resolved — never what an author meant. A consumer building a
+    multi-value edit from ``enum_values`` on a ``Palette``-faceted ``list``
+    control must write one of them as the whole value, never wrap two of
+    them into the list.
     """
 
 

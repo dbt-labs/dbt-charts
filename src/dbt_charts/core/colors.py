@@ -42,6 +42,393 @@ class InvalidColorError(DbtChartsError):
             self.code = ERR_INTERNAL
 
 
+# The full CSS Color Module / SVG 1.1 extended keyword set, minus
+# "transparent" -- that name means "no fill", not a color, and has no hex.
+# A superset of _CSS_NAMED_COLORS (compile/models/primitives.py), a
+# narrower table scoped to extracting a keyword from a border-shorthand
+# string, not the full legal vocabulary for a Color()-faceted field like
+# style.background.
+_CSS_NAMED_COLOR_HEX: dict[str, str] = {
+    "aliceblue": "#f0f8ff",
+    "antiquewhite": "#faebd7",
+    "aqua": "#00ffff",
+    "aquamarine": "#7fffd4",
+    "azure": "#f0ffff",
+    "beige": "#f5f5dc",
+    "bisque": "#ffe4c4",
+    "black": "#000000",
+    "blanchedalmond": "#ffebcd",
+    "blue": "#0000ff",
+    "blueviolet": "#8a2be2",
+    "brown": "#a52a2a",
+    "burlywood": "#deb887",
+    "cadetblue": "#5f9ea0",
+    "chartreuse": "#7fff00",
+    "chocolate": "#d2691e",
+    "coral": "#ff7f50",
+    "cornflowerblue": "#6495ed",
+    "cornsilk": "#fff8dc",
+    "crimson": "#dc143c",
+    "cyan": "#00ffff",
+    "darkblue": "#00008b",
+    "darkcyan": "#008b8b",
+    "darkgoldenrod": "#b8860b",
+    "darkgray": "#a9a9a9",
+    "darkgreen": "#006400",
+    "darkgrey": "#a9a9a9",  # codespell:ignore grey
+    "darkkhaki": "#bdb76b",
+    "darkmagenta": "#8b008b",
+    "darkolivegreen": "#556b2f",
+    "darkorange": "#ff8c00",
+    "darkorchid": "#9932cc",
+    "darkred": "#8b0000",
+    "darksalmon": "#e9967a",
+    "darkseagreen": "#8fbc8f",
+    "darkslateblue": "#483d8b",
+    "darkslategray": "#2f4f4f",
+    "darkslategrey": "#2f4f4f",  # codespell:ignore grey
+    "darkturquoise": "#00ced1",
+    "darkviolet": "#9400d3",
+    "deeppink": "#ff1493",
+    "deepskyblue": "#00bfff",
+    "dimgray": "#696969",
+    "dimgrey": "#696969",  # codespell:ignore grey
+    "dodgerblue": "#1e90ff",
+    "firebrick": "#b22222",
+    "floralwhite": "#fffaf0",
+    "forestgreen": "#228b22",
+    "fuchsia": "#ff00ff",
+    "gainsboro": "#dcdcdc",
+    "ghostwhite": "#f8f8ff",
+    "gold": "#ffd700",
+    "goldenrod": "#daa520",
+    "gray": "#808080",
+    "grey": "#808080",  # codespell:ignore grey
+    "green": "#008000",
+    "greenyellow": "#adff2f",
+    "honeydew": "#f0fff0",
+    "hotpink": "#ff69b4",
+    "indianred": "#cd5c5c",
+    "indigo": "#4b0082",
+    "ivory": "#fffff0",
+    "khaki": "#f0e68c",
+    "lavender": "#e6e6fa",
+    "lavenderblush": "#fff0f5",
+    "lawngreen": "#7cfc00",
+    "lemonchiffon": "#fffacd",
+    "lightblue": "#add8e6",
+    "lightcoral": "#f08080",
+    "lightcyan": "#e0ffff",
+    "lightgoldenrodyellow": "#fafad2",
+    "lightgray": "#d3d3d3",
+    "lightgreen": "#90ee90",
+    "lightgrey": "#d3d3d3",  # codespell:ignore grey
+    "lightpink": "#ffb6c1",
+    "lightsalmon": "#ffa07a",
+    "lightseagreen": "#20b2aa",
+    "lightskyblue": "#87cefa",
+    "lightslategray": "#778899",
+    "lightslategrey": "#778899",  # codespell:ignore grey
+    "lightsteelblue": "#b0c4de",
+    "lightyellow": "#ffffe0",
+    "lime": "#00ff00",
+    "limegreen": "#32cd32",
+    "linen": "#faf0e6",
+    "magenta": "#ff00ff",
+    "maroon": "#800000",
+    "mediumaquamarine": "#66cdaa",
+    "mediumblue": "#0000cd",
+    "mediumorchid": "#ba55d3",
+    "mediumpurple": "#9370db",
+    "mediumseagreen": "#3cb371",
+    "mediumslateblue": "#7b68ee",
+    "mediumspringgreen": "#00fa9a",
+    "mediumturquoise": "#48d1cc",
+    "mediumvioletred": "#c71585",
+    "midnightblue": "#191970",
+    "mintcream": "#f5fffa",
+    "mistyrose": "#ffe4e1",
+    "moccasin": "#ffe4b5",
+    "navajowhite": "#ffdead",
+    "navy": "#000080",
+    "oldlace": "#fdf5e6",
+    "olive": "#808000",
+    "olivedrab": "#6b8e23",
+    "orange": "#ffa500",
+    "orangered": "#ff4500",
+    "orchid": "#da70d6",
+    "palegoldenrod": "#eee8aa",
+    "palegreen": "#98fb98",
+    "paleturquoise": "#afeeee",
+    "palevioletred": "#db7093",
+    "papayawhip": "#ffefd5",
+    "peachpuff": "#ffdab9",
+    "peru": "#cd853f",
+    "pink": "#ffc0cb",
+    "plum": "#dda0dd",
+    "powderblue": "#b0e0e6",
+    "purple": "#800080",
+    "rebeccapurple": "#663399",
+    "red": "#ff0000",
+    "rosybrown": "#bc8f8f",
+    "royalblue": "#4169e1",
+    "saddlebrown": "#8b4513",
+    "salmon": "#fa8072",
+    "sandybrown": "#f4a460",
+    "seagreen": "#2e8b57",
+    "seashell": "#fff5ee",
+    "sienna": "#a0522d",
+    "silver": "#c0c0c0",
+    "skyblue": "#87ceeb",
+    "slateblue": "#6a5acd",
+    "slategray": "#708090",
+    "slategrey": "#708090",  # codespell:ignore grey
+    "snow": "#fffafa",
+    "springgreen": "#00ff7f",
+    "steelblue": "#4682b4",
+    "tan": "#d2b48c",
+    "teal": "#008080",
+    "thistle": "#d8bfd8",
+    "tomato": "#ff6347",
+    "turquoise": "#40e0d0",
+    "violet": "#ee82ee",
+    "wheat": "#f5deb3",
+    "white": "#ffffff",
+    "whitesmoke": "#f5f5f5",
+    "yellow": "#ffff00",
+    "yellowgreen": "#9acd32",
+}
+
+
+def css_named_color_to_hex(name: str) -> str | None:
+    """Hex for a CSS keyword color, or None when ``name`` isn't one.
+
+    Case-insensitive. Covers the full CSS Color Module / SVG 1.1 extended
+    keyword set, minus ``transparent`` -- that keyword means "no fill" and
+    has no hex; ``parse_css_color`` special-cases it itself, before this
+    function is ever consulted.
+    """
+    return _CSS_NAMED_COLOR_HEX.get(name.lower())
+
+
+_HEX_ALPHA_COLOR_PATTERN = re.compile(
+    r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+)
+# rgb(...)/rgba(...) and hsl(...)/hsla(...): comma-separated
+# ("rgb(10, 20, 30)", "hsla(220, 60%, 50%, 0.5)") or the modern
+# space-separated form with a slash-delimited alpha ("rgb(10 20 30 / 50%)",
+# "hsl(220 60% 50% / 50%)"). Channels and alpha both accept a percentage.
+_COLOR_FUNCTION_PATTERN = re.compile(r"^(rgba?|hsla?)\(\s*(.+?)\s*\)$", re.IGNORECASE)
+
+
+def _finite_float(token: str) -> float:
+    """``float(token)``, rejecting nan/inf/-inf/infinity.
+
+    ``float()`` parses all four without raising -- ``min(1.0, nan)`` then
+    silently clamps a NaN channel to 1.0 (pure red from ``rgb(nan,0,0)``,
+    not an error), and a NaN that survives into ``rgb01_to_hex``'s
+    ``int(x * 255)`` raises an unlocated ``ValueError`` far from the
+    authored value that caused it. Every numeric token in this grammar --
+    an rgb() channel, an alpha, an hsl() hue -- routes through here first,
+    so a non-finite value fails at the one seam that can name it.
+    """
+    value = float(token)
+    if not math.isfinite(value):
+        raise ValueError(f"not a finite number: {token!r}")
+    return value
+
+
+def _parse_channel_0_1(token: str) -> float:
+    """One rgb() channel -- 0-255 integer or a percentage -- to 0-1, clamped."""
+    token = token.strip()
+    value = (
+        _finite_float(token[:-1]) / 100.0
+        if token.endswith("%")
+        else _finite_float(token) / 255.0
+    )
+    return max(0.0, min(1.0, value))
+
+
+def _parse_unit_interval(token: str) -> float:
+    """An alpha channel -- a bare 0-1 float or a percentage -- to 0-1, clamped."""
+    token = token.strip()
+    value = (
+        _finite_float(token[:-1]) / 100.0
+        if token.endswith("%")
+        else _finite_float(token)
+    )
+    return max(0.0, min(1.0, value))
+
+
+def _parse_percentage(token: str) -> float:
+    """An hsl() saturation/lightness channel -- a percentage ONLY -- to 0-1.
+
+    Unlike alpha, CSS never accepts a bare number here: a browser reads
+    ``hsl(220, 60, 50%)`` as invalid, not as 60 meaning 0.6 -- a bare
+    number raises rather than silently being read as a fraction.
+    """
+    token = token.strip()
+    if not token.endswith("%"):
+        raise ValueError(f"not a percentage: {token!r}")
+    return max(0.0, min(1.0, _finite_float(token[:-1]) / 100.0))
+
+
+def _split_function_channels(body: str) -> tuple[list[str], str | None]:
+    """Split a color function's parenthesized body into (channels, alpha).
+
+    Shared by rgb()/rgba() and hsl()/hsla(): both accept 3 channels plus an
+    optional alpha, in exactly one of two syntaxes -- comma-separated with
+    alpha as a trailing 4th comma-separated argument
+    (``"10, 20, 30, 0.5"``), or space-separated with alpha after a ``/``
+    (``"10 20 30 / 50%"``). The two never mix. Raises ``ValueError`` (with
+    the specific reason) on a malformed or mixed body.
+    """
+    if "," in body:
+        if "/" in body:
+            raise ValueError(f"comma syntax cannot carry a slash alpha: {body!r}")
+        parts = [p.strip() for p in body.split(",")]
+        if any(not p for p in parts) or len(parts) not in (3, 4):
+            raise ValueError(f"expected 3 or 4 comma-separated values: {body!r}")
+        return (parts[:3], parts[3]) if len(parts) == 4 else (parts, None)
+    if "/" in body:
+        channels_part, alpha_part = body.split("/", 1)
+        alpha_token: str | None = alpha_part.strip()
+        if not alpha_token:
+            raise ValueError(f"empty alpha after slash: {body!r}")
+    else:
+        channels_part, alpha_token = body, None
+    parts = [p for p in re.split(r"\s+", channels_part.strip()) if p]
+    if len(parts) != 3:
+        raise ValueError(f"expected 3 space-separated channels: {body!r}")
+    return parts, alpha_token
+
+
+def _hsl_to_rgb01(
+    h_deg: float, s: float, lightness: float
+) -> tuple[float, float, float]:
+    """Standard HSL-to-sRGB conversion. ``h_deg`` in degrees; ``s``/``lightness`` 0-1."""
+    h = h_deg % 360.0
+    c = (1.0 - abs(2.0 * lightness - 1.0)) * s
+    x = c * (1.0 - abs((h / 60.0) % 2.0 - 1.0))
+    m = lightness - c / 2.0
+    if h < 60:
+        rp, gp, bp = c, x, 0.0
+    elif h < 120:
+        rp, gp, bp = x, c, 0.0
+    elif h < 180:
+        rp, gp, bp = 0.0, c, x
+    elif h < 240:
+        rp, gp, bp = 0.0, x, c
+    elif h < 300:
+        rp, gp, bp = x, 0.0, c
+    else:
+        rp, gp, bp = c, 0.0, x
+    return (rp + m, gp + m, bp + m)
+
+
+def parse_css_color(value: str) -> tuple[float, float, float, float]:
+    """Parse a CSS/SVG color string to (r, g, b, a), each 0-1.
+
+    Accepts hex (``#rgb``, ``#rgba``, ``#rrggbb``, ``#rrggbbaa``), a CSS
+    keyword name (``css_named_color_to_hex``), ``transparent``/``none``
+    (alpha 0), ``rgb()``/``rgba()`` with integer or percentage channels, and
+    ``hsl()``/``hsla()`` with a degree hue and percentage saturation/
+    lightness -- all four functions accept a 0-1 or percentage alpha,
+    comma- or space-separated (``rgb(10 20 30 / 50%)``,
+    ``hsl(220 60% 50% / 50%)``). Raises ``InvalidColorError`` on anything
+    else -- a color the engine cannot read is a real authoring defect, not
+    a case for a silent guess.
+    """
+    stripped = value.strip()
+    lowered = stripped.lower()
+    if lowered in {"transparent", "none"}:
+        return (0.0, 0.0, 0.0, 0.0)
+
+    hex_match = _HEX_ALPHA_COLOR_PATTERN.match(stripped)
+    if hex_match:
+        digits = hex_match.group(1)
+        if len(digits) in (3, 4):
+            digits = "".join(d * 2 for d in digits)
+        r = int(digits[0:2], 16) / 255.0
+        g = int(digits[2:4], 16) / 255.0
+        b = int(digits[4:6], 16) / 255.0
+        a = int(digits[6:8], 16) / 255.0 if len(digits) == 8 else 1.0
+        return (r, g, b, a)
+
+    named_hex = css_named_color_to_hex(stripped)
+    if named_hex is not None:
+        r = int(named_hex[1:3], 16) / 255.0
+        g = int(named_hex[3:5], 16) / 255.0
+        b = int(named_hex[5:7], 16) / 255.0
+        return (r, g, b, 1.0)
+
+    func_match = _COLOR_FUNCTION_PATTERN.match(stripped)
+    function_reason: str | None = None
+    if func_match:
+        fn = func_match.group(1).lower()
+        try:
+            channels, alpha_token = _split_function_channels(func_match.group(2))
+            a = _parse_unit_interval(alpha_token) if alpha_token is not None else 1.0
+            if fn.startswith("rgb"):
+                r, g, b = (_parse_channel_0_1(c) for c in channels)
+            else:
+                hue_token, sat_token, light_token = channels
+                # CSS units are case-insensitive ("220DEG" is as legal
+                # as "220deg"); strip the suffix on a lowered copy so
+                # the numeric literal's own case is untouched.
+                h_deg = _finite_float(
+                    hue_token[:-3] if hue_token.lower().endswith("deg") else hue_token
+                )
+                s = _parse_percentage(sat_token)
+                lightness = _parse_percentage(light_token)
+                r, g, b = _hsl_to_rgb01(h_deg, s, lightness)
+        except ValueError as e:
+            # The function shape matched (rgb(...)/hsl(...)), so a deeper
+            # grammar failure here has a specific, actionable reason --
+            # a malformed channel split, a non-finite number, an hsl()
+            # percentage missing its `%` -- worth keeping instead of
+            # discarding it for the generic message below.
+            function_reason = str(e)
+        else:
+            return (r, g, b, a)
+
+    if function_reason is not None:
+        raise InvalidColorError(f"Invalid color value: {value!r} ({function_reason})")
+    raise InvalidColorError(f"Invalid color value: {value!r}")
+
+
+def composite_over(
+    top: tuple[float, float, float, float], under: tuple[float, float, float, float]
+) -> tuple[float, float, float, float]:
+    """Standard source-over alpha compositing: paint ``top`` over ``under``.
+
+    ``a_out = a_top + a_under * (1 - a_top)``; each output channel is the
+    alpha-weighted blend of the two inputs, un-premultiplied by ``a_out``.
+    Both colors are (r, g, b, a) tuples, each component 0-1. An output
+    alpha of 0 (both layers fully transparent) returns black at alpha 0 --
+    there is no color to report, only "nothing painted here."
+    """
+    rt, gt, bt, at = top
+    ru, gu, bu, au = under
+    a_out = at + au * (1.0 - at)
+    if a_out <= 0.0:
+        return (0.0, 0.0, 0.0, 0.0)
+    under_weight = au * (1.0 - at)
+    r_out = (rt * at + ru * under_weight) / a_out
+    g_out = (gt * at + gu * under_weight) / a_out
+    b_out = (bt * at + bu * under_weight) / a_out
+    return (r_out, g_out, b_out, a_out)
+
+
+def rgb01_to_hex(r: float, g: float, b: float) -> str:
+    """(r, g, b), each 0-1, to a lowercase 6-digit hex string, clamped."""
+
+    def _byte(c: float) -> int:
+        return max(0, min(255, round(c * 255)))
+
+    return f"#{_byte(r):02x}{_byte(g):02x}{_byte(b):02x}"
+
+
 def is_color_token(value: str) -> bool:
     """Return True if ``value`` is shaped like a palette token.
 
@@ -49,6 +436,46 @@ def is_color_token(value: str) -> bool:
     which live in the style cascade.
     """
     return bool(_COLOR_TOKEN_PATTERN.match(value))
+
+
+# A bare word with no dot/bracket suffix -- distinct from is_color_token's
+# dotted/bracket shape ("category[2]", "chrome.ink"). Both shapes can be an
+# unresolved theme-role reference at board/chart scope ("category", a role
+# name authored as a bare string, matches neither a hex literal nor a CSS
+# keyword by pattern alone).
+_BARE_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+
+
+# Reserved CSS keywords that are bare-identifier-shaped (matching
+# _BARE_IDENTIFIER_PATTERN, exactly like a role name or a typo would) but are
+# never a candidate role: a browser reserves these, so they can only ever be
+# an unreadable color, same as oklch()/var(--x). Deferring them the way a
+# genuine role candidate defers would route them to ERR-PALETTE-UNKNOWN
+# ("unknown role") instead of the parse-failure fallback every other
+# unreadable color takes -- a different, wrong reason.
+_CSS_RESERVED_UNREADABLE_KEYWORDS = frozenset(
+    {"currentcolor", "inherit", "initial", "unset", "revert"}
+)
+
+
+def is_deferred_color_reference(value: str) -> bool:
+    """True when ``value`` is shaped like a possible theme-role reference
+    (a color token, or a bare identifier) rather than literal color data.
+
+    Shape only, same contract as ``is_color_token``: whether the reference
+    actually resolves needs the theme's ``palettes:``/``roles:`` maps, which
+    live in the style cascade. Shared by ``mark_ink()``
+    (``compile/resolve/style/palette.py``) and the palette-list validator
+    (``compile/resolve/style/tokens.py``) -- both need to tell a candidate
+    role name/typo apart from literal, already-parseable color data.
+
+    A CSS-reserved keyword (``currentColor``, ``inherit``, ...) matches the
+    bare-identifier shape too, but is never a role candidate -- it is a
+    definite, unreadable color, not a name that might resolve later.
+    """
+    if value.strip().lower() in _CSS_RESERVED_UNREADABLE_KEYWORDS:
+        return False
+    return is_color_token(value) or bool(_BARE_IDENTIFIER_PATTERN.match(value))
 
 
 def is_sanitizable_color(color: str) -> bool:
@@ -216,15 +643,14 @@ def is_light_canvas(canvas: str) -> bool:
 def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> str:
     """Nudge *color* toward legible against *background*, hue/chroma preserved.
 
-    A readability floor for ink derived from an author-picked color that has
-    no registered dark companion (``resolve_dark_companion_stops`` falls back
-    to the bright color itself when a custom fill isn't found in any
-    registered categorical palette — e.g. a sequential-gray override like
-    ``dbt-seq-gray.2``), or a mark color that was never a palette member at
-    all (e.g. a named border token). Binary-searches OKLCH lightness, moving
-    toward WHICHEVER OF BLACK/WHITE HAS MORE CONTRAST against *background*,
-    for the closest-to-original L that still clears ``min_ratio`` -- C and H
-    stay fixed, so the result still reads as the same hue, just legible.
+    A readability floor for ink derived from an author-picked color that
+    ``label_ink()``'s dark-move alone doesn't clear -- e.g. a sequential-gray
+    override like ``dbt-seq-gray.2``, or a mark color that was never a
+    palette member at all (e.g. a named border token). Binary-searches OKLCH
+    lightness, moving toward WHICHEVER OF BLACK/WHITE HAS MORE CONTRAST
+    against *background*, for the closest-to-original L that still clears
+    ``min_ratio`` -- C and H stay fixed, so the result still reads as the
+    same hue, just legible.
     Returns *color* unchanged when it already clears the floor.
 
     Picking the higher-contrast endpoint (rather than pivoting on the

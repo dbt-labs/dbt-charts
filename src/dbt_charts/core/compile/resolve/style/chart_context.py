@@ -27,6 +27,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
+from dbt_charts.core.compile.resolve.style.palette import ink_canvas
 from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
     _append_emoji_family,
@@ -400,6 +401,12 @@ def build_chart_style_context(
     _background = getattr(primary, "background", None)
     if _background is not None:
         overrides["background"] = _background
+        # The chart-local background composites over the board's own
+        # (already-opaque) canvas -- ink_canvas must be recomputed alongside
+        # background, or it silently keeps describing the board's canvas
+        # after the chart just painted a different one. _palette.py/pie.py
+        # read this field directly instead of hand-compositing themselves.
+        overrides["ink_canvas"] = ink_canvas(_background, base_charts.ink_canvas)
     _title = getattr(primary, "title", None)
     if _title is not None:
         overrides["title"] = merge_onto_base(base_charts.title, _title)

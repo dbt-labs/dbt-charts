@@ -247,13 +247,13 @@ class TestCompileDoesNotRepeatItself:
         result = compile(_SIBLING_BOARDS_YAML, file="f.yaml")
         assert result.success, [d.message for d in result.errors]
 
-        # Root (which authors no style of its own) plus two siblings that
-        # merge to one style: two cascades, one per distinct style. The root
-        # contributes nothing authored, so each sibling's normalize-walk
-        # resolve and its propagate-walk resolve are the same computation.
-        # Without the memo it is still more, because each sibling would be
-        # resolved twice regardless.
-        assert len(cascades) == 2
+        # Root (no style of its own) plus two siblings sharing one style:
+        # one root cascade + one normalize-walk cascade (parent_context is
+        # not yet threaded down at that pass) + one propagate-walk cascade
+        # (the real parent, what render uses) = three. Without the memo
+        # this is five -- each sibling resolved once per walk, with no
+        # sharing between the two identically-styled siblings either.
+        assert len(cascades) == 3
 
     def test_a_board_is_composed_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
         composes: list[str] = []

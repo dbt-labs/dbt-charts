@@ -390,7 +390,7 @@ def test_label_rail_color_domain_is_alphabetical(resolve_horizontal_bar_chart):
 
 
 def test_label_rail_color_range_is_dark_companions(resolve_horizontal_bar_chart):
-    """Pin the color *range* on the rail to the vivid-10-dark stops.
+    """Pin the color *range* on the rail to each segment's label ink.
 
     The whole point of the ``_dark_companion_stops`` helper is that each
     label inks a notch darker than its segment for legibility — without
@@ -398,7 +398,10 @@ def test_label_rail_color_range_is_dark_companions(resolve_horizontal_bar_chart)
     for the bright one and the chart would still render, just with low-
     contrast labels.
     """
-    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
+    from dbt_charts.core.compile.resolve.style.palette import (
+        label_ink,
+        palette as resolve_palette,
+    )
 
     data = _two_series_two_row_data()
     rc = resolve_horizontal_bar_chart(data=data, enabled=True, stack="zero")
@@ -407,8 +410,9 @@ def test_label_rail_color_range_is_dark_companions(resolve_horizontal_bar_chart)
     rail_range = pane["encoding"]["color"]["scale"]["range"]
     # Main stack order is B, A while the independent rail scale keeps its
     # alphabetical domain A, B. Each label must retain its segment's slot.
-    dark = resolve_palette("vivid-10-dark")
-    assert rail_range == [dark[1], dark[0]]
+    bright = resolve_palette("vivid-10")
+    ink = [label_ink(c, _BOARD_CTX.background) for c in bright]
+    assert rail_range == [ink[1], ink[0]]
 
 
 def test_wrap_reduces_chart_pane_height_to_absorb_rail(resolve_horizontal_bar_chart):

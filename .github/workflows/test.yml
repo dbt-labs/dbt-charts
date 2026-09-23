@@ -31,11 +31,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.12.13"
+          version: "0.12.18"
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375  # v2.87.12
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5  # v2.87.19
         with:
           tool: just
 

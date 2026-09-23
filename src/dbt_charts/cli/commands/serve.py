@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
-import uvicorn
 
 from dbt_charts.agent_api import Diagnostic
 from dbt_charts.cli._error_format import print_diagnostics
@@ -51,7 +49,8 @@ def serve_command(
             discarded on exit.
 
     Returns:
-        None (exits with code 0 on success, 1 on errors)
+        None (exits with code 0 on success, 1 on errors, 3 when the server
+        never started, which is uvicorn's own STARTUP_FAILURE code)
     """
     from dbt_charts.agent_api import set_surface
     from dbt_charts.agent_api.serve import format_startup_failure, prepare_serve
@@ -89,7 +88,6 @@ def serve_command(
         typer.echo(f"  Auto-detected dialect: {setup.dialect} (from dbt profile)")
 
     port = setup.port
-    app = setup.app
 
     # Start server. The URL is the whole banner: it lists every board in the
     # project, so any other route printed here is a second way to say the same
@@ -100,16 +98,15 @@ def serve_command(
     typer.echo("   Press CTRL+C to stop")
 
     try:
-        uvicorn.run(
-            app,
-            host=host,
-            port=port,
-            log_level="info",
-            timeout_graceful_shutdown=3,
-        )
+        setup.server.run()
     except KeyboardInterrupt:
         typer.echo("\n👋 Server stopped")
-        sys.exit(0)
+        raise typer.Exit(0) from None
     except Exception as e:  # noqa: BLE001 — uvicorn surface
         print_diagnostics([format_startup_failure(e)])
         raise typer.Exit(1) from None
+
+    # A lifespan startup exception leaves `started` false and returns without
+    # raising, so nothing above catches it.
+    if not setup.server.started:
+        raise typer.Exit(3)

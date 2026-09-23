@@ -215,9 +215,7 @@ def test_resolve_pie_no_color_bakes_dark_companion_of_palette_zero() -> None:
     static label.font color."""
     from dbt_charts.core.compile.models.chart.normalized import PieChart
     from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.compile.resolve.style.palette import (
-        resolve_dark_companion_stops,
-    )
+    from dbt_charts.core.compile.resolve.style.palette import label_ink
 
     board = _make_pie_style()
     chart = PieChart(id="p", type="pie", theta="value")
@@ -228,7 +226,7 @@ def test_resolve_pie_no_color_bakes_dark_companion_of_palette_zero() -> None:
         width=600.0,
     )
 
-    expected = tuple(resolve_dark_companion_stops(board.palette[:1]))
+    expected = (label_ink(board.palette[0], board.background),)
     assert resolved.dark_companion_stops == expected
     assert len(resolved.dark_companion_stops) == 1
 
@@ -274,9 +272,7 @@ def test_resolve_pie_no_color_does_not_bake_authored_slice_label_color() -> None
     need patch-peeking at resolve time."""
     from dbt_charts.core.compile.models.chart.normalized import PieChart
     from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.compile.resolve.style.palette import (
-        resolve_dark_companion_stops,
-    )
+    from dbt_charts.core.compile.resolve.style.palette import label_ink
 
     board = _make_pie_style()
     chart = PieChart(
@@ -287,7 +283,7 @@ def test_resolve_pie_no_color_does_not_bake_authored_slice_label_color() -> None
     )
     resolved = resolve(chart, [{"value": 90}, {"value": 10}], board, width=600.0)
 
-    expected = tuple(resolve_dark_companion_stops(board.palette[:1]))
+    expected = (label_ink(board.palette[0], board.background),)
     assert resolved.dark_companion_stops == expected
 
 

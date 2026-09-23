@@ -687,6 +687,12 @@ class ResolvedChartDefaults:
     pagination: PaginationConfig | None
     formats: dict[str, str] | None
     background: str
+    # The opaque canvas label ink derives contrast against: the board
+    # background composited over the theme's own canvas. Read by
+    # render/chart/support_table_attachment.py's header-fill readability
+    # floor, which needs an opaque canvas and cannot composite one itself
+    # (render is barred from compile.resolve.style.palette.ink_canvas()).
+    ink_canvas: str
 
 
 @dataclasses.dataclass(frozen=True)

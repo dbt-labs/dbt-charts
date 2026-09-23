@@ -50,7 +50,7 @@ from typing import Any, Literal, cast
 
 from d3_format import FormatSpec, parse as _d3_parse
 from d3_format.errors import D3FormatError
-from dbt_charts.core.colors import ensure_readable_ink
+from dbt_charts.core.colors import ensure_readable_ink, parse_css_color, rgb01_to_hex
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.format import decimal_pad_table_for, resolve_format
 from dbt_charts.core.compile.models.chart.authored import (
@@ -3391,7 +3391,7 @@ def _mark_series_header_fills(
     spec: VLDict,
     support_table: ChartSupportTable,
     resolved_chart: _CartesianResolvedChartFields,
-    background: str,
+    charts_style: ResolvedChartDefaults,
 ) -> dict[int, str] | None:
     """Header ink for each ``source:`` entry whose column names a mark
     series' own ``y`` measure — a colored header stands in for a legend
@@ -3422,16 +3422,11 @@ def _mark_series_header_fills(
     keep the board's default ink untouched.
 
     Each field's effective color (``_effective_mark_color``) is run through
-    ``companion_color_for_fill`` (a no-op passthrough when the color isn't a
-    literal member of the chart's own categorical palette -- true for most
-    border colors, and for a fill the chart already resolved from that
-    palette it substitutes the theme's matching dark companion), then
-    ``ensure_readable_ink`` (a WCAG contrast floor against the card
-    background, hue preserved) -- catching both a light palette override
-    with no registered dark companion (e.g. a sequential-gray slot) and a
-    border/fill color that was never a palette member to begin with (e.g. a
-    named token like ``category.gold``) and so skipped the companion step
-    entirely.
+    ``companion_color_for_fill`` -- see the two branches below for the
+    palette-member/passthrough split. ``canvas`` reads
+    ``charts_style.ink_canvas`` (see that field's own docstring), never
+    ``resolved_chart.background``, which can be ``transparent``, a CSS
+    name, or ``rgba(...)``, none of which ``ensure_readable_ink`` can read.
     """
     # Scatter is deliberately excluded: ResolvedScatterStyle carries no
     # series_label (no companion-ink concept for a scatter chart).
@@ -3461,16 +3456,32 @@ def _mark_series_header_fills(
         fill_by_field[y_field] = effective
     palette = list(resolved_chart.palette)
     dark_companions = resolved_chart.style.series_label.dark_companion_palette
-    result = {
-        entry_idx: ensure_readable_ink(
-            companion_color_for_fill(
-                fill_by_field[entry.source], palette, dark_companions
-            ),
-            background,
-        )
-        for entry_idx, entry in enumerate(support_table.entries)
-        if isinstance(entry, ChartSupportTableSource) and entry.source in fill_by_field
-    }
+    canvas = charts_style.ink_canvas
+    result = {}
+    for entry_idx, entry in enumerate(support_table.entries):
+        if not (
+            isinstance(entry, ChartSupportTableSource) and entry.source in fill_by_field
+        ):
+            continue
+        fill = fill_by_field[entry.source]
+        if fill in palette:
+            # In the chart's own categorical palette -- companion_color_for_fill
+            # substitutes its label_ink() companion, already legible against
+            # its own chart-effective canvas (dark_companions was computed
+            # at compile time, not necessarily against this `canvas`); no
+            # floor applied here either way.
+            result[entry_idx] = companion_color_for_fill(fill, palette, dark_companions)
+        else:
+            # Never a palette member (most border colors, e.g. an outline-only
+            # layer's `border.color`) -- companion_color_for_fill passes it
+            # through unchanged, so it never went through label_ink() and
+            # still needs its own contrast floor. `fill` is raw authored
+            # input here (a CSS name, an alpha-carrying hex, ...), not the
+            # 6-digit hex ensure_readable_ink() requires -- parse first.
+            r, g, b, a = parse_css_color(fill)
+            result[entry_idx] = (
+                fill if a <= 0.0 else ensure_readable_ink(rgb01_to_hex(r, g, b), canvas)
+            )
     return result or None
 
 
@@ -4056,7 +4067,7 @@ def _apply_support_table_columns_post_pass(
     )
     value_formats = [entry.format for entry in support_table.entries]
     header_fills = _mark_series_header_fills(
-        spec, support_table, resolved_chart, charts_style.background
+        spec, support_table, resolved_chart, charts_style
     )
 
     spec = attach_support_table_columns(

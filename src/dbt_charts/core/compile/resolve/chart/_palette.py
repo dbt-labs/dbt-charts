@@ -19,7 +19,7 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.compile.models.style.theme import (
     font_weight_as_css,
 )
-from dbt_charts.core.compile.resolve.style.palette import resolve_dark_companion_stops
+from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
 from dbt_charts.core.compile.resolve.style.typography import width_tier
 
@@ -151,12 +151,19 @@ def _resolved_series_label(
     chart_style_context: ChartStyleContext,
     primary: _HasColor | None,
     width: float,
+    canvas: str,
 ) -> ResolvedSeriesLabelStyle:
     """Bake series-label typography + dark-companion ink at compile time.
 
     The render layer is barred from compile.palette, so the dark-companion
-    stops for the chart's effective palette are resolved here (full palette; the
-    renderer slices ``[:n_series]``). Font fields are required post-cascade.
+    ink for the chart's effective palette is resolved here (full palette; the
+    renderer slices ``[:n_series]``). ``canvas`` is the chart's own effective,
+    already-opaque ink canvas -- the caller's own
+    ``chart_local_style_context.ink_canvas`` (chart_context.py recomputes it
+    alongside a chart-local ``style.background`` override, composited over
+    the board's own), not ``chart_style_context`` itself, which stays the
+    board-level cascade bag for the palette/font lookups above. Font fields
+    are required post-cascade.
     """
     font = chart_style_context.series_label.font
     if (
@@ -177,7 +184,7 @@ def _resolved_series_label(
         font_size=font_size,
         font_weight=font_weight_as_css(font.compact_weight if compact else font.weight),
         font_style=font.style,
-        dark_companion_palette=tuple(resolve_dark_companion_stops(list(eff_palette))),
+        dark_companion_palette=tuple(mark_ink(c, canvas) for c in eff_palette),
         gap_px=font_size * multiplier,
     )
 

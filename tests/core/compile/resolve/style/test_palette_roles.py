@@ -139,6 +139,89 @@ def test_board_may_not_name_a_role():
     assert result.errors[0].code == "ERR-PALETTE-UNKNOWN"
 
 
+def test_currentcolor_inside_a_palette_list_compiles_and_inks_as_itself():
+    """`currentColor` is bare-identifier-shaped -- matching the same shape
+    as a candidate role name or a typo -- but it's a reserved CSS keyword,
+    not a name that could ever resolve to a role, so it does not take the
+    role deferral. It also is not a color dbt Charts can read -- no
+    breaking change means this compiles, with the mark inked as itself."""
+    result = compile_board(_board('["currentColor", "#4e79a7"]'))
+    assert result.success, result.errors
+    assert result.board is not None
+    ctx = result.board.chart_style_context
+    assert ctx.dark_companion_palette[0] == "currentColor"
+
+
+@pytest.mark.parametrize("member", ["bloo", "category", "vivid-10"])
+def test_a_bare_word_role_or_shipped_name_inside_a_palette_list_compiles(member):
+    """No-breaking-change canary for the deleted list-member gate: a typo
+    (`bloo`), a real role every theme binds (`category`), and a real
+    shipped palette (`vivid-10`) all used to be rejected as one member of
+    a literal color list. `mark_ink()` already inks an unreadable member
+    as itself -- this compiles clean, first member unchanged, same as
+    any other member it can't read as a color."""
+    result = compile_board(_board(f'["{member}", "#4e79a7"]'))
+    assert result.success, result.errors
+    assert result.board is not None
+    ctx = result.board.chart_style_context
+    assert ctx.dark_companion_palette[0] == member
+
+
+def test_a_css_keyword_member_beside_hex_stops_compiles():
+    """`palette: ["navy", "#4e79a7"]` -- a CSS keyword name is real color
+    data, not a candidate role name; it must not hit ERR-PALETTE-UNKNOWN
+    just because a bare identifier also matches its shape."""
+    result = compile_board(_board('["navy", "#4e79a7"]'))
+    assert result.success, result.errors
+
+
+def test_an_rgb_function_member_beside_hex_stops_compiles():
+    """`palette: ["rgb(10,20,30)", "#4e79a7"]` -- the full parse_css_color
+    grammar, not just is_sanitizable_color's hex-only subset, applies to
+    each list member."""
+    result = compile_board(_board('["rgb(10,20,30)", "#4e79a7"]'))
+    assert result.success, result.errors
+
+
+def test_an_eight_digit_hex_member_beside_hex_stops_compiles():
+    """`palette: ["#4e79a7ff", "#4e79a7"]` -- an alpha-carrying hex stop is
+    legal color data, same as a plain 6-digit hex."""
+    result = compile_board(_board('["#4e79a7ff", "#4e79a7"]'))
+    assert result.success, result.errors
+
+
+def test_a_float_list_gradient_palette_is_not_treated_as_color_data():
+    """`gradient.palette: [0.0, 0.5, 1.0]` -- ScaleTargetConfig.palette is a
+    documented list[float] of relative stops on the gradient field, a
+    different field that happens to share the name "palette" with the
+    categorical list. A non-str member is skipped outright rather than
+    run through is_sanitizable_color, which used to raise a raw TypeError."""
+    result = compile_board(_gradient("[0.0, 0.5, 1.0]"))
+    assert result.success, result.errors
+
+
+def test_a_malformed_hex_member_beside_hex_stops_compiles_and_inks_as_itself():
+    """`palette: ["#12345", "#4e79a7"]` -- a five-digit hex is neither a
+    valid color nor a candidate role name. No breaking change: this
+    compiles, and the unreadable stop's own ink is the string unchanged --
+    render paints it as authored; there is no ink to derive."""
+    result = compile_board(_board('["#12345", "#4e79a7"]'))
+    assert result.success, result.errors
+    assert result.board is not None
+    ctx = result.board.chart_style_context
+    assert ctx.dark_companion_palette[0] == "#12345"
+
+
+def test_a_malformed_hex_member_in_a_chart_local_palette_compiles():
+    """Chart-local color resolution never eagerly calls `mark_ink()` per
+    palette member the way board-level style resolution does, so a
+    malformed chart-local list member takes the same path as a board-level
+    one: no breaking change means a color-shaped (not role-shaped) string
+    is never rejected, list member or not."""
+    result = compile_board(_chart_local("palette", '["#12345", "#4e79a7"]'))
+    assert result.success, result.errors
+
+
 def test_nested_board_style_role_is_rejected():
     """A nested board carries its own board-level style cascade, reachable only
     by recursing into `item.board` — unlike its charts, which normalization

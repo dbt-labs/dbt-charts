@@ -41,11 +41,12 @@ def build_embedded_server(
     background thread, etc.).
     """
     try:
-        import uvicorn  # noqa: PLC0415
+        from dbt_charts.core.serve.shutdown import build_server  # noqa: PLC0415
     except ImportError as e:
-        # uvicorn is a runtime dependency, so this only fires on a broken
-        # install. Naming the `mcp` extra here would be actively misleading —
-        # it ships `mcp` alone and cannot supply uvicorn.
+        # shutdown.py imports uvicorn at module scope. uvicorn is a runtime
+        # dependency, so this only fires on a broken install. Naming the `mcp`
+        # extra here would be actively misleading — it ships `mcp` alone and
+        # cannot supply uvicorn.
         raise ImportError(
             "Embedded preview server requires uvicorn, which ships as a "
             f"dbt charts runtime dependency. Reinstall dbt charts: {install_hint()}"
@@ -58,11 +59,10 @@ def build_embedded_server(
     # access on). Pass the same posture so the clickable preview agrees with the
     # tool-side render — standalone `dct serve` is the surface that tightens to
     # strict read-only, not these authoring surfaces.
-    config = uvicorn.Config(
+    server = build_server(
         create_server(project, **LOCAL_AUTHORING_REGISTRY_KWARGS),
         host=host,
         port=resolved,
         log_level=log_level,
     )
-    server = uvicorn.Server(config)
     return server, resolved

@@ -41,6 +41,20 @@ def test_build_embedded_server_keeps_local_authoring_posture(tmp_path: Path) -> 
     assert app_state.duckdb_config == LOCAL_AUTHORING_REGISTRY_KWARGS["duckdb_config"]
 
 
+def test_build_embedded_server_closes_the_watch_on_shutdown(tmp_path: Path) -> None:
+    """`dct mcp serve` sets no graceful timeout, so an open stream would hang it.
+
+    What that shutdown does is covered in tests/core/serve/test_shutdown.py; this
+    pins that the embedded preview gets it too.
+    """
+    from dbt_charts.core.serve.shutdown import GracefulServer
+
+    server, _port = build_embedded_server(FilesystemProject(tmp_path), port_hint=18797)
+
+    assert isinstance(server, GracefulServer)
+    assert server.config.app.state.watcher is not None
+
+
 def test_build_embedded_server_increments_when_port_taken(tmp_path: Path) -> None:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -70,6 +84,8 @@ def test_build_embedded_server_raises_import_error_on_uvicorn_missing(
     alone) would send the user somewhere that cannot fix it.
     """
     monkeypatch.setitem(sys.modules, "uvicorn", None)
+    # Evict the importer too, so it re-executes its own `import uvicorn`.
+    monkeypatch.delitem(sys.modules, "dbt_charts.core.serve.shutdown", raising=False)
     with pytest.raises(ImportError, match=r"uvicorn"):
         build_embedded_server(FilesystemProject(tmp_path), port_hint=18800)
 

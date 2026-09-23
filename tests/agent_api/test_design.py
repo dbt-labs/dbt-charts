@@ -277,11 +277,19 @@ def _panel_interactions(prop):
         # fails when typed by hand, which this sweep was never about.
         edits += [v for v in prop.enum_values if v != prop.value]
         # A vocabulary on a `list` control still has a multi-value shape to
-        # reach, and it has to be reached in the vocabulary the field takes.
-        # The channel probes below are column names — `x` in a palette box is a
-        # user typing nonsense into free text, which this sweep does not test
-        # for `style.color.static` or any other text control either.
-        if prop.widget == "list" and len(prop.enum_values) > 1:
+        # reach, and it has to be reached in the vocabulary the field takes --
+        # except a categorical palette (the `palette` facet), whose scalar
+        # arm alone takes a name; a list is already literal color stops, and
+        # a name inside it is neither a color nor a token (see `Palette`'s
+        # own docstring). Wrapping two names into a list there is not a
+        # panel interaction any control should offer, so this sweep does not
+        # probe it -- the scalar sweep just above still exercises the
+        # vocabulary the way the field actually takes it.
+        if (
+            prop.widget == "list"
+            and len(prop.enum_values) > 1
+            and "palette" not in prop.facets
+        ):
             edits.append(list(prop.enum_values[:2]))
     elif prop.widget == "checkbox":
         edits.append(not prop.value)
@@ -1263,11 +1271,14 @@ def _render_failures(board: str) -> list[str]:
 # is bounded to those controls rather than to every control the parse gate walks.
 # The variable target is the exception and every value of its `input` select is
 # now a render of its own. `extends` and the two categorical palettes are the
-# rest: a `list` control carrying a vocabulary sweeps every value of it, which is
-# what caught `PaletteName` offering four tone names no `palette:` field can
-# resolve. ~2,200 renders, ~210s here; the ceiling is a runaway guard, not a
-# budget — it sits clear of that measurement so a loaded xdist worker doesn't
-# trip it.
+# rest: a `list` control carrying a vocabulary sweeps every value of it as a
+# scalar write. A categorical palette's list *items* are colors or color
+# tokens, never palette names -- `palette: ["editorial-10", "#4e79a7"]` is
+# rejected at resolve (ERR-PALETTE-UNKNOWN), same as a typo would be, so
+# `_panel_interactions` does not build that shape (`Palette`'s own docstring
+# in `core/compile/models/markers.py` has the full rule). ~2,200 renders,
+# ~210s here; the ceiling is a runaway guard, not a budget — it sits clear of
+# that measurement so a loaded xdist worker doesn't trip it.
 @pytest.mark.timeout(600)
 def test_no_list_control_can_commit_a_board_that_stops_rendering() -> None:
     """The parse gate's blind half: a rule the compiler enforces at resolve.

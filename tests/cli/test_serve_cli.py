@@ -1,17 +1,19 @@
 """Smoke-depth tests for the dct serve CLI command.
 
 Covers argument-validation paths and the startup banner. Does NOT start the HTTP
-server. All assertions pin exit codes to the documented values (0, 1, 2 only —
-never != 0).
+server. All assertions pin exit codes to the documented values (0, 1, 2, and the
+3 uvicorn reserves for a server that never started — never != 0).
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -22,6 +24,12 @@ from dbt_charts.core.serve.server import create_server
 runner = CliRunner()
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _run_started(server: uvicorn.Server) -> None:
+    """Stand-in for Server.run(): reports a served lifetime without binding a port."""
+    server.started = True
+
 
 # Every URL the startup banner prints, reduced to its path+query. The bare-path
 # alternative matters as much as the absolute one: a route hint is as likely to be
@@ -78,7 +86,7 @@ class TestDftServeCacheFlag:
 
         def fake_create_server(_project: object, **kwargs: object) -> object:
             captured.update(kwargs)
-            return object()
+            return SimpleNamespace(state=SimpleNamespace(watcher=None))
 
         cache_path = tmp_path / "cache.duckdb"
         with (
@@ -86,7 +94,7 @@ class TestDftServeCacheFlag:
                 "dbt_charts.core.serve.server.create_server",
                 side_effect=fake_create_server,
             ),
-            patch("dbt_charts.cli.commands.serve.uvicorn.run"),
+            patch("uvicorn.Server.run", _run_started),
         ):
             result = runner.invoke(
                 app,
@@ -153,10 +161,10 @@ class TestDftServeDiagnostics:
     def test_uvicorn_catch_all_renders_structured_code(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """uvicorn.run raising OSError → exit 1, ERR-STARTUP-FAILED in stderr with detail."""
+        """uvicorn Server.run raising OSError → exit 1, ERR-STARTUP-FAILED in stderr with detail."""
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
         monkeypatch.delenv("DCT_DEFAULT_THEME", raising=False)
-        with patch("dbt_charts.cli.commands.serve.uvicorn.run") as mock_run:
+        with patch("uvicorn.Server.run") as mock_run:
             mock_run.side_effect = OSError("address already in use")
             result = runner.invoke(app, ["serve", "--project-dir", str(tmp_path)])
         assert result.exit_code == 1
@@ -167,6 +175,17 @@ class TestDftServeDiagnostics:
         assert "ERR-STARTUP-FAILED" in combined
         assert "address already in use" in combined
         assert "Docs:" in combined
+
+
+class TestDftServeStartupFailure:
+    """A server that never started must not report success."""
+
+    def test_server_that_never_started_exits_3(self, tmp_path: Path) -> None:
+        """A lifespan startup exception returns from run() without raising."""
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        with patch("uvicorn.Server.run"):
+            result = runner.invoke(app, ["serve", "--project-dir", str(tmp_path)])
+        assert result.exit_code == 3, result.output
 
 
 class TestDftServeBanner:
@@ -190,7 +209,7 @@ class TestDftServeBanner:
         (tmp_path / "charts").mkdir()
         (tmp_path / "charts" / "sales.yml").write_text("title: Sales\ntext: hi\n")
 
-        with patch("dbt_charts.cli.commands.serve.uvicorn.run"):
+        with patch("uvicorn.Server.run", _run_started):
             result = runner.invoke(app, ["serve", "--project-dir", str(tmp_path)])
         assert result.exit_code == 0, result.output
 

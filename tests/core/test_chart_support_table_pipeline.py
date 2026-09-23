@@ -1373,6 +1373,175 @@ def test_outline_only_layer_support_table_header_follows_border_color(monkeypatc
     assert _header_fill(spec, "Target") != layer_mark["fill"]
 
 
+def test_outline_only_layer_with_near_white_border_gets_the_readability_floor(
+    monkeypatch,
+):
+    """HIGH regression: the outline-only passthrough case (border.color never
+    a palette member) still needs its own contrast floor -- #eeeeee is
+    nowhere close to 4.5:1 against a white board canvas, so without
+    ensure_readable_ink the header would render nearly invisible. label_ink()
+    never touches this value at all (companion_color_for_fill passes it
+    through unchanged, since it's not a palette member), so the floor has
+    to be applied here, not upstream.
+    """
+    data = [
+        {"region": "A", "revenue": 30.0, "target": 10.0},
+        {"region": "B", "revenue": 20.0, "target": 30.0},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "region",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {
+                "entries": [
+                    {"source": "revenue", "label": "Revenue"},
+                    {"source": "target", "label": "Target"},
+                ]
+            },
+            "layers": [
+                {
+                    "type": "bar",
+                    "y": "target",
+                    "label": "Target",
+                    "style": {
+                        "marks": {
+                            "bar": {
+                                "opacity": 0,
+                                "border": {"width": 4, "color": "#eeeeee"},
+                            }
+                        }
+                    },
+                }
+            ],
+            "style": {"orientation": "horizontal", "legend": {"visible": False}},
+        }
+    )
+    spec = _render_v2_spec(chart, data, width=400, height=200, monkeypatch=monkeypatch)
+
+    from dbt_charts.core.colors import wcag_contrast
+
+    header_fill = _header_fill(spec, "Target")
+    assert header_fill != "#eeeeee"
+    assert wcag_contrast(header_fill, _BOARD_CONTEXT.ink_canvas) >= 4.5 - 1e-6
+
+
+def test_outline_only_layer_with_a_css_name_border_does_not_crash(monkeypatch):
+    """MEDIUM regression: the readability floor passed `fill` straight into
+    ensure_readable_ink(), which only reads 6-digit hex -- a CSS color name
+    like "red" (a legal, common `border.color` value, never a palette
+    member) crashed inside relative_luminance's int(..., 16) parse. Parse
+    with parse_css_color() first (a CSS name resolves to its hex; fully
+    transparent skips the floor and paints as-is) before flooring.
+    """
+    data = [
+        {"region": "A", "revenue": 30.0, "target": 10.0},
+        {"region": "B", "revenue": 20.0, "target": 30.0},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "region",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {
+                "entries": [
+                    {"source": "revenue", "label": "Revenue"},
+                    {"source": "target", "label": "Target"},
+                ]
+            },
+            "layers": [
+                {
+                    "type": "bar",
+                    "y": "target",
+                    "label": "Target",
+                    "style": {
+                        "marks": {
+                            "bar": {
+                                "opacity": 0,
+                                "border": {"width": 4, "color": "red"},
+                            }
+                        }
+                    },
+                }
+            ],
+            "style": {"orientation": "horizontal", "legend": {"visible": False}},
+        }
+    )
+    spec = _render_v2_spec(chart, data, width=400, height=200, monkeypatch=monkeypatch)
+
+    from dbt_charts.core.colors import wcag_contrast
+
+    header_fill = _header_fill(spec, "Target")
+    assert wcag_contrast(header_fill, _BOARD_CONTEXT.ink_canvas) >= 4.5 - 1e-6
+
+
+def test_outline_only_layer_with_transparent_chart_background_does_not_crash(
+    monkeypatch,
+):
+    """CRITICAL regression: the readability floor used to read
+    resolved_chart.background directly -- raw, and a chart-local
+    style.background: transparent reaches ensure_readable_ink() as the
+    literal string "transparent", which hex_to_oklch() cannot parse. The
+    floor now reads charts_style.ink_canvas (compile-baked, always opaque
+    hex), so a translucent/transparent chart-local background never
+    reaches ensure_readable_ink() at all.
+    """
+    data = [
+        {"region": "A", "revenue": 30.0, "target": 10.0},
+        {"region": "B", "revenue": 20.0, "target": 30.0},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "region",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {
+                "entries": [
+                    {"source": "revenue", "label": "Revenue"},
+                    {"source": "target", "label": "Target"},
+                ]
+            },
+            "layers": [
+                {
+                    "type": "bar",
+                    "y": "target",
+                    "label": "Target",
+                    "style": {
+                        "marks": {
+                            "bar": {
+                                "opacity": 0,
+                                "border": {"width": 4, "color": "#eeeeee"},
+                            }
+                        }
+                    },
+                }
+            ],
+            "style": {
+                "orientation": "horizontal",
+                "legend": {"visible": False},
+                "background": "transparent",
+            },
+        }
+    )
+    spec = _render_v2_spec(chart, data, width=400, height=200, monkeypatch=monkeypatch)
+
+    from dbt_charts.core.colors import wcag_contrast
+
+    board_canvas = _BOARD_CONTEXT.ink_canvas
+    header_fill = _header_fill(spec, "Target")
+    assert header_fill != "#eeeeee"
+    assert wcag_contrast(header_fill, board_canvas) >= 4.5 - 1e-6
+
+
 def test_light_fill_series_header_gets_readability_floor(monkeypatch):
     """A series whose fill has no registered dark companion (a custom
     categorical palette override, e.g. a light sequential-gray slot) must

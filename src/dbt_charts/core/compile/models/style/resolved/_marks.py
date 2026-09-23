@@ -141,8 +141,10 @@ class ResolvedSeriesLabelStyle(BaseModel):
     )
     dark_companion_palette: tuple[str, ...] = Field(
         description=(
-            "Dark-companion ink stops for the full effective palette; the renderer "
-            "slices [:n_series] for legible label text over light backgrounds."
+            "Label ink for the full effective palette, one stop per mark, "
+            "derived from each mark color against the chart's canvas so it "
+            "stays legible on light and dark canvases alike; the renderer "
+            "slices [:n_series] for the labels it actually draws."
         ),
     )
     gap_px: float = Field(

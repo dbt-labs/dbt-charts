@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.colors import hex_to_oklch, oklch_to_hex
+from dbt_charts.core.colors import hex_to_oklch, is_sanitizable_color, oklch_to_hex
 from dbt_charts.core.compile.config import (
     get_chart_rendering,
     load_config,
@@ -1278,154 +1278,95 @@ class TestVariant:
             reset_config()
 
 
-# ============================================================================
-# resolve_dark_companion_stops — direct-label inking
-# ============================================================================
+class TestMarkInk:
+    """mark_ink() routes every non-token/non-identifier mark color through
+    parse_css_color(), not label_ink() directly. No breaking change: a mark
+    color dbt Charts cannot read is inked as itself, the same contract the
+    pre-live-derivation companion lookup had for a color with no `-dark`
+    twin -- render paints it as authored; there is no ink to derive."""
 
+    def test_six_digit_hex_inks_normally(self):
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-class TestResolveDarkCompanionStops:
-    """The direct-label companion resolver is palette-agnostic: it auto-detects
-    which registered categorical palette the emitted colors came from and
-    looks up ``<bright>-dark``. Today's catalog has two such pairs registered:
-    ``vivid-10`` ↔ ``vivid-10-dark`` (default theme) and
-    ``editorial-10`` ↔ ``editorial-10-dark`` (editorial themes).
-    """
+        ink = mark_ink("#0073c2", "#ffffff")
+        assert ink != "#0073c2"
+        assert is_sanitizable_color(ink)
 
-    def test_editorial_10_stops_auto_resolve_to_editorial_10_dark(self):
-        """The case that motivated this fix.
+    def test_three_digit_short_hex_does_not_raise(self):
+        """#fff used to crash inside hex_to_oklch (int('', 16))."""
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        Chart rendered under the editorial theme cycles ``editorial-10`` stops.
-        Without auto-detection, the resolver would fall back to ``vivid-10``
-        lookup (no match for editorial-10 hexes) and return the bright colors
-        unchanged — labels would render at the same color as their marks.
-        """
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
+        ink = mark_ink("#fff", "#161616")
+        assert is_sanitizable_color(ink)
 
-        editorial_stops = palette("editorial-10", steps=5)
-        result = resolve_dark_companion_stops(editorial_stops)
-        expected = palette("editorial-10-dark", steps=5)
-        assert result == expected
+    def test_eight_digit_hex_with_alpha_inks_normally(self):
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-    def test_vivid_10_stops_resolve_to_vivid_10_dark(self):
-        """Status-quo behavior preserved: vivid-10 marks still get
-        vivid-10-dark companions when no palette name is passed."""
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
+        ink = mark_ink("#4e79a7ff", "#ffffff")
+        assert is_sanitizable_color(ink)
 
-        cat10_stops = palette("vivid-10", steps=5)
-        result = resolve_dark_companion_stops(cat10_stops)
-        expected = palette("vivid-10-dark", steps=5)
-        assert result == expected
+    def test_rgb_function_inks_normally(self):
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-    def test_custom_hex_falls_through_to_bright(self):
-        """When emitted colors don't match any registered palette (board
-        author hand-pinned hex via ``style.range.category``), labels match
-        the marks — same as today's behavior in that path."""
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
+        ink = mark_ink("rgb(10, 20, 30)", "#ffffff")
+        assert is_sanitizable_color(ink)
 
-        custom = ["#aabbcc", "#ddeeff", "#112233"]
-        assert resolve_dark_companion_stops(custom) == custom
+    def test_malformed_five_digit_hex_falls_back_unchanged(self):
+        """#12345 used to silently truncate through hex_to_oklch (5 hex
+        digits sliced into a bogus 2/2/1-digit r/g/b); parse_css_color
+        correctly rejects it, and mark_ink falls back to painting it as
+        authored rather than raising."""
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-    def test_explicit_palette_name_disambiguates_auto_detect(self):
-        """Callers that know the palette name can pass it to skip detection.
+        assert mark_ink("#12345", "#ffffff") == "#12345"
 
-        Forward-compat affordance for the chart-series-label-color-binding
-        follow-up task — once compiled-style carries the palette name, both
-        call sites can plumb it through and bypass the auto-detect scan.
-        """
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
+    def test_css_keyword_name_inks_against_its_real_hex(self):
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        editorial_stops = palette("editorial-10", steps=3)
-        result = resolve_dark_companion_stops(
-            editorial_stops, bright_palette_name="editorial-10"
-        )
-        expected = palette("editorial-10-dark", steps=3)
-        assert result == expected
+        white_ink = mark_ink("white", "#161616")
+        # "white" resolves to #ffffff first, then label_ink()'s dark move
+        # toward white (the pole, on this dark canvas) -- already there,
+        # so it legitimately inks to #ffffff exactly, unmoved.
+        assert white_ink == "#ffffff"
 
-    def test_unknown_explicit_palette_name_falls_through_to_bright(self):
-        """An explicit palette name that has no dark companion registered
-        falls through to the bright colors rather than raising."""
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
+    def test_color_token_shape_passes_through_unresolved(self):
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        editorial_stops = palette("editorial-10", steps=3)
-        result = resolve_dark_companion_stops(
-            editorial_stops, bright_palette_name="fake-palette"
-        )
-        assert result == editorial_stops
+        assert mark_ink("category[2]", "#ffffff") == "category[2]"
+        assert mark_ink("chrome.ink", "#ffffff") == "chrome.ink"
 
-    def test_empty_input_returns_empty(self):
-        """Defensive: zero-series chart shouldn't crash the resolver."""
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
+    def test_bare_identifier_passes_through_unresolved(self):
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        assert resolve_dark_companion_stops([]) == []
+        assert mark_ink("category", "#ffffff") == "category"
 
-    def test_off_by_one_emit_returns_wrong_slot_companions(self):
-        """If a chart emits colors starting from a non-slot-0 stop (the
-        ``palette[1:n+1]`` off-by-one currently affecting line/area charts;
-        tracked in chart-series-label-color-binding), per-color lookup finds
-        each color at its actual index in vivid-10 and returns the dark
-        companion at that index.
+    def test_currentcolor_falls_back_unchanged_not_deferred(self):
+        """`currentColor` is bare-identifier-shaped like a candidate role
+        name, but it's a reserved CSS keyword the browser owns, never a
+        role -- `is_deferred_color_reference` excludes it, so it takes the
+        parse-failure fallback path here, not the role-deferral path
+        "category" above takes. Both happen to return the value unchanged,
+        but via different code -- this pins the reserved-keyword carve-out
+        stays live even though its output is indistinguishable from the
+        general fallback."""
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        This means the resolver-side behavior is "dark companion at the wrong
-        slot" — the caller passed wrong input. The chart-series-label-color-
-        binding task fixes the upstream caller.
-        """
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
+        assert mark_ink("currentColor", "#ffffff") == "currentColor"
 
-        # Cat-10 slots at indices 1-3 (skipping slot-0) — what line/area charts
-        # emit today under the off-by-one bug.
-        cat10 = palette("vivid-10")
-        cat10_dark = palette("vivid-10-dark")
-        skipped_emit = cat10[1:4]
-        assert skipped_emit[0] != cat10[0]
-        result = resolve_dark_companion_stops(skipped_emit)
-        # Per-color: each is found at its actual index → returns dark at that index.
-        assert result == [cat10_dark[1], cat10_dark[2], cat10_dark[3]]
+    def test_transparent_mark_passes_through_unchanged(self):
+        """A fully transparent mark has no ink to derive against any
+        canvas -- "transparent"/"none" also match the bare-identifier
+        shape, but pass through as themselves rather than deferring or
+        raising."""
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-    def test_author_picked_non_slot_0_editorial_10_slots_resolve_correctly(self):
-        """Author picks editorial-10 indices 1 and 5. Under slot-0 equality
-        the first color fails detection and both labels fall
-        through to bright. Under per-color lookup each is found at its actual
-        index and returns the correct dark companion.
-        """
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
+        assert mark_ink("transparent", "#ffffff") == "transparent"
+        assert mark_ink("none", "#ffffff") == "none"
 
-        editorial = palette("editorial-10")
-        author_picks = [editorial[1], editorial[5]]
-        result = resolve_dark_companion_stops(author_picks)
-        e10_dark = palette("editorial-10-dark")
-        assert result == [e10_dark[1], e10_dark[5]]
+    def test_garbage_falls_back_unchanged(self):
+        from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-    def test_mixed_palette_picks_resolve_each_to_own_dark(self):
-        """One color from vivid-10 and one from editorial-10. Each resolves
-        independently to its own palette's dark companion.
-        """
-        from dbt_charts.core.compile.resolve.style.palette import (
-            resolve_dark_companion_stops,
-        )
-
-        cat10_slot3 = palette("vivid-10")[3]  # #e1a500
-        e10_slot1 = palette("editorial-10")[1]
-        result = resolve_dark_companion_stops([cat10_slot3, e10_slot1])
-        assert result == [
-            palette("vivid-10-dark")[3],
-            palette("editorial-10-dark")[1],
-        ]
+        assert mark_ink("not-a-color!!!", "#ffffff") == "not-a-color!!!"
 
 
 def test_palette_index_and_spine_use_iterdir_and_read_text_not_glob_or_open(

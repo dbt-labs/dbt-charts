@@ -177,8 +177,9 @@ class SliceLabelsStyle(BaseModel):
         description=(
             "Slice label font style overrides. ``color`` only takes effect "
             "on single-series pies (no ``color:`` channel authored); "
-            "multi-series pies always paint each label the dark companion "
-            "of its own wedge color and ignore an authored ``color`` here."
+            "multi-series pies always paint each label with ink derived "
+            "from its own wedge color against the chart's canvas, and "
+            "ignore an authored ``color`` here."
         ),
     )
     # Default content (not typography). When the chart author omits ``template:``

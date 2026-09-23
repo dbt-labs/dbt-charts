@@ -198,17 +198,16 @@ def test_label_dark_companion_follows_chart_local_palette_override(
     label_pane = spec["hconcat"][1]
     label_range = label_pane["encoding"]["color"]["scale"]["range"]
 
-    # The two emitted area colors are bright slots 0 and 2 of vivid-10
-    # (#0073c2 = blue, #00ad75 = green). The label dark companions must be
-    # the dark twins of those same slots — NOT the dark twins of slots 0
-    # and 1 (which would give dark-blue + dark-CYAN, the bug).
-    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
+    # The two emitted area colors are the chart-local override, blue and
+    # green. The label ink must be EACH color's own canvas-aware ink — NOT
+    # a hand-tuned companion looked up by theme-palette slot (which used to
+    # give dark-blue + dark-CYAN when indexed by alphabetical-domain
+    # position instead of the actual emitted color).
+    from dbt_charts.core.compile.resolve.style.palette import label_ink
 
-    bright = resolve_palette("vivid-10")
-    dark = resolve_palette("vivid-10-dark")
     expected = [
-        dark[bright.index("#0073c2")],  # Core → dark-blue
-        dark[bright.index("#00ad75")],  # Growth → dark-GREEN
+        label_ink("#0073c2", board_style.background),  # Core
+        label_ink("#00ad75", board_style.background),  # Growth
     ]
     assert label_range == expected, (
         f"Label pane dark companion colors must track the chart-local "

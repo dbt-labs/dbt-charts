@@ -517,7 +517,10 @@ class DesignProperty(BaseModel):
             "Values on offer: what the schema declares, plus — on a field the "
             "schema facets as a `format` — the aliases in force in the "
             "target's scope. Every value on a `select`; on a `combo`, the "
-            "shortcuts."
+            "shortcuts. On a `list` control whose field also carries the "
+            "`palette` facet, these name whole-value shortcuts only — write "
+            "one as the field's entire value, never as one item of the list "
+            "(see `Palette`'s own docstring: a palette name is not a color)."
         ),
     )
     default_repr: str | None = Field(

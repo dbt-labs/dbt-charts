@@ -56,10 +56,7 @@ from dbt_charts.core.compile.models.style.theme import (
 )
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
-from dbt_charts.core.compile.resolve.style.palette import (
-    color,
-    resolve_dark_companion_stops,
-)
+from dbt_charts.core.compile.resolve.style.palette import color, ink_canvas, mark_ink
 from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
     _append_emoji_family,
@@ -260,6 +257,7 @@ def _build_resolved_callout_chart(
 
 def _build_chart_style_context(
     charts: ChartsStyle,
+    base_background: str,
     font_family: str | None,
     title: TitleStyle,
     spark: SparkStyle,
@@ -272,6 +270,7 @@ def _build_chart_style_context(
     charts_board_overrides: ChartsStylePatch,
     card_padding: float,
     formats: dict[str, str] | None = None,
+    background_authored: bool = True,
 ) -> ChartStyleContext:
     # Deferred: a module-level import here would cycle back through
     # context.py -> resolved._base/.callout -> resolved/__init__.py ->
@@ -314,6 +313,7 @@ def _build_chart_style_context(
     _CHART_LOCAL_ONLY = {
         "palette",
         "dark_companion_palette",
+        "ink_canvas",
         "single_series_palette",
         "requested_alias_palette",
         "axis_overrides_global",
@@ -362,10 +362,26 @@ def _build_chart_style_context(
         "charts.background must be filled by apply_inherit(Inherit(from_path='Style.background')); "
         "got None — missing Inherit marker or apply_inherit not called"
     )
+    # An authored background composites exactly once over the canvas beneath
+    # it. A scope that only INHERITS its background (charts.background here
+    # merely echoes the parent's own value, unauthored at this scope) adds
+    # nothing -- ink is derived against what an author actually asked to
+    # paint, not repainted per inheriting layer (that's a render concern,
+    # tracked separately, not modeled into ink). base_background IS the
+    # parent's own already-composited ink_canvas in that case; inherit it
+    # verbatim instead of compositing the echoed value over it again.
+    board_ink_canvas = (
+        ink_canvas(charts.background, base_background)
+        if background_authored
+        else base_background
+    )
     return ChartStyleContext(
         **passthrough,
         palette=resolved_palette,
-        dark_companion_palette=tuple(resolve_dark_companion_stops(resolved_palette)),
+        dark_companion_palette=tuple(
+            mark_ink(c, board_ink_canvas) for c in resolved_palette
+        ),
+        ink_canvas=board_ink_canvas,
         single_series_palette=resolved_single_series_palette,
         requested_alias_palette=_categorical_obj.requested_alias_palette,
         dashes=charts.dashes if charts.dashes is not None else [],
@@ -442,6 +458,8 @@ def _finalize_chart_style_context(
     cascaded: Style,
     pre_style: Style,
     charts_board_overrides: ChartsStylePatch,
+    base_background: str,
+    background_authored: bool = True,
 ) -> ChartStyleContext:
     """Build ChartStyleContext from an already-seeded, already-cascaded Style.
 
@@ -465,6 +483,7 @@ def _finalize_chart_style_context(
         )
     return _build_chart_style_context(
         cascaded.charts,
+        base_background,
         font_family=resolved_root_font.family,
         title=cascaded.title,
         spark=cascaded.charts.table.spark,
@@ -477,12 +496,15 @@ def _finalize_chart_style_context(
         formats=cascaded.formats,
         charts_board_overrides=charts_board_overrides,
         card_padding=cascaded.frame.card_padding,
+        background_authored=background_authored,
     )
 
 
 def _finalize_style(
     merged: Style,
     charts_board_overrides: ChartsStylePatch,
+    base_background: str,
+    background_authored: bool = True,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
     """Apply a single inherit cascade to a merged Style; return final style + context.
 
@@ -501,6 +523,8 @@ def _finalize_style(
         cascaded,
         pre_style,
         charts_board_overrides,
+        base_background,
+        background_authored,
     )
     # ResolvedChartDefaults is exactly ChartStyleContext minus its sparse/
     # cascade-only fields (see the class docstring) — every remaining field
@@ -548,22 +572,45 @@ def resolve_chart_style_context(base: Style, *patches: Any) -> ChartStyleContext
 
 
 def resolve_style_and_context(
-    base: Style, *patches: Any
+    base: Style,
+    *patches: Any,  # type-state: explicit_any — heterogeneous patch types (StylePatch, ChartsStylePatch, ...) merged in sequence
+    base_background: str | None = None,
+    background_authored: bool = True,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
     """Shared cascade entry point behind resolve_style()/resolve_chart_style_context().
 
     Both public getters run the same cascade once and read their half of the
     result — the two products are always built together, so no-patch calls
     share one cache entry keyed on `id(base)`.
-    """
-    if patches:
-        return _finalize_style(*_merge_style(base, *patches))
 
+    `base_background` is the canvas this scope's own background composites
+    over. Every root-board resolve leaves it unset, so `base.background` --
+    the raw theme's own canvas -- is what a root paints beneath its own
+    background, correctly. A nested board paints on top of what its PARENT
+    scope actually composited, not the theme's raw canvas underneath that --
+    `compile_board_resolved_style` (normalize/dispatch.py) passes the
+    parent's own `ChartStyleContext.ink_canvas` here for that case.
+
+    `background_authored` is False only for a nested board that authored no
+    `background:` of its own (`compile_board_resolved_style` checks the raw,
+    unmerged patch) -- then `base_background` is inherited verbatim as
+    `ink_canvas`, uncomposited: an authored background composites exactly
+    once, and a scope that only inherits one adds nothing.
+    """
+    background = base.background if base_background is None else base_background
+    if patches:
+        return _finalize_style(
+            *_merge_style(base, *patches), background, background_authored
+        )
+
+    # The no-patch fast path is only ever reached today with base_background
+    # unset (a nested board with a cascade to run always has own_patch, so it
+    # takes the patches branch above) -- id(base) alone is the correct key.
     cache_key = id(base)
     cached = _RESOLVED_STYLE_CACHE.get(cache_key)
     if cached is not None and cached[0] is base:
         return cached[1], cached[2]
 
-    resolved, chart_context = _finalize_style(*_merge_style(base))
+    resolved, chart_context = _finalize_style(*_merge_style(base), background)
     _RESOLVED_STYLE_CACHE[cache_key] = (base, resolved, chart_context)
     return resolved, chart_context

@@ -2993,7 +2993,7 @@ Authored overlay for SliceLabelsStyle. Pie labels: typography + positioning offs
 |-------|------|-------------|
 | `offset` | float | Radial offset of slice labels from the arc in pixels. |
 | `line_height` | float | Line height for slice labels in pixels. Reserved vertical space above the disk is ``line_height × &lt;rendered lines&gt;`` per row, so the same value handles 1-line, 2-line, and multi-line templates. |
-| `font` | [FontStyle](#fontstyle) | Slice label font style overrides. ``color`` only takes effect on single-series pies (no ``color:`` channel authored); multi-series pies always paint each label the dark companion of its own wedge color and ignore an authored ``color`` here. Unset fields fall back to [`style.charts.font`](#chartsstyle) (except `color`). |
+| `font` | [FontStyle](#fontstyle) | Slice label font style overrides. ``color`` only takes effect on single-series pies (no ``color:`` channel authored); multi-series pies always paint each label with ink derived from its own wedge color against the chart's canvas, and ignore an authored ``color`` here. Unset fields fall back to [`style.charts.font`](#chartsstyle) (except `color`). |
 | `default_template` | [LabelsDefaultTemplate](#labelsdefaulttemplate) | Default Jinja templates for per-slice labels when template is not authored. |
 | `template` | str | Jinja2 label template. Overrides default_template when authored. |
 | `where` | str | Jinja2 boolean filter; labels only render on rows where this is truthy. |

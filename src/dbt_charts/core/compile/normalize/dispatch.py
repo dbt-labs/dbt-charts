@@ -150,7 +150,7 @@ def _theme_from_extends(extends: str | list[str] | None) -> str | None:
 # `repr` of the dumped fields, not `model_dump_json`: JSON writes inf and nan as
 # null, so `gap: .inf` would key the same as `gap: null` and silently take the
 # wrong style off the memo. A repr the other way round can only miss.
-_BoardCascadeKey = tuple[str, str]
+_BoardCascadeKey = tuple[str, str, str | None, bool]
 _CascadeProducts = tuple[ResolvedStyle, ChartStyleContext]
 
 # Board style cascades already resolved, innermost compile last. Every cascade
@@ -197,6 +197,7 @@ def compile_board_resolved_style(
     parent_context: ChartStyleContext | None,
     parent_patch: StylePatch | None = None,
     theme_name: str | None = None,
+    parent_theme_name: str | None = None,
 ) -> tuple[ResolvedStyle, ChartStyleContext, StylePatch | None]:
     """Build the authoritative ResolvedStyle + ChartStyleContext for this board scope.
 
@@ -225,6 +226,14 @@ def compile_board_resolved_style(
     The resolved style and chart context come from the same cascade pass —
     ``parent_resolved``/``parent_context`` must be supplied together (both
     None at the root, both set for every nested board) or omitted together.
+
+    ``parent_theme_name`` is the parent scope's own effective theme (also
+    None at the root) -- compared against this scope's own effective theme
+    to tell whether this board itself authored a `theme:`/`extends:` that
+    differs from what it would otherwise have inherited (the cascade
+    already falls through to the parent's theme when this board authors
+    none, so a difference here can only come from this scope's own
+    authoring), which decides the ink-canvas bottom layer below.
     """
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.merge import scope_patch
@@ -237,16 +246,88 @@ def compile_board_resolved_style(
 
     effective_theme = theme_name or get_default_theme_name()
     base = get_theme_style(effective_theme)
+    # This scope's own theme differs from its immediate parent's -- the
+    # cascade already falls through to the parent's theme when this board
+    # authors none (see the docstring above), so a difference here can only
+    # come from this scope's own `theme:`/`extends:`. render always paints
+    # a nested board's background over the PARENT's real, already-composited
+    # pixels (`bottom_layer` below), own theme or not -- an opaque own-theme
+    # canvas just composites to itself over anything beneath it, so this
+    # doesn't change what the bottom layer is. What it does change: this
+    # scope's own resolve can never be reused verbatim from the parent (the
+    # parent's entire resolved style is for the wrong theme), so it always
+    # earns a fresh composite -- folded into `background_authored` below,
+    # and it rules out the `board_style is None` branch's "reuse the parent
+    # verbatim" shortcut.
+    own_theme_declared = (
+        parent_theme_name is not None and effective_theme != parent_theme_name
+    )
+    # A nested board paints on top of what its PARENT scope actually
+    # composited, never the theme's raw canvas underneath that -- see
+    # resolve_style_and_context's own docstring. The root has no parent
+    # context, so it keeps the theme canvas (base_background=None).
+    bottom_layer = parent_context.ink_canvas if parent_context is not None else None
 
     if board_style is None:
-        if parent_resolved is not None and parent_context is not None:
+        if (
+            not own_theme_declared
+            and parent_resolved is not None
+            and parent_context is not None
+        ):
             return parent_resolved, parent_context, parent_patch
-        return (*resolve_style_and_context(base), parent_patch)
+        # No style: of its own to merge, but either there is no parent to
+        # reuse from (the root) or this scope's own theme rules out the
+        # shortcut above -- a fresh resolve against `base`, still folding
+        # whatever an ancestor authored (`parent_patch`).
+        patches = (parent_patch,) if parent_patch is not None else ()
+        return (
+            *resolve_style_and_context(
+                base,
+                *patches,
+                base_background=bottom_layer,
+                background_authored=own_theme_declared or parent_context is None,
+            ),
+            parent_patch,
+        )
 
     own_patch = scope_patch(parent_patch, board_style)
+    # An authored background composites exactly once over the canvas
+    # beneath it; a scope that only inherits one (this board's own raw
+    # style: authors no background:) adds nothing (resolve_style_and_context's
+    # own docstring has the full rule). Checked on `board_style`, the raw,
+    # unmerged patch -- `own_patch.charts.background` would echo the
+    # inherited value regardless of whether THIS board authored anything,
+    # since it folds the parent's own patch forward. Both authoring
+    # spellings count (the common `style.background:`, and the rarer
+    # explicit `style.charts.background:` override). Authored means the
+    # key is present AND the value is not None -- an explicit
+    # `background: null` is not an authored color, so it must not force a
+    # second composite either. `model_dump(exclude_unset=True)` (a plain
+    # dict, so `.get(...)` types as `Any`), not `board_style.background is
+    # not None` directly: a patch model's generated runtime class makes
+    # every field truly optional, but its TYPE_CHECKING stub inherits the
+    # field's type from the non-patch base (`Style.background: str`,
+    # required on the resolved model), so a bare `is not None` on the
+    # attribute itself reads as statically-impossible to pyright even
+    # though it is meaningful at runtime.
+    _own_fields = board_style.model_dump(exclude_unset=True)
+    background_authored = (
+        own_theme_declared
+        or parent_context is None
+        or _own_fields.get("background") is not None
+        or (
+            isinstance(_own_fields.get("charts"), dict)
+            and _own_fields["charts"].get("background") is not None
+        )
+    )
 
     cache = _current_board_style_cache()
-    key = (effective_theme, repr(own_patch.model_dump(exclude_unset=True)))
+    key = (
+        effective_theme,
+        repr(own_patch.model_dump(exclude_unset=True)),
+        bottom_layer,
+        background_authored,
+    )
     cached = cache.get(key)
     if cached is not None:
         # A shallow copy, not the cached object: the sizing pass keys its
@@ -257,7 +338,12 @@ def compile_board_resolved_style(
         # not the allocation.
         return copy.copy(cached[0]), cached[1], own_patch
 
-    resolved = resolve_style_and_context(base, own_patch)
+    resolved = resolve_style_and_context(
+        base,
+        own_patch,
+        base_background=bottom_layer,
+        background_authored=background_authored,
+    )
     cache[key] = resolved
     return (*resolved, own_patch)
 
@@ -324,6 +410,15 @@ def sync_board_resolved_style(
     too, since every field an ancestor board explicitly authored flows down
     via ``parent_patch`` (through the same nested-board ``Merge`` relation
     ``compile_board_resolved_style`` uses at compile time).
+
+    No ``parent_theme_name`` here, unlike the compile-time propagate walk:
+    a nested ``board.theme`` is frozen at compile time (sibling boards never
+    re-derive it when an ancestor's theme changes later), so comparing it
+    against the just-changed parent's theme here would read stale
+    inheritance as if this board had pinned its own theme. The nested-theme
+    ink-canvas fix (``compile_board_resolved_style``'s ``parent_theme_name``)
+    is compile-time only; a ``set_theme()`` re-cascade keeps its pre-fix
+    behavior.
     """
     board.resolved_style, board.chart_style_context, own_patch = (
         compile_board_resolved_style(
@@ -349,6 +444,7 @@ def _propagate_resolved_style(
     parent_resolved: ResolvedStyle,
     parent_context: ChartStyleContext,
     parent_patch: StylePatch | None = None,
+    parent_theme_name: str | None = None,
 ) -> None:
     """Walk the layout tree and set resolved_style/chart_style_context on nested Boards."""
     from dbt_charts.core.compile.models.board.normalized import Layout
@@ -368,12 +464,14 @@ def _propagate_resolved_style(
                 parent_context,
                 parent_patch,
                 theme_name=item.board.theme,
+                parent_theme_name=parent_theme_name,
             )
             _propagate_resolved_style(
                 item.board.layout,
                 item.board.resolved_style,
                 item.board.chart_style_context,
                 own_patch,
+                parent_theme_name=item.board.theme,
             )
 
 
@@ -764,6 +862,7 @@ def normalize_board(
         parent_context.get("resolved_style"),
         parent_context.get("chart_style_context"),
         theme_name=theme,
+        parent_theme_name=parent_context.get("theme"),
     )
 
     # ════════════════════════════════════════════════════════════════════
@@ -814,6 +913,7 @@ def normalize_board(
         resolved_style,
         chart_style_context,
         own_style_patch,
+        parent_theme_name=theme,
     )
 
     # Auto-generate hidden variables for tabs/details widgets

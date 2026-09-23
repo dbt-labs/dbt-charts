@@ -60,7 +60,7 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
-from dbt_charts.core.compile.resolve.style.palette import resolve_dark_companion_stops
+from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
@@ -137,10 +137,11 @@ def _resolve_pie(
     # patch-peeking is needed) is applied later by PieEmitter, which prefers
     # it over dark_companion_stops[0]. Multi-series pies never honor font.color.
     dark_stops: tuple[str, ...]
+    canvas = chart_local_style_context.ink_canvas
     if color_channel is not None and color_channel.data_field:
-        dark_stops = tuple(resolve_dark_companion_stops(list(eff_palette)))
+        dark_stops = tuple(mark_ink(c, canvas) for c in eff_palette)
     else:
-        dark_stops = tuple(resolve_dark_companion_stops(eff_palette[:1]))
+        dark_stops = (mark_ink(eff_palette[0], canvas),)
 
     # template/where live under style.marks.slice.labels (mirrors the authored
     # surface); the default_template fallback fires when template is None

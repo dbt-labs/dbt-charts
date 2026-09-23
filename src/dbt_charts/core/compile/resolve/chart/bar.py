@@ -706,7 +706,9 @@ def _resolve_bar(
     # Hoisted above the ResolvedBarStyle construction below (its only other
     # use) so the horizontal collision disqualifier can measure the same
     # font the rail actually paints with, without resolving it twice.
-    series_label = _resolved_series_label(chart_style_context, primary, width)
+    series_label = _resolved_series_label(
+        chart_style_context, primary, width, chart_local_style_context.ink_canvas
+    )
     # Resolved after orientation: the disqualifier chain below is specific to
     # the horizontal rail. `merged_legend` was hoisted above (with
     # `plot_height_estimate`) for the floor check; `_base_kwargs` further
@@ -1323,7 +1325,12 @@ def _resolve_histogram(
         stacked_domain_max=None,
         orientation="vertical",
         style=ResolvedBarStyle(
-            series_label=_resolved_series_label(chart_style_context, primary, width),
+            series_label=_resolved_series_label(
+                chart_style_context,
+                primary,
+                width,
+                chart_local_style_context.ink_canvas,
+            ),
             stack_order=None,
             mark=hist_mark,
             overlap=None,

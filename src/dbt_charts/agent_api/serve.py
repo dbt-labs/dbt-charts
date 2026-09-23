@@ -18,16 +18,17 @@ if TYPE_CHECKING:
 class ServeSetup(BaseModel):
     """The resolved outcome of a successful `prepare_serve` call.
 
-    `app` is `Any` rather than `FastAPI`: `create_server`'s real return value is
-    a `FastAPI` instance, but the ASGI-app contract `uvicorn.run` actually needs
-    is duck-typed (any ASGI-callable) — pinning it to `FastAPI` would reject the
-    test doubles `dbt-charts/tests/cli/test_serve_cli.py` legitimately passes in
-    place of a real server.
+    `app` and `server` are `Any` rather than `FastAPI` / `uvicorn.Server`:
+    `create_server` really does return a `FastAPI`, but the contract its callers
+    need is duck-typed, and pinning either would reject the test doubles
+    `dbt-charts/tests/cli/test_serve_cli.py` legitimately passes in place of a
+    real server.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     app: Any
+    server: Any
     port: int
     dialect: str
     dialect_inferred: bool
@@ -44,7 +45,7 @@ def prepare_serve(
     no_cache: bool,
     cache_path: Path | None,
 ) -> ServeSetup | Diagnostic:
-    """Validate startup config, resolve port/dialect, and build the ASGI app.
+    """Validate startup config, resolve port/dialect, and build the app and server.
 
     Returns a `Diagnostic` (not a raise) when `DCT_DEFAULT_THEME` names an
     unknown theme — the CLI formats and exits on either return shape. A
@@ -57,6 +58,7 @@ def prepare_serve(
     from dbt_charts.core.project_roots import infer_dialect_from_dbt
     from dbt_charts.core.serve.port import resolve_port
     from dbt_charts.core.serve.server import create_server
+    from dbt_charts.core.serve.shutdown import build_server
 
     env_theme = os.environ.get("DCT_DEFAULT_THEME")  # noqa: TID251 — DCT_DEFAULT_THEME knob
     # Empty string is treated as unset (matches get_default_theme_name, which
@@ -98,6 +100,11 @@ def prepare_serve(
 
     return ServeSetup(
         app=app,
+        # 3s bounds a slow in-flight render; the live-reload streams end on
+        # their own, because shutdown closes the watch they read from.
+        server=build_server(
+            app, host=host, port=resolved_port, timeout_graceful_shutdown=3
+        ),
         port=resolved_port,
         dialect=effective_dialect,
         dialect_inferred=dialect_inferred,

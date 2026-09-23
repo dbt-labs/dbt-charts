@@ -1,0 +1,3 @@
+kind: Fixes
+body: CTRL-C on `dct serve` with a browser tab open no longer prints an "Exception in ASGI application" traceback, and `dct mcp serve` no longer hangs on shutdown. Live reload now uses one project watch per server, which the server closes on the way down, so the `/__livereload` streams end instead of being force-canceled.
+time: 2026-09-23T16:45:00.000000-00:00

@@ -769,7 +769,7 @@ def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
     compiled = _resolve_color_tokens(compiled)
     # Roles are resolvable only now that `style.palettes` is final; expanding
     # here keeps every downstream consumer seeing plain stop lists.
-    compiled = expand_palette_refs(compiled)
+    compiled = expand_palette_refs(compiled, path="style")
     _compiled_theme_cache[name] = compiled
     return compiled
 

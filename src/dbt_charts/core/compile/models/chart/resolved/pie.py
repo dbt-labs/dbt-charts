@@ -49,15 +49,16 @@ class ResolvedPieChart(_SharedResolvedChartFields):
     style: ResolvedPieStyle = Field(
         description="Pie family style slice.",
     )
-    # Dark-companion ink stops for label color encoding, pre-baked from the
-    # resolved palette at resolve time (avoids importing compile.palette in
-    # render/chart/).  One stop per distinct color value in data order when a
-    # color channel is present; a single stop for palette[0] otherwise.
+    # Slice label ink, pre-baked from the resolved palette at resolve time
+    # (avoids importing compile.palette in render/chart/). One stop per
+    # distinct color value in data order when a color channel is present;
+    # a single stop for palette[0] otherwise.
     dark_companion_stops: tuple[str, ...] = Field(
         description=(
-            "Pre-baked dark companion stops for label ink: a per-category "
-            "color scale when a color channel is present, a single static "
-            "fill otherwise."
+            "Slice label ink, derived from each mark color against the "
+            "chart's canvas so it stays legible on light and dark canvases "
+            "alike: a per-category color scale when a color channel is "
+            "present, a single static fill otherwise."
         ),
     )
     resolution_width: float = Field(

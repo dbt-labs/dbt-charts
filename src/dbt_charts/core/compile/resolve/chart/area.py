@@ -739,7 +739,12 @@ def _resolve_area(
         chart_type="area",
         stack=resolved_stack,
         style=ResolvedAreaStyle(
-            series_label=_resolved_series_label(chart_style_context, primary, width),
+            series_label=_resolved_series_label(
+                chart_style_context,
+                primary,
+                width,
+                chart_local_style_context.ink_canvas,
+            ),
             area_mark=resolved_area_mark,
             line_mark=resolved_line_mark,
             point_mark=area.marks.point,

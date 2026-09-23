@@ -69,7 +69,9 @@ def _validate_board(board: Board, validated: set[int]) -> None:
         if item.type == "board" and item.board is not None:
             _validate_board(item.board, validated)
 
-    expand_palette_refs(board.chart_style_context.pre_style.charts, {})
+    expand_palette_refs(
+        board.chart_style_context.pre_style.charts, {}, path="style.charts"
+    )
 
     for chart in board.charts.values():
         if id(chart) in validated:
@@ -81,6 +83,6 @@ def _validate_board(board: Board, validated: set[int]) -> None:
 def _validate_chart(chart: Chart) -> None:
     """Check one chart's palette-bearing surfaces: its own style patch, and,
     for a KPI, its background channel."""
-    expand_palette_refs(chart.style, {})
+    expand_palette_refs(chart.style, {}, path=f"charts.{chart.id}.style")
     if isinstance(chart, KpiChart):
-        expand_palette_refs(chart.background, {})
+        expand_palette_refs(chart.background, {}, path=f"charts.{chart.id}.background")

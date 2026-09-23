@@ -53,11 +53,18 @@ from typing import Any, Literal
 import yaml
 
 from dbt_charts.core.colors import (
+    InvalidColorError,
+    composite_over,
+    css_named_color_to_hex,
     ensure_readable_ink,
     hex_to_oklch,
+    is_deferred_color_reference,
     is_light_canvas,
+    is_sanitizable_color,
     oklch_to_hex,
+    parse_css_color,
     relative_luminance,
+    rgb01_to_hex,
     wcag_contrast,
 )
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -1020,6 +1027,78 @@ def label_ink(color: str, canvas: str) -> str:
     return _label_ink_cached(color, canvas, get_chart_rendering().color_variants)
 
 
+def _try_parse_color(value: str) -> tuple[float, float, float, float] | None:
+    """parse_css_color(value), or None when dbt Charts cannot read it.
+
+    No breaking change: an authored color the engine cannot parse (an
+    ``oklch()``, a typo, a browser-only form) is never an error here --
+    every caller of this falls back to treating the value as if it
+    contributed no ink of its own, the same contract the pre-live-derivation
+    companion lookup had for a color with no ``-dark`` twin.
+    """
+    try:
+        return parse_css_color(value)
+    except InvalidColorError:
+        return None
+
+
+def ink_canvas(*layers: str) -> str:
+    """Composite ``layers`` top-down into a single opaque hex canvas.
+
+    ``layers[0]`` paints on top, ``layers[-1]`` is the base -- each layer
+    can be hex, a CSS keyword name, ``transparent``/``none``, or an
+    ``rgb()``/``rgba()``/``hsl()``/``hsla()`` function. A layer dbt Charts
+    cannot parse is skipped -- it contributes nothing, the same as a fully
+    transparent one -- so the result falls through to the next layer down
+    and ultimately the theme's own canvas.
+
+    Raises ``ValueError`` ("theme canvas must be opaque") when the fully
+    composited result is still not opaque -- unreachable through normal
+    authoring, since every caller's bottom layer is the theme's own canvas
+    and a layer above it can only raise the composited alpha, never lower
+    it below the base.
+    """
+    composited: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    for layer in reversed(layers):
+        parsed = _try_parse_color(layer)
+        if parsed is None:
+            continue
+        composited = composite_over(parsed, composited)
+    if composited[3] < 1.0 - 1e-9:
+        raise ValueError("theme canvas must be opaque")
+    return rgb01_to_hex(*composited[:3])
+
+
+def mark_ink(color: str, canvas: str) -> str:
+    """label_ink() for one mark color.
+
+    A color token or bare identifier that is NOT already a real, parseable
+    color defers to ``validate_board_palette_specs()`` instead of resolving
+    here -- checked in that order because a CSS keyword name like
+    ``white`` is also bare-identifier-shaped. Everything else routes
+    through ``parse_css_color``; a fully transparent mark, or one dbt
+    Charts cannot read at all, has no ink to derive -- the render paints
+    it as authored; there is no ink to derive -- and passes through
+    unchanged.
+    """
+    lowered = color.strip().lower()
+    is_real_color = (
+        lowered in {"transparent", "none"}
+        or is_sanitizable_color(color)
+        or css_named_color_to_hex(color) is not None
+    )
+    if not is_real_color and is_deferred_color_reference(color):
+        return color
+    parsed = _try_parse_color(color)
+    if parsed is None:
+        return color
+    r, g, b, a = parsed
+    if a <= 0.0:
+        # Fully transparent: no ink to derive against any canvas.
+        return color
+    return label_ink(rgb01_to_hex(r, g, b), canvas)
+
+
 # ============================================================================
 # Public API — discovery
 # ============================================================================
@@ -1076,173 +1155,20 @@ def select_default_palette(
     raise ValueError(f"unknown data_shape: {data_shape}")
 
 
-# ── Bright/dark companion pairing for direct-label inking ───────────────────
+# ── Continuous dark-companion lookup (sequential/diverging table swap) ──────
 #
-# A "dark companion" palette is pair-defined with its bright counterpart: slot
-# N in the bright palette is the same hue as slot N in the dark palette, just
-# at a darker tone. Used for label ink that sits a notch darker than its mark
-# color (endpoint labels on multi-series line/area charts, ``per_series``
-# strip labels on support_table-bearing charts).
-#
-# Pairs the engine knows about today:
-#   - vivid-10     → vivid-10-dark      (stark theme)
-#   - editorial-10 → editorial-10-dark  (editorial / cream themes)
-#
-# Future palette ``X`` shipped alongside ``X-dark`` works automatically — the
-# resolver looks up ``<bright>-dark`` in the catalog and falls back to the
-# bright color itself if no dark companion is registered.
-#
-# Both helpers live here (not in render/) because they are pure palette
-# indexing — no rendering, no spec construction. ``compile/resolve/``
-# and ``render/chart/support_table_attachment.py`` both consume the same
-# companion-pairing path; placing the helpers here removes the inverted
-# compile→render dependency that an earlier draft papered over with a
-# deferred import.
-
-
-@functools.lru_cache(maxsize=8)
-def _palette_stops_cached(name: str) -> list[str]:
-    """Memoized palette-stop lookup keyed on palette name.
-
-    Sized for the handful of categorical palettes shipped with the catalog —
-    bright + dark companions for each theme, plus a small headroom. Replaces
-    the earlier hardcoded ``_category_10_bright_stops`` / ``_category_10_dark_stops``
-    helpers; their values fall out of this cache for the same memoization win.
-    """
-    return palette(name)
-
-
-@functools.lru_cache(maxsize=8)
-def _has_dark_companion(bright_palette_name: str) -> bool:
-    """Whether ``<bright_palette_name>-dark`` is registered in the catalog.
-
-    Cached because ``list_palettes`` scans the catalog directory; we call this
-    once per chart-render and want to avoid re-scanning per stop.
-    """
-    dark_name = f"{bright_palette_name}-dark"
-    return dark_name in list_palettes(family="categorical")
+# Categorical label ink is now derived live (label_ink()); this lookup is the
+# lone survivor, for the continuous-table dark-canvas swap only -- a
+# sequential/diverging palette has no single "mark color" to derive live ink
+# against, so the swap still needs a real -dark palette file to pin to.
 
 
 @functools.lru_cache(maxsize=32)
 def _has_continuous_dark_companion(name: str) -> bool:
     """Whether ``<name>-dark`` is a registered sequential/diverging palette.
 
-    Sibling to :func:`_has_dark_companion` (categorical); the dark-canvas table
-    swap uses it to decide whether a pinned continuous palette has a -dark twin.
+    The dark-canvas table swap uses it to decide whether a pinned continuous
+    palette has a -dark twin.
     """
     twin = _get_index().get(f"{name}-dark")
     return twin is not None and twin["family"] in ("sequential", "diverging")
-
-
-@functools.lru_cache(maxsize=1)
-def _categorical_palettes_with_dark_companions() -> tuple[str, ...]:
-    """Names of categorical palettes that ship a ``<name>-dark`` companion.
-
-    Cached for the process lifetime — palette registration is static.
-    Ordering puts ``vivid-10`` first so the default palette takes priority
-    when stops happen to overlap between catalogs.
-    """
-    names = list_palettes(family="categorical")
-    candidates = [n for n in names if not n.endswith("-dark")]
-    paired = [n for n in candidates if f"{n}-dark" in names]
-    # Stable order with vivid-10 first (default), others alphabetic.
-    paired.sort(key=lambda n: (0 if n == "vivid-10" else 1, n))
-    return tuple(paired)
-
-
-def _find_dark_companion(c: str) -> str | None:
-    """Find ``c``'s dark companion by scanning paired palettes for a slot match.
-
-    For each bright palette that has a ``<name>-dark`` registered, checks
-    whether ``c`` appears in its stops. If found, returns the dark companion
-    at the same slot index. Returns ``None`` if ``c`` is not a stop in any
-    paired palette (custom-hex override → fall through to bright color).
-
-    Each emitted color is resolved independently, so author-picked non-slot-0
-    palette stops resolve correctly (e.g. editorial-10[1] → editorial-10-dark[1]).
-
-    Note: if the caller passes wrong input — e.g. the line/area chart off-by-one
-    tracked in chart-series-label-color-binding emits ``palette[1:n+1]`` instead
-    of ``palette[:n]`` — each color is still found at its actual slot index, and
-    the returned companion is at that index. The resolver does its job; the caller
-    passed wrong input.
-    """
-    for bright_name in _categorical_palettes_with_dark_companions():
-        bright_stops = _palette_stops_cached(bright_name)
-        if c in bright_stops:
-            idx = bright_stops.index(c)
-            dark_stops = _palette_stops_cached(f"{bright_name}-dark")
-            if idx < len(dark_stops):
-                return dark_stops[idx]
-    return None
-
-
-def resolve_dark_companion_stops(
-    emitted_colors: list[str],
-    bright_palette_name: str | None = None,
-) -> list[str]:
-    """Map a list of emitted mark colors to their dark-companion ink colors.
-
-    For each color in ``emitted_colors``:
-
-    - If ``bright_palette_name`` is provided, find the color's index in that
-      palette and return the corresponding stop from ``<bright_palette_name>-dark``.
-    - If ``bright_palette_name`` is None, scan all registered paired palettes for
-      one whose stops contain the color (per-color independent lookup). Each
-      color in the list is resolved independently — author-picked non-slot-0
-      stops resolve correctly without any caller-side palette plumbing.
-    - If no dark companion is found for a color (custom override not in any
-      palette, or no dark companion registered), fall back to the bright color
-      itself (label matches the mark without contrast bump).
-
-    ``bright_palette_name`` is optional. When unset, the per-color scan handles
-    theme-cycled stops, author-picked palette slots, and cross-palette mixes
-    automatically. Callers that know the palette name should still pass it
-    for explicit disambiguation (forward-compat for chart-series-label-color-
-    binding plumbing once compiled-style carries the palette name).
-
-    Used by both ``_build_endpoint_label_pane`` (endpoint labels) and the
-    ``per_series`` support-table strip row emitter so the two surfaces share
-    the same palette-companion pairing path.
-
-    Future direction — slot-keyed lookup. This helper is hex-keyed because
-    the compile pipeline already discards the palette name at validation:
-    ``CompiledChartsStyle._expand_palette_name`` expands ``"editorial-10"``
-    into a ``list[str]`` of hex stops, so downstream only hex is visible.
-    Once color tokens become first-class on the authoring surface (the
-    ``dashboard-color-roles`` initiative; tokens like ``palette.editorial-10.2``
-    and role bindings flowing through the cascade), the natural shape is
-    ``dark_companion(palette_name, slot_idx) -> str``: token-aware callers
-    pass ``(palette, slot)`` tuples and bypass the per-color scan. Slot-keyed
-    has three advantages over hex-keyed worth preserving in design memory:
-
-      1. No slot-0 collision risk. Distinct categorical palettes can share
-         the same hex at slot 0 (e.g. ``vivid-10`` and ``hero-6``);
-         hex-keyed picks one by scan order. Token-keyed disambiguates by
-         construction.
-      2. O(1) lookup. Hex-keyed scans the catalog; slot-keyed indexes.
-      3. Robust to palette content edits. A Round-B hex tune silently
-         breaks hex-keyed lookups; slot references survive.
-
-    The migration path: keep this hex-keyed entry point as a fallback, add a
-    slot-keyed entry point once tokens land, and let callers opt into the
-    new path as their inputs become token-aware. The optional
-    ``bright_palette_name`` parameter is the structural seam — callers that
-    know the palette name today (or once the chart-series-label-color-binding
-    plumbing exposes it) already bypass the catalog scan.
-    """
-    if bright_palette_name is not None:
-        if not _has_dark_companion(bright_palette_name):
-            return list(emitted_colors)
-        bright_stops = _palette_stops_cached(bright_palette_name)
-        dark_stops = _palette_stops_cached(f"{bright_palette_name}-dark")
-        result: list[str] = []
-        for c in emitted_colors:
-            try:
-                idx = bright_stops.index(c)
-            except ValueError:
-                idx = -1
-            result.append(dark_stops[idx] if 0 <= idx < len(dark_stops) else c)
-        return result
-
-    return [_find_dark_companion(c) or c for c in emitted_colors]

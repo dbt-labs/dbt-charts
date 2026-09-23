@@ -89,6 +89,7 @@ from dbt_charts.core.registered_views.router import RouteRouter
 from dbt_charts.core.render.dir_context import lazy_dir_context
 from dbt_charts.core.render.nav import nav_context
 from dbt_charts.core.serve.alias_index import AliasIndex, board_file_candidates
+from dbt_charts.core.serve.watcher import FileWatcher
 
 logger = logging.getLogger(__name__)
 
@@ -1005,6 +1006,7 @@ def create_server(
             _app.state.config_mtime = _config_mtime(core_project.root)
             _app.state.alias_index_mtime = _board_dir_mtime(core_project.charts_dir)
             _app.state.alias_index = AliasIndex.build(core_project)
+            await _app.state.watcher.start()
             yield
         finally:
             # Close the live registry (older ones were closed on rebuild) and the
@@ -1017,6 +1019,9 @@ def create_server(
             finally:
                 if cache is not None:
                     cache.close()
+            # Last: must stay below the warehouse closes, so a raise here
+            # cannot skip them.
+            await _app.state.watcher.stop()
 
     app = FastAPI(
         title="dbt charts Server",
@@ -1036,6 +1041,9 @@ def create_server(
     # Fallbacks until the lifespan sets the real signatures on startup.
     app.state.alias_index_mtime = 0.0
     app.state.config_mtime = 0.0
+    # Built here so shutdown.py can take it before the app runs. Watches the
+    # root, not charts_dir, which lives under it and need not exist yet.
+    app.state.watcher = FileWatcher(str(core_project.root))
     # Serializes concurrent registry / alias-index rebuilds.
     _refresh_lock = asyncio.Lock()
 
@@ -1109,16 +1117,14 @@ def create_server(
 
         Browser tabs opened via ``dct serve`` connect here via EventSource.
         When a board file or dbt_charts.yml changes, the server pushes
-        ``data: reload`` and the tab calls ``location.reload()``.
+        ``data: reload`` and the tab calls ``location.reload()``. The stream
+        ends when the server closes the watch, which is how CTRL-C reaches it.
         """
 
-        project: FilesystemProject = request.app.state.project
+        watcher: FileWatcher = request.app.state.watcher
 
         async def _event_stream() -> AsyncGenerator[str, None]:
-            from watchfiles import awatch  # noqa: PLC0415
-
-            watch_paths = [str(project.charts_dir), str(project.root)]
-            async for _ in awatch(*watch_paths):
+            async for _ in watcher.changes():
                 yield "data: reload\n\n"
 
         return StreamingResponse(

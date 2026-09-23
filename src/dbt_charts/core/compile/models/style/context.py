@@ -111,14 +111,13 @@ class ChartStyleContext:
 
     # --- Palette & color tokens ---
     palette: list[str]
-    # Dark-companion ink for each `palette` slot (same index), for label text
-    # painted over that slot's mark color. Baked once here so render never
-    # calls compile.resolve.style.palette.resolve_dark_companion_stops
-    # itself. This is the board palette, not a chart's effective (possibly
-    # chart-local-overridden)
-    # one — support_table_attachment.py's strip ink intentionally keys off the
-    # board palette to match pre-refactor render behavior; do not consolidate
-    # with ResolvedSeriesLabelStyle.dark_companion_palette (chart-effective)
+    # label_ink(mark, canvas) for each `palette` slot (same index), for
+    # label text painted over that slot's mark color. Baked once here so
+    # render never calls compile.resolve.style.palette.label_ink itself.
+    # This is the board palette, not a chart's effective (possibly
+    # chart-local-overridden) one — support_table_attachment.py's strip ink
+    # intentionally keys off the board palette; do not consolidate with
+    # ResolvedSeriesLabelStyle.dark_companion_palette (chart-effective)
     # without checking that call site.
     dark_companion_palette: tuple[str, ...]
     # Theme default ink palette for non-layered, single-encoding marks.
@@ -259,8 +258,18 @@ class ChartStyleContext:
     color: str | None = None
     # Materialized chart background: chart-local style.background when authored,
     # otherwise the board/board background propagated from ResolvedStyle.background
-    # at compile time.
+    # at compile time. Raw -- may be translucent (rgba(...)), a CSS name, or
+    # transparent; label ink never reads this directly, see ink_canvas below.
     background: str = ""
+    # The opaque canvas label ink derives contrast against (`ink_canvas()`
+    # in compile/resolve/style/palette.py). Always a fully opaque hex. An
+    # authored translucent style.background composites exactly once over
+    # this value; a scope that only inherits a background carries it
+    # forward unchanged. Computed, not authored -- excluded from the
+    # generic charts.* passthrough below. kw_only, not defaulted: every
+    # constructor call sets it explicitly (see the class docstring's
+    # requirement).
+    ink_canvas: str = dataclasses.field(kw_only=True)
 
     # Board-wide value→color scales, one per bound categorical field — the
     # PLANNED output the planner builds from ``category_color_pins`` plus

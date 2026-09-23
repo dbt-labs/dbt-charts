@@ -1,0 +1,3 @@
+kind: Features
+body: 'label ink for endpoint labels, stacked-bar rails, pie slice labels, and support-table strips is now derived live from each mark color against the chart''s own canvas, so inline user palettes and dark themes get legible labels with no companion palette files; the constants live in a new `chart_rendering.color_variants` block in `dbt_charts.yml`. An authored `background:` the engine cannot read (an `oklch()` or `var(--x)` value, say) contributes no layer, so label ink derives against the canvas beneath it; an authored palette color the engine cannot read is painted as authored, with no ink derived for it.'
+time: 2026-09-22T16:37:17.000000-07:00

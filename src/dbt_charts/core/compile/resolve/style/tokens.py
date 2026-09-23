@@ -441,7 +441,10 @@ def _resolve_palette_leaf(
 
 
 def expand_palette_refs(
-    node: Any, palettes: Mapping[str, str] | None = None, name_only: bool = False
+    node: Any,  # type-state: explicit_any — generic recursive walk over a heterogeneous Pydantic-model/dict/list/scalar style tree
+    palettes: Mapping[str, str] | None = None,
+    name_only: bool = False,
+    path: str = "",
 ) -> Any:
     """Substitute theme palette roles and expand every palette name to stops.
 
@@ -455,6 +458,12 @@ def expand_palette_refs(
     ``ERR-PALETTE-UNKNOWN`` here — the first point at which the two can be told
     apart, and the reason the model validator defers an unresolvable name
     instead of rejecting it.
+
+    ``path`` accumulates the authored field path as the walk descends (a
+    caller seeds it with the root it started from, e.g. ``"style"`` or
+    ``f"charts.{chart.id}.style"``), so a diagnostic raised deep in the tree
+    names the real field an author could look up, not just the bare leaf
+    name every recursive call shares (``"palette"``).
     """
     from dbt_charts.core.compile.models.style.theme import Style
 
@@ -474,11 +483,17 @@ def expand_palette_refs(
             # the table it is itself part of.
             if isinstance(node, Style) and name in _RESOLUTION_CONTEXT_FIELDS:
                 continue
+            child_path = f"{path}.{name}" if path else name
             if name in _PALETTE_FIELDS and isinstance(value, str):
-                new_value = _resolve_palette_leaf(value, name, palettes, name_only)
+                new_value = _resolve_palette_leaf(
+                    value, child_path, palettes, name_only
+                )
             else:
                 new_value = expand_palette_refs(
-                    value, palettes, name_only or name in _NAME_ONLY_FIELDS
+                    value,
+                    palettes,
+                    name_only or name in _NAME_ONLY_FIELDS,
+                    child_path,
                 )
             if new_value is not value:
                 updates[name] = new_value
@@ -490,19 +505,23 @@ def expand_palette_refs(
         # (KPI `background`'s `{column, scale}` channel spec) never becomes a
         # model, so this branch is key-aware too — the same `_PALETTE_FIELDS`
         # check the model branch runs on field names, run here on dict keys.
-        new_map = {
-            k: (
-                _resolve_palette_leaf(v, k, palettes, name_only)
-                if k in _PALETTE_FIELDS and isinstance(v, str)
-                else expand_palette_refs(
-                    v, palettes, name_only or k in _NAME_ONLY_FIELDS
+        new_map = {}
+        changed = False
+        for k, v in node.items():
+            child_path = f"{path}.{k}" if path else k
+            if k in _PALETTE_FIELDS and isinstance(v, str):
+                new_v = _resolve_palette_leaf(v, child_path, palettes, name_only)
+            else:
+                new_v = expand_palette_refs(
+                    v, palettes, name_only or k in _NAME_ONLY_FIELDS, child_path
                 )
-            )
-            for k, v in node.items()
-        }
-        return new_map if any(new_map[k] is not node[k] for k in node) else node
+            new_map[k] = new_v
+            changed = changed or new_v is not v
+        return new_map if changed else node
     if isinstance(node, list):
-        new_list = [expand_palette_refs(item, palettes, name_only) for item in node]
+        new_list = [
+            expand_palette_refs(item, palettes, name_only, path) for item in node
+        ]
         return (
             new_list
             if any(a is not b for a, b in zip(new_list, node, strict=True))

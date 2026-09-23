@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.0.1.dev96",
+  "version": "0.8.1.dev210",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11449,6 +11449,10 @@
         "background": {
           "title": "Background",
           "type": "string"
+        },
+        "ink_canvas": {
+          "title": "Ink Canvas",
+          "type": "string"
         }
       },
       "required": [
@@ -11469,6 +11473,7 @@
         "heatmap",
         "histogram",
         "hover_emphasis",
+        "ink_canvas",
         "kpi",
         "label_usable_ratio",
         "legend",
@@ -14740,7 +14745,7 @@
           "description": "Pie family style slice."
         },
         "dark_companion_stops": {
-          "description": "Pre-baked dark companion stops for label ink: a per-category color scale when a color channel is present, a single static fill otherwise.",
+          "description": "Slice label ink, derived from each mark color against the chart's canvas so it stays legible on light and dark canvases alike: a per-category color scale when a color channel is present, a single static fill otherwise.",
           "items": {
             "type": "string"
           },
@@ -16576,7 +16581,7 @@
           "type": "string"
         },
         "dark_companion_palette": {
-          "description": "Dark-companion ink stops for the full effective palette; the renderer slices [:n_series] for legible label text over light backgrounds.",
+          "description": "Label ink for the full effective palette, one stop per mark, derived from each mark color against the chart's canvas so it stays legible on light and dark canvases alike; the renderer slices [:n_series] for the labels it actually draws.",
           "items": {
             "type": "string"
           },
@@ -19422,7 +19427,7 @@
         },
         "font": {
           "$ref": "#/$defs/FontStyle",
-          "description": "Slice label font style overrides. ``color`` only takes effect on single-series pies (no ``color:`` channel authored); multi-series pies always paint each label the dark companion of its own wedge color and ignore an authored ``color`` here."
+          "description": "Slice label font style overrides. ``color`` only takes effect on single-series pies (no ``color:`` channel authored); multi-series pies always paint each label with ink derived from its own wedge color against the chart's canvas, and ignore an authored ``color`` here."
         },
         "default_template": {
           "$ref": "#/$defs/LabelsDefaultTemplate",

@@ -77,47 +77,48 @@ ALLOWED: dict[tuple[str, int], str] = {
     # and app.state.project are FilesystemProject throughout server.py — no
     # runtime isinstance narrow needed, only the FilesystemProject import
     # (under TYPE_CHECKING) and explicit local annotations below.
-    ("core/serve/server.py", 500): (
-        "_render_board_file(project: FilesystemProject) — already FS-typed"
-    ),
     ("core/serve/server.py", 501): (
         "_render_board_file(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 603): (
-        "_render_board_download(project: FilesystemProject) — already FS-typed"
+    ("core/serve/server.py", 502): (
+        "_render_board_file(project: FilesystemProject) — already FS-typed"
     ),
     ("core/serve/server.py", 604): (
         "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1005): (
-        "create_server: core_project inferred FilesystemProject from the parameter"
+    ("core/serve/server.py", 605): (
+        "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
     ("core/serve/server.py", 1006): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1068): (
+    ("core/serve/server.py", 1007): (
+        "create_server: core_project inferred FilesystemProject from the parameter"
+    ),
+    ("core/serve/server.py", 1046): (
+        "create_server: core_project inferred FilesystemProject from the parameter; "
+        "the live-reload watch is opened over the project root"
+    ),
+    ("core/serve/server.py", 1076): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1080): (
+    ("core/serve/server.py", 1088): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1120): (
-        "livereload: project explicitly typed FilesystemProject"
-    ),
-    ("core/serve/server.py", 1166): (
+    ("core/serve/server.py", 1172): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1252): (
+    ("core/serve/server.py", 1258): (
         "get_board: app.state.project is always FilesystemProject (dct serve is "
         "filesystem-only); the local a few lines below makes this explicit"
     ),
-    ("core/serve/server.py", 1355): (
+    ("core/serve/server.py", 1361): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
-    ("core/serve/server.py", 1357): (
+    ("core/serve/server.py", 1363): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
-    ("core/serve/server.py", 1379): (
+    ("core/serve/server.py", 1385): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (
@@ -148,10 +149,10 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/project_session.py", 300): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
-    ("agent_api/serve.py", 78): (
+    ("agent_api/serve.py", 80): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
-    ("agent_api/serve.py", 86): (
+    ("agent_api/serve.py", 88): (
         "prepare_serve(project: FilesystemProject), already FS-typed "
         "(dbt_root, dialect inference reads the linked dbt project directory)"
     ),

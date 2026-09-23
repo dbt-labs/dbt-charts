@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,11 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.diagnostics import Diagnostic
 
 
+def _app_double() -> SimpleNamespace:
+    """Stands in for `create_server`'s app: an ASGI callable carrying its watch."""
+    return SimpleNamespace(state=SimpleNamespace(watcher=object()))
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> FilesystemProject:
     (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
@@ -21,7 +27,7 @@ def project(tmp_path: Path) -> FilesystemProject:
 
 class TestPrepareServe:
     def test_explicit_dialect_skips_inference(self, project: FilesystemProject) -> None:
-        sentinel = object()
+        sentinel = _app_double()
         with (
             patch("dbt_charts.core.serve.port.resolve_port", return_value=1234),
             patch("dbt_charts.core.project_roots.infer_dialect_from_dbt") as mock_infer,
@@ -54,7 +60,9 @@ class TestPrepareServe:
                 "dbt_charts.core.project_roots.infer_dialect_from_dbt",
                 return_value="bigquery",
             ),
-            patch("dbt_charts.core.serve.server.create_server", return_value=object()),
+            patch(
+                "dbt_charts.core.serve.server.create_server", return_value=_app_double()
+            ),
         ):
             result = prepare_serve(
                 project,
@@ -79,7 +87,9 @@ class TestPrepareServe:
                 "dbt_charts.core.project_roots.infer_dialect_from_dbt",
                 return_value=None,
             ),
-            patch("dbt_charts.core.serve.server.create_server", return_value=object()),
+            patch(
+                "dbt_charts.core.serve.server.create_server", return_value=_app_double()
+            ),
         ):
             result = prepare_serve(
                 project,
@@ -121,7 +131,9 @@ class TestPrepareServe:
                 "dbt_charts.core.project_roots.infer_dialect_from_dbt",
                 return_value=None,
             ),
-            patch("dbt_charts.core.serve.server.create_server", return_value=object()),
+            patch(
+                "dbt_charts.core.serve.server.create_server", return_value=_app_double()
+            ),
         ):
             monkeypatch.setenv("DCT_DEFAULT_THEME", "paper")
             result = prepare_serve(
@@ -175,7 +187,9 @@ class TestPrepareServeDbtProjectDir:
                 "dbt_charts.core.project_roots.infer_dialect_from_dbt",
                 return_value=None,
             ) as mock_infer,
-            patch("dbt_charts.core.serve.server.create_server", return_value=object()),
+            patch(
+                "dbt_charts.core.serve.server.create_server", return_value=_app_double()
+            ),
         ):
             prepare_serve(
                 project,

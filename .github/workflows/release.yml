@@ -75,7 +75,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.12.13"
+          version: "0.12.18"
 
       - name: Verify frozen dbt charts YAML schema
         if: github.event_name == 'release'
@@ -116,7 +116,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.12.13"
+          version: "0.12.18"
 
       - run: uv publish --trusted-publishing always dist/*
 

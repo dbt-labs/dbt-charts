@@ -467,7 +467,12 @@ def _resolve_line(
         wide_measures=wide_measures,
         chart_type="line",
         style=ResolvedLineStyle(
-            series_label=_resolved_series_label(chart_style_context, primary, width),
+            series_label=_resolved_series_label(
+                chart_style_context,
+                primary,
+                width,
+                chart_local_style_context.ink_canvas,
+            ),
             line_mark=resolved_line_mark,
             point_mark=line_point_mark,
             endpoint_labels=endpoint_labels,

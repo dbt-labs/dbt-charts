@@ -27,6 +27,8 @@ Palette YAML shape (unified):
 Role-indirection grammar:
     chrome.ink         → theme.palettes[chrome] → palette → resolve alias "ink"
     category[1]        → theme.palettes[category] → palette → colors[0] (1-indexed)
+    single_series[1]   → theme's single_series_palette[0] (1-indexed; not a
+                          palettes: role — the list is authored directly)
     ink                → theme.roles[ink] → recurse as role.alias
 
 surface="table" (sequential and diverging only)
@@ -46,7 +48,7 @@ from __future__ import annotations
 import difflib
 import functools
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from importlib.resources import files
 from typing import Any, Literal
 
@@ -826,19 +828,30 @@ def color_from_theme(
     *,
     palettes: Mapping[str, str],
     roles: dict[str, str] | None = None,
+    single_series_palette: Sequence[str] | None = None,
     _visited_roles: frozenset[str] | None = None,
 ) -> str:
     """Resolve a role-indirected color token against theme palettes and roles.
 
     Token grammar:
-        ``chrome.ink``     — role.alias: look up palettes[role], resolve alias
-        ``category[1]``    — role[N]: look up palettes[role], colors[N-1] (1-indexed)
-        ``ink``            — bare name: look up roles[ink], recurse
+        ``chrome.ink``        — role.alias: look up palettes[role], resolve alias
+        ``category[1]``       — role[N]: look up palettes[role], colors[N-1] (1-indexed)
+        ``single_series[1]``  — the active theme's single-series ink list, N-1
+            (1-indexed); not a ``palettes:`` role — themes author
+            ``single_series_palette`` as a literal, already-cascaded list
+            (``style.charts.color.categorical.single_series_palette``), so
+            this indexes the caller-supplied list directly rather than a
+            palette file
+        ``ink``                — bare name: look up roles[ink], recurse
 
     Args:
-        token: Color token string in one of the three grammar forms.
+        token: Color token string in one of the four grammar forms.
         palettes: Theme ``palettes:`` block — maps role names to palette names.
         roles: Theme ``roles:`` block — maps bare alias names to role.alias tokens.
+        single_series_palette: The active theme's resolved
+            ``single_series_palette`` (a plain one-series chart's ink list),
+            for the ``single_series[N]`` form. ``None`` when the caller has no
+            such context (e.g. theme-load time, before the cascade exists).
         _visited_roles: Internal cycle-detection set (do not pass from call sites).
 
     Returns:
@@ -848,7 +861,7 @@ def color_from_theme(
         UnknownColorError: Token is unresolvable (unknown role, missing alias,
             out-of-range index, cycle, or missing colors array).
     """
-    # Bracket form: role[N]
+    # Bracket form: role[N] / single_series[N]
     bracket_match = re.match(r"^([A-Za-z][A-Za-z0-9_-]*)\[(\d+)\]$", token)
     if bracket_match:
         role, n_str = bracket_match.group(1), bracket_match.group(2)
@@ -857,6 +870,17 @@ def color_from_theme(
             raise UnknownColorError(
                 f"bracket index must be 1-indexed (≥ 1), got {token!r}"
             )
+        if role == "single_series":
+            if single_series_palette is None:
+                raise UnknownColorError(
+                    f"no single-series palette context available for {token!r}"
+                )
+            if n > len(single_series_palette):
+                raise UnknownColorError(
+                    f"single-series palette has {len(single_series_palette)} slot(s); "
+                    f"requested slot {n} (1-indexed)"
+                )
+            return single_series_palette[n - 1]
         palette_name = palettes.get(role)
         if palette_name is None:
             raise UnknownColorError(
@@ -922,6 +946,7 @@ def color_from_theme(
         target,
         palettes=palettes,
         roles=effective_roles,
+        single_series_palette=single_series_palette,
         _visited_roles=visited | {token},
     )
 

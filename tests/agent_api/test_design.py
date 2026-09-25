@@ -133,6 +133,29 @@ _PARSE_FIXTURES = {
         "    y: [revenue, cost]\n"
         "    color: region\n"
     ),
+    # A bar with a start takes one y and no stack; the panel must not offer
+    # either edit that would break it.
+    "bar-with-y-start": (
+        "rows:\n"
+        "  - title: Bar\n"
+        "    type: bar\n"
+        "    query: q\n"
+        "    x: month\n"
+        "    y: revenue\n"
+        "    y_start: cost\n"
+    ),
+    # The mirror of the fixture above: a stacking bar takes no start, since a
+    # stack computes every start itself.
+    "bar-with-stack": (
+        "rows:\n"
+        "  - title: Bar\n"
+        "    type: bar\n"
+        "    query: q\n"
+        "    x: month\n"
+        "    y: revenue\n"
+        "    style:\n"
+        "      stack: zero\n"
+    ),
     "charts-map": (
         "charts:\n"
         "  k:\n"
@@ -2320,6 +2343,7 @@ _CHANNELS_BY_FAMILY = {
     "type: bar\n    query: q\n    x: month\n    y: revenue\n": {
         "x",
         "y",
+        "y_start",
         "color",
         "support_table",
     },

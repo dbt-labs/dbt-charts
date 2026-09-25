@@ -1,0 +1,3 @@
+kind: Features
+body: "Bars take a y_start column, so a bar can run from a value other than zero, which draws floating bars, dumbbells, ranged dots, waterfalls, candlesticks, and gantts."
+time: 2026-09-24T12:00:00.000000-07:00

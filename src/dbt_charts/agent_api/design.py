@@ -220,7 +220,12 @@ _NOT_DESIGN_PATHS = ("style.charts", "style.color.gradient")
 # list empty rather than breaking the board. So `options.column` is a hazard on
 # one branch and a real control on the other, and a name that is simply in or
 # out gets one of the two wrong.
-# GATED — the render sweep walks every Variable control in full.
+# GATED — the render sweep walks every Variable control in full. `histogram`'s
+# entry is a field one `type:` of a shared model refuses outright: `BarChart`
+# declares `y_start` for both tags, and `_validate_y_start` refuses it on a
+# histogram, whose bars count from zero — no value a text box can produce
+# compiles there.
+# GATED (histogram) — the parse sweep (`histogram-no-x`, `histogram-multi-metric`).
 _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
     "Variable": (
         ("column", None),
@@ -228,6 +233,7 @@ _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("options.column", "options.query"),
         ("options.label_column", "options.query"),
     ),
+    "histogram": (("y_start", None),),
 }
 
 # A layout container earns a design entry only once it carries content of its
@@ -264,10 +270,12 @@ _SCALAR_TYPES = _NUMERIC_TYPES | {"str", "bool"}
 # the panel shows one half of a mutually exclusive pair and hides the other.
 # Mirror: once a sibling is authored, `y` is not a *multi-value* control, since
 # the list is the edit that creates the collision. `layers` has no control
-# (`_NOT_DESIGN`), so only the mirror direction is live today.
+# (`_NOT_DESIGN`), so for it only the mirror direction is live; `y_start` is a
+# control (a text box), so it is live in both.
 # GATED — the parse sweep (bar, area) and the render sweep (line, scatter).
 _LIST_CONFLICTS = {
-    "bar": ("y", ("layers",)),
+    # A bar with y_start draws one start per bar, so it takes one y.
+    "bar": ("y", ("layers", "y_start")),
     "AreaChart": ("y", ("layers",)),
     "LineChart": ("y", ("layers",)),
     "ScatterChart": ("y", ("layers",)),
@@ -422,6 +430,13 @@ _REQUIRED_WITH_LIST = {"bar": {"x": "y"}}
 # AGREED — `test_a_histogram_that_loses_its_x_stops_rendering`. Clearing an `x`
 # is not a `list` edit, so the render sweep never makes it.
 _ALWAYS_REQUIRED = {"histogram": ("x",)}
+
+# A bar's own start and a stack are one or the other (`_validate_y_start`):
+# a stack computes every start itself. While `y_start` stands, `style.stack` is
+# not a control; while a stacking mode stands, `y_start` is not. `stack: none`
+# stacks nothing and composes with a start.
+# GATED — the parse sweep (`bar-with-y-start`).
+_START_OR_STACK = {"bar": ("y_start", "style.stack", ("zero", "normalize", "center"))}
 
 # Required once a sibling is authored: `{model: {field: (siblings, …)}}`. A
 # bar's `y` is optional to the schema and a bar with neither `x` nor `y`
@@ -778,6 +793,13 @@ def _suppressed(
             if isinstance(getattr(node, field, None), list)
         ),
     )
+    exclusive = _START_OR_STACK.get(rules)
+    if exclusive is not None:
+        start, stack, stacking = exclusive
+        if getattr(node, start, None) is not None:
+            withheld = (*withheld, stack)
+        if _dotted(node, stack) in stacking:
+            withheld = (*withheld, start)
     # Not in the table above, because the table restates rules and this one asks
     # the renderer's. `required: true` on a variable with nothing to satisfy it
     # raises before a query runs, and `renderer.py` answers with a board error and

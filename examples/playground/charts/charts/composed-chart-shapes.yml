@@ -19,13 +19,41 @@ notes: shapes an author asks for by name that dbt Charts has no `type:` for. Eac
 style:
   frame:
     width: 1872
+  charts:
+    category_colors:
+      direction:
+        values:
+          Increase: positive.solid
+          Decrease: negative.solid
+          Total: single_series[1]
 queries:
+  # Hand-shaped so the streamgraph reads like one: bursts, S-curves, a fade
+  # and steady baselines, each on its own schedule. Keep it when regenerating
+  # this board's other sample data.
   flows:
     source: examples_db
     sql: |
-      SELECT date, category, SUM(revenue) AS revenue
-      FROM ecommerce_orders
-      GROUP BY date, category
+      WITH series AS (
+        SELECT
+          t,
+          DATE '2024-01-01' + (CAST(t AS INTEGER) * 7) AS date,
+          unnest(['Holiday Rush', 'Word of Mouth', 'Summer Fling', 'Slow Bleed',
+                  'Steady Staples', 'Background Noise', 'New Arrival']) AS category
+        FROM generate_series(0, 51) AS s(t)
+      )
+      SELECT
+        date,
+        category,
+        ROUND(CASE category
+          WHEN 'Holiday Rush' THEN 400 * EXP(-POWER((t - 45) / 3.5, 2))
+          WHEN 'Summer Fling' THEN 260 * EXP(-POWER((t - 24) / 8.0, 2))
+          WHEN 'Word of Mouth' THEN 300 / (1 + EXP(-0.22 * (t - 30)))
+          WHEN 'New Arrival' THEN 220 / (1 + EXP(-0.30 * (t - 40)))
+          WHEN 'Slow Bleed' THEN 260 / (1 + EXP(0.18 * (t - 14)))
+          WHEN 'Steady Staples' THEN 150 + 12 * SIN(t * 0.35) + 6 * SIN(t * 0.9 + 1.3)
+          WHEN 'Background Noise' THEN 60 + 12 * SIN(t * 0.21) + 7 * SIN(t * 0.53 + 0.7) + 5 * SIN(t * 1.31 + 2.1)
+        END, 2) AS revenue
+      FROM series
       ORDER BY date, category
   entities:
     source: examples_db
@@ -37,8 +65,8 @@ queries:
         round(20 + 40 * abs(sin(e * 0.9)), 1)                      AS value_2019,
         round(35 + 50 * abs(sin(e * 1.4)), 1)                      AS value_2024,
         round(28 + 45 * abs(cos(e * 0.6)), 1)                      AS value_2029,
-        round(30 + 55 * abs(sin(e * 1.7)) - 12, 1)                 AS low,
-        round(30 + 55 * abs(sin(e * 1.7)) + 12, 1)                 AS high
+        round(30 + 55 * abs(sin(e * 1.7)) - 4 - 12 * abs(sin(e * 2.3)), 1) AS low,
+        round(30 + 55 * abs(sin(e * 1.7)) + 3 + 10 * abs(cos(e * 1.9)), 1) AS high
       FROM generate_series(1, 8) t(e)
       ORDER BY e
   # Bullet's qualitative ranges: three cumulative bands per category, stacked to
@@ -125,6 +153,64 @@ queries:
         ('Region C', 2023, 6)
       ) AS t(entity, year, rank)
       ORDER BY year, rank
+  bridge:
+    source: examples_db
+    sql: |
+      WITH steps(ord, step, change) AS (
+        VALUES
+          (1, 'Q1 revenue', 120.0),
+          (2, 'New customers', 28.0),
+          (3, 'Expansion', 13.0),
+          (4, 'Churn', -22.0),
+          (5, 'Discounts', -8.0)
+      ),
+      running AS (
+        SELECT ord, step, change, SUM(change) OVER (ORDER BY ord) AS end_value
+        FROM steps
+      )
+      SELECT step, end_value - change AS start_value, end_value, ord,
+             CASE WHEN ord = 1 THEN 'Total'
+                  WHEN change >= 0 THEN 'Increase'
+                  ELSE 'Decrease' END AS direction
+      FROM running
+      UNION ALL
+      SELECT 'Q2 revenue', 0, SUM(change), 6, 'Total' FROM steps
+      ORDER BY ord
+  prices:
+    source: examples_db
+    sql: |
+      WITH days AS (
+        SELECT d, DATE '2026-03-02' + d::INTEGER AS trade_date
+        FROM generate_series(0, 19) t(d)
+      ),
+      px AS (
+        -- Each day opens where the day before closed.
+        SELECT d, trade_date,
+               round(100 + 6 * sin((d - 1) * 0.45 + 0.5) + 0.6 * (d - 1)
+                     + 1.4 * sin((d - 1) * 2.3), 2)                            AS open,
+               round(100 + 6 * sin(d * 0.45 + 0.5) + 0.6 * d
+                     + 1.4 * sin(d * 2.3), 2)                                  AS close,
+               round(1.2 + abs(sin(d * 1.9)) * 2.0, 2)            AS reach
+        FROM days
+      )
+      SELECT trade_date AS day, d, open, close,
+             greatest(open, close) + reach    AS high,
+             least(open, close) - reach * 0.8 AS low,
+             CASE WHEN close >= open THEN 'Up' ELSE 'Down' END AS session
+      FROM px
+      ORDER BY d
+  plan:
+    source: examples_db
+    sql: |
+      SELECT task, start_date::DATE AS start_date, finish_date::DATE AS finish_date
+      FROM (VALUES
+        (1, 'Scope',  '2026-01-05', '2026-01-23'),
+        (2, 'Design', '2026-01-19', '2026-02-20'),
+        (3, 'Build',  '2026-02-09', '2026-04-10'),
+        (4, 'Test',   '2026-03-23', '2026-04-24'),
+        (5, 'Launch', '2026-04-20', '2026-05-01')
+      ) AS t(ord, task, start_date, finish_date)
+      ORDER BY ord
 charts:
   lollipop:
     query: entities
@@ -270,16 +356,218 @@ charts:
       axis_y:
         title:
           visible: false
+  dumbbell:
+    query: entities
+    type: bar
+    title: Dumbbell
+    subtitle: "type: bar from y_start to y, thinned to a stem, with a scatter layer at each end."
+    x: category
+    y: value_2024
+    y_start: value_2019
+    sort:
+      by: value_2024
+      order: desc
+    style:
+      orientation: horizontal
+      legend:
+        values:
+        - "2019"
+        - "2024"
+      color:
+        categorical:
+          palette:
+          - dbt-grays.muted
+          - category[2]
+          - category[1]
+      marks:
+        bar:
+          band_width: 0.04
+    layers:
+    - type: scatter
+      y: value_2019
+      label: "2019"
+      style:
+        marks:
+          point:
+            size: 120
+            filled: true
+    - type: scatter
+      y: value_2024
+      label: "2024"
+      style:
+        marks:
+          point:
+            size: 120
+            filled: true
+  ranged_dot:
+    query: entities
+    type: bar
+    title: Ranged dot
+    subtitle: "type: bar from y_start to y as a pale interval, with a scatter layer on the estimate."
+    x: category
+    y: high
+    y_start: low
+    sort:
+      by: value
+      order: desc
+    style:
+      orientation: horizontal
+      legend:
+        visible: false
+      color:
+        categorical:
+          palette:
+          - category_ghost[1]
+          - category_ink[1]
+      marks:
+        bar:
+          band_width: 0.35
+    layers:
+    - type: scatter
+      y: value
+      style:
+        marks:
+          point:
+            size: 90
+            filled: true
+  floating_bar:
+    query: entities
+    type: bar
+    title: Floating bar
+    subtitle: "type: bar with y_start, so each bar spans low to high instead of zero to high."
+    x: category
+    y: high
+    y_start: low
+    style:
+      orientation: vertical
+  waterfall:
+    query: bridge
+    type: bar
+    title: Waterfall
+    subtitle: "type: bar with y_start from a running total the query computes; color: on the query's direction column."
+    x: step
+    y: end_value
+    y_start: start_value
+    color: direction
+    style:
+      orientation: vertical
+      number_format: "$,.0f"
+      # One direction per step, so the colored bars coincide instead of
+      # splitting each band into side-by-side slots.
+      overlap: full
+      # The bars' own colors read as rise, fall and total; no key needed.
+      legend:
+        visible: false
+      marks:
+        bar:
+          labels:
+            visible: true
+  candlestick:
+    query: prices
+    type: bar
+    title: Candlestick
+    subtitle: "type: bar from low to high as a thin wick, with a bar layer from open to close as the body; color: on the session's direction paints wick and body alike."
+    x: day
+    y: high
+    y_start: low
+    color: session
+    style:
+      orientation: vertical
+      number_format: "$,.0f"
+      # One session per day, so each day's bar fills its band instead of a grouped slot.
+      overlap: full
+      # Rising and falling read from the marks themselves.
+      legend:
+        visible: false
+      # The wick and the body share one color scale, in the domain's order: Down, Up.
+      color:
+        categorical:
+          palette:
+          - negative.solid
+          - positive.solid
+      # No knockout outline: in one color, the wick runs into the body unbroken,
+      # and a thin body isn't eaten by a white stroke.
+      marks:
+        bar:
+          band_width: 0.08
+          border:
+            width: 0
+            radius: 0
+    layers:
+    - type: bar
+      y: close
+      y_start: open
+      color: session
+      style:
+        marks:
+          bar:
+            band_width: 0.6
+            border:
+              width: 0
+              radius: 0
+  candlestick_outlined:
+    query: prices
+    type: bar
+    title: Candlestick, outlined
+    subtitle: "The other convention: wick and body outline in ink, only the body's fill carries the direction."
+    x: day
+    y: high
+    y_start: low
+    style:
+      orientation: vertical
+      number_format: "$,.0f"
+      overlap: full
+      legend:
+        visible: false
+      # Slots: the ink wick, then the body's Down and Up fills.
+      color:
+        categorical:
+          palette:
+          - dbt-grays.ink
+          - negative.solid
+          - positive.solid
+      marks:
+        bar:
+          band_width: 0.08
+          border:
+            radius: 0
+    layers:
+    - type: bar
+      y: close
+      y_start: open
+      color: session
+      style:
+        marks:
+          bar:
+            band_width: 0.6
+            border:
+              color: dbt-grays.ink
+              width: 1
+              radius: 0
+  gantt:
+    query: plan
+    type: bar
+    title: Gantt
+    subtitle: "type: bar over a date measure with y_start; horizontal, so time runs left to right."
+    x: task
+    y: finish_date
+    y_start: start_date
+    style:
+      orientation: horizontal
+      # Each bar prints its length, in one unit across the chart.
+      marks:
+        bar:
+          labels:
+            visible: true
 rows:
 - text: |
-    **6 charts.** Each is the natural recipe for a shape an author asks for by
+    **13 charts.** Each is the natural recipe for a shape an author asks for by
     name and dbt Charts has no `type:` for. Read each one against the shape it
     claims to be, not against whether it is a legible chart: the question is
     whether the recipe would give an author the chart they asked for.
 
-    Dumbbell, connected dot plot and ranged dot are absent because they cannot
-    be drawn at all: each needs one mark spanning two values, and no layerable
-    mark takes a second positional channel.
+    Dumbbell, ranged dot, floating bar, waterfall, candlestick and gantt all
+    draw with `y_start`: a bar that starts somewhere other than zero.
 - cols:
   - lollipop
   - bullet
@@ -288,3 +576,13 @@ rows:
   - bump
   - dot_plot
   - streamgraph
+- cols:
+  - dumbbell
+  - ranged_dot
+  - floating_bar
+- cols:
+  - waterfall
+  - candlestick
+  - candlestick_outlined
+- cols:
+  - gantt

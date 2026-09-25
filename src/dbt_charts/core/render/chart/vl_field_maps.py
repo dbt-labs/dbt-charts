@@ -30,6 +30,7 @@ from dbt_charts.core.text.numeral_scale import (
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE_NAMES
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
+    Rows,
     cap_padding_to_label_limit,
     coerce_numeric_cell,
     measured_label_padding,
@@ -1105,6 +1106,22 @@ def bar_data_signs(data: list[dict[str, Any]], field: str) -> tuple[bool, bool]:
     """
     values = [row[field] for row in data if isinstance(row.get(field), (int, float))]
     return any(v > 0 for v in values), any(v < 0 for v in values)
+
+
+def bar_span_signs(data: Rows, end_field: str, start_field: str) -> tuple[bool, bool]:
+    """Return (has_rise, has_fall) for spans running start_field → end_field.
+
+    A zero-length span counts as a rise, as a zero value does in bar_data_signs.
+    """
+    pairs = [
+        (
+            coerce_numeric_cell(row.get(end_field)),
+            coerce_numeric_cell(row.get(start_field)),
+        )
+        for row in data
+    ]
+    diffs = [e - s for e, s in pairs if e is not None and s is not None]
+    return any(d >= 0 for d in diffs), any(d < 0 for d in diffs)
 
 
 def bar_mark_radius(bar: BarMarkStyle) -> float | None:

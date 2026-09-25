@@ -41,15 +41,17 @@ body:
   - type: textarea
     id: repro
     attributes:
-      label: Standalone reproduction (board YAML)
+      label: Standalone reproduction
       description: |
         dbt-charts is a visual, YAML-driven tool — we can't reproduce a
         rendering bug without seeing the actual board. Use inline `values:`
         data instead of a live database connection so this runs with
-        `dct render` on its own, no warehouse access needed. Replace the
-        data/chart below with whatever reproduces the bug.
-      render: yaml
+        `dct render` on its own, no warehouse access needed. If the bug
+        involves interaction with dbt (e.g. `dbt_project.yml`, model YAML),
+        include those files too, using a fenced code block per file below.
       value: |
+        ```yaml
+        # board.yml
         queries:
           revenue_by_month:
             columns: [month, revenue]
@@ -67,6 +69,7 @@ body:
             y: revenue
         rows:
           - revenue_chart
+        ```
     validations:
       required: true
 
@@ -89,5 +92,15 @@ body:
         Output of `dct validate` or `dct render` against the YAML above,
         including any ERR-* / WARN-* diagnostic codes.
       render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Additional information
+      description: |
+        Anything else worth knowing, such as a suspected cause, a workaround
+        you've found, or related issues/PRs.
     validations:
       required: false

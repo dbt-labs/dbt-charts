@@ -1183,6 +1183,78 @@ _CHART_SHAPE_RECIPES = {
         "per category use long-format rows with color: on the series column "
         "rather than layers:, which keeps the shape rotatable"
     ),
+    "dumbbell": (
+        "type: bar with y_start for the far end, thinned to a stem with "
+        "style.marks.bar.band_width, plus a layers: scatter at each end "
+        "(color: from style.color.categorical.palette — a chart with layers: "
+        "does not bind board category_colors)"
+    ),
+    "barbell": (
+        "type: bar with y_start for the far end, thinned to a stem with "
+        "style.marks.bar.band_width, plus a layers: scatter at each end "
+        "(color: from style.color.categorical.palette — a chart with layers: "
+        "does not bind board category_colors)"
+    ),
+    "connected_dot_plot": (
+        "type: bar with y_start for the far end, thinned to a stem with "
+        "style.marks.bar.band_width, plus a layers: scatter at each end "
+        "(color: from style.color.categorical.palette — a chart with layers: "
+        "does not bind board category_colors)"
+    ),
+    "ranged_dot": (
+        "type: bar with y_start for the low end, drawn as a pale interval "
+        "(color: from style.color.categorical.palette), plus a layers: "
+        "scatter on the point estimate"
+    ),
+    "floating_bar": "type: bar with y_start, so the bar runs from y_start to y instead of from zero",
+    "range_bar": "type: bar with y_start, so the bar runs from y_start to y instead of from zero",
+    "waterfall": (
+        "type: bar with y_start from a running total the query computes, "
+        "color: on the query's own direction column pinned with board "
+        "category_colors, and style.overlap: full so each step's bar fills "
+        "its band instead of splitting into a grouped slot"
+    ),
+    "bridge_chart": (
+        "type: bar with y_start from a running total the query computes, "
+        "color: on the query's own direction column pinned with board "
+        "category_colors, and style.overlap: full so each step's bar fills "
+        "its band instead of splitting into a grouped slot"
+    ),
+    "candlestick": (
+        "type: bar with y_start: low and y: high as a thin wick, plus a "
+        "layers: bar with y_start: open and y: close as the body. Same-color "
+        "convention: color: on the query's session column on both the base "
+        "bar and the body layer, with style.marks.bar.border.width: 0 to drop "
+        "the knockout outline and border.radius: 0 for square candles. "
+        "Ink-outline convention: no color: on the base "
+        "bar (an ink palette slot), color: on the body layer alone, and "
+        "style.marks.bar.border in ink"
+    ),
+    "ohlc": (
+        "type: bar with y_start: low and y: high as a thin wick, plus a "
+        "layers: bar with y_start: open and y: close as the body. Same-color "
+        "convention: color: on the query's session column on both the base "
+        "bar and the body layer, with style.marks.bar.border.width: 0 to drop "
+        "the knockout outline and border.radius: 0 for square candles. "
+        "Ink-outline convention: no color: on the base "
+        "bar (an ink palette slot), color: on the body layer alone, and "
+        "style.marks.bar.border in ink"
+    ),
+    "stock_chart": (
+        "type: bar with y_start: low and y: high as a thin wick, plus a "
+        "layers: bar with y_start: open and y: close as the body. Same-color "
+        "convention: color: on the query's session column on both the base "
+        "bar and the body layer, with style.marks.bar.border.width: 0 to drop "
+        "the knockout outline and border.radius: 0 for square candles. "
+        "Ink-outline convention: no color: on the base "
+        "bar (an ink palette slot), color: on the body layer alone, and "
+        "style.marks.bar.border in ink"
+    ),
+    "gantt": (
+        "type: bar with a date y and a date y_start, style.orientation: "
+        "horizontal so time runs left to right, keeping the query's row "
+        "order rather than the usual value-descending default"
+    ),
 }
 
 # Shapes dbt charts cannot draw at all. Naming them is the half a recipe cannot
@@ -1193,7 +1265,6 @@ _UNSUPPORTED_CHART_SHAPES = frozenset(
         "sankey",
         "treemap",
         "violin",
-        "waterfall",
         "funnel",
         "gauge",
         "radar",
@@ -1202,19 +1273,8 @@ _UNSUPPORTED_CHART_SHAPES = frozenset(
         "marimekko",
         "spider",
         "alluvial",
-        "gantt",
         "word cloud",
         "network",
-        "candlestick",
-        # Both need one mark to span two values (VL's y/y2). Every layerable
-        # mark takes a single measure channel, and a bar is anchored at zero,
-        # so the connector between a pair — and the interval behind a dot —
-        # cannot be drawn at all. A dot plot of the two ends draws; the thing
-        # that makes it a dumbbell does not.
-        "dumbbell",
-        "barbell",
-        "connected_dot_plot",
-        "ranged_dot",
     }
 )
 

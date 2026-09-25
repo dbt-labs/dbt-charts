@@ -33,16 +33,25 @@ fragmenting the stacked area/line path with phantom imputed points. See
 
 from __future__ import annotations
 
+import contextlib
+import datetime as dt
 import json
+import math
 from dataclasses import dataclass
 from typing import Literal
 
+from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.time_unit_detect import (
     detect_time_unit,
     tooltip_header_date_expr,
 )
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_TIME_SPECS,
+    PredefinedTimeFormat,
+)
+from dbt_charts.core.utils import coerce_numeric_cell
 
 # Zero-width Unicode "format" characters (general category Cf — the same
 # family as U+200B ZERO WIDTH SPACE) mark each tooltip entry's role so
@@ -71,6 +80,8 @@ ROLE_ORDER = "‌"  # ZERO WIDTH NON-JOINER
 # so the raw slice count and the grand total are context. Composes with a role
 # marker (a muted total is MUTED + ROLE_TOTAL). chart_interactivity.js mirrors it.
 MUTED = "⁠"  # WORD JOINER
+# Brackets a value row's swatch color: SWATCH + "#hex" + SWATCH + label.
+SWATCH = "\u200b"  # ZERO WIDTH SPACE
 
 
 @dataclass(frozen=True)
@@ -112,6 +123,9 @@ class TooltipField:
     # the two marks. A prefix (the layer's own label) keeps the two sources'
     # series identities distinct without changing which column drives the row.
     prefix: str = ""
+    # A value row's own color key (a hex), "" for none: set when one block
+    # lists several marks' values, so each row still shows whose it is.
+    swatch: str = ""
 
 
 @dataclass(frozen=True)
@@ -139,6 +153,8 @@ CHART_AXES_LUT: dict[str, ChartAxesRoles] = {
     "heatmap": ChartAxesRoles(supports_series=False),
     "scatter": ChartAxesRoles(supports_series=False),
     "scatter_colored": ChartAxesRoles(supports_series=False, header_is_swatched=True),
+    # A scatter with one category axis and a color split: grouped per category.
+    "dot_plot": ChartAxesRoles(supports_series=True),
 }
 
 
@@ -198,6 +214,8 @@ def _value_expr(tf: TooltipField) -> str:
     if tf.kind == "quantitative":
         return f"format({ref}, {json.dumps(tf.format)})"
     if tf.kind == "temporal":
+        if tf.format:
+            return f"utcFormat(toDate({ref}), {json.dumps(tf.format)})"
         return tooltip_header_date_expr(ref, tf.time_unit)
     return ref
 
@@ -210,6 +228,8 @@ def _row_expr(tf: TooltipField, marker: str = "") -> str:
     of that marker so the value renders at the low-contrast label color.
     """
     prefix = (MUTED if tf.muted else "") + marker
+    if tf.swatch:
+        prefix += SWATCH + tf.swatch + SWATCH
     return f"{json.dumps(prefix + tf.title + ': ')} + ({_value_expr(tf)})"
 
 
@@ -266,6 +286,124 @@ def build_structured_tooltip_expr(
     return " + '; ' + ".join(parts)
 
 
+_SPAN_DIFFERENCE_FIELD = "__dct_span_difference"
+_SPAN_NATIVE_DURATION_FIELD = "__dct_span_native_duration"
+_DAY_MS = 86_400_000
+# A duration reads in the coarsest unit that keeps it a readable number:
+# days up to three weeks, weeks up to eight, months beyond.
+_DURATION_UNITS: tuple[tuple[str, float, float, str], ...] = (
+    ("day", 1, 21, ".0f"),
+    ("week", 7, 56, ".1~f"),
+    ("month", 30.4375, math.inf, ".1~f"),
+)
+# The house date, as every other date the board prints (19 Sep 2026).
+SPAN_DATE_FORMAT = PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
+
+
+def _days_expr(end_field: str, start_field: str) -> str:
+    e, s = json.dumps(end_field), json.dumps(start_field)
+    return f"((toDate(datum[{e}]) - toDate(datum[{s}])) / {_DAY_MS})"
+
+
+def _unit_text_expr(days: str, unit: str) -> str:
+    name, size, _, fmt = next(u for u in _DURATION_UNITS if u[0] == unit)
+    text = f"format({days} / {size}, {json.dumps(fmt)})"
+    # Singular by the printed number, not the raw one: 1.04 weeks prints "1".
+    return (
+        f"{text} + ' ' + "
+        f"({text} == '1' ? {json.dumps(name)} : {json.dumps(name + 's')})"
+    )
+
+
+def _as_date(value: dt.date | str | None) -> dt.date | None:
+    """A date cell as a date: a date or datetime as is, an ISO string parsed
+    (file and CSV sources deliver dates as text). None for an empty cell or
+    text that is no date.
+    """
+    if isinstance(value, dt.date):
+        return value
+    if isinstance(value, str):
+        with contextlib.suppress(ValueError):
+            return dt.date.fromisoformat(value[:10])
+    return None
+
+
+def span_duration_unit(rows: ChartRenderData, end_field: str, start_field: str) -> str:
+    """One unit for every duration on a chart, picked from its median length,
+    so rows compare at a glance (all in weeks, not days beside months)."""
+    ends = [
+        (_as_date(row.get(end_field)), _as_date(row.get(start_field))) for row in rows
+    ]
+    lengths = sorted((e - s).days for e, s in ends if e is not None and s is not None)
+    if not lengths:
+        return _DURATION_UNITS[0][0]
+    median = lengths[len(lengths) // 2]
+    return next(name for name, _, limit, _ in _DURATION_UNITS if median <= limit)
+
+
+def span_duration_expr(end_field: str, start_field: str, unit: str) -> str:
+    """A date bar's length as text in ``unit`` (``4.6 weeks``)."""
+    return _unit_text_expr(_days_expr(end_field, start_field), unit)
+
+
+def span_rises_only(rows: ChartRenderData, end_field: str, start_field: str) -> bool:
+    """True when no row runs backwards, so the difference is an extent, not a move."""
+    for row in rows:
+        end = coerce_numeric_cell(row.get(end_field))
+        start = coerce_numeric_cell(row.get(start_field))
+        if end is not None and start is not None and end < start:
+            return False
+    return True
+
+
+def span_tooltip_rows(
+    end: TooltipField,
+    start: TooltipField,
+    covered: frozenset[str],
+    rows: ChartRenderData,
+) -> tuple[list[TooltipField], list[VLDict]]:
+    """Value rows describing a bar from ``start`` to ``end``, plus the
+    transforms computing their difference.
+
+    An end another row already names (``covered``: a dumbbell's end dots) is
+    left out rather than repeated. The difference reads by kind: numbers give
+    a signed ``Change`` when bars run both ways and an unsigned ``Range`` when
+    every bar rises; dates give a ``Duration`` in the chart's one unit, with
+    the row's own natural unit beneath it, muted, when that differs.
+    """
+    if end.kind == "temporal":
+        unit = span_duration_unit(rows, end.field, start.field)
+        days = _days_expr(end.field, start.field)
+        natural = " : ".join(
+            f"{days} <= {limit} ? "
+            + ("''" if name == unit else _unit_text_expr(days, name))
+            for name, _, limit, _ in _DURATION_UNITS[:-1]
+        )
+        last = _DURATION_UNITS[-1][0]
+        natural += " : " + ("''" if last == unit else _unit_text_expr(days, last))
+        fields = [
+            TooltipField(_SPAN_DIFFERENCE_FIELD, "Duration"),
+            TooltipField(_SPAN_NATIVE_DURATION_FIELD, "", muted=True),
+        ]
+        transforms: list[VLDict] = [
+            {"calculate": _unit_text_expr(days, unit), "as": _SPAN_DIFFERENCE_FIELD},
+            {"calculate": natural, "as": _SPAN_NATIVE_DURATION_FIELD},
+        ]
+    else:
+        e = f"datum[{json.dumps(end.field)}]"
+        s = f"datum[{json.dumps(start.field)}]"
+        magnitude = f"format(abs({e} - {s}), {json.dumps(end.format)})"
+        if span_rises_only(rows, end.field, start.field):
+            fields = [TooltipField(_SPAN_DIFFERENCE_FIELD, "Range")]
+            expr = magnitude
+        else:
+            fields = [TooltipField(_SPAN_DIFFERENCE_FIELD, "Change")]
+            expr = f"({e} >= {s} ? '+' : '\\u2212') + {magnitude}"
+        transforms = [{"calculate": expr, "as": _SPAN_DIFFERENCE_FIELD}]
+    ends = [tf for tf in (start, end) if tf.field not in covered]
+    return [*ends, *fields], transforms
+
+
 __all__ = [
     "CHART_AXES_LUT",
     "MUTED",
@@ -274,10 +412,16 @@ __all__ = [
     "ROLE_ORDER",
     "ROLE_SERIES",
     "ROLE_TOTAL",
+    "SWATCH",
     "ChartAxesRoles",
     "TooltipField",
     "build_structured_tooltip_expr",
     "field_cardinality",
     "header_tooltip_field",
     "series_row_promoted",
+    "SPAN_DATE_FORMAT",
+    "span_duration_expr",
+    "span_duration_unit",
+    "span_rises_only",
+    "span_tooltip_rows",
 ]

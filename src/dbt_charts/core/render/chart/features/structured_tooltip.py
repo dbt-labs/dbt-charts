@@ -29,10 +29,14 @@ one bubble with no JS changes.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved._layer import (
+    ResolvedBarLayer,
+    ResolvedLayer,
+)
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
@@ -43,6 +47,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
 )
+from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.emitters._cartesian import (
     layer_encoding_owner,
@@ -50,10 +55,13 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     wide_measures_title,
 )
 from dbt_charts.core.render.chart.emitters._tooltip import (
+    SPAN_DATE_FORMAT,
+    SWATCH,
     TooltipField,
     build_structured_tooltip_expr,
     header_tooltip_field,
     series_row_promoted,
+    span_tooltip_rows,
 )
 from dbt_charts.core.render.chart.emitters.pie import PIE_PCT_FIELD, PIE_TOTAL_FIELD
 from dbt_charts.core.render.chart.feature import chart_rows
@@ -218,6 +226,142 @@ def _cartesian_roles(
     return header, series, values, order
 
 
+def _layer_name(layer: ResolvedLayer) -> str:
+    """The name a layer goes by in the bubble: the overlay label cascade."""
+    assert layer.y is not None
+    return layer.label if layer.label is not None else default_axis_title(layer.y)
+
+
+def _shares_rows(layer: ResolvedLayer, chart: ResolvedBarChart) -> bool:
+    return layer.y is not None and layer.query_name in (None, chart.query_name)
+
+
+def _span_values(
+    chart: ResolvedBarChart, data: ChartRenderData, end: TooltipField
+) -> tuple[list[TooltipField], list[VLDict]]:
+    """Value rows, and the transforms they read, for a bar with y_start.
+
+    Layers plotting from the same rows join one block with the bar, since
+    together they describe one category: each layer's value under its own
+    name first, then the bar's ends and their difference, never repeating an
+    end a layer already names (a dumbbell: 2019, 2024, change; a ranged dot:
+    value, low, high, range). A bar layer with its own y_start nested inside
+    the bar reads outer and inner ends in the order finance tools use for a
+    candlestick: open, high, low, close, then the inner change.
+    """
+    assert chart.y is not None and chart.y_start is not None
+    if chart.measure_type == "temporal":
+        end = TooltipField(chart.y, end.title, kind="temporal", format=SPAN_DATE_FORMAT)
+    start = replace(end, field=chart.y_start, title=default_axis_title(chart.y_start))
+    layers = [layer for layer in chart.layers if _shares_rows(layer, chart)]
+    inner = next(
+        (
+            layer
+            for layer in layers
+            if isinstance(layer, ResolvedBarLayer) and layer.y_start is not None
+        ),
+        None,
+    )
+    named = [
+        replace(end, field=layer.y, title=_layer_name(layer))
+        for layer in layers
+        if layer is not inner and layer.y is not None
+    ]
+    if inner is not None:
+        assert inner.y is not None and inner.y_start is not None
+        inner_end = replace(end, field=inner.y, title=default_axis_title(inner.y))
+        inner_start = replace(
+            end, field=inner.y_start, title=default_axis_title(inner.y_start)
+        )
+        change, transforms = span_tooltip_rows(
+            inner_end, inner_start, frozenset({inner.y, inner.y_start}), data
+        )
+        return [*named, inner_start, end, start, inner_end, *change], transforms
+    rows, transforms = span_tooltip_rows(
+        end, start, frozenset(tf.field for tf in named), data
+    )
+    return [*named, *rows], transforms
+
+
+def _with_swatches(
+    base_spec: ChartSpec, values: list[TooltipField], named: frozenset[str]
+) -> list[TooltipField]:
+    """Key each row of a combined block to the mark it describes.
+
+    Each layer's rows take that layer's paint; the bar's own rows (its ends
+    and their difference) take the bar's. Both come off the shared color scale
+    the overlay built. A block with no layer rows (a candlestick's nested
+    bars) keeps none: its rows all describe one mark. Nor does a block with a
+    layer split into colors of its own: no one swatch describes that layer.
+    """
+    enc = base_spec.encoding.get("color")
+    if not named or not isinstance(enc, dict) or "datum" not in enc:
+        return values
+    scale = enc["scale"]
+    paint = dict(zip(scale["domain"], scale["range"], strict=True))
+    if not named <= paint.keys():
+        return values
+    bar_paint = paint[enc["datum"]]
+    return [
+        replace(tf, swatch=paint[tf.title] if tf.title in named else bar_paint)
+        for tf in values
+    ]
+
+
+_LAYER_SERIES_FIELD = "__dct_layer_series"
+
+
+def _layer_series(
+    chart: ResolvedBarChart, data: ChartRenderData, base_spec: ChartSpec
+) -> tuple[tuple[TooltipField, ...], list[VLDict]]:
+    """A series row borrowed from a layer's color split, for a block whose bar
+    has none (an ink-outlined candlestick: only the body says up or down).
+
+    Its swatch is the layer's paint for that row's value, carried in the label
+    (SWATCH-bracketed): the hovered mark may be the uncolored bar.
+    """
+    enc = base_spec.encoding.get("color")
+    if not isinstance(enc, dict) or "scale" not in enc:
+        return (), []
+    paint = dict(zip(enc["scale"]["domain"], enc["scale"]["range"], strict=True))
+    for layer in chart.layers:
+        if layer.color is None or not series_row_promoted(layer.color, data):
+            continue
+        ref = f"datum[{json.dumps(layer.color)}]"
+        swatch = " : ".join(
+            f"{ref} == {json.dumps(value)} ? {json.dumps(SWATCH + paint[value] + SWATCH)}"
+            for value in dict.fromkeys(row[layer.color] for row in data)
+            if value in paint
+        )
+        if not swatch:
+            continue
+        title = format_display_text(
+            layer.color, from_slug=True, font=chart.style.axis_x.title.font
+        )
+        return (
+            (TooltipField(_LAYER_SERIES_FIELD, title),),
+            [{"calculate": f"({swatch} : '') + {ref}", "as": _LAYER_SERIES_FIELD}],
+        )
+    return (), []
+
+
+def _stamp_descriptions(
+    spec: ChartSpec, description: str, transforms: list[VLDict]
+) -> None:
+    """Give every data mark in a layered spec the same description, so a hover
+    on any of them opens the one block (the runtime folds identical marks).
+
+    The block's fields are computed on the shared outer data; a mark carrying
+    its own copy of the rows (a gap-filled base) computes them itself.
+    """
+    for layer in spec.layers:
+        if layer.tooltip_description is not None:
+            layer.tooltip_description = description
+            if layer.data is not None:
+                layer.transforms = [*layer.transforms, *transforms]
+        _stamp_descriptions(layer, description, transforms)
+
+
 def _has_negative_value(data: ChartRenderData, field: str) -> bool:
     """True when any row's ``field`` value is negative.
 
@@ -325,6 +469,52 @@ def _pie_roles(
         ),
     )
     return header, values, total
+
+
+def _dot_plot_roles(
+    chart: ResolvedScatterChart, data: ChartRenderData, spec: ChartSpec
+) -> (
+    tuple[
+        tuple[TooltipField, ...],
+        tuple[TooltipField, ...],
+        list[TooltipField],
+        tuple[TooltipField, ...],
+    ]
+    | None
+):
+    """Header (the category), series (the color), value, order for a dot plot.
+
+    A scatter with one category axis, one measure axis and a color split is a
+    dot plot: each category's dots are one row of the chart, so a hover reads
+    them together, the way a grouped bar's does. The category heads the
+    bubble, each series follows under its color in the color scale's order
+    (a time series in time order), and the measure is the value. None for any
+    other scatter shape.
+    """
+    assert isinstance(chart.x, str) and isinstance(chart.y, str)
+    color_ch = chart.resolved_channels.get("color")
+    if color_ch is None or not color_ch.data_field:
+        return None
+    kinds = {axis: infer_vega_type_from_data(data, axis) for axis in (chart.x, chart.y)}
+    categories = [axis for axis, kind in kinds.items() if kind == "nominal"]
+    measures = [axis for axis, kind in kinds.items() if kind == "quantitative"]
+    if len(categories) != 1 or len(measures) != 1:
+        return None
+    (category,), (measure,) = categories, measures
+    style = chart.style
+    title = chart.x_label if measure == chart.x else chart.y_label
+    header = (TooltipField(category, default_axis_title(category)),)
+    series_title = format_display_text(
+        color_ch.data_field, from_slug=True, font=style.axis_x.title.font
+    )
+    series = (TooltipField(color_ch.data_field, series_title),)
+    value = TooltipField(
+        measure,
+        title if title is not None else default_axis_title(measure),
+        kind="quantitative",
+        format=style.tooltip_format,
+    )
+    return header, series, [value], _series_order_role(spec, color_ch.data_field)
 
 
 def _scatter_roles(
@@ -479,6 +669,37 @@ class StructuredTooltipFeature:
             # the real owner.
             base_spec = layer_encoding_owner(spec.layers[0]) if chart.layers else spec
             header, series, values, order = _cartesian_roles(chart, data, base_spec)
+            plain_values = values
+            is_span = isinstance(chart, ResolvedBarChart) and chart.y_start is not None
+            if is_span:
+                assert isinstance(chart, ResolvedBarChart)
+                values, span_transforms = _span_values(chart, data, values[0])
+                if chart.layers and all(
+                    _shares_rows(lay, chart) for lay in chart.layers
+                ):
+                    named = frozenset(
+                        _layer_name(lay)
+                        for lay in chart.layers
+                        if not (
+                            isinstance(lay, ResolvedBarLayer)
+                            and lay.y_start is not None
+                        )
+                    )
+                    values = _with_swatches(base_spec, values, named)
+                    if not series:
+                        series, series_transforms = _layer_series(
+                            chart, data, base_spec
+                        )
+                        span_transforms = [*span_transforms, *series_transforms]
+                    spec.transforms = [*spec.transforms, *span_transforms]
+                    base_spec.tooltip_description = build_structured_tooltip_expr(
+                        "bar", header, series, values
+                    )
+                    _stamp_descriptions(
+                        spec, base_spec.tooltip_description, span_transforms
+                    )
+                    return spec
+                base_spec.transforms = [*base_spec.transforms, *span_transforms]
             if chart.layers and not series:
                 # A single-series base has no series row today (no color
                 # channel to promote) -- but chart_interactivity.js's
@@ -526,11 +747,30 @@ class StructuredTooltipFeature:
                     chart.stack == "normalize" and not chart.layers,
                 )
             lut_key = _CHART_TYPE_LUT_KEY[type(chart)]
-            base_spec.tooltip_description = build_structured_tooltip_expr(
+            description = build_structured_tooltip_expr(
                 lut_key, header, series, values, total, order
             )
+            if (
+                is_span
+                and isinstance(chart, ResolvedBarChart)
+                and chart.measure_type == "quantitative"
+            ):
+                # A row that starts at zero is a plain bar (a waterfall's
+                # totals): its value, not a start, an end and a difference.
+                plain = build_structured_tooltip_expr(
+                    lut_key, header, series, plain_values, total, order
+                )
+                description = f"(datum[{json.dumps(chart.y_start)}] == 0 ? {plain} : {description})"
+            base_spec.tooltip_description = description
         elif isinstance(chart, ResolvedScatterChart):
             data = chart_rows(chart, datasets).all_rows()
+            dot_plot = _dot_plot_roles(chart, data, spec)
+            if dot_plot is not None:
+                header, series, values, order = dot_plot
+                spec.tooltip_description = build_structured_tooltip_expr(
+                    "dot_plot", header, series, values, order=order
+                )
+                return spec
             lut_key, header, values = _scatter_roles(chart, data)
             spec.tooltip_description = build_structured_tooltip_expr(
                 lut_key, header, (), values

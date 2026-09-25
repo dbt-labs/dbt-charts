@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
+from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
 from ._base import (
     _CartesianChartFields,
     reject_multi_series_channel_conflicts,
 )
-from ._layer import CARTESIAN_LAYER_SUPPORTED_CHART_TYPES, CartesianLayer
+from ._layer import (
+    CARTESIAN_LAYER_SUPPORTED_CHART_TYPES,
+    BarChartLayer,
+    reject_blank_y_start,
+)
 
 
 class BarChart(_CartesianChartFields):
@@ -24,12 +29,20 @@ class BarChart(_CartesianChartFields):
         Literal["bar", "histogram"],
         Field(description="Selects the chart family."),
     ]
+    y_start: Annotated[
+        str | None,
+        Channel(),
+        Field(
+            default=None,
+            description="Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as y: both numeric, or both dates. Not with stacking.",
+        ),
+    ]
     style: Annotated[
         BarChartStylePatch | None,
         Field(default=None, description="Appearance overrides for this chart alone."),
     ]
     layers: Annotated[
-        list[CartesianLayer] | None,
+        list[BarChartLayer] | None,
         Field(
             default=None,
             description=(
@@ -40,6 +53,14 @@ class BarChart(_CartesianChartFields):
             ),
         ),
     ]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_blank_y_start(
+        cls,
+        data: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+    ) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+        return reject_blank_y_start(data)
 
     @model_validator(mode="after")
     def _reject_histogram_layers(self) -> BarChart:
@@ -54,6 +75,31 @@ class BarChart(_CartesianChartFields):
             raise ValueError(
                 f"chart.layers is not supported for chart type {self.type!r}. "
                 f"Supported chart types: {supported}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_y_start(self) -> BarChart:
+        if self.y_start is None:
+            return self
+        if self.type == "histogram":
+            raise ValueError(
+                "y_start is not supported on type: histogram — a histogram's "
+                "bars count from zero, so it takes no y_start."
+            )
+        if self.style is not None and self.style.stack in (
+            "zero",
+            "normalize",
+            "center",
+        ):
+            raise ValueError(
+                "y_start sets each bar's start, so it can't be stacked; "
+                "remove style.stack or y_start."
+            )
+        if isinstance(self.y, list):
+            raise ValueError(
+                "y_start sets one start per bar, so y must name a single column, "
+                "not a list."
             )
         return self
 

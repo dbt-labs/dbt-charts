@@ -9,6 +9,7 @@ one corner. A recipe nobody rendered is worse than no recipe, so each noun in
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from typing import Any
 
@@ -16,7 +17,7 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.authored import (
-    BarLayer,
+    BarChartBarLayer,
     LayerAxisYStyle,
     LineLayer,
     ScatterLayer,
@@ -350,6 +351,23 @@ def _marks(spec: Any, mark_type: str) -> list[dict[str, Any]]:
     return found
 
 
+def _texts(spec: Any) -> list[dict[str, Any]]:
+    """Every text-mark node, with the transforms visible to it."""
+    found: list[dict[str, Any]] = []
+
+    def walk(node: dict[str, Any], transforms: list[dict[str, Any]]) -> None:
+        seen = [*transforms, *node.get("transform", [])]
+        mark = node.get("mark")
+        mark_type = mark.get("type") if isinstance(mark, dict) else mark
+        if mark_type == "text":
+            found.append({**node, "transform": seen})
+        for child in node.get("layer", []):
+            walk(child, seen)
+
+    walk(spec, [])
+    return found
+
+
 def _shape_bar(measure: str, **style: Any) -> dict[str, Any]:
     return _spec(
         BarChart(
@@ -435,7 +453,7 @@ def _bullet_spec(*, layer_query: str | None) -> dict[str, Any]:
         y="size",
         color="band",
         layers=[
-            BarLayer.model_validate(
+            BarChartBarLayer.model_validate(
                 {
                     "type": "bar",
                     "y": "actual",
@@ -665,7 +683,302 @@ def test_dot_plot_recipe_survives_rotation(noun: str) -> None:
     )
 
 
+def _bar_encodings(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every encoding that draws a bar mark, merged with its ancestors' encodings.
+
+    Mixed rise/fall data makes the emitter split a span into sign-filtered
+    sub-layers (for corner-radius rounding) that carry only their own y/y2 —
+    color and the rest of the shared encoding live on an ancestor node. A raw
+    per-node read misses those; this walk merges parent encoding down first,
+    matching ``_bar_encodings`` in ``tests/core/test_bar_y_start_render.py``.
+    """
+    found: list[dict[str, Any]] = []
+
+    def walk(node: dict[str, Any], inherited: dict[str, Any]) -> None:
+        enc = {**inherited, **node.get("encoding", {})}
+        mark = node.get("mark")
+        mark_type = mark.get("type") if isinstance(mark, dict) else mark
+        if mark_type == "bar":
+            found.append(enc)
+        for child in node.get("layer", []):
+            walk(child, enc)
+
+    walk(spec, {})
+    return found
+
+
+# Consistently rising (high always above low) so a dumbbell/ranged-dot/
+# floating-bar span never trips the engine's sign-split (that split is the
+# waterfall/candlestick shapes' own concern below, not this one's).
+_SPAN_DATA = [
+    {"region": "West", "low": 60.0, "high": 100.0},
+    {"region": "East", "low": 40.0, "high": 90.0},
+    {"region": "North", "low": 80.0, "high": 140.0},
+]
+
+
+def _dumbbell_spec() -> dict[str, Any]:
+    return _spec(
+        BarChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="bar",
+            x="region",
+            y="high",
+            y_start="low",
+            layers=[
+                ScatterLayer(type="scatter", y="high"),
+                ScatterLayer(type="scatter", y="low"),
+            ],
+            style=BarChartStylePatch.model_validate(
+                {"orientation": "horizontal", "marks": {"bar": {"band_width": 0.06}}}
+            ),
+        ),
+        _SPAN_DATA,
+    )
+
+
+@pytest.mark.parametrize("noun", ["dumbbell", "barbell", "connected_dot_plot"])
+def test_dumbbell_recipe_draws_a_thinned_span_and_two_end_dots(noun: str) -> None:
+    """A span, not two independent bars: the band must be thinned to a stem
+    and a dot must sit at each end the span connects."""
+    spec = _dumbbell_spec()
+
+    (enc,) = _bar_encodings(spec)
+    assert enc["x2"] == {"field": "low"}, noun
+    bars = _marks(spec, "bar")
+    assert len(bars) == 1, noun
+    assert bars[0]["mark"]["height"] == {"band": 0.06}, (
+        f"{noun}: band_width must thin the bar to a stem, got {bars[0]['mark']}"
+    )
+
+    points = _marks(spec, "point")
+    assert len(points) == 2, noun
+    fields = {p["encoding"]["x"]["field"] for p in points}
+    assert fields == {"high", "low"}, noun
+    for point in points:
+        assert "y" not in point["encoding"], (
+            f"{noun}: each dot must share the bars' category band, not open its own axis"
+        )
+
+
+@pytest.mark.parametrize("noun", ["ranged_dot"])
+def test_ranged_dot_recipe_draws_a_span_and_a_point_estimate(noun: str) -> None:
+    spec = _spec(
+        BarChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="bar",
+            x="region",
+            y="high",
+            y_start="low",
+            layers=[ScatterLayer(type="scatter", y="high")],
+            style=BarChartStylePatch.model_validate({"orientation": "horizontal"}),
+        ),
+        _SPAN_DATA,
+    )
+
+    (enc,) = _bar_encodings(spec)
+    assert enc["x2"] == {"field": "low"}, noun
+
+    points = _marks(spec, "point")
+    assert len(points) == 1, noun
+    assert points[0]["encoding"]["x"]["field"] == "high", noun
+
+
+@pytest.mark.parametrize("noun", ["floating_bar", "range_bar"])
+def test_floating_bar_recipe_spans_without_stacking_or_forcing_zero(noun: str) -> None:
+    spec = _spec(
+        BarChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="bar",
+            x="region",
+            y="high",
+            y_start="low",
+            style=BarChartStylePatch.model_validate({"orientation": "vertical"}),
+        ),
+        _SPAN_DATA,
+    )
+
+    (enc,) = _bar_encodings(spec)
+    assert enc["y2"] == {"field": "low"}, noun
+    assert enc["y"].get("stack") is None, noun
+    # The data (40-140) is far from zero; the recipe's whole point is that the
+    # axis is not forced down to include it.
+    assert enc["y"].get("scale", {}).get("zero") is not True, noun
+
+
+def test_gantt_recipe_draws_date_spans_in_query_order() -> None:
+    plan = [
+        {
+            "task": "Scope",
+            "start_date": dt.date(2026, 1, 5),
+            "finish_date": dt.date(2026, 1, 23),
+        },
+        {
+            "task": "Build",
+            "start_date": dt.date(2026, 2, 9),
+            "finish_date": dt.date(2026, 4, 10),
+        },
+        {
+            "task": "Design",
+            "start_date": dt.date(2026, 1, 19),
+            "finish_date": dt.date(2026, 2, 20),
+        },
+    ]
+    spec = _spec(
+        BarChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="bar",
+            x="task",
+            y="finish_date",
+            y_start="start_date",
+            style=BarChartStylePatch.model_validate({"orientation": "horizontal"}),
+        ),
+        plan,
+    )
+
+    (enc,) = _bar_encodings(spec)
+    assert enc["x"]["type"] == "temporal"
+    assert enc["x2"] == {"field": "start_date"}
+    assert enc["y"].get("sort") in (None, ["Scope", "Build", "Design"])
+
+
+_WATERFALL_DATA = [
+    {"step": "Start", "start_value": 0, "end_value": 120, "direction": "Total"},
+    {"step": "Gain", "start_value": 120, "end_value": 148, "direction": "Increase"},
+    {"step": "Loss", "start_value": 148, "end_value": 126, "direction": "Decrease"},
+    {"step": "End", "start_value": 0, "end_value": 126, "direction": "Total"},
+]
+
+
+def _waterfall_spec(*, labels_visible: bool = False) -> dict[str, Any]:
+    style: dict[str, Any] = {"orientation": "vertical", "overlap": "full"}
+    if labels_visible:
+        style["marks"] = {"bar": {"labels": {"visible": True}}}
+    return _spec(
+        BarChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="bar",
+            x="step",
+            y="end_value",
+            y_start="start_value",
+            color="direction",
+            style=BarChartStylePatch.model_validate(style),
+        ),
+        _WATERFALL_DATA,
+    )
+
+
+@pytest.mark.parametrize("noun", ["waterfall", "bridge_chart"])
+def test_waterfall_recipe_spans_and_colors_by_direction_without_stacking(
+    noun: str,
+) -> None:
+    spec = _waterfall_spec()
+
+    # A rise (Start/Gain/End) and a fall (Loss) both appear in the data, so the
+    # engine's sign-split rounding fires — every resulting bar still has to
+    # carry the shape's own contract, not just one of them.
+    encs = _bar_encodings(spec)
+    assert encs, noun
+    for enc in encs:
+        assert enc["y2"] == {"field": "start_value"}, noun
+        assert enc["color"]["field"] == "direction", noun
+        assert enc["y"].get("stack") is None, noun
+        # overlap: full must fill the whole band rather than splitting each
+        # step into its own grouped slot.
+        assert not ({"xOffset", "yOffset"} & set(enc)), noun
+
+
+@pytest.mark.parametrize("noun", ["waterfall", "bridge_chart"])
+def test_waterfall_recipe_labels_the_signed_change(noun: str) -> None:
+    spec = _waterfall_spec(labels_visible=True)
+
+    (text,) = _texts(spec)
+    field = text["encoding"]["text"]["field"]
+    (calc,) = [t for t in text["transform"] if t.get("as") == field]
+    expr = calc["calculate"]
+    assert "datum['end_value'] - datum['start_value']" in expr, noun
+    assert "'+'" in expr and "'\\u2212'" in expr, noun
+
+
+_CANDLESTICK_DATA = [
+    {"session": "Mon", "low": 95.0, "high": 110.0, "open": 100.0, "close": 105.0},
+    {"session": "Tue", "low": 100.0, "high": 115.0, "open": 105.0, "close": 98.0},
+]
+
+
+def _candlestick_spec(*, color_on_base: bool) -> dict[str, Any]:
+    return _spec(
+        BarChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="bar",
+            x="session",
+            y="high",
+            y_start="low",
+            color="session" if color_on_base else None,
+            layers=[
+                BarChartBarLayer.model_validate(
+                    {"type": "bar", "y": "close", "y_start": "open", "color": "session"}
+                )
+            ],
+            style=BarChartStylePatch.model_validate(
+                {"orientation": "vertical", "marks": {"bar": {"band_width": 0.15}}}
+            ),
+        ),
+        _CANDLESTICK_DATA,
+    )
+
+
+@pytest.mark.parametrize("noun", ["candlestick", "ohlc", "stock_chart"])
+def test_candlestick_recipe_draws_a_wick_and_a_body_span(noun: str) -> None:
+    """The wick (low-high) is the base span; the body (open-close) is a
+    second, independently-spanned bar layer — not the same bar redrawn.
+
+    Mon closes above its open, Tue below — the body's own rise/fall mix
+    trips the same sign-split as waterfall, so the wick is one merged
+    encoding and the body is two (one per sign), all sharing the y2: open
+    contract.
+    """
+    spec = _candlestick_spec(color_on_base=True)
+
+    encs = _bar_encodings(spec)
+    wick = [e for e in encs if e.get("y2") == {"field": "low"}]
+    body = [e for e in encs if e.get("y2") == {"field": "open"}]
+    assert len(wick) == 1, noun
+    assert body, noun
+    assert wick[0]["y"]["field"] == "high", noun
+    assert all(e["y"]["field"] == "close" for e in body), noun
+
+
+@pytest.mark.parametrize("noun", ["candlestick", "ohlc", "stock_chart"])
+def test_candlestick_recipe_supports_the_ink_outline_convention(noun: str) -> None:
+    """The ink-outline convention: the base wick carries no `color:` on the
+    session column (a layered chart still gives it a synthetic ink-slot
+    legend token, but that token is not bound to the data), while the body
+    layer alone is colored by session."""
+    spec = _candlestick_spec(color_on_base=False)
+
+    encs = _bar_encodings(spec)
+    wick = [e for e in encs if e.get("y2") == {"field": "low"}]
+    body = [e for e in encs if e.get("y2") == {"field": "open"}]
+    assert len(wick) == 1, noun
+    assert wick[0].get("color", {}).get("field") != "session", noun
+    assert body and all(e["color"]["field"] == "session" for e in body), noun
+
+
 _RENDER_VERIFIED_NOUNS = {
+    "gantt",
     "streamgraph",
     "stacked_area",
     "stacked_bar",
@@ -694,6 +1007,17 @@ _RENDER_VERIFIED_NOUNS = {
     "bump",
     "dot_plot",
     "cleveland_dot_plot",
+    "dumbbell",
+    "barbell",
+    "connected_dot_plot",
+    "ranged_dot",
+    "floating_bar",
+    "range_bar",
+    "waterfall",
+    "bridge_chart",
+    "candlestick",
+    "ohlc",
+    "stock_chart",
 }
 
 
@@ -718,6 +1042,10 @@ _SYNONYM_GROUPS: tuple[tuple[str, ...], ...] = (
     ("small_multiples", "trellis", "faceted"),
     ("dual_axis", "combo", "bar_and_line"),
     ("dot_plot", "cleveland_dot_plot"),
+    ("dumbbell", "barbell", "connected_dot_plot"),
+    ("floating_bar", "range_bar"),
+    ("waterfall", "bridge_chart"),
+    ("candlestick", "ohlc", "stock_chart"),
 )
 
 
@@ -749,6 +1077,17 @@ def test_synonym_nouns_hand_out_their_primary_recipe(group: tuple[str, ...]) -> 
         # Its own last word is a generic tail, and it must not fold to "dot".
         ("dot plot", "dotplot"),
         ("Cleveland dot plot", "clevelanddotplot"),
+        ("dumbbell chart", "dumbbell"),
+        ("barbell graph", "barbell"),
+        ("ranged dot plot", "rangeddot"),
+        ("connected dot plot", "connecteddotplot"),
+        ("floating bar chart", "floatingbar"),
+        ("range bar graph", "rangebar"),
+        ("waterfall chart", "waterfall"),
+        ("bridge chart", "bridgechart"),
+        ("candlestick chart", "candlestick"),
+        ("stock chart", "stockchart"),
+        ("gantt chart", "gantt"),
     ],
 )
 def test_shape_nouns_resolve_however_they_are_spelled(
@@ -765,7 +1104,7 @@ def test_shape_nouns_resolve_however_they_are_spelled(
 
 @pytest.mark.parametrize(
     "authored",
-    ["dumbbell chart", "barbell graph", "ranged dot plot", "connected dot plot"],
+    ["sankey diagram", "treemap chart", "gauge chart", "radar chart", "violin plot"],
 )
 def test_unsupported_nouns_resolve_however_they_are_spelled(authored: str) -> None:
     keys = _shape_noun_keys(authored)

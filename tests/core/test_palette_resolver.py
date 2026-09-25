@@ -541,10 +541,6 @@ class TestPaletteTonal:
                     f"min ΔE = {min(pair_deltas):.2f}"
                 )
 
-    # test_studio_output_matches_shipped_yaml is intentionally not covered
-    # here — it loads ai_notes/palette_studio/tonal_session.py, which is
-    # outside dbt-charts/.
-
     @pytest.mark.parametrize(
         ("name", "anchor_hue", "wobble_tolerance"),
         [

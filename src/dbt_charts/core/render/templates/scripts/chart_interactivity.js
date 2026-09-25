@@ -38,6 +38,21 @@
     /*{# beside a percent lead (pie's raw slice count + grand total). Composes with #}*/
     /*{# a role marker, so it's peeled ahead of the role marker below. #}*/
     const MUTED = '⁠';
+    /*{# Brackets a value row's own swatch color (emitters/_tooltip.py's SWATCH): #}*/
+    /*{# one block listing several marks' values keys each row to its mark. #}*/
+    const SWATCH = '\u200b';
+    const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
+
+    /*{# Peels a SWATCH-bracketed color off the front of a row. A row's text can #}*/
+    /*{# be warehouse data, so only a well-formed hex counts: anything else (no #}*/
+    /*{# closing marker, not a color) is left as text and draws no swatch. #}*/
+    function peelSwatch(text) {
+        if (text.charAt(0) !== SWATCH) return { swatch: null, text: text };
+        const close = text.indexOf(SWATCH, 1);
+        const color = close === -1 ? '' : text.slice(1, close);
+        if (!HEX_COLOR.test(color)) return { swatch: null, text: text };
+        return { swatch: color, text: text.slice(close + 1) };
+    }
 
     /*{# Internal structural dividers (header underline, footer-total rule) are a #}*/
     /*{# fixed hairline, decoupled from the box frame's border.width. The frame #}*/
@@ -99,7 +114,8 @@
                 continue;
             }
             if (marker === ROLE_SERIES) {
-                entries.push({ role: 'series', value: pair.slice(1) });
+                const peeled = peelSwatch(pair.slice(1));
+                entries.push({ role: 'series', value: peeled.text, swatch: peeled.swatch });
                 continue;
             }
             if (marker === ROLE_ORDER) {
@@ -108,15 +124,18 @@
             }
 
             const isTotal = marker === ROLE_TOTAL;
-            const rest = isTotal ? pair.slice(1) : pair;
+            const peeled = peelSwatch(isTotal ? pair.slice(1) : pair);
+            const rest = peeled.text;
+            const swatch = peeled.swatch;
             const colonIndex = rest.indexOf(':');
             if (colonIndex === -1) continue;
 
             const key = rest.substring(0, colonIndex).trim();
             const value = rest.substring(colonIndex + 1).trim();
-            if (!key) continue;
+            /*{# A muted value may go unlabeled: a gray second line under the row above. #}*/
+            if (!key && !muted) continue;
 
-            entries.push({ role: isTotal ? 'total' : 'value', label: key, value: value, muted: muted });
+            entries.push({ role: isTotal ? 'total' : 'value', label: key, value: value, muted: muted, swatch: swatch });
         }
 
         return entries;
@@ -312,8 +331,11 @@
                 const ob = markOrderEntry(b.entries);
                 const sa = markSeriesEntry(a.entries);
                 const sb = markSeriesEntry(b.entries);
-                const ka = oa ? orderRank(oa) : (sa && sa.value in order ? order[sa.value] : Infinity);
-                const kb = ob ? orderRank(ob) : (sb && sb.value in order ? order[sb.value] : Infinity);
+                /*{# The rendered legend wins where a row appears in it: the bubble #}*/
+                /*{# then reads in the order the reader already sees. A baked rank #}*/
+                /*{# covers rows no legend lists (an endpoint-labeled chart). #}*/
+                const ka = sa && sa.value in order ? order[sa.value] : (oa ? orderRank(oa) : Infinity);
+                const kb = sb && sb.value in order ? order[sb.value] : (ob ? orderRank(ob) : Infinity);
                 return ka !== kb ? ka - kb : a._i - b._i;
             });
         }
@@ -1025,10 +1047,21 @@
         return stroke && stroke !== 'none' ? stroke : null;
     }
 
-    function seriesSwatch(color) {
+    /*{# A line is keyed with a line, not a filled square that reads as a bar. #}*/
+    /*{# Its hover target is either the stroke itself or the invisible point a #}*/
+    /*{# line layer lays over each datum to be hoverable (opacity 0). #}*/
+    function isStrokedMark(mark) {
+        const fill = mark.getAttribute('fill');
+        if ((!fill || fill === 'none') && markSeriesColor(mark)) return true;
+        return mark.getAttribute('aria-roledescription') === 'point' &&
+            mark.getAttribute('opacity') === '0';
+    }
+
+    function seriesSwatch(color, asLine) {
         const sw = DCT_TOOLTIP_STYLE.swatch;
-        return '<span style="display:inline-block;width:' + sw.size + 'px;height:' + sw.size +
-            'px;border-radius:' + sw.radius + 'px;' +
+        const height = asLine ? 2 : sw.size;
+        return '<span style="display:inline-block;width:' + sw.size + 'px;height:' + height +
+            'px;border-radius:' + (asLine ? 1 : sw.radius) + 'px;' +
             'background:' + color + ';margin-right:6px;flex-shrink:0;"></span>';
     }
 
@@ -1058,14 +1091,43 @@
     }
 
     function seriesRow(entry, seriesColor, ts) {
-        const swatch = seriesColor ? seriesSwatch(seriesColor) : '';
+        const color = entry.swatch || seriesColor;
+        const swatch = color ? seriesSwatch(color) : '';
         return '<div style="display:flex;align-items:center;padding:2px 0;color:' +
             ts.value.font.color + ';">' + swatch + formatValue(entry.value) + '</div>';
     }
 
     /*{# dependent value row (today's label -> value shape); the footer total #}*/
     /*{# reuses it with a top border + heavier weight instead of a new layout. #}*/
-    function valueRow(entry, ts, isTotal) {
+    /*{# Splits a number-shaped display value around its decimal point so a #}*/
+    /*{# column of them lines up on it: prefix + integer part, then the point, #}*/
+    /*{# fraction and suffix. null when the value isn't number-shaped (a date). #}*/
+    const DECIMAL_SHAPE = /^([^\d]*[\d,]*\d)(\.\d+)?([^\d]*)$/;
+    function decimalParts(value) {
+        const m = DECIMAL_SHAPE.exec(String(value));
+        return m ? { whole: m[1], tail: (m[2] || '') + m[3] } : null;
+    }
+
+    /*{# The widest tail (point, fraction, suffix) among a tooltip's numbers, in #}*/
+    /*{# ch: every tail cell takes this width, so the points share one x. #}*/
+    function decimalTailWidth(entries) {
+        let widest = 0;
+        entries.forEach(function (e) {
+            const parts = e.role === 'value' ? decimalParts(e.value) : null;
+            if (parts) widest = Math.max(widest, parts.tail.length);
+        });
+        return widest;
+    }
+
+    function alignedValue(value, tailWidth) {
+        const parts = tailWidth ? decimalParts(value) : null;
+        if (!parts) return formatValue(value);
+        return escapeHtml(parts.whole) +
+            '<span style="display:inline-block;white-space:pre;text-align:left;min-width:' + tailWidth + 'ch;">' +
+            escapeHtml(parts.tail) + '</span>';
+    }
+
+    function valueRow(entry, ts, isTotal, tailWidth) {
         const rowStyle = isTotal
             ? 'display:flex;justify-content:space-between;gap:' + ts.gap + 'px;margin-top:4px;padding-top:4px;border-top:' + DIVIDER_WIDTH + 'px solid ' + ts.border.color + ';'
             : 'display:flex;justify-content:space-between;gap:' + ts.gap + 'px;padding:2px 0;';
@@ -1076,8 +1138,8 @@
         const valueColor = entry.muted ? ts.label.font.color : ts.value.font.color;
         return (
             '<div style="' + rowStyle + '">' +
-                '<span style="color:' + ts.label.font.color + ';font-weight:' + labelWeight + ';">' + formatFieldName(entry.label) + '</span>' +
-                '<span style="color:' + valueColor + ';font-weight:' + ts.value.font.weight + ';text-align:right;font-variant-numeric:tabular-nums lining-nums;">' + formatValue(entry.value) + '</span>' +
+                '<span style="display:flex;align-items:center;color:' + ts.label.font.color + ';font-weight:' + labelWeight + ';">' + (entry.swatch ? seriesSwatch(entry.swatch) : '') + formatFieldName(entry.label) + '</span>' +
+                '<span style="color:' + valueColor + ';font-weight:' + ts.value.font.weight + ';text-align:right;font-variant-numeric:tabular-nums lining-nums;">' + alignedValue(entry.value, tailWidth) + '</span>' +
             '</div>'
         );
     }
@@ -1090,12 +1152,16 @@
     /*{# x-unified path (xUnifiedRow filters to role === 'value' and never sees #}*/
     /*{# it), not a row to render here. Skipping it explicitly, rather than #}*/
     /*{# falling through to valueRow(), avoids formatFieldName(undefined). #}*/
+    /*{# A value row with nothing to say (an optional second line, like a #}*/
+    /*{# duration's other unit when it matches the first) is left out. #}*/
     function singleMarkHtml(entries, seriesColor, ts) {
+        const tailWidth = decimalTailWidth(entries);
         return entries.map(function (entry) {
             if (entry.role === 'header') return headerRow(entry, seriesColor, ts);
             if (entry.role === 'series') return seriesRow(entry, seriesColor, ts);
             if (entry.role === 'order') return '';
-            return valueRow(entry, ts, entry.role === 'total');
+            if (entry.role === 'value' && entry.value === '') return '';
+            return valueRow(entry, ts, entry.role === 'total', tailWidth);
         }).join('');
     }
 
@@ -1123,11 +1189,11 @@
     /*{# value (label/dim color, weight 500, no parens) -- each its own grid #}*/
     /*{# cell so percent and raw form true right-aligned columns regardless of #}*/
     /*{# digit count, instead of one drifting joined string. #}*/
-    function xUnifiedRow(entries, seriesColor, isActive, ts, hasPercent) {
+    function xUnifiedRow(entries, seriesColor, isActive, ts, hasPercent, asLine, recede) {
         const series = markSeriesEntry(entries);
         const values = entries.filter(function (e) { return e.role === 'value'; });
         const label = series ? formatValue(series.value) : (values[0] ? formatFieldName(values[0].label) : '');
-        const swatch = seriesColor ? seriesSwatch(seriesColor) : '';
+        const swatch = seriesColor ? seriesSwatch(seriesColor, asLine) : '';
 
         /*{# active_marker='fill' (default): background-only tint on the row that #}*/
         /*{# triggered the hover -- no border/weight change, reads as a subtle tint, #}*/
@@ -1160,7 +1226,7 @@
         /*{# value drops to the low-contrast label color ONLY when it's the raw #}*/
         /*{# companion beside a percent (there the % is the lead). A sole value #}*/
         /*{# (no % column) IS its row's lead -> value color, matching single-mark. #}*/
-        const valueColor = hasPercent ? ts.label.font.color : ts.value.font.color;
+        const valueColor = (hasPercent || recede) ? ts.label.font.color : ts.value.font.color;
         const valueCell = xUnifiedCell(
             valueText,
             'text-align:right;color:' + valueColor + ';' + valueWeight + 'font-variant-numeric:tabular-nums lining-nums;',
@@ -1257,9 +1323,18 @@
             return m.entries.filter(function (e) { return e.role === 'value'; }).length > 1;
         });
         const columns = hasPercent ? 'auto minmax(0,1fr) auto auto' : 'auto minmax(0,1fr) auto';
-        const totalEntry = findTotalEntry(matches);
-        function renderRow(m) {
-            return xUnifiedRow(m.entries, markSeriesColor(m.mark), m.mark === hoveredMark, ts, hasPercent);
+        /*{# When the legend puts an overlay ahead of the stacked parts (a bullet: #}*/
+        /*{# actual and goal, then the bands they are read against), the parts are #}*/
+        /*{# a backdrop: no total sums them, and only the leading row keeps the #}*/
+        /*{# loud value color -- everything after it is reference. #}*/
+        const overlayLeads = plan.shown.length > 0 && !carriesGroupTotal(plan.shown[0]) &&
+            plan.shown.some(carriesGroupTotal);
+        const totalEntry = overlayLeads ? null : findTotalEntry(matches);
+        function renderRow(m, i) {
+            return xUnifiedRow(
+                m.entries, markSeriesColor(m.mark), m.mark === hoveredMark, ts, hasPercent,
+                isStrokedMark(m.mark), overlayLeads && i > 0
+            );
         }
 
         let html = '<div style="display:grid;grid-template-columns:' + columns + ';column-gap:0;align-items:center;">';

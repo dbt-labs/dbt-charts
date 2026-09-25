@@ -8,6 +8,7 @@ from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import resolve_label_format
 from dbt_charts.core.compile.merge import merge_onto_base
+from dbt_charts.core.compile.models.chart.authored._layer import BarChartBarLayer
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTablePerSeries,
 )
@@ -102,6 +103,10 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     unfold_wide_rows,
     wide_measure_labels_for,
 )
+from dbt_charts.core.compile.resolve.chart.enrich import (
+    classify_column_type,
+    first_non_null_samples,
+)
 from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
     estimate_plot_height,
     plot_height_floor_px,
@@ -114,9 +119,12 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
+    ERR_BAR_Y_START_KIND,
+    ERR_BAR_Y_START_NULL,
 )
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
@@ -603,6 +611,99 @@ def _stack_legend_should_yield(
     return required > plot_height
 
 
+def _span_column_kind(field: str, rows: ChartRows) -> str:
+    samples = first_non_null_samples(field, rows)
+    return classify_column_type(field, samples) if samples else "numeric"
+
+
+def _check_bar_span(
+    chart_id: str,
+    y_field: str,
+    y_start: str,
+    rows: ChartRows,
+    axis: tuple[str, str] | None,
+) -> Literal["numeric", "temporal"]:
+    """Validate one bar's span columns and return the kind they share.
+
+    ``axis`` is the chart's own value column and its kind, when checking a bar
+    layer: a layer's span sits on the chart's value axis.
+    """
+    for index, row in enumerate(rows, start=1):
+        if row.get(y_start) is None:
+            raise CompilationError.from_code(
+                ERR_BAR_Y_START_NULL,
+                chart_id=chart_id,
+                y_start_field=y_start,
+                row=index,
+            )
+    y_kind = _span_column_kind(y_field, rows)
+    start_kind = _span_column_kind(y_start, rows)
+    if y_kind == "categorical":
+        raise CompilationError.from_code(
+            ERR_BAR_Y_NOT_NUMERIC, chart_id=chart_id, y_field=y_field
+        )
+    for other, other_kind in ((y_start, start_kind), *([axis] if axis else [])):
+        if other_kind != y_kind:
+            raise CompilationError.from_code(
+                ERR_BAR_Y_START_KIND,
+                chart_id=chart_id,
+                y_field=y_field,
+                y_kind=y_kind,
+                y_start_field=other,
+                y_start_kind=other_kind,
+            )
+    return "temporal" if y_kind == "temporal" else "numeric"
+
+
+def _bar_span_kind(
+    normalized: BarChart, data: ChartRows, datasets: LayerDatasets
+) -> Literal["numeric", "temporal"] | None:
+    """The kind of the chart's value axis when its own bars have y_start.
+
+    None when they don't: the plain numeric-y check applies to the chart's own
+    bars instead, and the axis is numeric. Every bar layer with y_start is
+    checked against that axis either way.
+    """
+    kind: Literal["numeric", "temporal"] | None = None
+    if normalized.y_start is not None and isinstance(normalized.y, str):
+        kind = _check_bar_span(
+            normalized.id, normalized.y, normalized.y_start, data, None
+        )
+    # A chart with no single y column has no one column to name beside a layer.
+    span_layers = [
+        layer
+        for layer in normalized.layers
+        if isinstance(layer, BarChartBarLayer) and layer.y_start is not None
+    ]
+    if not span_layers:
+        return kind
+    axis: tuple[str, str] | None = None
+    if isinstance(normalized.y, str):
+        axis_kind = kind if kind is not None else _span_column_kind(normalized.y, data)
+        if axis_kind == "categorical":
+            raise CompilationError.from_code(
+                ERR_BAR_Y_NOT_NUMERIC, chart_id=normalized.id, y_field=normalized.y
+            )
+        axis = (normalized.y, axis_kind)
+    for layer in normalized.layers:
+        if (
+            not isinstance(layer, BarChartBarLayer)
+            or layer.y_start is None
+            or layer.y is None
+        ):
+            continue
+        if layer.query is None or layer.query == normalized.query_name:
+            rows = data
+        elif datasets is ...:
+            continue
+        elif layer.query not in datasets:
+            raise ChartDataError(f"Missing rows for bar layer query {layer.query!r}")
+        else:
+            rows = datasets[layer.query]
+        _check_bar_span(normalized.id, layer.y, layer.y_start, rows, axis)
+    return kind
+
+
 def _resolve_bar(
     normalized: BarChart,
     dataset: ChartDataset,
@@ -621,7 +722,8 @@ def _resolve_bar(
     # the _bake_cartesian_axes docstring above) — the axis cascade hardcodes y
     # to "quantitative" and downstream stack-totals math assumes numeric y. A
     # categorical y silently bakes a NaN axis with zero marks; refuse instead.
-    _bar_bad_y = _first_non_numeric_y(normalized.y, data)
+    span_kind = _bar_span_kind(normalized, data, datasets)
+    _bar_bad_y = _first_non_numeric_y(normalized.y, data) if span_kind is None else None
     if _bar_bad_y is not None:
         _bar_y_hint = None
         if x_ch_type == "quantitative":
@@ -636,6 +738,10 @@ def _resolve_bar(
         )
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
+    )
+    # Only a bar from one date to another puts dates on the value axis.
+    measure_type: Literal["quantitative", "temporal"] = (
+        "temporal" if span_kind == "temporal" else "quantitative"
     )
     plan = plan_cartesian(
         normalized,
@@ -663,7 +769,15 @@ def _resolve_bar(
     # Flat chart.stack overrides style.bar.stack; fall through to the merged bar
     # style (which already applied style.bar.stack → board theme cascade) so that
     # per-chart style overrides are respected even when chart.stack is None.
-    resolved_stack = normalized.stack if normalized.stack is not None else bar.stack
+    # A bar with y_start sets each bar's own start, so it never stacks; the
+    # authored model already rejects an authored style.stack beside it.
+    resolved_stack = (
+        "none"
+        if normalized.y_start is not None
+        else normalized.stack
+        if normalized.stack is not None
+        else bar.stack
+    )
     is_stacked = resolved_stack not in (None, "none")
     primary = plan.primary
     channels = plan.channels
@@ -997,6 +1111,13 @@ def _resolve_bar(
             if y_field
             else _numeric_y_values(data, tuple(y_fields))
         )
+        if span_kind == "temporal":
+            bar_zero = False
+        elif normalized.y_start is not None and ay_scale_zero is None and bar_y_values:
+            # A bar with y_start encodes position at both ends, not length
+            # from zero, so zero anchors the axis only when a bar already
+            # reaches it (a waterfall's totals); otherwise the axis fits.
+            bar_zero = min(bar_y_values) <= 0 <= max(bar_y_values)
         _bar_ticks = _resolve_cartesian_ticks(
             normalized.id,
             ay_merged,
@@ -1156,6 +1277,8 @@ def _resolve_bar(
         **_ck,
         wide_measures=wide_measures,
         chart_type="bar",
+        y_start=normalized.y_start,
+        measure_type=measure_type,
         stack=resolved_stack,
         stacked_domain_max=stacked_domain_max,
         orientation=orientation,

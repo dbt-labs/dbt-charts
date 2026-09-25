@@ -96,6 +96,20 @@ from dbt_charts.core.compile.models.style.authored._base import (
 )
 
 
+def reject_blank_y_start(
+    data: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+    """Refuse a y_start key with no column: YAML parses a blank value as None,
+    which would otherwise read as unset and quietly draw the bar from zero."""
+    if isinstance(data, dict) and "y_start" in data:
+        value = data["y_start"]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError(
+                "y_start names no column; remove it for bars that start at zero."
+            )
+    return data
+
+
 class TypedLayerBase(BaseModel):
     """Common identity fields and validators shared by all typed layer variants."""
 
@@ -164,6 +178,27 @@ class BarLayer(TypedLayerBase):
     ] = None
 
 
+class BarChartBarLayer(BarLayer):
+    """A bar-type layer on a bar chart, which may start somewhere other than zero.
+
+    Only a bar chart's layers take `y_start`: its bar and theirs share the one
+    value axis whose span rules the bar chart checks.
+    """
+
+    y_start: str | None = Field(
+        default=None,
+        description="Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as the chart's y: both numeric, or both dates.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_blank_y_start(
+        cls,
+        data: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+    ) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+        return reject_blank_y_start(data)
+
+
 class LineLayer(TypedLayerBase):
     """A line-type layer on a cartesian chart."""
 
@@ -208,6 +243,12 @@ class ScatterLayer(TypedLayerBase):
 # `type` key before validating the rest of the fields.
 CartesianLayer = Annotated[
     BarLayer | LineLayer | AreaLayer | ScatterLayer,
+    Field(discriminator="type"),
+]
+
+# A bar chart's layers: the same, with a bar layer that may take y_start.
+BarChartLayer = Annotated[
+    BarChartBarLayer | LineLayer | AreaLayer | ScatterLayer,
     Field(discriminator="type"),
 ]
 

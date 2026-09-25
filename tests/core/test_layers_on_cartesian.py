@@ -33,6 +33,7 @@ from dbt_charts.core.compile.models.chart.authored import (
 )
 from dbt_charts.core.compile.models.chart.authored._layer import (
     AreaLayer,
+    BarChartBarLayer,
     BarLayer,
     CartesianLayer,
     LineLayer,
@@ -287,6 +288,11 @@ def _bar_normalized(**kwargs):  # type: ignore[no-untyped-def]
         "variable_dependencies": set(),
     }
     defaults.update(kwargs)
+    # Layers validated against the generic union re-validate as a bar chart's.
+    if "layers" in kwargs:
+        defaults["layers"] = [
+            layer.model_dump(exclude_unset=True) for layer in kwargs["layers"]
+        ]
     return NBarChart(**defaults)
 
 
@@ -496,6 +502,7 @@ def test_emit_bar_layer_returns_chart_spec() -> None:
         encoding=encoding,
         data=_BAR_DATA,
         measure_field="revenue",
+        start_field=None,
         config={},
         transforms=[],
         x_is_banded=True,
@@ -635,7 +642,7 @@ def test_bar_layer_marks_bar_propagates() -> None:
     from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedBarLayer
     from dbt_charts.core.compile.resolve import resolve
 
-    layer = BarLayer(
+    layer = BarChartBarLayer(
         type="bar",
         y="revenue",
         style={"marks": {"bar": {"padding": 0.3}}},
@@ -1279,7 +1286,6 @@ def test_step_band_on_base_does_not_shrink_bar_layer_width() -> None:
     band-width-shorthand degradation applies to the bar layer, not just a
     base bar. Regression: only the base-is-bar case was fixed; band-step-on-
     primary + a bar layer left the bar layer's own width broken."""
-    from dbt_charts.core.compile.models.chart.authored._layer import BarLayer
     from dbt_charts.core.compile.models.chart.normalized import AreaChart as NAreaChart
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.render.chart.emitters.area import AreaEmitter
@@ -1294,7 +1300,7 @@ def test_step_band_on_base_does_not_shrink_bar_layer_width() -> None:
         query_name="q",
         variable_dependencies=set(),
         style={"marks": {"area": {"curve": "step"}}},
-        layers=[BarLayer(type="bar", y="target")],
+        layers=[BarChartBarLayer(type="bar", y="target")],
     )
     resolved = resolve(chart, _BAR_DATA, _default_board_style())
     vl = translate_to_vl(
@@ -1352,7 +1358,6 @@ def test_area_base_halo_not_recolored_by_shared_legend_scale() -> None:
     scale — the halo pins its own literal color instead. Regression: an
     inherited encoding on the outer wrapper alone recolors the halo too,
     collapsing the area's opacity."""
-    from dbt_charts.core.compile.models.chart.authored._layer import BarLayer
     from dbt_charts.core.compile.models.chart.normalized import AreaChart as NAreaChart
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.render.chart.emitters.area import AreaEmitter
@@ -1366,7 +1371,7 @@ def test_area_base_halo_not_recolored_by_shared_legend_scale() -> None:
         query=_sql(),
         query_name="q",
         variable_dependencies=set(),
-        layers=[BarLayer(type="bar", y="target")],
+        layers=[BarChartBarLayer(type="bar", y="target")],
     )
     resolved = resolve(chart, _BAR_DATA, _default_board_style())
     vl = translate_to_vl(

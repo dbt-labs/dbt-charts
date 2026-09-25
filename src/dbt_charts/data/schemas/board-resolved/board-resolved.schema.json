@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.8.1.dev210",
+  "version": "0.8.1.dev245",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10482,6 +10482,29 @@
           "default": null,
           "description": "Final per-chart support_table style (board theme merged with the family override)."
         },
+        "y_start": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Column each bar starts from; absent, bars start at zero.",
+          "title": "Y Start"
+        },
+        "measure_type": {
+          "default": "quantitative",
+          "description": "Value-axis data type: temporal only for a bar from one date column to another.",
+          "enum": [
+            "quantitative",
+            "temporal"
+          ],
+          "title": "Measure Type",
+          "type": "string"
+        },
         "wide_measures": {
           "default": [],
           "description": "Authored y: list measures, stored after resolve-time normalization.",
@@ -10628,6 +10651,18 @@
           ],
           "default": null,
           "title": "Y"
+        },
+        "y_start": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Y Start"
         },
         "label": {
           "anyOf": [

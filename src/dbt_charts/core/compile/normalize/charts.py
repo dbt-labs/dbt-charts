@@ -270,6 +270,7 @@ def normalize_chart(
                 type=chart_type,
                 chart_id=chart_id,
                 stack=authored_style.stack if authored_style is not None else None,
+                y_start=authored.y_start,
                 layers=authored.layers if authored.layers is not None else [],
                 query_registry=query_registry,
                 default_source=default_source,
@@ -672,6 +673,7 @@ _FIELD_CHANNEL_KEYS: frozenset[str] = frozenset(
     {
         "x",
         "y",
+        "y_start",
         "color",
         "theta",
         "size",

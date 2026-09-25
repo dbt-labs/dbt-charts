@@ -23,7 +23,7 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.authored._layer import (
     AreaLayer,
-    BarLayer,
+    BarChartBarLayer,
     LineLayer,
 )
 from dbt_charts.core.compile.resolve import resolve
@@ -213,7 +213,7 @@ class TestSeveralLayersNoColor:
             y="revenue",
             layers=[
                 AreaLayer(type="area", y="cost", label="Cost"),
-                BarLayer(type="bar", y="target", label="Target"),
+                BarChartBarLayer(type="bar", y="target", label="Target"),
             ],
             style={"endpoint_labels": {"visible": True}},
         )
@@ -679,7 +679,7 @@ class TestLegendNotOverSuppressed:
         [LineLayer(type="line", y="cumulative", label="Cumulative")],
         [
             AreaLayer(type="area", y="cost", label="Cost"),
-            BarLayer(type="bar", y="target", label="Target"),
+            BarChartBarLayer(type="bar", y="target", label="Target"),
         ],
     ],
     ids=["one_layer", "several_layers"],
@@ -784,7 +784,7 @@ def test_layers_sharing_a_label_render_without_endpoint_labels(make_chart):
         y="annual",
         layers=[
             LineLayer(type="line", y="cumulative", label="Target"),
-            BarLayer(type="bar", y="cumulative", label="Target"),
+            BarChartBarLayer(type="bar", y="cumulative", label="Target"),
         ],
     )
     spec = _resolve_and_render(chart, _bar_with_layers_data())

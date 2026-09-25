@@ -222,8 +222,9 @@ Authored patch for bar and histogram charts; histogram adds automatic x binning.
 | `support_table` | list[str \| ChartSupportTableSource \| ChartSupportTableAggregate \| ChartSupportTablePerSeries] \| [ChartSupportTable](#chartsupporttable) | Optional mini data-grid attached below/above the chart. |
 | `height` | int \| float | Explicit chart height in pixels. Positive number only. When set, overrides aspect_ratio and theme cascade. Valid on cartesian chart families (area, bar, heatmap, histogram, line, scatter), pie/donut, and geo families (geoshape, map, point_map, bubble_map). Other chart families use renderer-owned or layout-owned sizing contracts. |
 | `width` | int \| float | Chart width in pixels. Positive number only. In a rows layout the chart's slot pins to this width (a fixed footprint, capped at the row). In cols and grid layouts it contributes to the dashboard's intrinsic width measurement when the board has no width of its own, and the layout still owns the final slot. Valid on cartesian chart families (area, bar, heatmap, histogram, line, scatter), pie/donut, and geo families (geoshape, map, point_map, bubble_map). Other chart families use renderer-owned or layout-owned sizing contracts. |
+| `y_start` | str | Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as y: both numeric, or both dates. Not with stacking. |
 | `style` | [BarChartStyle](#barchartstyle) | Appearance overrides for this chart alone. |
-| `layers` | list[[BarLayer](#barlayer) \| [LineLayer](#linelayer) \| [AreaLayer](#arealayer) \| [ScatterLayer](#scatterlayer)] | Extra marks drawn over this chart, each with its own type and columns. Not supported when type: histogram: a histogram bins x and aggregates to a count, so there is no shared y measure for an overlay to plot against. |
+| `layers` | list[[BarChartBarLayer](#barchartbarlayer) \| [LineLayer](#linelayer) \| [AreaLayer](#arealayer) \| [ScatterLayer](#scatterlayer)] | Extra marks drawn over this chart, each with its own type and columns. Not supported when type: histogram: a histogram bins x and aggregates to a count, so there is no shared y measure for an overlay to plot against. |
 
 <a id="linechart"></a>
 ## LineChart
@@ -734,9 +735,9 @@ Authored overlay for BarChartStyle. Bar chart style: chart-level fields + marks 
 | `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed on stacked bars instead of in a legend. |
 | `marks` | [BarChartMarksStyle](#barchartmarksstyle) | Bar-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
 
-<a id="barlayer"></a>
-## BarLayer
-A bar-type layer on a cartesian chart.
+<a id="barchartbarlayer"></a>
+## BarChartBarLayer
+A bar-type layer on a bar chart, which may start somewhere other than zero.
 
 **Required**
 
@@ -755,6 +756,7 @@ A bar-type layer on a cartesian chart.
 | `color` | str | Column whose values split this layer into colored series; bare column name only. |
 | `axis_y` | [LayerAxisYStyle](#layeraxisystyle) | This layer's own y axis: which side it sits on, its title, scale, ticks, grid. |
 | `style` | [BarLayerStyle](#barlayerstyle) | Appearance overrides for this layer's bar marks. |
+| `y_start` | str | Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as the chart's y: both numeric, or both dates. |
 
 <a id="linelayer"></a>
 ## LineLayer
@@ -847,6 +849,28 @@ Authored overlay for LineChartStyle. Line chart style: chart-level fields + mark
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed at the end of each line instead of in a legend. |
 | `marks` | [LineChartMarksStyle](#linechartmarksstyle) | Line-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
+
+<a id="barlayer"></a>
+## BarLayer
+A bar-type layer on a cartesian chart.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | const: "bar" |  |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `query` | str | Query name for this layer's data (overrides chart-level query). |
+| `x` | str | X-axis column name for this layer. |
+| `y` | str | Y-axis column name for this layer. |
+| `label` | str | Name for this layer's measure wherever the layer is identified. Defaults to its y column name. |
+| `color` | str | Column whose values split this layer into colored series; bare column name only. |
+| `axis_y` | [LayerAxisYStyle](#layeraxisystyle) | This layer's own y axis: which side it sits on, its title, scale, ticks, grid. |
+| `style` | [BarLayerStyle](#barlayerstyle) | Appearance overrides for this layer's bar marks. |
 
 <a id="areachartstyle"></a>
 ## AreaChartStyle

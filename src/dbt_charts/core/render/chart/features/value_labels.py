@@ -40,9 +40,14 @@ from dbt_charts.core.compile.models.style.theme import (
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_LABELS_FIELD_NOT_FOUND,
+    ERR_SPAN_MIDDLE_ALIGNED_LABELS,
     ERR_STACKED_MIDDLE_ALIGNED_LABELS,
 )
 from dbt_charts.core.render.chart._types import VLDict
+from dbt_charts.core.render.chart.emitters._tooltip import (
+    span_duration_expr,
+    span_duration_unit,
+)
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.step_band import STEP_BAND_EDGE_FIELD, is_band_step
@@ -576,6 +581,146 @@ def _build_bar_text_layer(
     return result
 
 
+# A bar with y_start points from its start to its end, so where a label sits
+# depends on which way that row runs: (rise, fall) mark props per position,
+# picked per row by a Vega expression. `bottom` is read from the start end.
+_SPAN_POS_VERTICAL: dict[str, tuple[VLDict, VLDict]] = {
+    "above": ({"baseline": "bottom", "dy": -4}, {"baseline": "top", "dy": 4}),
+    "top": ({"baseline": "top", "dy": 4}, {"baseline": "bottom", "dy": -4}),
+    "bottom": ({"baseline": "bottom", "dy": -4}, {"baseline": "top", "dy": 4}),
+}
+_SPAN_POS_HORIZONTAL: dict[str, tuple[VLDict, VLDict]] = {
+    "above": ({"align": "left", "dx": 4}, {"align": "right", "dx": -4}),
+    "top": ({"align": "right", "dx": -4}, {"align": "left", "dx": 4}),
+    "bottom": ({"align": "left", "dx": 4}, {"align": "right", "dx": -4}),
+}
+
+
+_SPAN_CENTERED_VERTICAL: VLDict = {"baseline": "middle", "dy": 0}
+_SPAN_CENTERED_HORIZONTAL: VLDict = {"align": "center", "dx": 0}
+
+
+def _span_label_text_expr(
+    labels: BarLabelsStyle, y_field: str, start_field: str, is_house: bool
+) -> str:
+    """The signed change ``y - y_start`` (``+$28``, ``−$22``), or plain ``y``
+    on a row that starts at zero, as a Vega expression."""
+    end, start = f"datum[{y_field!r}]", f"datum[{start_field!r}]"
+
+    def fmt(value: str) -> str:
+        if is_house and labels.format is not None:
+            return numeral_vega_expr(value, labels.format, "narrative")
+        if labels.format is not None:
+            return f"format({value}, {_json.dumps(labels.format)})"
+        return f"format({value}, {_json.dumps('')})"
+
+    sign = f"({end} >= {start} ? '+' : '\\u2212')"
+    return f"{start} == 0 ? {fmt(end)} : {sign} + {fmt(f'abs({end} - {start})')}"
+
+
+def _build_bar_span_text_layer(
+    labels: BarLabelsStyle,
+    y_field: str,
+    start_field: str,
+    is_horizontal: bool,
+    background: str,
+    is_house: bool,
+    label_is_text: bool,
+    duration_unit: str | None,
+) -> VLDict:
+    """Build the value-label text layer for a bar with y_start.
+
+    Its text is the change (see ``_span_label_text_expr``); a bar between two
+    dates (``duration_unit`` set) prints its length in the chart's one unit.
+
+    Positions read from the ``y`` end, the tip of the change: ``above`` sits
+    past it (below a falling bar), ``top`` just inside it, ``bottom`` inside
+    the start end, and ``middle`` halfway between the two ends. Under ``top``
+    only a row that starts at zero keeps its label at the tip, as any bar
+    does; a change row centers its label, since the label measures the whole
+    bar (a waterfall's steps against its totals).
+    """
+    effective_position = labels.position if labels.position is not None else "above"
+    measure_channel = "x" if is_horizontal else "y"
+    # A date bar's ends are positioned as dates: compare and average their
+    # timestamps, never the raw strings.
+    end = f"datum[{y_field!r}]"
+    start = f"datum[{start_field!r}]"
+    if duration_unit is not None:
+        end, start = f"time(toDate({end}))", f"time(toDate({start}))"
+    rise_ok = f"{end} >= {start}"
+    mark_dict: VLDict = {"type": "text"}
+    anchor = end
+    if effective_position in ("middle", "middle_aligned"):
+        if effective_position == "middle_aligned":
+            raise ChartDataError.from_code(ERR_SPAN_MIDDLE_ALIGNED_LABELS)
+        pos_map_middle = (
+            BAR_POS_MAP_HORIZONTAL if is_horizontal else BAR_POS_MAP_VERTICAL
+        )
+        mark_dict = dict(pos_map_middle["middle"])
+        anchor = f"({end} + {start}) / 2"
+    else:
+        pos_map = _SPAN_POS_HORIZONTAL if is_horizontal else _SPAN_POS_VERTICAL
+        rise, fall = pos_map[effective_position]
+        for key in rise:
+            mark_dict[key] = {
+                "expr": f"{rise_ok} ? {_json.dumps(rise[key])} : {_json.dumps(fall[key])}"
+            }
+        if effective_position == "top":
+            from_zero = f"datum[{start_field!r}] == 0"
+            centered = (
+                _SPAN_CENTERED_HORIZONTAL if is_horizontal else _SPAN_CENTERED_VERTICAL
+            )
+            for key in rise:
+                mark_dict[key] = {
+                    "expr": f"{from_zero} ? ({mark_dict[key]['expr']}) : {_json.dumps(centered[key])}"
+                }
+            anchor = f"{from_zero} ? {end} : ({end} + {start}) / 2"
+        if effective_position == "bottom":
+            anchor = start
+    if labels.dx is not None:
+        mark_dict["dx"] = labels.dx
+    if labels.dy is not None:
+        mark_dict["dy"] = labels.dy
+    apply_label_font(mark_dict, labels)
+
+    transforms: list[VLDict] = []
+    if labels.field is not None:
+        text_enc, transforms = _house_register_text_encoding(
+            labels, labels.field, "__value_label_text", is_house, label_is_text
+        )
+    else:
+        text_enc = {"field": "__value_label_text", "type": "nominal"}
+        transforms = [
+            {
+                "calculate": (
+                    span_duration_expr(y_field, start_field, duration_unit)
+                    if duration_unit is not None
+                    else _span_label_text_expr(labels, y_field, start_field, is_house)
+                ),
+                "as": "__value_label_text",
+            }
+        ]
+    position_field = "__value_label_anchor"
+    transforms.append(
+        {"calculate": _null_safe_position(anchor, y_field), "as": position_field}
+    )
+    layer_enc: VLDict = {
+        "text": text_enc,
+        measure_channel: {
+            "field": position_field,
+            "type": "temporal" if duration_unit is not None else "quantitative",
+            "stack": None,
+        },
+    }
+    size = label_size_encoding(labels)
+    if size is not None:
+        layer_enc["size"] = size
+    if effective_position in _INSIDE_BAR_POSITIONS:
+        layer_enc["color"] = {"value": background}
+    return {"mark": mark_dict, "transform": transforms, "encoding": layer_enc}
+
+
 def _bar_channel_encoding(spec: ChartSpec, channel: str) -> VLDict | None:
     """A channel's emitted encoding, wherever the emitter actually left it.
 
@@ -824,6 +969,9 @@ def _fit_hide_test(
         # directly as "the segment is shorter than one line of label needs".
         return f"{measure} * {plot_height} / {measure_span:.6g} < {required_px:.6g}"
 
+    if chart.y_start is not None:
+        # A span's extent is its change, whichever way it runs.
+        return extent_px(f"abs({field} - datum[{chart.y_start!r}])")
     if effective_position == "middle":
         return f"{field} != 0 && {extent_px(f'abs({field})')}"
     # `top` anchors to the bar's end and `bottom` to the zero line. On a
@@ -1324,17 +1472,33 @@ class ValueLabelFeature:
         # _emitted_stack. The label must land on what VL actually lays out.
         measure_channel = "x" if is_horiz else "y"
         stack_offset, stack_sort = _emitted_stack(spec, measure_channel)
-        text_layer = _build_bar_text_layer(
-            labels,
-            y,
-            is_horiz,
-            is_stacked,
-            chart.background,
-            is_house=chart.style.label_is_house,
-            label_is_text=labels_draw_text(labels, data),
-            category_field=chart.x if isinstance(chart.x, str) else None,
-            stack_offset=stack_offset,
-            stack_sort=stack_sort,
+        label_is_text = labels_draw_text(labels, data)
+        text_layer = (
+            _build_bar_span_text_layer(
+                labels,
+                y,
+                chart.y_start,
+                is_horiz,
+                chart.background,
+                chart.style.label_is_house,
+                label_is_text,
+                span_duration_unit(data, y, chart.y_start)
+                if chart.measure_type == "temporal"
+                else None,
+            )
+            if chart.y_start is not None
+            else _build_bar_text_layer(
+                labels,
+                y,
+                is_horiz,
+                is_stacked,
+                chart.background,
+                is_house=chart.style.label_is_house,
+                label_is_text=label_is_text,
+                category_field=chart.x if isinstance(chart.x, str) else None,
+                stack_offset=stack_offset,
+                stack_sort=stack_sort,
+            )
         )
         # Move text-layer transforms to the outer spec's top-level transform
         # list. When a VL sub-layer carries its own transform array, vl-convert

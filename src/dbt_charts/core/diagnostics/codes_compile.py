@@ -382,6 +382,45 @@ ERR_BAR_Y_NOT_NUMERIC = REGISTRY.register(
     )
 )
 
+ERR_BAR_Y_START_NULL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BAR-Y-START-NULL",
+        domain="compile",
+        title="Bar chart y_start column has an empty cell",
+        message_template=(
+            "Chart {chart_id!r} (bar): y_start column {y_start_field!r} is empty "
+            "in row {row}. Every row needs a start; write 0 for a bar that "
+            "starts at zero."
+        ),
+        doc=(
+            "Fired when a bar chart's `y_start:` column holds a NULL. A missing "
+            "start is never read as zero: have the query write an explicit 0 for "
+            "a bar that starts at zero."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_BAR_Y_START_KIND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BAR-Y-START-KIND",
+        domain="compile",
+        title="Bar chart y and y_start are different kinds",
+        message_template=(
+            "Chart {chart_id!r} (bar): column {y_field!r} is {y_kind} but "
+            "column {y_start_field!r} is {y_start_kind}. A bar's start and end, "
+            "and every bar on the chart, sit on one value axis: make them all "
+            "numeric, or all dates."
+        ),
+        doc=(
+            "Fired when a bar's `y:` and `y_start:` columns (or a bar layer's, "
+            "against the chart's own) are not the same kind. Both must be "
+            "numeric, or both dates."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_LINE_Y_NOT_NUMERIC = REGISTRY.register(
     ErrorCode(
         code="ERR-LINE-Y-NOT-NUMERIC",

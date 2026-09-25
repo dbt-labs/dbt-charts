@@ -19,7 +19,7 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.authored import (
     AreaLayer,
-    BarLayer,
+    BarChartBarLayer,
     LayerAxisYStyle,
     LineLayer,
     ScatterLayer,
@@ -188,7 +188,7 @@ def _layered_bar_spec(
     if labels:
         layer_body["style"] = {"marks": {layer_mark: {"labels": {"visible": True}}}}
     layer_cls = {
-        "bar": BarLayer,
+        "bar": BarChartBarLayer,
         "line": LineLayer,
         "area": AreaLayer,
         "scatter": ScatterLayer,

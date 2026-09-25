@@ -42,8 +42,8 @@ queries:
   # is, and six copies of the fix would let them drift apart again.
   #
   # close_at on an OPEN opportunity is a projected close date, running months
-  # past the last real close (fixture: open pipeline reaches 2026-07-31 while
-  # the last closed deal is 2026-05-10). MAX(close_at) over all rows therefore
+  # past the last real close (fixture: open pipeline reaches 2026-11-23 while
+  # the last closed deal is 2026-08-26). MAX(close_at) over all rows therefore
   # reads as a "today" the books have not reached: it opens empty trailing
   # months on every time series and starves the rolling windows behind them.
   # Filter to is_closed, then truncate to the month boundary so no series ends
@@ -94,20 +94,21 @@ queries:
                WHERE status = 'active' AND created_at <= (SELECT today FROM bounds) - INTERVAL 90 DAY)
               , 0) - 1                                                          AS active_subs_growth_pct
 
-  # ── Hero: monthly bookings stacked by top-5 lead source ────────────────
+  # ── Hero: monthly bookings stacked by top-6 lead source ────────────────
   monthly_bookings_by_source:
     sql: |
       WITH src AS (
         SELECT lead_source
         FROM opportunities
         WHERE is_won AND lead_source IS NOT NULL
+          AND {{ filter('lead_source', lead_source) }}
         GROUP BY 1
         -- A SUM(amount) tie at this LIMIT 6 boundary can swap which source
         -- makes the top-6 cut, not just the display order.
         ORDER BY SUM(amount) DESC, lead_source ASC
         LIMIT 6
       ),
-      -- Shared anchor — see kpi_data. Months come from CLOSED rows only and
+      -- Shared anchor — see book_period. Months come from CLOSED rows only and
       -- stop at the last complete month, so the domain never carries a column
       -- whose business has not closed yet.
       bounds AS (SELECT * FROM {{ queries.book_period }}),
@@ -132,7 +133,6 @@ queries:
         ON date_trunc('month', o.close_at)::DATE = grid.m
        AND o.lead_source = grid.lead_source
        AND o.is_closed
-      WHERE {{ filter('grid.lead_source', lead_source) }}
       GROUP BY 1, 2
       ORDER BY 1, 2
 
@@ -144,7 +144,7 @@ queries:
   # CFOs care about this mix because it is the ARPU story.
   plan_mix:
     sql: |
-      -- Shared anchor — see kpi_data. Capping here is what makes the center
+      -- Shared anchor — see book_period. Capping here is what makes the center
       -- total equal the cumulative-area chart's final value: both are
       -- "closed-won $ through the last complete month".
       WITH bounds AS (SELECT * FROM {{ queries.book_period }}),
@@ -168,20 +168,21 @@ queries:
       FROM bands
       ORDER BY bookings DESC, plan ASC
 
-  # ── Multi-line: win rate by source over time (same top-5 dim as hero) ──
+  # ── Multi-line: win rate by source over time (same top-6 dim as hero) ──
   win_rate_by_source_monthly:
     sql: |
       WITH src AS (
         SELECT lead_source
         FROM opportunities
         WHERE is_won AND lead_source IS NOT NULL
+          AND {{ filter('lead_source', lead_source) }}
         GROUP BY 1
         -- Same tiebreaker as monthly_bookings_by_source's src CTE — keeps the
         -- top-6 cut and color/legend order stable across runs.
         ORDER BY SUM(amount) DESC, lead_source ASC
         LIMIT 6
       ),
-      -- Shared anchor — see kpi_data. Critical here: a part-month tail carries
+      -- Shared anchor — see book_period. Critical here: a part-month tail carries
       -- only a handful of closed deals per source, and a 3-month rolling rate
       -- computed over it collapses every series onto ~100%.
       bounds AS (SELECT * FROM {{ queries.book_period }}),
@@ -208,7 +209,6 @@ queries:
           ON date_trunc('month', o.close_at)::DATE = grid.m
          AND o.lead_source = grid.lead_source
          AND o.is_closed
-        WHERE {{ filter('grid.lead_source', lead_source) }}
         GROUP BY 1, 2
       )
       -- 3-month trailing window smooths the per-source monthly choppiness
@@ -233,7 +233,7 @@ queries:
   # ── Area: cumulative bookings, single series ───────────────────────────
   cumulative_bookings:
     sql: |
-      -- Shared anchor — see kpi_data. Stops the running total at the last
+      -- Shared anchor — see book_period. Stops the running total at the last
       -- complete month so the curve does not flatten into a part-month tail.
       WITH bounds AS (SELECT * FROM {{ queries.book_period }}),
       monthly AS (
@@ -257,7 +257,7 @@ queries:
   # ── Bottom table: top accounts ─────────────────────────────────────────
   top_accounts:
     sql: |
-      -- Shared anchor — see kpi_data. Two things ride on it here. Aging
+      -- Shared anchor — see book_period. Two things ride on it here. Aging
       -- measured against an unreached "today" overstates every row by the
       -- length of the open-pipeline tail; and the row scope has to stop at
       -- the same period_end as the charts, or a part-month close lands after
@@ -351,7 +351,7 @@ charts:
 
   # ── Hero: stacked column ───────────────────────────────────────────────
   # Endpoint labels (segment names on the rightmost column) ink via the
-  # editorial-10-dark companion. Attached data_table dropped this round —
+  # editorial-10-dark companion. Attached support_table dropped this round —
   # it was rendering as an oversized strip that pushed the chart off-baseline.
   hero_bookings:
     query: monthly_bookings_by_source

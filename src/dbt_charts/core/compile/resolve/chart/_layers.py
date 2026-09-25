@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -9,6 +10,8 @@ from dbt_charts.core.compile.format import resolve_format, resolve_label_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored._layer import (
     AreaLayer,
+    BarChartBarLayer,
+    BarChartLayer,
     BarLayer,
     CartesianLayer,
     LayerAxisYStyle,
@@ -240,6 +243,7 @@ def _resolve_one_layer(
             axis_y=axis_y,
             x=layer.x,
             y=layer.y,
+            y_start=layer.y_start if isinstance(layer, BarChartBarLayer) else None,
             label=layer.label,
             color=layer.color,
             query_name=query_name,
@@ -303,7 +307,7 @@ def _check_layers_y_domain(
 
 
 def _resolve_layer_list(
-    layers: list[CartesianLayer],
+    layers: Sequence[CartesianLayer | BarChartLayer],
     chart_style_context: ChartStyleContext,
     base_type: str,
     base_family_style: Any,

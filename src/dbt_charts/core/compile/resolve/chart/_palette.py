@@ -194,7 +194,10 @@ def _with_color_tokens(primary: Any, chart_style_context: ChartStyleContext) -> 
     if primary is None:
         return None
     return _resolve_color_tokens(
-        primary, chart_style_context.palettes, chart_style_context.roles
+        primary,
+        chart_style_context.palettes,
+        chart_style_context.roles,
+        single_series_palette=chart_style_context.single_series_palette,
     )
 
 

@@ -46,6 +46,7 @@ CHART_FIELDS = (
     "link",
     "x",
     "y",
+    "y_start",
     "color",
     "size",
     "shape",

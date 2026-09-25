@@ -9,6 +9,7 @@ from typing import Any, Literal
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.primitives import OverlapSpec
+from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     category_scale_for,
 )
@@ -856,6 +857,32 @@ def _emit_wide_bar(
     )
 
 
+_DATE_TICK_LABEL_EXPR = (
+    "timeFormat(datum.value, date(datum.value) != 1 ? '%b %-d' "
+    ": month(datum.value) != 0 ? '%b' : '%Y')"
+)
+
+
+def _temporal_measure_encoding(enc: VLDict, ay: ResolvedAxisStyle) -> None:
+    """Turn a measure encoding into a date axis, for a bar from one date to another.
+
+    The value axis keeps its measure-axis styling but none of its number
+    machinery: Vega-Lite picks calendar ticks near the axis tick-count target.
+    Labels name the coarsest boundary a tick sits on (``2026``, ``Feb``,
+    ``Feb 9``), where Vega-Lite's own would spell out ``February``.
+    """
+    axis = enc["axis"]
+    for key in ("format", "formatType", "values"):
+        axis.pop(key, None)
+    axis["labelExpr"] = _DATE_TICK_LABEL_EXPR
+    if ay.ticks.count is not None:
+        axis["tickCount"] = ay.ticks.count
+    enc.pop("format", None)
+    scale = enc.get("scale")
+    if scale is not None:
+        scale.pop("zero", None)
+
+
 def _emit_vertical(
     chart: ResolvedBarChart,
     data: list[dict[str, Any]],
@@ -902,6 +929,7 @@ def _emit_vertical(
             {},
             data,
             measure_field,
+            chart.y_start,
             config,
             [],
             True,
@@ -1040,7 +1068,7 @@ def _emit_vertical(
 
     y_enc: dict[str, Any] = {
         "field": measure_field,
-        "type": "quantitative",
+        "type": chart.measure_type,
         "title": y_title,
         "axis": ay_vl,
         "format": tooltip_format,
@@ -1068,7 +1096,9 @@ def _emit_vertical(
         is_stacked = bool(measure_field) and chart.stack not in (None, "none")
         _ay_cont = ay.scale.continuous if ay.scale is not None else None
         ay_scale_zero = _ay_cont.zero if _ay_cont is not None else None
-        bar_zero = not is_stacked and ay_scale_zero is not False
+        bar_zero = (
+            not is_stacked and chart.y_start is None and ay_scale_zero is not False
+        ) or ay_scale_zero is True
         authored_domain = authored_measure_domain(ay)
         y_ticks: list[float] | None = list(ay.tick_values) if ay.tick_values else None
         bake_tick_ladder(ay_vl, ay.tick_values)
@@ -1099,8 +1129,9 @@ def _emit_vertical(
                 extra_scale.pop("zero", None)
                 y_scale.update(extra_scale)
         else:
-            # Stacked vertical bar: bar_zero is False for a stack, so the
-            # anchor verdict falls back to the axis's own is_zero_anchored.
+            # A stacked bar, or a bar with y_start whose axis doesn't reach
+            # zero: bar_zero is False, so the anchor verdict falls back to the
+            # axis's own is_zero_anchored.
             y_scale = y_zero_scale(ay)
 
         if measure_field and chart.stack not in (None, "none"):
@@ -1137,6 +1168,10 @@ def _emit_vertical(
         y_enc["scale"] = y_scale
 
     encoding: dict[str, Any] = {"x": x_enc, "y": y_enc}
+    if chart.y_start is not None:
+        encoding["y2"] = {"field": chart.y_start}
+    if chart.measure_type == "temporal":
+        _temporal_measure_encoding(y_enc, ay)
 
     transforms: list[dict[str, Any]] = (
         list(wide.transforms) if wide is not False else []
@@ -1328,6 +1363,7 @@ def _emit_vertical(
         encoding,
         data,
         measure_field,
+        chart.y_start,
         config,
         transforms,
         x_is_banded,
@@ -1470,8 +1506,11 @@ def _emit_horizontal(
     # and the existing tests assert it is present here.
     _ay_cont_h = ay.scale.continuous if ay.scale is not None else None
     _ay_scale_zero_h = _ay_cont_h.zero if _ay_cont_h is not None else None
+    # A bar with y_start encodes position at both ends, not length from zero.
     x_enc_scale: VLDict = {
-        "zero": _ay_scale_zero_h if isinstance(_ay_scale_zero_h, bool) else True
+        "zero": _ay_scale_zero_h
+        if isinstance(_ay_scale_zero_h, bool)
+        else chart.y_start is None
     }
     if ay.scale is not None:
         extra_x_scale = emit_resolved_scale_vl(ay.scale)
@@ -1479,7 +1518,7 @@ def _emit_horizontal(
         x_enc_scale.update(extra_x_scale)
     x_enc: dict[str, Any] = {
         "field": measure_field,
-        "type": "quantitative",
+        "type": chart.measure_type,
         "title": x_title,
         "axis": ay_vl,
         "scale": x_enc_scale,
@@ -1629,12 +1668,16 @@ def _emit_horizontal(
     )
     if y_sort is not None:
         y_enc["sort"] = y_sort
-    elif measure_field and color_ch is None and wide is False:
+    elif measure_field and color_ch is None and wide is False and chart.y_start is None:
         y_enc["sort"] = {"field": measure_field, "order": "descending"}
     else:
         y_enc["sort"] = None
 
     encoding: dict[str, Any] = {"x": x_enc, "y": y_enc}
+    if chart.y_start is not None:
+        encoding["x2"] = {"field": chart.y_start}
+    if chart.measure_type == "temporal":
+        _temporal_measure_encoding(x_enc, ay)
 
     # Stacking: emit x.stack for stacked horizontal bars; "none" → grouped (yOffset).
     if chart.stack is not None and chart.stack != "none":
@@ -1791,6 +1834,7 @@ def _emit_horizontal(
         encoding,
         data,
         measure_field,
+        chart.y_start,
         config,
         transforms,
         # Horizontal bar's categorical axis is always emitted nominal (see

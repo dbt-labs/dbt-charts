@@ -106,6 +106,50 @@ class TestBracketForm:
 
 
 # ---------------------------------------------------------------------------
+# single_series[N] — indexes the board's resolved single-series ink list,
+# not a `palettes:` role. A theme's `single_series_palette` is a literal,
+# already-cascaded list, so this bracket form is handed the list directly
+# rather than a role name to look up in `palettes`.
+# ---------------------------------------------------------------------------
+
+
+class TestSingleSeriesBracketForm:
+    def test_slot_1_returns_first_ink(self):
+        result = color_from_theme(
+            "single_series[1]",
+            palettes={},
+            single_series_palette=["#111111", "#222222"],
+        )
+        assert result.lower() == "#111111"
+
+    def test_slot_2_returns_second_ink(self):
+        result = color_from_theme(
+            "single_series[2]",
+            palettes={},
+            single_series_palette=["#111111", "#222222"],
+        )
+        assert result.lower() == "#222222"
+
+    def test_out_of_range_raises(self):
+        with pytest.raises(UnknownColorError, match="slot"):
+            color_from_theme(
+                "single_series[2]", palettes={}, single_series_palette=["#111111"]
+            )
+
+    def test_zero_raises_one_indexed(self):
+        with pytest.raises(UnknownColorError, match="1-indexed"):
+            color_from_theme(
+                "single_series[0]", palettes={}, single_series_palette=["#111111"]
+            )
+
+    def test_missing_single_series_palette_raises(self):
+        """No single-series context supplied (caller never threaded it) —
+        fails loudly, same as any other unresolvable token."""
+        with pytest.raises(UnknownColorError, match="single.series"):
+            color_from_theme("single_series[1]", palettes={})
+
+
+# ---------------------------------------------------------------------------
 # Categorical dotted-integer form palette.N — 1-indexed positional
 # ---------------------------------------------------------------------------
 

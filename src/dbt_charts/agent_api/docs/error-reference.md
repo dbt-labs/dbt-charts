@@ -234,6 +234,34 @@ Chart {chart_id!r} (bar): y column {y_field!r} is not numeric. Bar charts always
 
 Fired when a bar chart's `y:` column contains non-numeric data. Bar charts always use y as the measure axis regardless of orientation; use a numeric column for y.
 
+### ERR-BAR-Y-START-KIND: Bar chart y and y_start are different kinds
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (bar): column {y_field!r} is {y_kind} but column {y_start_field!r} is {y_start_kind}. A bar's start and end, and every bar on the chart, sit on one value axis: make them all numeric, or all dates.
+```
+
+Fired when a bar's `y:` and `y_start:` columns (or a bar layer's, against the chart's own) are not the same kind. Both must be numeric, or both dates.
+
+### ERR-BAR-Y-START-NULL: Bar chart y_start column has an empty cell
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (bar): y_start column {y_start_field!r} is empty in row {row}. Every row needs a start; write 0 for a bar that starts at zero.
+```
+
+Fired when a bar chart's `y_start:` column holds a NULL. A missing start is never read as zero: have the query write an explicit 0 for a bar that starts at zero.
+
 ### ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED: An authored category_colors field has more values than the palette has swatches
 
 - **Level:** error
@@ -975,6 +1003,20 @@ Chart {chart_id!r} (scatter): y: [...] column {y_field!r} is not numeric. A sing
 ```
 
 Fired when a scatter chart's y: [a, b] list contains a non-numeric column. A single y: column may be categorical (a dot plot), but a list y: folds every measure onto one shared numeric axis, so each measure must be numeric.
+
+### ERR-SPAN-MIDDLE-ALIGNED-LABELS: labels.position: middle_aligned is not meaningful on a bar with y_start
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+labels.position 'middle_aligned' lines every label up at one height measured from zero, which a bar with y_start does not start from. Use 'middle' to center each label between its bar's two ends.
+```
+
+Fired when `labels.position: middle_aligned` is set on a bar with `y_start`. That position places every label at one common height measured from zero; a bar that starts elsewhere has no such height. Use `middle`.
 
 ### ERR-SPARK-BAR-VALUE-FIELD-NOT-FOUND: spark_bar x names a column not in the query result
 

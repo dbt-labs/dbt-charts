@@ -1639,11 +1639,6 @@ rows:
         assert "row-gap" in messages, f"Expected 'row-gap' in errors; got: {messages!r}"
 
 
-# A fixture test against text-layout-lab.yml (from
-# examples/playground-experimental/) is intentionally not covered here —
-# that corpus is outside dbt-charts/.
-
-
 class TestWrongShapeNestedStyleModel:
     """model_type Pydantic errors — scalar where a mapping is expected.
 

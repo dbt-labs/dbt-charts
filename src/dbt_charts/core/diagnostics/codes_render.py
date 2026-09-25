@@ -662,6 +662,29 @@ ERR_STACKED_MIDDLE_ALIGNED_LABELS = REGISTRY.register(
     )
 )
 
+ERR_SPAN_MIDDLE_ALIGNED_LABELS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SPAN-MIDDLE-ALIGNED-LABELS",
+        domain="render",
+        title="labels.position: middle_aligned is not meaningful on a bar with y_start",
+        message_template=(
+            "labels.position 'middle_aligned' lines every label up at one height "
+            "measured from zero, which a bar with y_start does not start from. "
+            "Use 'middle' to center each label between its bar's two ends."
+        ),
+        doc=(
+            "Fired when `labels.position: middle_aligned` is set on a bar with "
+            "`y_start`. That position places every label at one common height "
+            "measured from zero; a bar that starts elsewhere has no such height. "
+            "Use `middle`."
+        ),
+        summary=(
+            "Fired when `labels.position: middle_aligned` is set on a bar with y_start."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_LABELS_FIELD_NOT_FOUND = REGISTRY.register(
     ErrorCode(
         code="ERR-LABELS-FIELD-NOT-FOUND",

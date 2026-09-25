@@ -130,14 +130,35 @@ def test_spider_error_says_so_rather_than_suggesting_pie() -> None:
     assert "Did you mean" not in message
 
 
-@pytest.mark.parametrize(
-    "noun", ["alluvial", "gantt", "word cloud", "wordcloud", "network", "candlestick"]
-)
+@pytest.mark.parametrize("noun", ["alluvial", "word cloud", "wordcloud", "network"])
 def test_more_unsupported_shapes_say_so_rather_than_guessing(noun: str) -> None:
     message = _compile_chart_type(noun)
 
     assert "cannot draw" in message
     assert "Did you mean" not in message
+
+
+@pytest.mark.parametrize(
+    ("noun", "recipe_fragment"),
+    [
+        ("gantt", "date y_start"),
+        ("candlestick", "y_start: low"),
+        ("ohlc", "y_start: low"),
+        ("waterfall", "y_start from a running total"),
+        ("dumbbell", "y_start for the far end"),
+        ("ranged dot", "y_start for the low end"),
+        ("floating bar", "type: bar with y_start"),
+    ],
+)
+def test_now_supported_shapes_name_the_recipe_instead_of_cannot_draw(
+    noun: str, recipe_fragment: str
+) -> None:
+    """A shape drawn with `type: bar` and `y_start` gets its recipe, not a
+    "cannot draw"."""
+    message = _compile_chart_type(noun)
+
+    assert "cannot draw" not in message
+    assert recipe_fragment in message
 
 
 def test_unsupported_shape_error_still_lists_the_supported_types() -> None:

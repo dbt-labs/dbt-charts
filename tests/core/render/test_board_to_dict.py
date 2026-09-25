@@ -173,6 +173,7 @@ _OMITTED_FROM_PROJECTION = {
     "query_name": "emitted as `query`",
     "pivot_columns": "emitted as `columns` (pure rename of authored `columns`)",
     "id": "the key of the charts map",
+    "measure_type": "derived at resolve from the y and y_start columns' data",
     # Shares a name with an authored field but not a shape: the resolved layer
     # carries the full set of baked mark styles (line_mark/point_mark/...) plus
     # `query_name`, none of which the authored layer accepts. Projecting it

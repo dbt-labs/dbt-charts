@@ -111,13 +111,15 @@ def _resolve_one_color_token(
     token: str,
     palettes: Mapping[str, str] | None,
     roles: dict[str, str] | None,
+    single_series_palette: list[str] | None = None,
 ) -> str:
     """Resolve a single color token (dotted or bracket form) to hex.
 
     Tries the direct ``palette.slot`` path first.  If the left-hand side is not
     a known palette name the token is a role-indirected address (dotted alias
-    like ``chrome.ink``, or 1-indexed bracket slot like ``category[2]``); try
-    ``color_from_theme()`` with the theme palettes/roles context.  Raises
+    like ``chrome.ink``, or 1-indexed bracket slot like ``category[2]``, or the
+    ``single_series[N]`` list-indirected form); try ``color_from_theme()`` with
+    the theme palettes/roles/single-series context.  Raises
     ``UnknownColorError`` if both paths fail.
     """
     from dbt_charts.core.compile.resolve.style.palette import (
@@ -133,7 +135,12 @@ def _resolve_one_color_token(
         pass
 
     if palettes is not None:
-        return color_from_theme(token, palettes=palettes, roles=roles)
+        return color_from_theme(
+            token,
+            palettes=palettes,
+            roles=roles,
+            single_series_palette=single_series_palette,
+        )
 
     raise UnknownColorError(
         f"color token '{token}' is not a known palette.slot address and no "
@@ -146,6 +153,7 @@ def _resolve_color_tokens(
     palettes: Mapping[str, str] | None = None,
     roles: dict[str, str] | None = None,
     in_keyed_collection: bool = False,
+    single_series_palette: list[str] | None = None,
 ) -> Any:
     """Walk a Style subtree and resolve every dotted palette token to hex.
 
@@ -166,6 +174,11 @@ def _resolve_color_tokens(
     and passed through the recursion so role-indirected tokens (e.g.
     ``chrome.ink`` where ``chrome`` maps to a palette name via the theme's
     ``palettes:`` block) resolve correctly alongside direct palette.slot tokens.
+    ``single_series_palette`` is caller-supplied (never extracted from a
+    ``Style`` node here) for the ``single_series[N]`` form — at theme-load
+    time the theme's own single-series ink is itself mid-resolution, so
+    that form only resolves when a caller with an already-cascaded value
+    (a board or chart style context) threads it through.
 
     Run once at theme-load time inside ``get_theme_style()`` so cached
     themes carry hex.  Board-level patches that introduce color tokens are
@@ -198,17 +211,23 @@ def _resolve_color_tokens(
             if in_keyed_collection and isinstance(value, str):
                 if name not in _COLOR_FIELD_NAMES:
                     continue
-            new = _resolve_color_tokens(value, palettes, roles, in_keyed_collection)
+            new = _resolve_color_tokens(
+                value, palettes, roles, in_keyed_collection, single_series_palette
+            )
             if new is not value:
                 updates[name] = new
         return node.model_copy(update=updates) if updates else node
     if isinstance(node, str):
         if is_color_token(node):
-            return _resolve_one_color_token(node, palettes, roles)
+            return _resolve_one_color_token(
+                node, palettes, roles, single_series_palette
+            )
         return node
     if isinstance(node, list):
         new_list = [
-            _resolve_color_tokens(item, palettes, roles, in_keyed_collection)
+            _resolve_color_tokens(
+                item, palettes, roles, in_keyed_collection, single_series_palette
+            )
             for item in node
         ]
         return (
@@ -224,7 +243,8 @@ def _resolve_color_tokens(
         # the SVG as `fill="negative.text"`. The name-based guard belongs on the
         # model branch above, where a name is what the walk actually has.
         new_dict = {
-            k: _resolve_color_tokens(v, palettes, roles, True) for k, v in node.items()
+            k: _resolve_color_tokens(v, palettes, roles, True, single_series_palette)
+            for k, v in node.items()
         }
         return new_dict if any(new_dict[k] is not v for k, v in node.items()) else node
     return node
@@ -302,9 +322,21 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
     context.  Theme-self tokens (``theme.background``) resolve against the
     base's own value so a board patch that says ``background: theme.background``
     inherits the theme hex rather than creating a circular reference.
+    ``single_series_palette`` comes off ``base.charts.color.categorical``,
+    already resolved to hex at this point, for the ``single_series[N]`` form.
     """
     palettes = base.palettes
     roles = base.roles
+    authored_single_series = (
+        base.charts.color.categorical.single_series_palette
+        if base.charts.color.categorical is not None
+        else None
+    )
+    # A list is the resolved ink list `single_series[N]` indexes; a bare string
+    # names a palette, which the token does not read.
+    single_series_palette = (
+        authored_single_series if isinstance(authored_single_series, list) else None
+    )
 
     def _walk(node: Any) -> Any:
         if isinstance(node, CategoryColorBinding):
@@ -328,7 +360,9 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             if node in _THEME_SELF_TOKENS:
                 return _self_token_replacement(node, base)
             if is_color_token(node):
-                return _resolve_one_color_token(node, palettes, roles)
+                return _resolve_one_color_token(
+                    node, palettes, roles, single_series_palette
+                )
             return node
         if isinstance(node, list):
             new_list = [_walk(item) for item in node]

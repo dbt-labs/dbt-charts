@@ -21,6 +21,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     bar_corner_props,
     bar_data_signs,
     bar_mark_to_vl,
+    bar_span_signs,
     continuous_bar_size_prop,
     line_mark_to_vl,
     scatter_mark_to_vl,
@@ -451,6 +452,7 @@ def emit_bar_layer(
     encoding: VLDict,
     data: list[VLDict],
     measure_field: str | None,
+    start_field: str | None,
     config: VLDict,
     transforms: list[VLDict],
     x_is_banded: bool,
@@ -467,10 +469,17 @@ def emit_bar_layer(
     authored x) — not necessarily the outer chart's. ``x_is_banded=False``
     routes width/height through ``continuous_bar_size_prop`` instead of
     ``bar_mark_to_vl``'s band-fraction shorthand; see both docstrings.
+
+    ``start_field`` is the bar's ``y_start`` column, bound to the span channel
+    (``y2``/``x2``) already in ``encoding``. A span's sign is its direction,
+    end minus start, so rises and falls round their own tip.
     """
-    has_pos, has_neg = (
-        bar_data_signs(data, measure_field) if measure_field else (True, False)
-    )
+    if measure_field is None:
+        has_pos, has_neg = True, False
+    elif start_field is None:
+        has_pos, has_neg = bar_data_signs(data, measure_field)
+    else:
+        has_pos, has_neg = bar_span_signs(data, measure_field, start_field)
     mark_props = {**bar_mark_to_vl(bar_mark, orientation, x_is_banded), "tooltip": True}
     if not x_is_banded and bar_mark.size is None:
         mark_props.update(
@@ -506,6 +515,11 @@ def emit_bar_layer(
         # (once per sub-layer, once shared) instead of once. Only the outer
         # encoding keeps the axis.
         sublayer_measure_enc = {k: v for k, v in measure_enc.items() if k != "axis"}
+        sublayer_enc: VLDict = {measure_ch: sublayer_measure_enc}
+        span_ch = f"{measure_ch}2"
+        if span_ch in encoding:
+            sublayer_enc[span_ch] = encoding[span_ch]
+        base = "0" if start_field is None else f"datum['{start_field}']"
         # Preserve original category order — see pin_categorical_domain_order's
         # docstring for why splitting a mark across sub-layers needs this.
         cat_ch = "y" if measure_ch == "x" else "x"
@@ -518,14 +532,20 @@ def emit_bar_layer(
         pos_layer = ChartSpec(
             mark="bar",
             mark_props={**mark_props, **pos_corner},
-            encoding={measure_ch: sublayer_measure_enc},
-            transforms=[{"filter": f"datum['{measure_field}'] >= 0"}, *transforms],
+            encoding=dict(sublayer_enc),
+            transforms=[
+                {"filter": f"datum['{measure_field}'] >= {base}"},
+                *transforms,
+            ],
         )
         neg_layer = ChartSpec(
             mark="bar",
             mark_props={**mark_props, **neg_corner},
-            encoding={measure_ch: sublayer_measure_enc},
-            transforms=[{"filter": f"datum['{measure_field}'] < 0"}, *transforms],
+            encoding=dict(sublayer_enc),
+            transforms=[
+                {"filter": f"datum['{measure_field}'] < {base}"},
+                *transforms,
+            ],
         )
         return ChartSpec(
             mark="layered",

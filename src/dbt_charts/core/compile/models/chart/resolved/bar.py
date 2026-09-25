@@ -19,6 +19,17 @@ class ResolvedBarChart(_CartesianResolvedChartFields):
     # carries a list-y at render time; wide measures are normalized at resolve
     # time into wide_measures + WIDE_VALUE_FIELD.
     y: str | None = Field(default=None, description="Y-axis data column.")
+    y_start: str | None = Field(
+        default=None,
+        description="Column each bar starts from; absent, bars start at zero.",
+    )
+    measure_type: Literal["quantitative", "temporal"] = Field(
+        default="quantitative",
+        description=(
+            "Value-axis data type: temporal only for a bar from one date "
+            "column to another."
+        ),
+    )
     # Original wide-measure column names when y was authored as a list.
     # Empty tuple for single-series charts.  The emitter reads this to call
     # fold_wide_measures instead of a plain y-channel encoding.

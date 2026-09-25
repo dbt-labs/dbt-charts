@@ -259,7 +259,10 @@ def build_chart_style_context(
     # UnknownColorError on unknown tokens, matching validate-and-error-fast.
     if chart_style_patch is not None:
         chart_style_patch = _resolve_color_tokens(
-            chart_style_patch, base_charts.palettes, base_charts.roles
+            chart_style_patch,
+            base_charts.palettes,
+            base_charts.roles,
+            single_series_palette=base_charts.single_series_palette,
         )
 
     if not _chart_style_has_overrides(

@@ -219,6 +219,33 @@ class TestTokenResolution:
         with pytest.raises(UnknownColorError, match="bogus-palette"):
             _resolve_tokens_on_patch(patch, base)
 
+    @pytest.mark.parametrize("theme_name", ["clarity", "stark"])
+    def test_single_series_token_matches_the_themes_single_series_ink(
+        self, theme_name: str
+    ) -> None:
+        """`single_series[1]` pins a category to whatever ink a plain
+        one-series bar gets on this theme, without naming the theme's current
+        palette token."""
+        from dbt_charts.core.compile.config import get_theme_style
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.compile.resolve.style.tokens import (
+            _resolve_tokens_on_patch,
+        )
+
+        base = get_theme_style(theme_name)
+        patch = StylePatch.model_validate(
+            {
+                "charts": {
+                    "category_colors": {
+                        "category": {"values": {"Total": "single_series[1]"}}
+                    }
+                }
+            }
+        )
+        resolved = _resolve_tokens_on_patch(patch, base)
+        got = resolved.charts.category_colors["category"].values["Total"]
+        assert got == base.charts.color.categorical.single_series_palette[0]
+
 
 class TestPlanner:
     """``plan_category_colors`` — observed values + authored block → scales.

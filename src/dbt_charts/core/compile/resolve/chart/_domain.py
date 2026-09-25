@@ -8,6 +8,8 @@ from decimal import Decimal
 from typing import Any, Literal, NamedTuple
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.models.chart.authored._layer import BarChartBarLayer
+from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.style.theme import (
     AxisYStyle,
     BaseScaleStyle,
@@ -266,18 +268,28 @@ def _shared_y_values(
     must not widen this one. Layers sharing the base query read from ``data``;
     own-query layers read from ``datasets`` when the caller can supply it.
     """
-    values = _numeric_y_values(data, (y_field,))
-    seen = {(chart.query_name, y_field)}
+    base_fields: tuple[str, ...] = (y_field,)
+    if isinstance(chart, BarChart) and chart.y_start is not None:
+        base_fields = (y_field, chart.y_start)
+    values = _numeric_y_values(data, base_fields)
+    seen = {(chart.query_name, field) for field in base_fields}
     for layer in chart.layers:
         if layer.y is None or (
             layer.axis_y is not None and layer.axis_y.position == "right"
         ):
             continue
         query_name = layer.query
-        key = (query_name, layer.y)
-        if key in seen:
+        fields = tuple(
+            field
+            for field in (
+                layer.y,
+                layer.y_start if isinstance(layer, BarChartBarLayer) else None,
+            )
+            if field is not None and (query_name, field) not in seen
+        )
+        if not fields:
             continue
-        seen.add(key)
+        seen.update((query_name, field) for field in fields)
         if query_name is None or query_name == chart.query_name:
             rows = data
         else:
@@ -288,7 +300,7 @@ def _shared_y_values(
                     f"Missing rows for shared-scale layer query {query_name!r}"
                 )
             rows = datasets[query_name]
-        values.extend(_numeric_y_values(rows, (layer.y,)))
+        values.extend(_numeric_y_values(rows, fields))
     return values
 
 

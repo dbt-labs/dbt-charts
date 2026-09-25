@@ -6,7 +6,7 @@ via CLI commands (``dbt_charts/cli/commands/``) or MCP server modules
 
 Contract
 --------
-Every function in this package must satisfy all three rules:
+Every function in this package must satisfy all four rules:
 
 1. **Typed args and typed returns.** Function signatures use concrete Python
    types — ``Path``, ``str``, ``int``, Pydantic models, or ``TypedDict``
@@ -22,6 +22,13 @@ Every function in this package must satisfy all three rules:
    A ``save`` function writes exactly one file. An ``execute`` function runs
    SQL and nothing else. Side effects must match what the verb name implies
    and nothing more.
+
+4. **Back-compat with the VS Code extension's LSP.** Anything
+   ``apps/vscode-extension/server/dbt_charts_lsp`` imports from this package
+   runs against whatever dbt-charts the user has installed, back to
+   ``dbt_charts_lsp.MINIMUM_DBT_CHARTS_VERSION``. Add before you remove: an
+   API the LSP needs ships in a dbt-charts release before the LSP starts
+   calling it.
 
 Thin-wrapper rule
 -----------------

@@ -91,6 +91,8 @@ class ResolvedBarLayer:
     axis_y: LayerAxisYStyle = field(default_factory=LayerAxisYStyle)
     x: str | None = None
     y: str | None = None
+    # Column each bar starts from; absent, bars start at zero.
+    y_start: str | None = None
     label: str | None = None
     color: str | None = None
     # Named query this layer's own data comes from, when it overrides the

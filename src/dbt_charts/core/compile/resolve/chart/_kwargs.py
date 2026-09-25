@@ -228,6 +228,7 @@ def _base_kwargs(
             normalized.conditional_formatting,
             chart_style_context.palettes,
             chart_style_context.roles,
+            single_series_palette=chart_style_context.single_series_palette,
         )
         if normalized.conditional_formatting
         else None

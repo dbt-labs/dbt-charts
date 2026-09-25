@@ -60,6 +60,7 @@ from dbt_charts.core.render.chart.emitters._tooltip import (
     build_structured_tooltip_expr,
     header_tooltip_field,
     series_row_promoted,
+    span_tooltip_rows,
 )
 from dbt_charts.core.render.chart.features.value_labels import (
     BandLabelAnchor,
@@ -91,6 +92,7 @@ from dbt_charts.core.render.utils import (
     normalize_data_types,
     ordered_distinct_values,
 )
+from dbt_charts.core.text.case import default_axis_title
 
 # VL scale types where the domain is an ordered list of discrete categories
 # (as opposed to a continuous [min, max] range). Union-domain reconciliation
@@ -740,8 +742,10 @@ def _layer_tooltip_description(
     label: str,
     tooltip_format: str,
     color_field: str | None,
-) -> str:
-    """Build this overlay layer's own structured-tooltip description expr.
+    span_start: str | None,
+) -> tuple[str, list[VLDict]]:
+    """Build this overlay layer's own structured-tooltip description expr, and
+    the transforms it reads.
 
     A combo overlay layer joins the SAME x-unified
     bubble ``chart_interactivity.js``'s ``collectMatchingMarks`` already
@@ -781,18 +785,36 @@ def _layer_tooltip_description(
     own commensurable parts) is never folded into the base's own group-total
     — that footer is built solely from the base's own
     ``StructuredTooltipFeature`` role computation.
+
+    A bar layer with ``y_start`` (``span_start``) is named for its two ends
+    (``open to close``) and lists both plus their difference, as the base bar
+    does. (A base bar with y_start replaces every same-rows layer's
+    description with one shared block; see ``StructuredTooltipFeature``.)
     """
     header: tuple[TooltipField, ...] = ()
     if "field" in x_enc:
         header = (header_tooltip_field(x_enc["field"], "", rows),)
+    end = TooltipField(y_field, label, kind="quantitative", format=tooltip_format)
+    values = [end]
+    transforms: list[VLDict] = []
+    name = label
+    if span_start is not None:
+        start = TooltipField(
+            span_start,
+            default_axis_title(span_start),
+            kind="quantitative",
+            format=tooltip_format,
+        )
+        values, transforms = span_tooltip_rows(end, start, frozenset(), rows)
+        name = f"{start.title} to {label}"
     if color_field is not None and series_row_promoted(color_field, rows):
         series = (
-            TooltipField(color_field, color_field, kind="nominal", prefix=f"{label}: "),
+            TooltipField(color_field, color_field, kind="nominal", prefix=f"{name}: "),
         )
     else:
-        series = (TooltipField(label, label, literal=True),)
-    values = [TooltipField(y_field, label, kind="quantitative", format=tooltip_format)]
-    return build_structured_tooltip_expr("line", header, series, values)
+        series = (TooltipField(name, name, literal=True),)
+    description = build_structured_tooltip_expr("line", header, series, values)
+    return description, transforms
 
 
 def _fix_bar_band_width(spec: ChartSpec, x_is_banded: bool) -> None:
@@ -1536,7 +1558,7 @@ def render_cartesian_overlay(
         # convention as TooltipField.format) when the base family doesn't
         # support structured tooltips; every assignment site below only
         # stamps `.tooltip_description` when this is truthy.
-        layer_tooltip_description = (
+        layer_tooltip_description, layer_tooltip_transforms = (
             _layer_tooltip_description(
                 layer_x_enc,
                 rows_for_layer,
@@ -1544,9 +1566,10 @@ def render_cartesian_overlay(
                 label,
                 layer_value_format,
                 layer.color,
+                layer.y_start if isinstance(layer, ResolvedBarLayer) else None,
             )
             if base_mark_type in _STRUCTURED_TOOLTIP_BASE_FAMILIES
-            else ""
+            else ("", [])
         )
 
         y_enc: VLDict = {
@@ -1646,6 +1669,9 @@ def render_cartesian_overlay(
         else:
             layer_series_fill = single_series_fill
         layer_encoding: VLDict = {val_ch: y_enc, "color": color_enc}
+        if isinstance(layer, ResolvedBarLayer) and layer.y_start is not None:
+            layer_encoding[f"{val_ch}2"] = {"field": layer.y_start}
+            y_enc["stack"] = None
         # Overlay layers must not inherit the outer stacked-bar ordering: on
         # line/trail/area 'order' controls point-connection order, not z-order,
         # so inheriting __df_series_order disconnects line segments.
@@ -1784,6 +1810,7 @@ def render_cartesian_overlay(
                 encoding=layer_encoding,
                 data=rows_for_layer,
                 measure_field=y_field,
+                start_field=layer.y_start,
                 config={},
                 transforms=[],
                 # layer_x_enc is this layer's OWN resolved x (its authored x,
@@ -1795,6 +1822,10 @@ def render_cartesian_overlay(
             )
             if layer_tooltip_description:
                 bar_spec.tooltip_description = layer_tooltip_description
+                bar_spec.transforms = [
+                    *bar_spec.transforms,
+                    *layer_tooltip_transforms,
+                ]
             if own_data is not None:
                 bar_spec.data = own_data
             if layer_shares_normalize_domain:

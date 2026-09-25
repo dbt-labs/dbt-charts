@@ -389,7 +389,10 @@ class BaselineFeature:
         # — this branch only decides the family-specific straddle/always-fire
         # verdict feeding its `should_fire`.
         if isinstance(chart, ResolvedBarChart):
-            should_fire = True
+            # A bar with y_start has no zero baseline unless its axis reaches
+            # zero anyway (a waterfall's totals); the rule's datum would
+            # otherwise pull zero into every floating bar's domain.
+            should_fire = chart.y_start is None or axis_style.zero_anchored
         else:
             # Line / area / scatter: mirror V1 _domain_includes_zero. The
             # rule's datum:0 pulls 0 into the unified domain, so it fires

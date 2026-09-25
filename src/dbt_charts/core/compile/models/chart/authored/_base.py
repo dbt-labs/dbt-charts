@@ -12,6 +12,7 @@ family models. extra="forbid" on each base propagates to all subclasses.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -25,7 +26,10 @@ from pydantic import (
     model_validator,
 )
 
-from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
+from dbt_charts.core.compile.models.chart.authored._layer import (
+    BarChartLayer,
+    CartesianLayer,
+)
 from dbt_charts.core.compile.models.markers import Channel, Color, DisplayText, Url
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import (
@@ -319,7 +323,7 @@ class _SharedChartFields(_BaseChartFields):
 def reject_multi_series_channel_conflicts(
     family: str,
     y: str | list[str] | None,
-    layers: list[CartesianLayer] | None,
+    layers: Sequence[CartesianLayer | BarChartLayer] | None,
 ) -> None:
     """Reject encodings that carry their own series alongside a list-valued `y:`.
 

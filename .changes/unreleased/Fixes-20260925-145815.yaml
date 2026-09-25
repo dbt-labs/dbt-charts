@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'An unrecognized `dct query` source name (a typo, or a generic guess like `default`/`duckdb`) executed silently against the engine''s in-memory DuckDB connection instead of raising `ERR-SOURCE-NOT-FOUND`, whenever the project directory also contained a `dbt_project.yml`. Unknown source names now always raise once any `sources:` are configured, dbt project or not.'
+time: 2026-09-25T14:58:15Z
+custom:
+  DbtChartsIssue: 45

@@ -575,6 +575,100 @@ class TestFontFaces:
 
         assert regular_width < bold_width < ratio_scaled
 
+    def test_heading_measurement_uses_supplied_heading_fontface(
+        self, dbt_charts_fonts_dir: Path
+    ) -> None:
+        """A heading measures against fonts.heading, not the body regular face,
+        when the two are different font files — the same "measure what gets
+        painted" guarantee font_weight already has for heading_font_weight.
+        """
+        regular_path = str(dbt_charts_fonts_dir / "InterVariable.ttf")
+        heading_path = str(dbt_charts_fonts_dir / "SourceSerif4Variable.ttf")
+        fonts = FontFaces(
+            regular=FontFace(path=regular_path),
+            heading=FontFace(path=heading_path),
+        )
+        renderer = SVGRenderer(fonts=fonts)
+        sample = "measured heading text width against body"
+
+        body_width = renderer._measure_text(sample, 14)
+        heading_width = renderer._measure_text(sample, 14, is_heading=True)
+
+        assert body_width != heading_width
+        assert "heading" in renderer.used_faces
+
+    def test_heading_measurement_uses_a_static_heading_face_with_a_weight(
+        self, dbt_charts_fonts_dir: Path
+    ) -> None:
+        """A heading face with no wght axis (a static font) still measures the
+        heading, not the body, when a weight is requested — regression for a
+        bug where `_measurer_at_weight` returning None (no axis to re-instance)
+        fell all the way through to the body-family branch below, instead of
+        the un-reweighted heading face `self._heading_measurer` already holds.
+        """
+        regular_path = str(dbt_charts_fonts_dir / "InterVariable.ttf")
+        # Static (non-variable): no 'fvar' table, so _measurer_at_weight
+        # returns None for any requested weight — the exact case that fell
+        # through to the regular face before this fix.
+        heading_path = str(
+            dbt_charts_fonts_dir / "DBTSerifOldstyleProportional-Regular.ttf"
+        )
+        fonts = FontFaces(
+            regular=FontFace(path=regular_path),
+            heading=FontFace(path=heading_path),
+        )
+        renderer = SVGRenderer(fonts=fonts)
+        sample = "measured heading text width against body"
+
+        heading_only_measurer = FontMeasurer(heading_path)
+        expected = heading_only_measurer.measure(sample, 14)
+        body_width = renderer._measure_text(sample, 14)
+
+        # font_weight="bold" forces the weight != None branch this bug lived in.
+        actual = renderer._measure_text(sample, 14, is_heading=True, font_weight="bold")
+
+        assert actual == expected
+        assert actual != body_width
+        assert "heading" in renderer.used_faces
+
+    def test_heading_measurement_falls_back_to_regular_without_a_heading_face(
+        self, dbt_charts_fonts_dir: Path
+    ) -> None:
+        """No fonts.heading supplied -> is_heading measures identically to a
+        plain run, matching heading_font_family's "" default (inherits body)."""
+        regular_path = str(dbt_charts_fonts_dir / "InterVariable.ttf")
+        renderer = SVGRenderer(fonts=FontFaces(regular=FontFace(path=regular_path)))
+        sample = "measured heading text width against body"
+
+        assert renderer._heading_face is None
+        assert renderer._measure_text(
+            sample, 14, is_heading=True
+        ) == renderer._measure_text(sample, 14)
+
+    def test_bold_run_inside_a_heading_still_uses_the_body_bold_face(
+        self, dbt_charts_fonts_dir: Path
+    ) -> None:
+        """is_heading + is_bold: no heading-bold combination is measured against
+        fonts.heading — the body bold face (or its ratio estimate) is used, per
+        the documented scope of the heading face (plain heading runs only)."""
+        regular_path = str(dbt_charts_fonts_dir / "InterVariable.ttf")
+        heading_path = str(dbt_charts_fonts_dir / "SourceSerif4Variable.ttf")
+        variable_path = str(dbt_charts_fonts_dir / "InterVariable.ttf")
+        fonts = FontFaces(
+            regular=FontFace(path=regular_path),
+            bold=FontFace(path=variable_path, weight=700),
+            heading=FontFace(path=heading_path),
+        )
+        renderer = SVGRenderer(fonts=fonts)
+        sample = "bold word"
+
+        bold_plain = renderer._measure_text(sample, 14, is_bold=True)
+        bold_in_heading = renderer._measure_text(
+            sample, 14, is_bold=True, is_heading=True
+        )
+
+        assert bold_plain == bold_in_heading
+
 
 class TestMaxContentWidth:
     """RenderResult.max_content_width tracks the widest emitted line."""
@@ -1250,6 +1344,33 @@ class TestBlockquoteFontOverrides:
         svg = render("> HELLO WORLD", style=style)
         assert "hello world" in svg
         assert "HELLO WORLD" not in svg
+
+
+class TestHeadingFontFamily:
+    """heading_font_family on mdsvg.Style is honored in the .md-heading CSS class."""
+
+    def test_heading_font_family_applies(self) -> None:
+        """heading_font_family is used for heading text, not just body text."""
+        style = Style(heading_font_family="'My Heading Font', serif")
+        svg = render("# A heading", style=style)
+        assert "My Heading Font" in svg
+
+    def test_heading_font_family_falls_back_to_body_family(self) -> None:
+        """Headings declare the body font-family when no heading override is set."""
+        style = Style(font_family="'Body Serif', serif")
+        svg = render("# A heading", style=style)
+        assert _has_md_class(svg, "heading")
+        assert "font-family: 'Body Serif', serif" in svg
+
+    def test_heading_font_family_independent_of_body_font_family(self) -> None:
+        """A heading override does not change the body text's own family."""
+        style = Style(
+            font_family="'Body Serif', serif",
+            heading_font_family="'Heading Sans', sans-serif",
+        )
+        svg = render("# A heading\n\nSome body text.", style=style)
+        assert "Heading Sans" in svg
+        assert "font-family: 'Body Serif', serif" in svg
 
 
 class TestBoldFontWeight:

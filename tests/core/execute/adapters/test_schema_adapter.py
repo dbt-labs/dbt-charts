@@ -188,7 +188,7 @@ class TestSchemaAdapterListTables:
         ):
             result = adapter._execute(query)
         assert result.error is not None
-        assert "typo_schema" in result.error
+        assert "typo_schema" in str(result.error)
         assert result.data == []
 
     def test_list_tables_respects_limit(self, adapter: SchemaAdapter) -> None:
@@ -231,7 +231,7 @@ class TestSchemaAdapterProfileTable:
         ):
             result = adapter._execute(query)
         assert result.error is not None
-        assert "missing_table" in result.error
+        assert "missing_table" in str(result.error)
         assert result.data == []
 
 
@@ -268,7 +268,7 @@ class TestSchemaAdapterProfileColumn:
         ):
             result = adapter._execute(query)
         assert result.error is not None
-        assert "missing_table" in result.error
+        assert "missing_table" in str(result.error)
         assert result.data == []
 
     def test_profile_column_not_found_returns_error(
@@ -289,7 +289,7 @@ class TestSchemaAdapterProfileColumn:
         ):
             result = adapter._execute(query)
         assert result.error is not None
-        assert "nonexistent" in result.error
+        assert "nonexistent" in str(result.error)
         assert result.data == []
 
 

@@ -1,5 +1,5 @@
 title: Sales Board with Filters
-source: duckdb_local
+source: dbt_charts_examples
 variables:
   region:
     column: orders.region

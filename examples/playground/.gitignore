@@ -1,0 +1,4 @@
+# Keep pre-built super_schema.json for playground examples
+!target/
+target/*
+!target/super_schema.json

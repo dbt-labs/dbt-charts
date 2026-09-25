@@ -66,7 +66,7 @@ class TestJsonPathExtraction:
             {"data": [{"id": 1}]},
         )
         assert not result.is_success
-        assert "missing_key" in result.error
+        assert "missing_key" in str(result.error)
 
     def test_json_path_non_list_result_returns_error(self) -> None:
         """json_path pointing to a non-list value returns a clear error."""
@@ -75,7 +75,7 @@ class TestJsonPathExtraction:
             {"data": [{"id": 1}], "count": 42},
         )
         assert not result.is_success
-        assert "list" in result.error.lower()
+        assert "list" in str(result.error).lower()
 
 
 class TestNoJsonPath:
@@ -102,4 +102,4 @@ class TestNoJsonPath:
         """
         result = _execute(HttpQuery(url="https://api.example.com/"), response_data)
         assert not result.is_success
-        assert "json_path" in result.error
+        assert "json_path" in str(result.error)

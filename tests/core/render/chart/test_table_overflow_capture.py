@@ -13,6 +13,7 @@ from typing import Any
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import TableChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.table import render_table_svg
@@ -78,3 +79,37 @@ def test_roomy_table_records_nothing() -> None:
 def test_no_sink_is_noop() -> None:
     """Rendering without an open sink must not raise (recording is a no-op)."""
     assert _render(width=220, sink_open=False) == {}
+
+
+def test_percentage_pinned_columns_summing_to_100_do_not_spuriously_overflow() -> None:
+    """Columns pinned to percentages that sum to exactly 100% must never overflow.
+
+    Sweep a range of slot widths so the test doesn't depend on any one budget
+    happening to trigger the rounding direction that reproduces the bug.
+    """
+    data = [{"a": 1, "b": 2, "c": 3, "d": 4}]
+    chart = resolve(
+        TableChart(
+            id="pct_cols",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="table",
+            style=TableChartStylePatch(
+                columns={
+                    "a": {"width": "10%"},
+                    "b": {"width": "20%"},
+                    "c": {"width": "30%"},
+                    "d": {"width": "40%"},
+                }
+            ),
+        ),
+        data,
+        chart_style_context=_BOARD_CTX,
+    )
+    for width in range(200, 1200, 7):
+        with collect_table_overflows() as sink:
+            render_table_svg(chart, data, width=width, board_style=_BOARD_RS)
+        assert "pct_cols" not in sink, (
+            f"width={width} spuriously recorded an overflow for columns "
+            f"pinned to percentages summing to exactly 100%: {sink.get('pct_cols')}"
+        )

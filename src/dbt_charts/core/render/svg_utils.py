@@ -322,7 +322,6 @@ def render_title(
     text_align: Literal["left", "center", "right"] = "left",
     *,
     level: int = 1,
-    prose: bool = False,
     resolved_style: "ResolvedStyle",
 ) -> str:
     """Render board title using mdsvg for proper text handling.
@@ -331,15 +330,15 @@ def render_title(
     layout/wrap width passed to mdsvg so the title text wraps inside the
     column — it does not influence the title's font size.
 
-    When ``prose=True`` the title uses ``style.title.font.family``, matching
-    the theme's prose-title stack instead of the chart-title narrow-card
-    fallback.
+    The title always renders in ``style.title.font.family`` — a board title
+    is always drawn as a heading (``board_title_markdown`` emits ``# {title}``
+    unconditionally), so there is no separate "prose" vs. "chart-title
+    narrow-card" family for it to fall back to.
 
     Args:
         title: Title text to render
         width: Layout width in pixels (passed to mdsvg for text wrap).
         text_align: Text alignment ("left", "center", "right")
-        prose: When True, render in the theme's prose-title family.
 
     Returns:
         SVG string for the title
@@ -355,9 +354,7 @@ def render_title(
     # Driven through SVGRenderer rather than mdsvg's one-shot `render()` so the
     # faces this title reached can be read back off the renderer: a title carries
     # markdown, so it can be the only thing on a board that paints italic.
-    renderer, font_path_family = title_renderer(
-        resolved_style, level, prose, text_align
-    )
+    renderer, font_path_family = title_renderer(resolved_style, level, text_align)
     svg = renderer.render(parse_markdown(markdown_title), width=width, padding=0.0)
     record_painted_faces(font_path_family, renderer.used_faces)
     return svg

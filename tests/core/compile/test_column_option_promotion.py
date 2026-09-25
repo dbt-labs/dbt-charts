@@ -19,6 +19,7 @@ from unittest.mock import Mock
 import pytest
 
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.collect import collect_all_query_names
@@ -344,7 +345,9 @@ class TestBestEffortColumnOptionDegradation:
 
         # Executor that fails the column-option query
         registry = Mock()
-        registry.execute.return_value = QueryResult(data=None, error="table not found")
+        registry.execute.return_value = QueryResult(
+            data=None, error=QueryError("table not found")
+        )
         executor = Executor(board=result.board, adapter_registry=registry)
 
         # Store the error on the executor as the named-query pipeline would
@@ -368,7 +371,9 @@ class TestBestEffortColumnOptionDegradation:
             call_count["n"] += 1
             sql = getattr(query, "sql", "")
             if "regions" in sql:
-                return QueryResult(data=None, error="no such table: regions")
+                return QueryResult(
+                    data=None, error=QueryError("no such table: regions")
+                )
             return QueryResult(data=[{"x": 1, "y": 2}])
 
         registry = Mock()

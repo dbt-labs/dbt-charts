@@ -1008,11 +1008,13 @@ class TestVariableResolutionInSizing:
             "Title height with vars should match resolved title height"
         )
 
-    def test_title_height_uses_body_font_path_for_non_prose_title(self, monkeypatch):
-        """Non-prose title layout measurement matches render_title(prose=False)."""
+    def test_title_height_uses_title_font_path(self, monkeypatch):
+        """Title layout measurement matches render_title: style.title.font.family,
+        never the body family, whatever text.font.family happens to be set to.
+        """
         import mdsvg
         from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.fonts import INTER_VARIABLE_FONT_FAMILY, get_face
+        from dbt_charts.core.fonts import SOURCE_SERIF_4_FONT_FAMILY, get_face
         from dbt_charts.core.render.sizing import get_title_height
 
         captured: dict[str, str] = {}
@@ -1045,45 +1047,8 @@ class TestVariableResolutionInSizing:
         )
         style = resolve_style(seed)
 
-        height = get_title_height("Measured as non prose", 400.0, resolved_style=style)
-
-        assert height == 42.0
-        assert captured["regular"] == str(
-            get_face(INTER_VARIABLE_FONT_FAMILY).measure_path
-        )
-
-    def test_title_height_uses_title_font_path_for_prose_title(self, monkeypatch):
-        """Prose title layout measurement matches render_title(prose=True)."""
-        import mdsvg
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.fonts import SOURCE_SERIF_4_FONT_FAMILY, get_face
-        from dbt_charts.core.render.sizing import get_title_height
-
-        captured: dict[str, str] = {}
-
-        class FakeSize:
-            height = 42.0
-
-        def fake_measure(
-            *_args: object, fonts: FontFaces, **_kwargs: object
-        ) -> FakeSize:
-            captured["regular"] = fonts.regular.path
-            return FakeSize()
-
-        monkeypatch.setattr(mdsvg, "measure", fake_measure)
-
-        base = get_theme_style()
-        seed = base.model_copy(
-            update={
-                "title": base.title.model_copy(
-                    update={"font": FontStyle(family="Source Serif 4, Georgia, serif")}
-                )
-            }
-        )
-        style = resolve_style(seed)
-
         height = get_title_height(
-            "Measured in serif", 400.0, resolved_style=style, prose=True
+            "Measured in the title family", 400.0, resolved_style=style
         )
 
         assert height == 42.0

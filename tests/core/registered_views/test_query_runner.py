@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
@@ -307,7 +308,9 @@ class TestRunRegistryQueriesValidationErrors:
             }
         )
         registry = MagicMock()
-        registry.execute.return_value = QueryResult(data=[], error="Source not found")
+        registry.execute.return_value = QueryResult(
+            data=[], error=QueryError("Source not found")
+        )
 
         with pytest.raises(RegistryQueryError) as exc_info:
             run_registry_queries(view, {}, registry)

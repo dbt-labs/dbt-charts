@@ -398,7 +398,7 @@ class TestSetupSqlMutatingGuard:
         ):
             result = adapter._execute(query)
         assert result.error is not None
-        assert "outside the setup_sql allowlist" in result.error
+        assert "outside the setup_sql allowlist" in str(result.error)
         # Setup driver never sees mutating SQL.
         mock_conn.execute.assert_not_called()
 
@@ -429,7 +429,7 @@ class TestSetupSqlMutatingGuard:
         ):
             result = adapter._execute(query, source_config=source_config)
         assert result.error is not None
-        assert "setup_sql" in result.error
+        assert "setup_sql" in str(result.error)
         mock_dbt_adapter.execute.assert_not_called()
 
     def test_setup_sql_valid_temp_function_still_works(self) -> None:

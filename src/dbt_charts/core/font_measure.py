@@ -339,10 +339,24 @@ def markdown_font_faces(font_family: str, style: MdsvgStyle) -> FontFaces:
         # used; there is no better answer available.
         regular = FontFace(path=get_font_path(font_family))
 
+    # Empty heading_font_family means the heading rule inherits font_family (mdsvg's
+    # own contract on the field), so the heading face is the same font file as
+    # `regular` — but still instanced at its own heading_axis (heading_font_weight),
+    # not text_axis, so it is not simply `regular` again. Passing it through anyway
+    # keeps this branch symmetric with the family-override case rather than
+    # special-casing "no override" as `heading=None`.
+    heading_family = style.heading_font_family or font_family
+    heading_axis = css_weight_to_axis(style.heading_font_weight)
+    heading_primary = registry_family(heading_family)
+    heading = _face_for(heading_primary, "normal", heading_axis)
+    if heading is None:
+        heading = FontFace(path=get_font_path(heading_family))
+
     return FontFaces(
         regular=regular,
         bold=_face_for(primary, "normal", bold_axis),
         italic=_face_for(primary, "italic", text_axis),
         bold_italic=_face_for(primary, "italic", bold_axis),
         mono=FontFace(path=str(get_face(SOURCE_CODE_PRO_FONT_FAMILY).measure_path)),
+        heading=heading,
     )

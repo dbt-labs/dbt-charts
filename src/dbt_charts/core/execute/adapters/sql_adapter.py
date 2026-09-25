@@ -38,6 +38,7 @@ from dbt_charts.core.compile.sql_guard import validate_select_only, validate_set
 from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_DURATION_EXCEEDED
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
@@ -49,6 +50,7 @@ from dbt_charts.core.execute.adapters.base import (
     classify_warehouse_error,
     connection_failure,
     handle_adapter_error,
+    plain_error,
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
@@ -365,9 +367,9 @@ class _SourcePool:
             # via the statement_timeout_sql send below; BigQuery needs the
             # handle itself to attach default_query_job_config. Without this,
             # a dialect with neither (databricks, spark, mysql, athena,
-            # clickhouse, sqlserver — redshift inherits statement_timeout_sql
-            # from PostgresDialect) never touches the handle here, so its
-            # connect failure leaks past this classification entirely.
+            # clickhouse, sqlserver — redshift has its own
+            # statement_timeout_sql override) never touches the handle here,
+            # so its connect failure leaks past this classification entirely.
             handle = adapter.connections.get_thread_connection().handle
 
             # Must follow ctx.__enter__() so get_thread_connection() returns the live
@@ -526,10 +528,7 @@ class SqlAdapter(BaseAdapter):
             QueryResult with data or error
         """
         if not is_sql_query(query):
-            return QueryResult(
-                data=[],
-                error=f"Expected SQL query, got {query.query_type}",
-            )
+            return plain_error(f"Expected SQL query, got {query.query_type}")
 
         prepared = self.prepare_sql(
             query, variables=variables, params=params, source_config=source_config
@@ -702,12 +701,9 @@ class SqlAdapter(BaseAdapter):
         """
         dialect_name = prepared.dialect_name
         if source_config is None:
-            return QueryResult(
-                data=[],
-                error=(
-                    f"No source config found for dialect '{dialect_name}'. "
-                    f"Provide an inline source: block or a named source in dbt_charts.yml."
-                ),
+            return plain_error(
+                f"No source config found for dialect '{dialect_name}'. "
+                f"Provide an inline source: block or a named source in dbt_charts.yml."
             )
 
         try:
@@ -732,10 +728,12 @@ class SqlAdapter(BaseAdapter):
             source_label = query.source or dialect_name
             return QueryResult(
                 data=[],
-                error=ERR_QUERY_DURATION_EXCEEDED.message_template.format(
-                    seconds=e.seconds, source=source_label
+                error=QueryError(
+                    ERR_QUERY_DURATION_EXCEEDED.message_template.format(
+                        seconds=e.seconds, source=source_label
+                    ),
+                    code=ERR_QUERY_DURATION_EXCEEDED,
                 ),
-                error_code=ERR_QUERY_DURATION_EXCEEDED,
             )
         except ConnectionSetupFailed as e:
             # Building/connecting the worker's dbt adapter failed (bad

@@ -1,6 +1,6 @@
 title: Sales Analytics Dashboard
 notes: Comprehensive view of sales performance across regions, products, and time
-source: duckdb_local
+source: dbt_charts_examples
 text: |
   This dashboard provides a **comprehensive view** of sales analytics with interactive filtering.
 
@@ -215,7 +215,6 @@ charts:
     type: line
     x: order_date
     y: total_revenue
-    color: None
   monthly_bars:
     title: Monthly Revenue
     query: monthly_revenue

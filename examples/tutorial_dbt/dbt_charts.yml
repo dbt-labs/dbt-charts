@@ -1,2 +1,7 @@
 server:
   port: 19415
+
+sources:
+  dbt_charts_examples:
+    type: dbt_profile
+    profile: dbt_charts_examples

@@ -25,6 +25,7 @@ from dbt_charts.core.compile.models.source import (
 )
 from dbt_charts.core.dbt_manifest import LoadedManifest, RefIndex, ref_index
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters import (
     BaseAdapter,
     DbtAdapter,
@@ -77,10 +78,10 @@ class TestQueryResult:
 
     def test_error_result(self):
         """Test error query result."""
-        result = QueryResult(data=[], error="Query failed")
+        result = QueryResult(data=[], error=QueryError("Query failed"))
 
         assert not result.is_success
-        assert result.error == "Query failed"
+        assert str(result.error) == "Query failed"
 
 
 class TestSqlAdapter:

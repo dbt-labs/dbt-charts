@@ -23,6 +23,7 @@ from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
     QueryParams,
     QueryResult,
+    plain_error,
 )
 
 
@@ -48,10 +49,7 @@ class ValuesAdapter(BaseAdapter):
     ) -> QueryResult:
         """Return inline rows from the query."""
         if not is_values_query(query):
-            return QueryResult(
-                data=[],
-                error=f"Expected values query, got {query.query_type}",
-            )
+            return plain_error(f"Expected values query, got {query.query_type}")
 
         rows = query.apply_limit(list(query.rows))
 

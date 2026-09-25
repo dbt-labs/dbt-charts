@@ -34,7 +34,7 @@ def _drawn_baseline(level: int) -> float:
 def test_the_reported_baseline_is_the_one_the_title_was_drawn_on(level: int) -> None:
     style = resolve_style(get_theme_style())
 
-    assert title_baseline_offset(style, level, False) == pytest.approx(
+    assert title_baseline_offset(style, level) == pytest.approx(
         _drawn_baseline(level), abs=0.01
     ), f"level {level}: reported baseline is not where the heading was painted"
 
@@ -49,7 +49,7 @@ def test_the_line_box_holds_the_baseline_it_was_drawn_with(level: int) -> None:
     """
     style = resolve_style(get_theme_style())
     block = get_title_height("Board Title", _WIDE, None, level, resolved_style=style)
-    top, height = title_line_box(block, level, style, False)
+    top, height = title_line_box(block, level, style)
     baseline = _drawn_baseline(level)
 
     assert top < baseline < top + height, (

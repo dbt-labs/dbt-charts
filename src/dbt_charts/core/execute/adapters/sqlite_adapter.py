@@ -24,6 +24,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
     ERR_WAREHOUSE_RUNTIME,
 )
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
     QueryParams,
@@ -31,6 +32,7 @@ from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
     connection_failure,
     handle_adapter_error,
+    plain_error,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
@@ -101,35 +103,23 @@ class SqliteAdapter(BaseAdapter):
         """
         if not is_sql_query(query):
             # _can_execute gates this — unreachable at runtime; narrows type to SqlQuery.
-            return QueryResult(
-                data=[],
-                error=f"Expected SQL query, got {query.query_type}",
-            )
+            return plain_error(f"Expected SQL query, got {query.query_type}")
 
         if query.setup_sql:
-            return QueryResult(
-                data=[],
-                error=(
-                    "setup_sql is not supported for SQLite sources. "
-                    "Remove the setup_sql block or switch to a DuckDB source."
-                ),
+            return plain_error(
+                "setup_sql is not supported for SQLite sources. "
+                "Remove the setup_sql block or switch to a DuckDB source."
             )
 
         if source_config is None:
-            return QueryResult(
-                data=[],
-                error="SQLite source requires a source_config with 'path'.",
-            )
+            return plain_error("SQLite source requires a source_config with 'path'.")
 
         raw_config: dict[str, Any] = source_config.model_dump(
             by_alias=True, exclude_none=True
         )
         db_path_str = raw_config.get("path")
         if not db_path_str:
-            return QueryResult(
-                data=[],
-                error="SQLite source_config missing required 'path' field.",
-            )
+            return plain_error("SQLite source_config missing required 'path' field.")
 
         # Resolve relative paths via data_dir (mirrors DuckDB's behavior). Without
         # this, a relative path like ./data/bird.sqlite resolves against the
@@ -200,8 +190,9 @@ class SqliteAdapter(BaseAdapter):
         except sqlite3.OperationalError as e:
             return QueryResult(
                 data=[],
-                error=f"SQLite SQL execution failed: {e}",
-                error_code=ERR_WAREHOUSE_RUNTIME,
+                error=QueryError(
+                    f"SQLite SQL execution failed: {e}", code=ERR_WAREHOUSE_RUNTIME
+                ),
             )
         except Exception as e:  # noqa: BLE001 — sqlite adapter error boundary
             return handle_adapter_error("sqlite SQL execution", e)

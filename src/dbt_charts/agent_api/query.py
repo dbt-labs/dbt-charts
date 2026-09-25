@@ -281,7 +281,7 @@ def execute_query(
                 success=False,
                 data=[],
                 columns=[],
-                errors=[result.error],
+                errors=[str(result.error)],
                 row_count=0,
                 truncated=False,
                 diagnostics=diagnostics,
@@ -454,7 +454,7 @@ def query_board(
         return _fail(
             name,
             resolved_display,
-            [exec_result.error],
+            [str(exec_result.error)],
             sql=sql,
             notes=noted,
         )

@@ -165,6 +165,10 @@ _ANTI_DANGLE_MAX_SQUEEZE = 0.15
 # Hard pixel floor: below 20px text clips descenders at our smallest body size.
 _ANTI_DANGLE_MIN_ROW_H = 20
 
+# Absorbs float-rounding noise on percentage-pinned column widths, not real
+# overflow — a real overflow is always many orders of magnitude larger.
+_WIDTH_OVERFLOW_EPSILON = 1e-6
+
 # Sentinel column key for the synthetic row-number column. The key uses a
 # private-use character that YAML-authored column names cannot reach, so
 # style.columns lookups and conditional_formatting dicts keyed by column name
@@ -3838,7 +3842,7 @@ def _render_table_svg_core(
     # spills over / collides with its neighbor. Record it (a no-op unless a
     # warning sink is open) so TABLE_COLUMNS_OVERFLOW can surface it, using the
     # renderer's own widen boundary as the threshold — no separate cutoff.
-    if actual_content_width > available_width:
+    if actual_content_width > available_width + _WIDTH_OVERFLOW_EPSILON:
         record_table_overflow(
             chart_id,
             TableOverflow(

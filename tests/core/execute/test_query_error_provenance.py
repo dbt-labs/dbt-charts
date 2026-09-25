@@ -64,7 +64,7 @@ def test_named_query_sql_syntax_error_keeps_execute_code_and_query_name(
     assert REGISTRY.get(error.code).domain == "execute"
     assert error.code == "ERR-BINDER-UNKNOWN-COLUMN"
     assert error.fields["query_name"] == "broken_query"
-    assert error.fields["detail"]
+    assert error.detail
     # The message is exactly the registered template — no wrap-and-stringify
     # prefix chain ("Query execution failed: DuckDB SQL execution failed: ...").
     assert error.message.startswith(

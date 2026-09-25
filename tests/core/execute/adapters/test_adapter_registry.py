@@ -274,6 +274,36 @@ class TestSourceAwareRouting:
         # DbtAdapter must have been called, not DuckDBAdapter
         dbt_adapter.execute.assert_called_once()
 
+    def test_unknown_source_with_dbt_project_present_still_raises(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Regression (dbt-labs/dbt-charts#45): a `dbt_project.yml` in the
+        project root registers DbtAdapter and puts a DbtContext in scope. Plain
+        SQL naming a typo'd/unconfigured source must still raise
+        ERR-SOURCE-NOT-FOUND — it must never silently execute against
+        DuckDBAdapter's `:memory:` default just because a dbt project happens
+        to be present.
+        """
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        (tmp_path / "dbt_project.yml").write_text(
+            "name: repro_project\nversion: '1.0.0'\nprofile: repro_project\n"
+        )
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  analytics_warehouse:\n    type: duckdb\n    path: ':memory:'\n"
+        )
+        project = local_project(tmp_path)
+        registry = build_adapter_registry(project)
+
+        for offending in ("analytics_warehous", "default", "duckdb"):
+            result = registry.execute(SqlQuery(sql="SELECT 1", source=offending))
+            assert (
+                result.error is not None and result.error.code is ERR_SOURCE_NOT_FOUND
+            ), f"source={offending!r} silently executed instead of raising"
+            assert result.data == []
+
     @pytest.mark.parametrize("source_type", ["duckdb", "sqlite"])
     def test_file_source_seam_closed_when_adapter_absent(
         self,
@@ -313,7 +343,7 @@ class TestSourceAwareRouting:
             result = registry.execute(query)
 
         assert not result.is_success
-        error = (result.error or "").lower()
+        error = str(result.error or "").lower()
         # An adapter IS registered for "sql" (SqlAdapter) — it's the source
         # (duckdb/sqlite) that has no claimant. The message must not claim
         # the type itself is unregistered, and must name the source problem.
@@ -343,7 +373,7 @@ class TestSourceAwareRouting:
         result = registry.execute(HttpQuery(url="https://example.com/"))
 
         assert not result.is_success
-        error = (result.error or "").lower()
+        error = str(result.error or "").lower()
         assert "http" in error
         assert "no adapter registered" in error
 
@@ -537,7 +567,7 @@ class TestSourcelessRejectScopedToSql:
         registry = self._hosted_registry(tmp_path, local_project)
         result = registry.execute(SqlQuery(sql="SELECT 1 AS one", source=None))
         assert result.error is not None
-        assert "source name required" in result.error.lower()
+        assert "source name required" in str(result.error).lower()
 
     def test_named_non_sql_query_still_resolves_on_hosted_surface(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -554,7 +584,7 @@ class TestSourcelessRejectScopedToSql:
         registry = self._hosted_registry(tmp_path, local_project)
         result = registry.execute(SchemaQuery(source="unregistered"))
         assert result.error is not None
-        assert "unregistered" in result.error
+        assert "unregistered" in str(result.error)
 
     def test_execute_threads_query_name_into_source_not_found_message(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -570,7 +600,7 @@ class TestSourcelessRejectScopedToSql:
             SchemaQuery(source="unregistered"), query_name="my_named_query"
         )
         assert result.error is not None
-        assert "my_named_query" in result.error
+        assert "my_named_query" in str(result.error)
 
 
 class TestSourcelessSqlRejectedOnDefaultResolver:
@@ -597,7 +627,7 @@ class TestSourcelessSqlRejectedOnDefaultResolver:
         registry = self._registry_with_a_configured_source(tmp_path, local_project)
         result = registry.execute(SqlQuery(sql="SELECT 1 AS one", source=None))
         assert result.error is not None
-        assert "Name a source for the query" in result.error
+        assert "Name a source for the query" in str(result.error)
 
     def test_sourceless_values_query_still_succeeds(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -631,8 +661,8 @@ def test_file_source_without_a_materializer_still_refuses(
     result = registry.execute(SqlQuery(sql="SELECT 1", source="marts"))
 
     assert result.error is not None
-    assert "marts" in result.error
-    assert "materializer" in result.error
+    assert "marts" in str(result.error)
+    assert "materializer" in str(result.error)
 
 
 def test_schema_query_on_a_file_source_refuses_even_with_a_materializer(
@@ -663,11 +693,11 @@ def test_schema_query_on_a_file_source_refuses_even_with_a_materializer(
     result = registry.execute(SchemaQuery(source="marts"))
 
     assert result.error is not None
-    assert "marts" in result.error
+    assert "marts" in str(result.error)
     # Distinguish this refusal from the "no materializer configured" one
     # (test_file_source_without_a_materializer_still_refuses) — this fires
     # unconditionally regardless of the materializer wired above.
-    assert "Schema introspection" in result.error
+    assert "Schema introspection" in str(result.error)
 
 
 class TestFileSourceDispatch:
@@ -745,7 +775,7 @@ class TestFileSourceDispatch:
         assert result.error is not None
         # Pin which arm answered: without this the test would also pass if a
         # future change made `marts` fail at source resolution instead.
-        assert "File-source execution" in result.error
+        assert "File-source execution" in str(result.error)
 
     def test_header_only_csv_returns_an_error_not_a_crash(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -763,11 +793,11 @@ class TestFileSourceDispatch:
         result = registry.execute(SqlQuery(sql="SELECT * FROM orders", source="marts"))
 
         assert result.error is not None
-        assert "File-source execution" in result.error
+        assert "File-source execution" in str(result.error)
         # Pin the raise site too: were this ValueError later promoted to a typed
         # DbtChartsError, the prefix alone would keep passing while the
         # ValueError arm of the catch lost its only coverage.
-        assert "contain no rows" in result.error
+        assert "contain no rows" in str(result.error)
 
     def test_execution_error_names_the_operation_once(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -787,9 +817,9 @@ class TestFileSourceDispatch:
         )
 
         assert result.error is not None
-        assert result.error.count("File-source execution failed") == 1
+        assert str(result.error).count("File-source execution failed") == 1
         # The backend's own context still reaches the author.
-        assert "nonexistent_col" in result.error
+        assert "nonexistent_col" in str(result.error)
 
     def test_lenient_variables_is_honored_on_the_file_source_path(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

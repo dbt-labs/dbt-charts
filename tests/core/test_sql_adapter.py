@@ -101,7 +101,8 @@ class TestGenericExecutePath:
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
 
-        assert result.error_code == ERR_UNPARSEABLE_SQL
+        assert result.error is not None
+        assert result.error.code == ERR_UNPARSEABLE_SQL
 
     def test_tokenizer_failure_keeps_execute_code(
         self, local_project: Callable[..., FilesystemProject]
@@ -119,7 +120,8 @@ class TestGenericExecutePath:
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
 
-        assert result.error_code == ERR_UNPARSEABLE_SQL
+        assert result.error is not None
+        assert result.error.code == ERR_UNPARSEABLE_SQL
 
     def test_duckdb_executes(self) -> None:
         """DuckDB adapter executes queries."""
@@ -763,7 +765,7 @@ class TestRuntimeMutatingSqlGuard:
                 ):
                     result = adapter._execute(_make_query(sql))
                 assert result.error is not None, f"expected error for {sql!r}"
-                assert "outside the read-only SQL allowlist" in result.error, (
+                assert "outside the read-only SQL allowlist" in str(result.error), (
                     f"expected guard message for {sql!r}, got {result.error!r}"
                 )
                 mock_conn.execute.assert_not_called()
@@ -793,7 +795,7 @@ class TestRuntimeMutatingSqlGuard:
             ):
                 result = adapter._execute(query, source_config=source_config)
             assert result.error is not None
-            assert "outside the read-only SQL allowlist" in result.error
+            assert "outside the read-only SQL allowlist" in str(result.error)
             mock_dbt_adapter.execute.assert_not_called()
         finally:
             adapter.close()
@@ -819,7 +821,7 @@ class TestRuntimeMutatingSqlGuard:
             ):
                 result = adapter._execute(query, variables={"kill": True})
             assert result.error is not None
-            assert "outside the read-only SQL allowlist" in result.error
+            assert "outside the read-only SQL allowlist" in str(result.error)
             mock_conn.execute.assert_not_called()
             # In the safe path the query still works end-to-end.
             result2 = adapter._execute(query, variables={"kill": False})

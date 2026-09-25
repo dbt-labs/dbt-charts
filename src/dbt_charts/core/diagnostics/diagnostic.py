@@ -89,6 +89,9 @@ class Diagnostic(BaseModel):
     chart: str | None = None
     query: str | None = None
     fields: dict[str, Any] = {}
+    # Foreign text, log-only; see DbtChartsError.detail. Distinct from the same-named
+    # fields["detail"] key (from_query_diagnostic.py), which is authored template text.
+    detail: str | None = None
     # Secondary locations for a diagnostic about a relationship between two
     # authored spots. Populated at construction by the emitter that knows both
     # halves; never patched on afterwards.
@@ -138,6 +141,7 @@ class Diagnostic(BaseModel):
         chart: str | None = None,
         query: str | None = None,
         fields: dict[str, Any] | None = None,
+        detail: str | None = None,
         cause: Diagnostic | str | None = None,
         related: tuple[RelatedLocation, ...] = (),
     ) -> Diagnostic:
@@ -158,6 +162,7 @@ class Diagnostic(BaseModel):
             chart=chart,
             query=query,
             fields=fields or {},
+            detail=detail,
             cause=cause,
             related=list(related),
         )
@@ -240,5 +245,6 @@ def build_diagnostic(exc: Any, *, file: str | None = None) -> Diagnostic:
         range=range_,
         query=fields.get("query_name"),
         fields=fields,
+        detail=exc.detail,
         cause=cause,
     )

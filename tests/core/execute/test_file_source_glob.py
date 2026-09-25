@@ -827,3 +827,33 @@ class TestExecutorGlobErrorCodes:
         with pytest.raises(QueryError) as exc_info:
             ex.execute_query("q")
         assert exc_info.value.code == ERR_GLOB_TOO_MANY
+
+    def test_glob_schema_mismatch_propagates_authored_message(
+        self, tmp_path: Path
+    ) -> None:
+        """from_code() no longer puts detail in .fields, so templates that embed
+        {detail} must not KeyError.
+        """
+        from dbt_charts.core.diagnostics.codes_execute import (
+            ERR_GLOB_SCHEMA_MISMATCH,
+        )
+
+        files = {
+            "data/a/report.json": '[{"id": 1, "score": 10}]',
+            "data/b/report.json": '[{"id": 2, "extra": "oops"}]',
+        }
+        project, board, registry = self._setup(tmp_path, files)
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        ex = Executor(
+            board,
+            adapter_registry=registry,
+            query_registry={"q": board.queries["q"]},
+            result_cache=TrivialDuckDBCache(),
+            file_materializer=mat,
+        )
+
+        with pytest.raises(QueryError) as exc_info:
+            ex.execute_query("q")
+        assert exc_info.value.code == ERR_GLOB_SCHEMA_MISMATCH
+        assert "'detail'" not in str(exc_info.value)
+        assert "on column names or types" in str(exc_info.value)

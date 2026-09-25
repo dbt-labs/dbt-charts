@@ -38,6 +38,26 @@ class TestCompactStyleIncludesConfig:
         style = get_compact_style(rs)
         assert style.font_family == rs.text.font.family
 
+    def test_heading_font_family_from_resolved_title_stack(self):
+        """Board/prose headings draw in style.title.font.family, not the body family.
+
+        Regression test for the reported defect: style.title.font.family
+        validated cleanly but never reached the rendered heading CSS class —
+        only style.title.font.color did.
+        """
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.compile.resolve.style.board import resolve_style
+        from dbt_charts.core.render.sizing import get_compact_style
+
+        patch = StylePatch.model_validate({"title": {"font": {"family": "Poppins"}}})
+        rs = resolve_style(get_theme_style(), patch)
+        style = get_compact_style(rs)
+
+        assert style.heading_font_family.startswith("Poppins")
+        # Independent of the body family — a distinctive title family must not
+        # leak into (or be shadowed by) style.text.font.family.
+        assert style.heading_font_family != style.font_family
+
     def test_base_font_size_from_config(self):
         from dbt_charts.core.render.sizing import get_compact_style
 
@@ -306,6 +326,82 @@ class TestRenderTitleUsesTextStack:
         rs = resolve_style(get_theme_style())
         svg = render_title("Hello", width=400, resolved_style=rs)
         assert rs.text.font.family.split(",")[0].strip() in svg
+
+
+class TestRenderTitleUsesTitleStack:
+    """A board title reads style.title.font.family, unconditionally.
+
+    Regression test for the reported defect: the board's own H1 rendered in
+    the theme's hardcoded body serif regardless of a distinct
+    style.title.font.family override — only style.title.font.color reached it.
+    """
+
+    def test_title_svg_uses_resolved_title_font_family(self):
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.render.svg_utils import render_title
+
+        patch = StylePatch.model_validate({"title": {"font": {"family": "Poppins"}}})
+        rs = resolve_style(get_theme_style(), patch)
+        svg = render_title("Hello", width=400, resolved_style=rs)
+        assert "Poppins" in svg
+
+
+class TestProseHeadingsUseTitleStack:
+    """H1-H6 written inside a text: block read style.title.font.family too,
+    matching a board's own title — the other half of the reported defect.
+
+    mdsvg has no per-role text measurement: it measures a whole document
+    against the same FontFaces it paints with, so a heading painting in a
+    family the measurer never saw would wrap at the wrong width — a fresh
+    bug, not just the old one. This is a real wrap-width regression test
+    (not just a string search), because that gap is exactly what a
+    CSS-only fix would miss.
+    """
+
+    def test_prose_heading_wraps_by_its_own_family_not_the_body_family(self):
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.render.prose import render_prose_svg
+
+        heading = (
+            "# North America pipeline coverage and stage conversion summary report"
+        )
+        # A width where Inter-vs-Source-Serif-4 wraps to a different line count
+        # for this text — not every width does (a small per-word width delta
+        # often still fits the same wrap points), so this one is checked, not
+        # assumed.
+        width = 320.0
+
+        def render_height(title_family: str) -> float:
+            patch = StylePatch.model_validate(
+                {
+                    "text": {"font": {"family": "Inter"}},
+                    "title": {"font": {"family": title_family}},
+                }
+            )
+            rs = resolve_style(get_theme_style(), patch)
+            _svg, height = render_prose_svg(heading, width, rs.text, rs)
+            return height
+
+        # Same family on both sides: a baseline with nothing to disagree about.
+        same_family_height = render_height("Inter")
+        # A real, much wider vendored family than Inter at the same width wraps
+        # onto more lines — this only shows up if the heading is actually
+        # *measured* in its own family, not just painted in it.
+        different_family_height = render_height("Source Serif 4")
+
+        assert different_family_height != same_family_height, (
+            "the heading's wrap width must track style.title.font.family, not "
+            "the body family render_prose_svg measures paragraphs with"
+        )
+
+    def test_prose_heading_svg_uses_resolved_title_font_family(self):
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.render.prose import render_prose_svg
+
+        patch = StylePatch.model_validate({"title": {"font": {"family": "Poppins"}}})
+        rs = resolve_style(get_theme_style(), patch)
+        svg, _height = render_prose_svg("# A heading", 400.0, rs.text, rs)
+        assert "Poppins" in svg
 
 
 class TestVlConvertFontNormalization:

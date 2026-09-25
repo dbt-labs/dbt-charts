@@ -73,6 +73,35 @@ class TestFileSourceAdHocQueries:
         assert all(r["region"] == "North" for r in result.data)
 
 
+def test_execute_query_glob_schema_mismatch_names_the_offending_files(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """from_code() no longer puts detail in .fields, so templates that embed
+    {detail} must not KeyError.
+    """
+    data_dir = tmp_path / "data"
+    (data_dir / "a").mkdir(parents=True)
+    (data_dir / "b").mkdir(parents=True)
+    (data_dir / "a" / "report.json").write_text('[{"id": 1, "score": 10}]')
+    (data_dir / "b" / "report.json").write_text('[{"id": 2, "extra": "oops"}]')
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n"
+        "  runs:\n"
+        "    type: json\n"
+        "    files:\n"
+        "      reports: data/*/report.json\n"
+    )
+    project = local_project(tmp_path)
+
+    with ProjectSession.from_project(project) as session:
+        result = session.execute_query("SELECT * FROM reports", source="runs")
+
+    assert result.success is False
+    assert result.errors
+    assert "'detail'" not in result.errors[0]
+    assert "on column names or types" in result.errors[0]
+
+
 def test_registry_with_no_materializer_still_refuses(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
@@ -156,8 +185,9 @@ class TestFileSourceDescribeQuery:
         EXPLAIN rejection is: ``_duckdb_cache_base.execute_file_source_sql``
         wraps every DuckDB error — including a genuine
         ``duckdb.BinderException`` — in a plain ``RuntimeError`` before
-        ``handle_adapter_error`` ever sees it, so ``error_code`` is always
-        None here and ``_is_query_defect`` falls back to ``unchecked``.
+        ``handle_adapter_error`` ever sees it, so the code stays at the
+        ERR-INTERNAL fallback here and ``_is_query_defect`` falls back to
+        ``unchecked``.
         """
         project = _csv_project(tmp_path, local_project)
         with ProjectSession.from_project(project) as session:

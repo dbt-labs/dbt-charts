@@ -1,0 +1,5 @@
+kind: Fixes
+body: A table with columns pinned to percentage widths summing to exactly 100% no longer spuriously fires `WARN-TABLE-COLUMNS-OVERFLOW` from sub-pixel floating-point rounding when nothing actually overflowed.
+time: 2026-09-25T14:55:28.000000-00:00
+custom:
+    DbtChartsIssue: "46"

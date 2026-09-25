@@ -52,6 +52,7 @@ from dbt_charts.core.execute.adapters.base import (
     QueryResult,
     apply_row_limit_truncation,
     handle_adapter_error,
+    plain_error,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
@@ -474,10 +475,8 @@ class AdapterRegistry:
                 query, board=board, dbt_context=dbt_context, query_name=query_name
             )
         except DbtChartsError as exc:
-            # handle_adapter_error keeps the resolver's typed identity —
-            # message-only flattening here used to downgrade
-            # ERR-SOURCE-NOT-FOUND et al. to the ERR-INTERNAL fallback by the
-            # time _query_error_from_result rebuilt the QueryError.
+            # handle_adapter_error keeps the resolver's typed identity, so
+            # ERR-SOURCE-NOT-FOUND et al. don't flatten to ERR-INTERNAL.
             return handle_adapter_error("Source resolution", exc)
 
         # SqlQuery and SchemaQuery are the two query types that can carry a
@@ -492,28 +491,22 @@ class AdapterRegistry:
         if source_config is not None and is_file_source(source_config):
             assert isinstance(query, SqlQuery | SchemaQuery)
             if isinstance(query, SchemaQuery):
-                return QueryResult(
-                    data=[],
-                    error=(
-                        f"Source {query.source!r} is a {source_config.type} file "
-                        "source. Schema introspection (the /data explorer, or "
-                        "an authored `type: schema` query) is not yet "
-                        "supported for file sources."
-                    ),
+                return plain_error(
+                    f"Source {query.source!r} is a {source_config.type} file "
+                    "source. Schema introspection (the /data explorer, or "
+                    "an authored `type: schema` query) is not yet "
+                    "supported for file sources."
                 )
 
             materializer = self._get_file_materializer()
             if materializer is None:
-                return QueryResult(
-                    data=[],
-                    error=(
-                        f"Source {query.source!r} is a {source_config.type} "
-                        "file source, but no file-source materializer is "
-                        "configured for this session. Pass one via "
-                        "AdapterRegistry(file_materializer=...) or "
-                        "ProjectSession(file_materializer=...) to run ad-hoc "
-                        "queries against file sources."
-                    ),
+                return plain_error(
+                    f"Source {query.source!r} is a {source_config.type} "
+                    "file source, but no file-source materializer is "
+                    "configured for this session. Pass one via "
+                    "AdapterRegistry(file_materializer=...) or "
+                    "ProjectSession(file_materializer=...) to run ad-hoc "
+                    "queries against file sources."
                 )
 
             assert isinstance(
@@ -563,19 +556,13 @@ class AdapterRegistry:
                     if source_config is not None
                     else "this query"
                 )
-                return QueryResult(
-                    data=[],
-                    error=(
-                        f"No adapter for query type {query.query_type!r} "
-                        f"supports {detail} in this deployment."
-                    ),
+                return plain_error(
+                    f"No adapter for query type {query.query_type!r} "
+                    f"supports {detail} in this deployment."
                 )
-            return QueryResult(
-                data=[],
-                error=(
-                    f"No adapter registered for query type {query.query_type!r} "
-                    "in this deployment."
-                ),
+            return plain_error(
+                f"No adapter registered for query type {query.query_type!r} "
+                "in this deployment."
             )
 
         # Composition: expand {{ queries.X }} references and parameterize
@@ -755,7 +742,7 @@ class AdapterRegistry:
                 warehouse=warehouse,
             )
         except (ValueError, KeyError, TypeError) as exc:
-            return QueryResult(data=[], error=str(exc))
+            return plain_error(str(exc))
         return query.model_copy(update={"sql": rendered.sql}), list(rendered.params)
 
     def prepare_sql(
@@ -787,9 +774,7 @@ class AdapterRegistry:
             return composed
         query, params = composed
         if not is_sql_query(query):
-            return QueryResult(
-                data=[], error=f"Expected SQL query, got {query.query_type}"
-            )
+            return plain_error(f"Expected SQL query, got {query.query_type}")
 
         from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 
@@ -798,12 +783,9 @@ class AdapterRegistry:
         # back for them, and no caller that wants one.
         adapter = self.get_adapter(query, source_config)
         if not isinstance(adapter, SqlAdapter):
-            return QueryResult(
-                data=[],
-                error=(
-                    f"{type(adapter).__name__} builds no wire SQL — "
-                    f"prepare_sql applies only to dbt-adapter sources."
-                ),
+            return plain_error(
+                f"{type(adapter).__name__} builds no wire SQL — "
+                f"prepare_sql applies only to dbt-adapter sources."
             )
         return adapter.prepare_sql(
             query, variables=variables, params=params, source_config=source_config

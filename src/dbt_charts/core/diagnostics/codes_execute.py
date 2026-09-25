@@ -504,7 +504,7 @@ ERR_WAREHOUSE_CONNECTION = REGISTRY.register(
         code="ERR-WAREHOUSE-CONNECTION",
         domain="execute",
         title="Could not open the warehouse",
-        message_template="Could not open the warehouse: {detail}.",
+        message_template="Could not open the warehouse: {reason}",
         doc=(
             "Fired when opening the connection fails, before any SQL is sent: "
             "a database file that is missing, unreadable, or lock-held by "
@@ -514,8 +514,12 @@ ERR_WAREHOUSE_CONNECTION = REGISTRY.register(
             "Distinct from ERR-WAREHOUSE-RUNTIME because nothing ever read "
             "the SQL: the query may be perfectly good, so callers that judge "
             "queries (`dct validate --warehouse`) must not report it as a "
-            "query defect. Check the source's credentials, host, and network "
-            "reachability in `dbt_charts.yml` or `profiles.yml`."
+            "query defect. `{reason}` names the classified cause; the "
+            "driver's own text (which may carry hostnames, PIDs, or "
+            "usernames) is not shown here but is available in `dct`'s "
+            "diagnostics output and server logs. Check the source's "
+            "credentials, host, and network reachability in "
+            "`dbt_charts.yml` or `profiles.yml`."
         ),
         docs_topic="queries",
     )

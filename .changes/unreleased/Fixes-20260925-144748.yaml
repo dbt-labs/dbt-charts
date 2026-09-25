@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'Redshift sources no longer fail every query at connection setup with `parameter ''statement_timeout'' requires an integer value`. Redshift''s `statement_timeout` takes an integer of milliseconds; it no longer inherits Postgres''s interval-string `SET statement_timeout = ''Ns''` syntax.'
+time: 2026-09-25T14:47:48.000000-00:00
+custom:
+    DbtChartsIssue: 39

@@ -264,7 +264,7 @@ class TestDbtProfileDuckdbRouting:
         )
         result = registry.execute(query)
         assert result.error is not None
-        assert "nonexistent_profile" in result.error
+        assert "nonexistent_profile" in str(result.error)
 
 
 # ---------------------------------------------------------------------------
@@ -353,8 +353,8 @@ class TestDbtProfileDuckdbRefResolution:
             SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="prod")
         )
         assert result.error is not None
-        assert "manifest" in result.error.lower()
-        assert "undefined" not in result.error.lower()
+        assert "manifest" in str(result.error).lower()
+        assert "undefined" not in str(result.error).lower()
 
 
 class TestDbtProfileBoardRenderRefResolution:
@@ -458,8 +458,8 @@ class TestDbtProfileBoardRenderRefResolution:
 
         query_result = registry.execute(board.queries["q"], board=board)
         assert query_result.error is not None
-        assert "manifest" in query_result.error.lower()
-        assert "undefined" not in query_result.error.lower()
+        assert "manifest" in str(query_result.error).lower()
+        assert "undefined" not in str(query_result.error).lower()
 
     def test_unbound_strict_variable_is_not_swallowed_as_a_ref_resolution_error(
         self,

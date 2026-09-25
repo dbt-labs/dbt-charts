@@ -545,8 +545,10 @@ class SVGRenderer:
         self._bold_measurer: FontMeasurer | None = None
         self._italic_measurer: FontMeasurer | None = None
         self._bold_italic_measurer: FontMeasurer | None = None
+        self._heading_measurer: FontMeasurer | None = None
         self._regular_face: FontFace | None = None
         self._italic_face: FontFace | None = None
+        self._heading_face: FontFace | None = None
         self._max_content_width: float = 0.0
         # Recorded where a font face is chosen to measure with, not where one is
         # requested: a bold or italic run whose family ships no such font face is
@@ -571,6 +573,9 @@ class SVGRenderer:
                 self._italic_measurer = self._measurer_for_face(fonts.italic)
             if fonts.bold_italic is not None:
                 self._bold_italic_measurer = self._measurer_for_face(fonts.bold_italic)
+            if fonts.heading is not None:
+                self._heading_measurer = self._measurer_for_face(fonts.heading)
+                self._heading_face = fonts.heading
             self._mono_face = fonts.mono
         elif font_path:
             self._measurer = _cached_measurer(font_path)
@@ -644,9 +649,10 @@ class SVGRenderer:
     def used_faces(self) -> frozenset[str]:
         """Which of the supplied ``FontFaces`` this renderer has reached so far.
 
-        Any of ``regular``, ``bold``, ``italic``, ``bold_italic``, ``mono``; empty
-        before anything is rendered. Accumulates across calls, so a caller rendering
-        several columns or blocks through one renderer reads the union.
+        Any of ``regular``, ``bold``, ``italic``, ``bold_italic``, ``mono``,
+        ``heading``; empty before anything is rendered. Accumulates across calls,
+        so a caller rendering several columns or blocks through one renderer reads
+        the union.
 
         A renderer measuring from a bare ``font_path`` still reports ``regular`` (and
         ``mono`` for code), since that is the font face it measured against — it simply
@@ -666,6 +672,7 @@ class SVGRenderer:
         is_italic: bool = False,
         is_mono: bool = False,
         font_weight: str | int | None = None,
+        is_heading: bool = False,
     ) -> float:
         """Measure text width against the font face that will actually be painted.
 
@@ -683,6 +690,16 @@ class SVGRenderer:
         is the same mistake as measuring the wrong file. It applies to upright and
         italic runs; a bold run inside a heading already paints at
         `bold_font_weight`, so it keeps the bold font face.
+
+        `is_heading` prefers `fonts.heading` (re-weighted to `font_weight` when a
+        variable font is supplied) over `fonts.regular` — the same
+        "measure what gets painted" reasoning as `font_weight` above, for
+        `Style.heading_font_family` instead of the weight axis. Only the plain
+        (non-bold, non-italic) run of a heading gets the heading face: `fonts`
+        carries no heading-bold/heading-italic combination to measure an
+        emphasized span inside a heading against, so that span falls through to
+        the body bold/italic face instead — a real gap, not a claimed match, kept
+        narrow because an emphasized run inside a heading is rare.
         """
         if is_mono:
             # Inline code paints at its own size, derived from the size of the
@@ -692,6 +709,25 @@ class SVGRenderer:
             return len(text) * self._ensure_mono_char_width() * mono_size
 
         weight = _numeric_weight(font_weight)
+
+        if (
+            is_heading
+            and not is_bold
+            and not is_italic
+            and self._heading_face is not None
+        ):
+            heading_measurer = None
+            if weight is not None:
+                heading_measurer = self._measurer_at_weight(self._heading_face, weight)
+            if heading_measurer is None:
+                # No variable weight axis to re-instance (or none requested) —
+                # the un-reweighted heading face is still the right file,
+                # never the body's.
+                heading_measurer = self._heading_measurer
+            if heading_measurer is not None:
+                self._used_faces.add("heading")
+                return heading_measurer.measure(text, font_size)
+
         if weight is not None and not is_bold:
             font_face = self._italic_face if is_italic else self._regular_face
             weighted = self._measurer_at_weight(font_face, weight)
@@ -1092,6 +1128,9 @@ class SVGRenderer:
         if self.style.code_font_decoration:
             code_extra += f" text-decoration: {self.style.code_font_decoration};"
 
+        # heading font override (empty = inherits body font, mirrors blockquote below)
+        heading_family = self.style.heading_font_family or self.style.font_family
+
         # blockquote font overrides
         bq_family = self.style.blockquote_font_family or self.style.font_family
         bq_extra = f" font-family: {bq_family};"
@@ -1113,7 +1152,7 @@ class SVGRenderer:
             ),
             "mono": f"font-family: {self.style.mono_font_family};",
             "heading": (
-                f"font-family: {self.style.font_family}; "
+                f"font-family: {heading_family}; "
                 f"fill: {self.style.get_heading_color()}; "
                 f"font-weight: {self.style.heading_font_weight};"
             ),
@@ -1435,6 +1474,7 @@ class SVGRenderer:
             css_class=self._scoped_class("heading"),
             font_weight=self.style.heading_font_weight,
             line_height_multiplier=self.style.heading_line_height,
+            is_heading=True,
         )
 
         return elements, margin_top + text_height + margin_bottom
@@ -2265,6 +2305,7 @@ class SVGRenderer:
         font_weight: str | int = "normal",
         line_height_multiplier: Optional[float] = None,
         line_window: tuple[int, int | None] | None = None,
+        is_heading: bool = False,
     ) -> Tuple[List[str], float]:
         """Render a sequence of spans as wrapped text using tspan for proper spacing.
 
@@ -2288,7 +2329,7 @@ class SVGRenderer:
         runs = self._build_text_runs(spans, font_size)
 
         # Wrap and layout text
-        lines = self._wrap_runs(runs, ctx.width, font_size, font_weight)
+        lines = self._wrap_runs(runs, ctx.width, font_size, font_weight, is_heading)
 
         if line_window is not None:
             start, count = line_window
@@ -2341,6 +2382,7 @@ class SVGRenderer:
                         is_italic=run.is_italic,
                         is_mono=run.is_code,
                         font_weight=font_weight,
+                        is_heading=is_heading,
                     )
                 )
 
@@ -2483,6 +2525,7 @@ class SVGRenderer:
         max_width: float,
         font_size: float,
         font_weight: str | int | None = None,
+        is_heading: bool = False,
     ) -> List[List[TextRun]]:
         """Wrap text runs to fit within max_width."""
         if not runs:
@@ -2509,6 +2552,7 @@ class SVGRenderer:
                     is_italic=_is_italic,
                     is_mono=_is_mono,
                     font_weight=font_weight,
+                    is_heading=is_heading,
                 )
 
             # A code span is one thing to read, and it paints one background box.

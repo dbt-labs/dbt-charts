@@ -106,7 +106,9 @@ class TestDefaultSourceResolver:
         assert result is None
 
     def test_dbt_context_allows_unknown_string_through(self):
-        """D4: unknown string source with dbt_context returns None (not raises)."""
+        """With no `sources:` configured at all, an unknown string source and
+        dbt_context returns None (not raises) — the pure-dbt-jinja workflow, no
+        dbt_charts.yml `sources:` block to check the name against."""
         from dbt_charts.core.execute.source_resolver import (
             DbtContext,
             DefaultSourceResolver,
@@ -120,6 +122,33 @@ class TestDefaultSourceResolver:
             dbt_context=DbtContext(),
         )
         assert result is None
+
+    def test_dbt_context_does_not_mask_unknown_name_when_sources_are_configured(self):
+        """Regression (dbt-labs/dbt-charts#45): once `sources:` is configured,
+        an unrecognized name must raise ERR-SOURCE-NOT-FOUND even when a dbt
+        project is in scope — it must never silently fall through to the
+        engine's default in-memory DuckDB connection. Without this, a typo'd
+        or generic source name ("default", "duckdb") executed successfully
+        against `:memory:` instead of failing."""
+        from dbt_charts.core.diagnostics.base import DbtChartsError
+        from dbt_charts.core.execute.source_resolver import (
+            DbtContext,
+            DefaultSourceResolver,
+        )
+
+        resolver = DefaultSourceResolver()
+        project_sources = _project_sources(
+            analytics_warehouse={"type": "duckdb", "path": "warehouse.duckdb"}
+        )
+        for offending in ("analytics_warehous", "default", "duckdb"):
+            with pytest.raises(DbtChartsError) as exc_info:
+                resolver.resolve(
+                    authored=offending,
+                    board_sources={},
+                    project_sources=project_sources,
+                    dbt_context=DbtContext(),
+                )
+            assert exc_info.value.code == ERR_SOURCE_NOT_FOUND
 
     def test_unknown_string_source_no_dbt_context_raises(self):
         """Unknown string source with no dbt_context raises ERR-SOURCE-NOT-FOUND."""

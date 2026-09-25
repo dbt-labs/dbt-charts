@@ -153,7 +153,7 @@ def _duckdb_describe(
     """Run DESCRIBE ({sql}) via the registry's read-only DuckDBAdapter."""
     result = adapter_registry.execute(SqlQuery(sql=f"DESCRIBE ({sql})", source=source))
     if result.error:
-        raise RuntimeError(result.error)
+        raise RuntimeError(str(result.error))
     return [
         DescribeQueryColumn(name=row["column_name"], type=row["column_type"])
         for row in result.data

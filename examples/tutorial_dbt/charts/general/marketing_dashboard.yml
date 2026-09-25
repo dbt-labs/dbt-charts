@@ -1,6 +1,6 @@
 # Marketing Command Center
 title: "Marketing Command Center"
-source: duckdb_local
+source: dbt_charts_examples
 
 text: |
   Track your marketing spend, conversions, and ROI across all channels.

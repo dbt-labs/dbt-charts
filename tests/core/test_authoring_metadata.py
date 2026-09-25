@@ -1052,8 +1052,14 @@ def _title_ink_and_box(svg: str, kind: str = "title") -> _InkAndBox:
     )
 
     resolved = resolve_style(get_theme_style())
-    family = title_font_family(resolved, False)
-    face = markdown_font_faces(family, get_compact_style(resolved)).regular
+    family = title_font_family(resolved)
+    faces = markdown_font_faces(family, get_compact_style(resolved))
+    # The title's own ink always paints through the heading face now (mdsvg
+    # measures/paints any heading, board title included, against
+    # Style.heading_font_family) — .heading is what glyph outlines here must
+    # match, not .regular. markdown_font_faces always populates it.
+    assert faces.heading is not None
+    face = faces.heading
     font = TTFont(face.path, fontNumber=face.font_number)
     units = font["head"].unitsPerEm
     glyphs, cmap = font.getGlyphSet(), font.getBestCmap()

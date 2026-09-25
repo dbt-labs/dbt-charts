@@ -1,0 +1,3 @@
+kind: Fixes
+body: Warehouse connection failures now render an authored message instead of the driver's raw exception text; the raw text (which could carry filesystem paths, PIDs, or OS usernames) moves to a separate `detail` field on the diagnostic, shown in `dct`'s diagnostic panels and `--json` output.
+time: 2026-09-24T15:03:05.000000-04:00

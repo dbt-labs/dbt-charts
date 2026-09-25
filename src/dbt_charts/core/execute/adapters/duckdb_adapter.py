@@ -39,6 +39,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_WAREHOUSE_RUNTIME,
 )
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import get_dialect
 from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
@@ -47,6 +48,7 @@ from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
     connection_failure,
     handle_adapter_error,
+    plain_error,
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
@@ -74,11 +76,9 @@ def _classify_duckdb_error(
     Everything else → ERR-WAREHOUSE-RUNTIME (warehouse rejected the query
     but no fine-grained category applies).
 
-    `error` is built from the classified code's own message_template — not a
-    hand-rolled "DuckDB SQL execution failed: {detail}" prefix — and `fields`
-    carries `detail` separately so the executor can construct the raised
-    QueryError via ErrorCode.from_code(...) instead of wrapping this string
-    again.
+    The classified `QueryError` is built via `from_code` so its message is
+    exactly the registered template, not a hand-rolled
+    "DuckDB SQL execution failed: {detail}" prefix.
 
     validate_select_only/validate_setup_sql run inside the same try this
     classifies, so a DbtChartsError (MutatingSqlError, UnparseableSqlError)
@@ -100,12 +100,7 @@ def _classify_duckdb_error(
         code = ERR_BINDER_TYPE_MISMATCH
     else:
         code = ERR_WAREHOUSE_RUNTIME
-    return QueryResult(
-        data=[],
-        error=code.message_template.format(detail=detail),
-        error_code=code,
-        fields={"detail": detail},
-    )
+    return QueryResult(data=[], error=QueryError.from_code(code, detail=detail))
 
 
 class DuckDBAdapter(BaseAdapter):
@@ -221,10 +216,7 @@ class DuckDBAdapter(BaseAdapter):
             QueryResult with data or error
         """
         if not is_sql_query(query):
-            return QueryResult(
-                data=[],
-                error=f"Expected SQL query, got {query.query_type}",
-            )
+            return plain_error(f"Expected SQL query, got {query.query_type}")
 
         sql = query.sql
         try:
@@ -279,7 +271,7 @@ class DuckDBAdapter(BaseAdapter):
             try:
                 conn = self._connect(raw_config, resolved_path)
             except Exception as e:  # noqa: BLE001 — classify driver connect errors
-                return connection_failure("DuckDB", e)
+                return connection_failure("duckdb", e)
             close_after = True
         else:
             conn = self._get_duckdb_connection_for_query(raw_config)

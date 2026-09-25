@@ -290,6 +290,17 @@ class FontFaces:
     Passed to ``SVGRenderer(fonts=...)`` instead of a bare ``font_path`` so
     bold/italic/mono runs measure against the real font face that will be
     painted, rather than a ratio-scaled guess from the regular font face.
+    ``heading`` is the font face a plain (neither bold nor italic) heading run
+    is *horizontally measured* against, whenever supplied — the SVG itself
+    always paints a heading via ``Style.heading_font_family`` (renderer-side,
+    independent of this dataclass); ``heading`` exists so that measurement
+    agrees with that paint instead of drifting from it. ``None`` measures
+    headings from ``regular`` like every other run, matching a heading with
+    no family override of its own. Vertical placement (baseline, line
+    height) still reads ``regular``'s own metrics for every run including
+    headings — a real, narrower gap than the horizontal one this field
+    closes, invisible unless a heading's family carries markedly different
+    ascent/descent from the body face.
     """
 
     regular: FontFace
@@ -297,6 +308,7 @@ class FontFaces:
     italic: FontFace | None = None
     bold_italic: FontFace | None = None
     mono: FontFace | None = None
+    heading: FontFace | None = None
 
 
 @dataclass

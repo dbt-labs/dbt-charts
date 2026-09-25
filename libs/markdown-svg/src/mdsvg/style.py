@@ -75,6 +75,7 @@ class Style:
         h4_size: Absolute h4 font size in px. Overrides h4_scale × base_font_size.
         h5_size: Absolute h5 font size in px. Overrides h5_scale × base_font_size.
         h6_size: Absolute h6 font size in px. Overrides h6_scale × base_font_size.
+        heading_font_family: Font family for heading text. Empty = inherits body font.
         heading_font_weight: Font weight for headings.
         heading_line_height: Line height multiplier for headings; falls back
             to ``line_height`` when None. Headings typically want a tighter
@@ -209,6 +210,9 @@ class Style:
     h4_size: Optional[float] = None
     h5_size: Optional[float] = None
     h6_size: Optional[float] = None
+    # Empty string = no override; falls back to font_family. Mirrors
+    # blockquote_font_family/code_font_family's override-or-inherit shape.
+    heading_font_family: str = ""
     heading_font_weight: str | int = "bold"
     # Optional tighter line-height multiplier for headings; None falls back to
     # the body line_height. Body multipliers (1.5-1.6) read too loose between

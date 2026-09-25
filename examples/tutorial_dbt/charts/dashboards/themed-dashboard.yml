@@ -11,7 +11,7 @@
 
 title: "Sales Analytics"
 theme: neon
-source: duckdb_local
+source: dbt_charts_examples
 
 queries:
   monthly_sales: |

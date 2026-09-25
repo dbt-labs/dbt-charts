@@ -345,7 +345,7 @@ class TestDuckDBAdapterReadOnlyFileReleasesLock:
             result = adapter._execute(_make_query("SELECT n FROM t"))
             assert result.data == []
             assert result.error is not None
-            assert result.error_code == ERR_WAREHOUSE_CONNECTION
+            assert result.error.code == ERR_WAREHOUSE_CONNECTION
         finally:
             adapter.close()
             writer.close()

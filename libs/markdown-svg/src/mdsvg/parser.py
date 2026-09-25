@@ -352,12 +352,27 @@ class MarkdownParser:
         block-starter (heading, HR, fenced code, blockquote, table row, HTML
         block) at the same or lower indent, or end of input. Lines with
         greater indent are nested content and pass through to the caller.
+
+        A blank line is kept as part of the body — rather than ending it —
+        when the next non-blank line is indented deeper than base_indent
+        (a loose list: the blank sits between a parent item and its
+        deeper-indented nested content, e.g. a sub-list).
         """
         body: List[str] = []
         i = start
         while i < len(lines):
             line = lines[i]
             if not line.strip():
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if (
+                    j < len(lines)
+                    and len(lines[j]) - len(lines[j].lstrip()) > base_indent
+                ):
+                    body.append(line)
+                    i += 1
+                    continue
                 break
             m_u = self.UNORDERED_LIST_ITEM.match(line)
             if m_u and len(m_u.group(1)) <= base_indent:
@@ -390,9 +405,11 @@ class MarkdownParser:
         """Parse an unordered or ordered list.
 
         Each item claims its marker line plus all following body lines up to
-        the next marker at base indent (or a blank line). Body lines that are
-        themselves list markers at a deeper indent become ListItem.children;
-        plain continuation lines are joined with the marker text into spans.
+        the next marker at base indent (see _collect_item_body for exactly
+        where a body ends, including loose-list blank-line handling). Body
+        lines that are themselves list markers at a deeper indent become
+        ListItem.children; plain continuation lines are joined with the
+        marker text into spans.
         """
         items: List[ListItem] = []
         i = start
@@ -418,13 +435,10 @@ class MarkdownParser:
                 elif indent < base_indent:
                     break
                 elif indent > base_indent:
-                    # Normally a sub-item already consumed by
-                    # _collect_item_body above. Also reachable for a nested
-                    # item separated from its parent by a blank line
-                    # (loose-list shape): the blank ends the item body, so the
-                    # deeper-indented line has no item to attach to and is
-                    # dropped — known lossy edge; full loose-list support
-                    # would require a second _parse_blocks call here.
+                    # A deeper-indented marker reaching the main loop (rather
+                    # than being consumed as nested content by
+                    # _collect_item_body above) has no item to attach to —
+                    # known lossy edge for malformed/ambiguous indentation.
                     i += 1
                     continue
 

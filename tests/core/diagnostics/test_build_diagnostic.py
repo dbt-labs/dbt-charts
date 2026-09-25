@@ -183,3 +183,22 @@ class TestToDiagnostic:
 
         assert isinstance(d.cause, str)
         assert "foreign exception" in d.cause
+
+
+class TestConnectionFailureDetailBoundary:
+    def test_connection_failure_message_carries_no_driver_text_only_detail_does(
+        self,
+    ) -> None:
+        from dbt_charts.core.execute.adapters.base import connection_failure
+
+        raw_driver_text = "FATAL: password authentication failed for user 'brian'"
+        result = connection_failure("postgres", RuntimeError(raw_driver_text))
+
+        assert result.error is not None
+        d = result.error.to_diagnostic()
+
+        assert d.code == "ERR-WAREHOUSE-CONNECTION"
+        assert raw_driver_text not in d.message
+        assert "brian" not in d.message
+        assert d.detail == raw_driver_text
+        assert "detail" not in d.fields

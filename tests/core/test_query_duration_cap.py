@@ -273,10 +273,10 @@ class TestQueryDurationExceeded:
                 _prepared("SELECT pg_sleep(5)", "postgres"), query, source_config
             )
 
-        assert result.error_code is ERR_QUERY_DURATION_EXCEEDED
         assert result.error is not None
-        assert "max_query_duration_seconds=5s" in result.error
-        assert "'mypg'" in result.error
+        assert result.error.code is ERR_QUERY_DURATION_EXCEEDED
+        assert "max_query_duration_seconds=5s" in str(result.error)
+        assert "'mypg'" in str(result.error)
 
     def test_does_not_retry_after_duration_exceeded(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -351,7 +351,7 @@ class TestQueryDurationExceeded:
                 _prepared("SELECT 1", "postgres"), query, source_config
             )
 
-        assert result.error_code is None
+        assert result.error is None
         # original + liveness check + one retry on the rebuilt connection
         assert len(data_calls) == 3
 
@@ -385,7 +385,9 @@ class TestQueryDurationExceeded:
                 _prepared("SELECT 1", "postgres"), query, source_config
             )
 
-        assert result.error_code is not ERR_QUERY_DURATION_EXCEEDED
+        assert (
+            result.error is None or result.error.code is not ERR_QUERY_DURATION_EXCEEDED
+        )
         # original + liveness check (which fails too, so the session is treated as
         # dead) + one retry after drop-and-reconnect.
         assert len(calls) == 3
@@ -449,10 +451,10 @@ class TestLivePostgresStatementTimeout:
         )
         elapsed = time.monotonic() - start
 
-        assert result.error_code is ERR_QUERY_DURATION_EXCEEDED
         assert result.error is not None
-        assert "max_query_duration_seconds=1s" in result.error
-        assert "'warehouse'" in result.error
+        assert result.error.code is ERR_QUERY_DURATION_EXCEEDED
+        assert "max_query_duration_seconds=1s" in str(result.error)
+        assert "'warehouse'" in str(result.error)
         # The load-bearing assertion: elapsed is close to the 1s cap, not the
         # full 5s pg_sleep duration — proof Postgres cancelled the statement
         # itself rather than us abandoning the wait client-side.

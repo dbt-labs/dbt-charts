@@ -382,7 +382,7 @@
    Border only, no fill - just outlines the dependent charts. #}
 .dbt-chart-highlight-overlay {
     fill: none;
-    stroke: #667eea;
+    stroke: var(--dbt-system-accent, #667eea);
     stroke-width: 3;
     pointer-events: none;
     opacity: 1;

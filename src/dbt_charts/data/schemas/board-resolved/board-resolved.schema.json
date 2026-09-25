@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.8.1.dev245",
+  "version": "0.8.1.dev268",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -4417,6 +4417,18 @@
           "default": {},
           "title": "Fields",
           "type": "object"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
         },
         "related": {
           "default": [],

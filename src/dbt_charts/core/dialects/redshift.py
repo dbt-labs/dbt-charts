@@ -1,7 +1,8 @@
 """Redshift dialect implementation.
 
 Redshift is PostgreSQL-based (8.0.2), so it inherits PostgreSQL behavior except
-where the fork's age shows — string literals and session reset, both below.
+where the fork's age shows, or its own extensions diverge — string literals,
+session reset, and statement_timeout, all below.
 """
 
 from dbt_charts.core.dialects.postgres import PostgresDialect
@@ -23,3 +24,10 @@ class RedshiftDialect(PostgresDialect):
         """Redshift's Postgres fork predates ``DISCARD`` and never gained it, so the
         pool drops the connection to clear session-scoped temp objects instead."""
         return ()
+
+    def statement_timeout_sql(self, seconds: int) -> str:
+        """Redshift's ``statement_timeout`` takes an integer of milliseconds, not
+        Postgres's interval-string syntax.
+        https://docs.aws.amazon.com/redshift/latest/dg/r_statement_timeout.html
+        """
+        return f"SET statement_timeout TO {seconds * 1000}"

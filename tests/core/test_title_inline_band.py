@@ -77,7 +77,6 @@ rows:
             board.title,
             board.variable_defaults,
             board.level,
-            False,
         )
         assert board.title is not None
         title_h = max(
@@ -94,7 +93,7 @@ rows:
         _t_dy, _v_dy, expected = compute_title_variables_inline_baseline_layout(
             title_h,
             var_h,
-            title_baseline_offset(board.resolved_style, board.level, False),
+            title_baseline_offset(board.resolved_style, board.level),
             float(vs.font.size),
             vs.font.family,
             float(vs.title_inline_band_bottom_pad),
@@ -120,7 +119,7 @@ rows:
         title_dy, vars_dy, band_h = compute_title_variables_inline_baseline_layout(
             title_h=38.4,  # mdsvg's natural block height for 24px Inter at line-height 1.3
             vars_h=36.0,  # default variables container_height
-            title_baseline=title_baseline_offset(style, 1, False),
+            title_baseline=title_baseline_offset(style, 1),
             label_font_size=11.0,  # default variables font size
             label_font_family=style.variables.font.family,
             pad=24.0,  # default title_inline_band_bottom_pad from _base.yaml
@@ -233,7 +232,6 @@ rows:
             board.title,
             board.variable_defaults,
             board.level,
-            False,
         )
         assert title_w >= 280.0
 
@@ -768,7 +766,7 @@ class TestMeasureTitleSingleLineWidth:
         from dbt_charts.core.render.sizing import _measure_title_single_line_width
 
         return _measure_title_single_line_width(
-            title, {}, resolve_style(get_theme_style()), 1, False
+            title, {}, resolve_style(get_theme_style()), 1
         )
 
     def test_empty_title_returns_zero(self) -> None:
@@ -923,7 +921,6 @@ rows:
                 title=board.title,
                 variable_values=board.variable_defaults,
                 level=board.level,
-                prose=False,
             )
             widths.append(title_w)
 
@@ -935,12 +932,17 @@ rows:
     def test_title_column_is_measured_in_the_family_the_title_is_drawn_in(
         self,
     ) -> None:
-        """A prose board titles in the title family, everything else in the body
-        family, and the measurement has to follow the render either way.
+        """A board title is always drawn as a heading, prose or not, and the
+        measurement has to follow the render either way.
 
         Pinned through the one function both sides ask, so a change to that
         rule cannot silently reserve a column in one family and paint the
-        title in another.
+        title in another. A non-prose title used to measure and paint in the
+        *body* family instead of style.title.font.family — invisible on the
+        shipped themes, which set both to the same string, but wrong for any
+        theme that doesn't. There is no longer a prose/non-prose split to
+        pin either side of: a board title always resolves to its own title
+        family, full stop.
         """
         import dataclasses
 
@@ -955,23 +957,23 @@ rows:
         # style would pass whichever branch the code took.
         in_a_different_family = dataclasses.replace(
             style,
-            text=style.text.model_copy(
-                update={"font": style.text.font.model_copy(update={"family": "Inter"})}
+            title=style.title.model_copy(
+                update={"font": style.title.font.model_copy(update={"family": "Inter"})}
             ),
         )
 
-        # The rule itself: a non-prose title resolves to the body family. Asserted on
-        # the selector rather than by re-measuring, because an expected width computed
-        # here would be a second copy of the production formula.
-        assert title_font_family(style, False) == style.text.font.family
-        assert title_font_family(in_a_different_family, False) == "Inter"
+        # The rule itself: asserted on the selector rather than by re-measuring,
+        # because an expected width computed here would be a second copy of the
+        # production formula.
+        assert title_font_family(style) == style.title.font.family
+        assert title_font_family(in_a_different_family) == "Inter"
 
         # Not the board's own title: the serif and Inter measure that one identically by
         # coincidence, which would make the inequality below vacuous. Checked, not
         # assumed — that coincidence is exactly what a re-vendored board can introduce.
         title = "Quarterly revenue by segment"
         widths = [
-            _measure_title_single_line_width(title, {}, s, 1, False)
+            _measure_title_single_line_width(title, {}, s, 1)
             for s in (style, in_a_different_family)
         ]
         assert widths[0] != widths[1], (
@@ -979,10 +981,6 @@ rows:
             "cannot tell which one the column was measured in — pick a title whose "
             "two families differ"
         )
-        # And the prose branch is unmoved by it, because it reads the title's own.
-        assert _measure_title_single_line_width(
-            title, {}, style, 1, True
-        ) == _measure_title_single_line_width(title, {}, in_a_different_family, 1, True)
 
     def test_band_is_rejected_when_the_committed_value_outgrows_its_column(
         self,
@@ -1001,7 +999,6 @@ rows:
             card_pad,
             board.variable_defaults,
             level=board.level,
-            prose=False,
         )
         fits_with_everything_selected = should_use_title_inline_band(
             board.title,
@@ -1011,7 +1008,6 @@ rows:
             card_pad,
             {"categories": ["Analytics", "Collaboration", "Security", "Support"]},
             level=board.level,
-            prose=False,
         )
 
         assert fits_at_defaults, "the default two-member value fits its column"
@@ -1038,7 +1034,6 @@ rows:
             card_pad,
             board.variable_defaults,
             level=board.level,
-            prose=False,
         )
 
     _JINJA_TITLE_BOARD = """
@@ -1190,7 +1185,6 @@ rows:
         card_pad = float(board.resolved_style.frame.card_padding)
         inner = max(content_w - 2 * card_pad, 1.0)
         vs = board.resolved_style.variables
-        prose = False
 
         title_w, vars_w = resolve_title_variables_inline_widths(
             inner,
@@ -1199,7 +1193,6 @@ rows:
             board.title,
             board.variable_defaults,
             board.level,
-            prose,
         )
 
         assert board.title is not None
@@ -1210,7 +1203,6 @@ rows:
                 board.variable_defaults,
                 level=board.level,
                 resolved_style=board.resolved_style,
-                prose=prose,
             ),
             float(board.resolved_style.title.min_height),
         )
@@ -1221,7 +1213,6 @@ rows:
                 board.variable_defaults,
                 level=board.level,
                 resolved_style=board.resolved_style,
-                prose=prose,
             ),
             float(board.resolved_style.title.min_height),
         )
@@ -1242,7 +1233,7 @@ rows:
         _, _, expected_band_h = compute_title_variables_inline_baseline_layout(
             h_at_inner,
             var_h,
-            title_baseline_offset(board.resolved_style, board.level, False),
+            title_baseline_offset(board.resolved_style, board.level),
             float(vs.font.size),
             vs.font.family,
             float(vs.title_inline_band_bottom_pad),

@@ -1951,18 +1951,16 @@ rows:
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """The Cloud-shaped path: AllowlistedSourceResolver raises
-        ERR-SOURCE-NOT-FOUND with structured fields; the registry's
-        QueryResult flattening must carry both so the rebuilt QueryError's
-        Diagnostic keeps the code AND its hint_generator gets the `source`
-        field it requires. Forwarding the code without the fields made the
-        hint call raise ``TypeError: suggest_close_source() missing 1
-        required positional argument: 'source'`` — extra fields are absorbed
-        by its ``**_kwargs``, missing ones are not — failing the whole board
-        render.
+        ERR-SOURCE-NOT-FOUND with structured fields; handle_adapter_error must
+        carry both onto the classified QueryError so its Diagnostic keeps the
+        code AND its hint_generator gets the `source` field it requires.
+        Forwarding the code without the fields made the hint call raise
+        ``TypeError: suggest_close_source() missing 1 required positional
+        argument: 'source'`` — extra fields are absorbed by its ``**_kwargs``,
+        missing ones are not — failing the whole board render.
         """
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.execute.executor import _query_error_from_result
         from dbt_charts.core.execute.source_resolver import (
             AllowlistedSourceResolver,
         )
@@ -1975,12 +1973,15 @@ rows:
             query_name="q",
         )
         assert not result.is_success
-        assert result.error_code is not None
-        assert result.error_code.code == "ERR-SOURCE-NOT-FOUND"
-        assert result.fields is not None
-        assert result.fields["source"] == "warehouse_prod"
+        assert result.error is not None
+        assert result.error.code is not None
+        assert result.error.code.code == "ERR-SOURCE-NOT-FOUND"
+        assert result.error.fields["source"] == "warehouse_prod"
 
-        diagnostic = _query_error_from_result(result, "q").to_diagnostic()
+        # Mirrors Executor's own raise sites: stamp query_name onto the
+        # already-built error, then build the Diagnostic from it.
+        result.error.fields.setdefault("query_name", "q")
+        diagnostic = result.error.to_diagnostic()
         assert diagnostic.code == "ERR-SOURCE-NOT-FOUND"
         assert "warehouse_prod" in diagnostic.message
         # Query attribution rides structurally, not as a message suffix:

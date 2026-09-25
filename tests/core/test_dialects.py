@@ -182,11 +182,10 @@ class TestRedshiftDialect:
         assert dialect.param(1) == "$1"
         assert dialect.param(2) == "$2"
 
-    def test_statement_timeout_sql_inherited_from_postgres(
+    def test_statement_timeout_sql_uses_integer_milliseconds(
         self, dialect: RedshiftDialect
     ) -> None:
-        """Redshift inherits Postgres's SET statement_timeout."""
-        assert dialect.statement_timeout_sql(30) == "SET statement_timeout = '30s'"
+        assert dialect.statement_timeout_sql(30) == "SET statement_timeout TO 30000"
 
 
 class TestSQLServerDialect:

@@ -1,5 +1,5 @@
 title: "Executive Summary"
-source: duckdb_local
+source: dbt_charts_examples
 
 text: |
   A high-level snapshot of company performance for executive review.

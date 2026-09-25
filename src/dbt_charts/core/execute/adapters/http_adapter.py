@@ -28,6 +28,7 @@ from dbt_charts.core.execute.adapters.base import (
     QueryParams,
     QueryResult,
     handle_adapter_error,
+    plain_error,
 )
 
 
@@ -111,10 +112,7 @@ class HttpAdapter(BaseAdapter):
             QueryResult with data or error
         """
         if not is_http_query(query):
-            return QueryResult(
-                data=[],
-                error=f"Expected HTTP query, got {query.query_type}",
-            )
+            return plain_error(f"Expected HTTP query, got {query.query_type}")
 
         url = query.url
 
@@ -188,10 +186,7 @@ class HttpAdapter(BaseAdapter):
                         params=resolved_params,
                     )
                 else:
-                    return QueryResult(
-                        data=[],
-                        error=f"Unsupported HTTP method: {method}",
-                    )
+                    return plain_error(f"Unsupported HTTP method: {method}")
 
                 response.raise_for_status()
                 data = response.json()
@@ -200,17 +195,14 @@ class HttpAdapter(BaseAdapter):
                     try:
                         result_data = _resolve_json_path(data, query.json_path)
                     except ValueError as e:
-                        return QueryResult(data=[], error=str(e))
+                        return plain_error(str(e))
                 elif isinstance(data, list):
                     result_data = data
                 else:
-                    return QueryResult(
-                        data=[],
-                        error=(
-                            "HTTP response is a JSON object. "
-                            "Set json_path to extract the data array "
-                            "(e.g., json_path: $.data)."
-                        ),
+                    return plain_error(
+                        "HTTP response is a JSON object. "
+                        "Set json_path to extract the data array "
+                        "(e.g., json_path: $.data)."
                     )
 
                 return QueryResult(data=result_data)

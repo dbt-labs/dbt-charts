@@ -4,6 +4,9 @@ logs/
 dbt_packages/
 dbt_modules/
 
+# filelock lock file created by the seed_tutorial_dbt_manifest fixture
+.manifest.lock
+
 # IDE
 .idea/
 *.iml

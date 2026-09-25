@@ -47,7 +47,6 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedTableChart,
 )
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
-from dbt_charts.core.compile.resolve.style.typography import board_is_prose
 from dbt_charts.core.compile.sizing import board_container_width, get_board_gap
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -1909,14 +1908,12 @@ def calculate_data_aware_layout(
 
     if board.title:
         title_measure_width = max(content_width - 2 * card_padding, 0.0)
-        prose = board_is_prose(board.text)
         board_title_height = get_title_height(
             board.title,
             title_measure_width,
             variable_values,
             level=board.level,
             resolved_style=board.resolved_style,
-            prose=prose,
         )
         container_height += board_title_height + gap + card_gap
 

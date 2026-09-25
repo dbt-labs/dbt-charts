@@ -1,0 +1,5 @@
+kind: Fixes
+body: A `text:` block's Markdown parser dropped nested list items when the enclosing list was loose (a blank line between a top-level item and its nested sub-list), a shape common in lists exported from Word or Google Docs. `dct validate` gave no warning; the sub-items simply vanished from the rendered SVG. Fixed.
+time: 2026-09-25T14:52:04.766548-00:00
+custom:
+    DbtChartsIssue: 41

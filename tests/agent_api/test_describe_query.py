@@ -8,6 +8,7 @@ from dbt_charts.agent_api.describe_query import (
     DescribeQueryColumn,
     describe_query,
 )
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.warehouse_check import WarehouseCheck, WarehouseCheckColumn
 
@@ -31,7 +32,9 @@ def _registry_for_duckdb(rows=None, error=None):
     """Fake AdapterRegistry for the DuckDB read-only path (registry.execute())."""
     registry = MagicMock()
     registry.resolve_source_config.return_value = {"type": "duckdb", "path": ":memory:"}
-    registry.execute.return_value = QueryResult(data=rows or [], error=error)
+    registry.execute.return_value = QueryResult(
+        data=rows or [], error=QueryError(error) if error is not None else None
+    )
     return registry
 
 

@@ -708,47 +708,6 @@ class TestVegaLiteTitleTypography:
 
 
 # ---------------------------------------------------------------------------
-# is_prose
-# ---------------------------------------------------------------------------
-
-
-class TestIsProse:
-    """is_prose returns True when word count >= 100."""
-
-    def test_below_threshold_is_not_prose(self):
-        from dbt_charts.core.compile.resolve.style.typography import is_prose
-
-        text = " ".join(["word"] * 99)
-        assert not is_prose(text)
-
-    def test_at_threshold_is_prose(self):
-        from dbt_charts.core.compile.resolve.style.typography import is_prose
-
-        text = " ".join(["word"] * 100)
-        assert is_prose(text)
-
-    def test_above_threshold_is_prose(self):
-        from dbt_charts.core.compile.resolve.style.typography import is_prose
-
-        text = " ".join(["word"] * 200)
-        assert is_prose(text)
-
-    def test_empty_is_not_prose(self):
-        from dbt_charts.core.compile.resolve.style.typography import is_prose
-
-        assert not is_prose("")
-
-    def test_markdown_syntax_tokens_counted(self):
-        """Markdown tokens (e.g. **, #) count as words — prose detection is
-        intentionally heuristic and not markdown-aware."""
-        from dbt_charts.core.compile.resolve.style.typography import is_prose
-
-        # 50 real words + 50 markdown tokens = 100 total tokens → prose
-        words = ["word"] * 50 + ["**bold**"] * 50
-        assert is_prose(" ".join(words))
-
-
-# ---------------------------------------------------------------------------
 # board_title_markdown
 # ---------------------------------------------------------------------------
 

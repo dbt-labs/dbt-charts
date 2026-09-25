@@ -507,8 +507,8 @@ def _check_via_wrap(
     )
     if result.error:
         return _failure(
-            result.error,
-            rejected=_is_query_defect(result.error_code),
+            str(result.error),
+            rejected=_is_query_defect(result.error.code),
             adapter_type=adapter_type,
             mechanism=check.keyword,
         )
@@ -657,8 +657,8 @@ def _check_bigquery(
     if isinstance(prepared, QueryResult):
         if prepared.error:
             return _failure(
-                prepared.error,
-                rejected=_is_query_defect(prepared.error_code),
+                str(prepared.error),
+                rejected=_is_query_defect(prepared.error.code),
                 adapter_type="bigquery",
                 mechanism=_BIGQUERY_DRY_RUN,
             )

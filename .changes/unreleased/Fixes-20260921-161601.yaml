@@ -1,0 +1,5 @@
+kind: Fixes
+body: '`style.title.font.family` now reaches board titles and prose markdown headings — previously only `style.title.font.color` was wired to the rendered heading, so a custom title font validated cleanly but never appeared. The variable-dependency hover highlight also now themes with the rest of the interactive stylesheet instead of painting a hardcoded color.'
+time: 2026-09-21T16:16:01.000000Z
+custom:
+    DbtChartsIssue: 36

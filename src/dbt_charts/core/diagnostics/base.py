@@ -36,9 +36,18 @@ class DbtChartsError(Exception):
     line: int | None = None
     column: int | None = None
     field_path: str = ""
+    # Foreign text (driver/subprocess output), never put in the authored
+    # message. Log-only; see from_code's detail param.
+    detail: str | None = None
 
     @classmethod
-    def from_code(cls, ec: ErrorCode, **fields: Any) -> Self:
+    def from_code(
+        cls,
+        ec: ErrorCode,
+        *,
+        detail: str | None = None,
+        **fields: Any,  # type-state: explicit_any — registered-code fields are runtime-heterogeneous by construction, per this method's own docstring
+    ) -> Self:
         """Construct an instance carrying a registry ErrorCode + structured fields.
 
         Bypasses the subclass __init__ (and its `_format_message` decoration);
@@ -55,6 +64,12 @@ class DbtChartsError(Exception):
         from `fields` rather than newly spelled out.
         Reserved field names (`code`, `message`, `fields`) are skipped so the
         registry-set values can't be clobbered by a caller-supplied field.
+
+        `detail` is foreign text, kept out of `.fields` so a host that
+        persists or displays `.fields` (Cloud's chart_errors) never carries it
+        along — it's stored only on `.detail`. It is still visible to
+        `ec.message_template` under the same `{detail}` key, for a code whose
+        authored template embeds it directly.
         """
         display_fields = {
             key: (
@@ -68,12 +83,15 @@ class DbtChartsError(Exception):
             )
             for key, value in fields.items()
         }
+        if detail is not None:
+            display_fields["detail"] = detail
         message = ec.message_template.format(**display_fields)
         inst: Self = cls.__new__(cls)
         Exception.__init__(inst, message)
         inst.message = message  # type: ignore[attr-defined]
         inst.code = ec
         inst.fields = dict(fields)
+        inst.detail = detail
         # Mirror fields onto typed subclass attributes so callers reading
         # e.chart_id / e.chart_type / e.format / e.element get the same value
         # whether the error was raised via legacy __init__ or from_code.

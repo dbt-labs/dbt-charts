@@ -73,8 +73,7 @@ class TestQueryErrorCachedViaIsSuccessFalsePath:
     def test_query_error_from_failed_adapter_result_is_cached(self):
         failed_result = Mock()
         failed_result.is_success = False
-        failed_result.error = "column 'x' not found"
-        failed_result.error_code = None
+        failed_result.error = QueryError("column 'x' not found")
         failed_result.column_descriptions = None
         failed_result.resolved_relations = None
         failed_result.truncated_reason = None

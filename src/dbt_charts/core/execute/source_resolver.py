@@ -53,9 +53,16 @@ AD_HOC_QUERY_NAME = "ad-hoc query"
 class DbtContext:
     """Carries dbt project context for source resolution.
 
-    When present, unknown string source names fall through to the dbt adapter
-    (which resolves profile names via the dbt manifest).
-    When absent, unknown names raise ERR-SOURCE-NOT-FOUND.
+    When present and no `sources:` are configured at all, an unknown string
+    source name defers (returns None) rather than raising — the query then
+    falls through to whichever adapter claims a source-less SQL query:
+    DbtAdapter for dbt-jinja (`ref()`/`source()`, resolved via the manifest),
+    or DuckDBAdapter otherwise, which auto-discovers the dbt project's own
+    local dev warehouse file under its `data/` directory (see
+    ``DuckDBAdapter.__init__``'s `dbt_project_path` parameter), falling back
+    to `:memory:` when discovery finds nothing there either. When any
+    `sources:` are configured, or when this is absent entirely, unknown names
+    always raise instead.
 
     dbt_project_path is populated by AdapterRegistry._derive_dbt_context() from
     the registered DbtAdapter. It is used by DefaultSourceResolver to expand
@@ -92,8 +99,10 @@ class SourceResolver(Protocol):
                 have already run parse_source_config on a dict input).
             board_sources: Named sources declared in the board's `sources:` block.
             project_sources: Project-level sources from dbt_charts.yml.
-            dbt_context: Present when a dbt project is in scope; allows unknown
-                string names to fall through to the dbt adapter.
+            dbt_context: Present when a dbt project is in scope; when no
+                `sources:` are configured at all, allows an unknown string
+                name to fall through to whichever adapter claims a
+                source-less query.
             query_name: Author-facing name of the query being resolved, for
                 ERR-SOURCE-NOT-FOUND / ERR-SOURCE-INLINE-FORBIDDEN messages.
                 Callers outside a named dashboard query (schema introspection,
@@ -103,7 +112,7 @@ class SourceResolver(Protocol):
 
         Returns:
             Typed source config, or None when no source applies (adapter uses
-            its own default connection) or when dbt_context covers the name.
+            its own default connection) or when dbt_context defers the name.
 
         Raises:
             DbtChartsError: With a ERR-SOURCE-* code on policy violations.
@@ -115,14 +124,21 @@ class DefaultSourceResolver:
     """Behavior-preserving default resolver for CLI, local playground, and inspect surfaces.
 
     Resolves authored source values using board-level sources first, then project-level
-    sources. Does not apply policy gates — inline dicts and unknown names are accepted
-    as-is. Unknown string names with a dbt context fall through to the dbt adapter.
+    sources. Does not apply policy gates — inline dicts are accepted as-is. An unknown
+    string name falls through to the dbt adapter only when no `sources:` are configured
+    at all; once any are, an unmatched name is always a mistake and raises.
 
     Resolution order for a string authored value:
       1. board_sources lookup (board's `sources:` block)
       2. project_sources lookup (dbt_charts.yml `sources:`)
-      3. dbt fallback: return None when dbt_context is set
-      4. raise ERR-SOURCE-NOT-FOUND otherwise
+      3. raise ERR-SOURCE-NOT-FOUND when any project sources are configured
+         (`project_sources.sources`) but the name matches neither lookup above
+      4. dbt fallback: return None when dbt_context is set (no project sources
+         configured at all) — the query then falls through to whichever
+         adapter claims a source-less query (DbtAdapter for dbt-jinja SQL,
+         DuckDBAdapter otherwise, which auto-discovers the dbt project's own
+         local dev warehouse file under `data/`, else `:memory:`)
+      5. raise ERR-SOURCE-NOT-FOUND-EMPTY otherwise
 
     For None authored: return None (sourceless query types — values, http, schema).
     For dict authored: validate and parse directly.
@@ -166,9 +182,9 @@ class DefaultSourceResolver:
                 return self._expand_dbt_profile(parsed, dbt_context)
             return parsed
 
-        if dbt_context is not None:
-            return None
-
+        # A configured `sources:` block names every source that's actually
+        # valid — an unmatched name is a mistake (typo, generic guess) and
+        # must raise, never fall through to the dbt-context deferral below.
         available = sorted(project_sources.sources.keys())
         if available:
             raise DbtChartsError.from_code(
@@ -177,6 +193,10 @@ class DefaultSourceResolver:
                 source=authored,
                 available=available,
             )
+
+        if dbt_context is not None:
+            return None
+
         raise DbtChartsError.from_code(
             ERR_SOURCE_NOT_FOUND_EMPTY,
             source=authored,

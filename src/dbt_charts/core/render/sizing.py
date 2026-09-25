@@ -80,10 +80,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from PIL import ImageFont
 
-from dbt_charts.core.compile.resolve.style.typography import (
-    board_is_prose,
-    board_title_spec,
-)
+from dbt_charts.core.compile.resolve.style.typography import board_title_spec
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.resolved import (
@@ -524,6 +521,12 @@ def compact_style_kwargs(
     assert _text_font_family is not None, "style.text.font.family must be configured"
     _default_family = apply_emoji_to_family(_text_font_family, _rs.emoji_mode)
 
+    _heading_font_family = _rs.title.font.family
+    assert _heading_font_family is not None, (
+        "style.title.font.family must be configured"
+    )
+    _heading_family = apply_emoji_to_family(_heading_font_family, _rs.emoji_mode)
+
     _text_font_color = _rs.text.font.color
     assert _text_font_color is not None, "style.text.font.color must be configured"
 
@@ -554,6 +557,11 @@ def compact_style_kwargs(
 
     kwargs: dict[str, Any] = {
         "font_family": font_family if font_family is not None else _default_family,
+        # Headings (board titles and markdown H1-H6 alike) read the title
+        # family, independent of whichever family `font_family` above resolved
+        # to for body/paragraph text — the same split the size, color, and
+        # weight keys below already make for `heading_*`.
+        "heading_font_family": _heading_family,
         "base_font_size": float(_text_font_size),
         "font_weight": text_weight,
         "line_height": float(_text_line_height),
@@ -636,17 +644,18 @@ def body_text_font_family(resolved_style: ResolvedStyle) -> str:
     return family
 
 
-def title_font_family(resolved_style: ResolvedStyle, prose: bool) -> str:
+def title_font_family(resolved_style: ResolvedStyle) -> str:
     """The family a board title is drawn in.
 
-    Only a prose board titles in the title family; everywhere else the heading
-    is set in the body family, because a board title sits over body content and
-    a prose page's does not. Measuring and drawing have to ask this once and
-    get the same answer — reserving a column in one family and painting the
-    title in another is the defect this exists to prevent.
+    Every board title — prose or not — is drawn as a heading
+    (``board_title_markdown`` always emits ``# {title}``), and
+    ``style.title.font.family`` is the one token that names a heading's
+    family; a board title never draws in the body family.
+
+    Measuring and drawing have to ask this once and get the same answer —
+    reserving a column in one family and painting the title in another is the
+    defect this exists to prevent.
     """
-    if not prose:
-        return body_text_font_family(resolved_style)
     family = resolved_style.title.font.family
     assert family is not None, "style.title.font.family must be configured"
     return family
@@ -716,7 +725,6 @@ def get_title_height(
     level: int = 1,
     *,
     resolved_style: ResolvedStyle | None = None,
-    prose: bool = False,
 ) -> float:
     """Get the actual height needed for a title by measuring it.
 
@@ -728,7 +736,6 @@ def get_title_height(
         width: Available width for the title (drives tier selection)
         variable_values: Variable values to resolve Jinja against
         resolved_style: Optional resolved board style for title typography measurement
-        prose: When True, measure with the theme's prose-title family.
 
     Returns:
         Actual height in pixels for the rendered title
@@ -758,17 +765,16 @@ def get_title_height(
     markdown_title, h1_size, heading_weight = board_title_markdown(
         resolved_title, level=level, resolved_style=resolved_style
     )
-    if prose:
-        font_family = _rs.title.font.family
-        assert font_family is not None, "style.title.font.family must be configured"
-    else:
-        font_family = body_text_font_family(_rs)
+    # Ask title_font_family, same as title_renderer does — a hand-rolled branch
+    # here is exactly the drift that let this measurement disagree with the
+    # family render_title actually paints the title in.
+    font_family = title_font_family(_rs)
 
     title_style = get_compact_style(
         _rs,
         h1_size=h1_size,
         heading_font_weight=heading_weight,
-        font_family=font_family if prose else None,
+        font_family=font_family,
         # Must match render_title exactly — this is the measure half of the same
         # title block; a mismatch desyncs reserved height from drawn height.
         heading_margin_scale="chrome",
@@ -787,7 +793,6 @@ def get_title_height(
 def title_renderer(
     resolved_style: ResolvedStyle,
     level: int,
-    prose: bool,
     text_align: Literal["left", "center", "right"] = "left",
 ) -> tuple[SVGRenderer, str]:
     """The mdsvg renderer a board title is drawn with, and the family it resolves to.
@@ -798,9 +803,15 @@ def title_renderer(
     about the face or the heading size, and the answers then describe a title
     nobody drew.
 
-    ``font_family`` stays None for a non-prose title: mdsvg then inherits the
-    document family rather than being told one. The returned family is what that
-    inheritance resolves to, which is what gets measured.
+    ``font_family`` is always the title family, unconditionally: the title's own
+    ink is always a heading, which paints via ``Style.heading_font_family``
+    regardless of ``font_family`` — but a title's markdown can still carry a
+    non-heading span (an emphasis run, or a second block on a multi-line
+    title), and that span paints through mdsvg's ``.md-*-text`` rule, which
+    ``font_family`` does control. Leaving it unset there let a measure and a
+    paint of the SAME non-heading span disagree on family whenever the
+    caller's own choice of ``font_family`` differed from the title family —
+    the same defect this whole module exists to prevent, just one rule over.
     """
     from dbt_charts.core.font_measure import markdown_font_faces
     from mdsvg.renderer import SVGRenderer
@@ -808,22 +819,20 @@ def title_renderer(
     font_size, heading_weight = board_title_spec(
         level=level, resolved_style=resolved_style
     )
-    family = title_font_family(resolved_style, prose)
+    family = title_font_family(resolved_style)
     style = get_compact_style(
         resolved_style,
         text_align=text_align,
         h1_size=font_size,
         heading_font_weight=heading_weight,
-        font_family=family if prose else None,
+        font_family=family,
         # Title spacing is chrome: it must not grow when body prose is resized.
         heading_margin_scale="chrome",
     )
     return SVGRenderer(style=style, fonts=markdown_font_faces(family, style)), family
 
 
-def title_baseline_offset(
-    resolved_style: ResolvedStyle, level: int, prose: bool
-) -> float:
+def title_baseline_offset(resolved_style: ResolvedStyle, level: int) -> float:
     """How far below a title block's top edge its first baseline sits.
 
     Asked of the renderer that draws the title rather than derived from the block
@@ -837,14 +846,13 @@ def title_baseline_offset(
     # read a different rung of the heading ramp than the title was drawn at —
     # which past h6, where board_title_spec clamps and the ramp does not, is a
     # different number.
-    return title_renderer(resolved_style, level, prose)[0].heading_baseline(1)
+    return title_renderer(resolved_style, level)[0].heading_baseline(1)
 
 
 def title_line_box(
     block_height: float,
     level: int,
     resolved_style: ResolvedStyle,
-    prose: bool,
 ) -> tuple[float, float]:
     """The ``(top, height)`` of the text inside a title block of ``block_height``.
 
@@ -861,9 +869,7 @@ def title_line_box(
     """
     # Level 1 for the same reason as `title_baseline_offset`: the title is drawn
     # as an h1 whose size the renderer already carries.
-    return title_renderer(resolved_style, level, prose)[0].heading_line_box(
-        1, block_height
-    )
+    return title_renderer(resolved_style, level)[0].heading_line_box(1, block_height)
 
 
 # ============================================================================
@@ -891,7 +897,6 @@ def _measure_title_single_line_width(
     variable_values: dict[str, Any] | None,
     resolved_style: ResolvedStyle,
     level: int,
-    prose: bool,
 ) -> float:
     """Width the title text needs to render on a single line at its natural size.
 
@@ -915,7 +920,7 @@ def _measure_title_single_line_width(
     plain = _HEADING_PREFIX_RE.sub("", resolved).strip()
 
     font_size, _weight = board_title_spec(level=level, resolved_style=resolved_style)
-    family = title_font_family(resolved_style, prose)
+    family = title_font_family(resolved_style)
     return float(_load_title_font(float(font_size), family).getlength(plain))
 
 
@@ -939,7 +944,6 @@ def resolve_title_variables_inline_widths(
     title: str | None,
     variable_values: dict[str, Any] | None,
     level: int,
-    prose: bool,
 ) -> tuple[float, float]:
     """Split inner title+variables width into (title_w, variables_w).
 
@@ -965,7 +969,7 @@ def resolve_title_variables_inline_widths(
     # Title's natural single-line width + a small breathing-room pad so the
     # measured width doesn't wrap on sub-pixel rendering jitter.
     natural = _measure_title_single_line_width(
-        title, variable_values, resolved_style, level, prose
+        title, variable_values, resolved_style, level
     )
     natural_with_pad = (
         natural + 8.0 if natural > 0 else _MIN_TITLE_INLINE_TITLE_COLUMN_PX
@@ -1033,7 +1037,6 @@ def should_use_title_inline_band(
     card_padding: float,
     variable_values: dict[str, Any] | None,
     level: int,
-    prose: bool,
 ) -> bool:
     """Return whether variables fit the compact title-inline band contract.
 
@@ -1048,7 +1051,7 @@ def should_use_title_inline_band(
 
     inner = max(content_width - 2 * card_padding, 1.0)
     _title_w, vars_w = resolve_title_variables_inline_widths(
-        inner, resolved_style, visible_variables, title, variable_values, level, prose
+        inner, resolved_style, visible_variables, title, variable_values, level
     )
     layout = _variables_layout(
         visible_variables, vars_w, variable_values, variables_style
@@ -1114,7 +1117,6 @@ def compute_title_variables_inline_band_height(
     vs = board.resolved_style.variables
     card_pad = float(board.resolved_style.frame.card_padding)
     inner = max(content_width - 2 * card_pad, 1.0)
-    prose = board_is_prose(board.text)
     _, vars_w = resolve_title_variables_inline_widths(
         inner,
         board.resolved_style,
@@ -1122,7 +1124,6 @@ def compute_title_variables_inline_band_height(
         board.title,
         variable_values,
         board.level,
-        prose,
     )
     if not board.title:
         return 0.0
@@ -1137,7 +1138,6 @@ def compute_title_variables_inline_band_height(
             variable_values,
             level=board.level,
             resolved_style=board.resolved_style,
-            prose=prose,
         ),
         float(board.resolved_style.title.min_height),
     )
@@ -1151,7 +1151,7 @@ def compute_title_variables_inline_band_height(
     _title_dy, _vars_dy, band_h = compute_title_variables_inline_baseline_layout(
         title_h,
         var_h,
-        title_baseline_offset(board.resolved_style, board.level, prose),
+        title_baseline_offset(board.resolved_style, board.level),
         float(vs.font.size),
         vs.font.family,
         float(vs.title_inline_band_bottom_pad),
@@ -1903,7 +1903,6 @@ def nested_board_sizing_context(
         card_pad,
         variable_values,
         nested_board.level,
-        board_is_prose(nested_board.text),
     )
 
     if use_title_inline:
@@ -1915,7 +1914,6 @@ def nested_board_sizing_context(
     else:
         inline_band_h = 0.0
         if nested_board.title:
-            prose = board_is_prose(nested_board.text)
             title_h = max(
                 get_title_height(
                     nested_board.title,
@@ -1923,7 +1921,6 @@ def nested_board_sizing_context(
                     variable_values,
                     level=nested_board.level,
                     resolved_style=nrs,
-                    prose=prose,
                 ),
                 float(nested_board.resolved_style.title.min_height),
             )

@@ -48,6 +48,7 @@ from dbt_charts.core.execute.adapters.base import (
     classify_warehouse_error,
     connection_failure,
     handle_adapter_error,
+    plain_error,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
@@ -325,10 +326,7 @@ class DbtAdapter(BaseAdapter):
             QueryResult with data or error
         """
         if not is_sql_query(query):
-            return QueryResult(
-                data=[],
-                error=f"Expected SQL query, got {query.query_type}",
-            )
+            return plain_error(f"Expected SQL query, got {query.query_type}")
 
         try:
             adapter = (

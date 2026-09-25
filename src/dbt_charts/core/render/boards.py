@@ -33,7 +33,6 @@ from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.style.resolved import (
     effective_padding as _effective_padding,
 )
-from dbt_charts.core.compile.resolve.style.typography import board_is_prose
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.font_measure import (
     get_font_measurer,
@@ -219,7 +218,6 @@ def _render_title_svg(
     resolved_style: "ResolvedStyle",
     text_align: Literal["left", "center", "right"] = "left",
     level: int = 1,
-    prose: bool = False,
 ) -> str:
     """Render a title with Jinja resolution and case transform."""
     from dbt_charts.core.render.svg_utils import render_title
@@ -237,7 +235,6 @@ def _render_title_svg(
         width,
         text_align=text_align,
         level=level,
-        prose=prose,
         resolved_style=resolved_style,
     )
 
@@ -340,7 +337,6 @@ def _board_uses_title_inline_band(
         float(board.style.frame.card_padding),
         _measured_variable_values(board, variables),
         board.level,
-        board_is_prose(board.text),
     )
 
 
@@ -434,7 +430,6 @@ def _render_title_variables_inline_band(
     card_pad: float,
     executor: ChartDataProvider,
     text_align: Literal["left", "center", "right"],
-    prose: bool,
     title_authored_attrs: str,
     variables_path: str,
 ) -> tuple[str, float]:
@@ -468,7 +463,6 @@ def _render_title_variables_inline_band(
         board.title,
         measured_values,
         board.level,
-        prose,
     )
     col_gap = float(vs.gap)
 
@@ -483,7 +477,6 @@ def _render_title_variables_inline_band(
         board.style,
         text_align=text_align,
         level=board.level,
-        prose=prose,
     )
     # Paint the title fill from cascade-resolved board style so user overrides
     # win over mdsvg's CSS-baked class fill.
@@ -502,12 +495,9 @@ def _render_title_variables_inline_band(
         measured_values,
         level=board.level,
         resolved_style=board.style,
-        prose=prose,
     )
     title_h = max(measured_title_h, float(board.style.title.min_height))
-    inline_title_line_box = title_line_box(
-        measured_title_h, board.level, board.style, prose
-    )
+    inline_title_line_box = title_line_box(measured_title_h, board.level, board.style)
 
     # The compact band packs its controls against the far edge, opposite the title.
     # Its variables are addressable exactly when its title is: both are keys of
@@ -526,7 +516,7 @@ def _render_title_variables_inline_band(
     title_dy, vars_dy, band_h = compute_title_variables_inline_baseline_layout(
         title_h,
         vars_h,
-        title_baseline_offset(board.style, board.level, prose),
+        title_baseline_offset(board.style, board.level),
         float(vs.font.size),
         vs.font.family,
         float(vs.title_inline_band_bottom_pad),
@@ -1059,8 +1049,6 @@ def render_board_svg(
 
     text_align = resolved_style.text.align
 
-    prose = board_is_prose(board.text)
-
     inline_header_svg = ""
     inline_header_height = 0.0
     title_svg = ""
@@ -1075,7 +1063,6 @@ def render_board_svg(
             card_pad,
             executor,
             text_align=text_align,
-            prose=prose,
             title_authored_attrs=authored_attrs("title", "title"),
             variables_path="variables",
         )
@@ -1087,7 +1074,6 @@ def render_board_svg(
             resolved_style,
             text_align=text_align,
             level=board.level,
-            prose=prose,
         )
         title_color = resolved_style.title.font.color
         if title_color:
@@ -1098,11 +1084,10 @@ def render_board_svg(
             _measured_variable_values(board, variables),
             level=board.level,
             resolved_style=resolved_style,
-            prose=prose,
         )
         title_height = max(measured_title_height, float(board.style.title.min_height))
         root_title_line_box = title_line_box(
-            measured_title_height, board.level, resolved_style, prose
+            measured_title_height, board.level, resolved_style
         )
 
     # Render text (markdown) if present (using shared helper)
@@ -1416,8 +1401,6 @@ def render_nested_board(
     )
     text_align = resolved_style.text.align
 
-    prose = board_is_prose(board.text)
-
     inline_header_svg = ""
     inline_header_height = 0.0
     title_svg = ""
@@ -1431,7 +1414,6 @@ def render_nested_board(
             card_pad,
             executor,
             text_align=text_align,
-            prose=prose,
             # The board's own header handle wraps this band and covers its heading.
             # An imported board has no handle at all, so the band's kind-only leaf
             # is the one tag inside that subtree — inert, because a host resolves
@@ -1449,7 +1431,6 @@ def render_nested_board(
             resolved_style,
             text_align=text_align,
             level=board.level,
-            prose=prose,
         )
         measured_title_height = get_title_height(
             board.title,
@@ -1457,11 +1438,10 @@ def render_nested_board(
             _measured_variable_values(board, variables),
             level=board.level,
             resolved_style=resolved_style,
-            prose=prose,
         )
         title_height = max(measured_title_height, float(board.style.title.min_height))
         nested_title_line_box = title_line_box(
-            measured_title_height, board.level, resolved_style, prose
+            measured_title_height, board.level, resolved_style
         )
 
     # Render text (markdown) if present (using shared helper)

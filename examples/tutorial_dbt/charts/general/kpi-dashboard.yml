@@ -1,5 +1,5 @@
 title: "Executive KPIs"
-source: duckdb_local
+source: dbt_charts_examples
 
 text: |
   **Key Performance Indicators** — Core metrics driving our business success.

@@ -1,6 +1,6 @@
 title: "Fivetran + dbt Celebration"
 
-source: duckdb_local
+source: dbt_charts_examples
 
 queries:
   revenue_with_projection: |

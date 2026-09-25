@@ -92,7 +92,7 @@ if TYPE_CHECKING:
         ParquetSourceConfig,
     )
     from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-    from dbt_charts.core.execute.adapters.base import QueryResult, ResolvedRelation
+    from dbt_charts.core.execute.adapters.base import ResolvedRelation
     from dbt_charts.core.execute.cache_backend import QueryResultCache
     from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 
@@ -298,31 +298,6 @@ def _memo_key(
         return (*cache_key, "off")
     ttl = query.cache.ttl_timedelta
     return (*cache_key, "forever" if ttl is None else str(ttl.total_seconds()))
-
-
-def _query_error_from_result(
-    result: "QueryResult", query_name: str | None
-) -> QueryError:
-    """Build the QueryError to raise for a failed QueryResult.
-
-    When the adapter classified the failure AND supplied structured `fields`
-    (e.g. DuckDBAdapter._classify_duckdb_error), construct via
-    QueryError.from_code so the code is set at construction and the message
-    is exactly the registered template — not `result.error` wrapped again.
-    Adapters that haven't migrated to structured fields (fields is None) pass
-    `result.error` through as the message, with the code still set at
-    construction rather than mutated in afterward.
-    """
-    if result.error_code is not None and result.fields is not None:
-        fields: dict[str, Any] = dict(result.fields)
-        if query_name is not None:
-            fields.setdefault("query_name", query_name)
-        return QueryError.from_code(result.error_code, **fields)
-    return QueryError(
-        result.error or "Unknown error",
-        query_name,
-        code=result.error_code,
-    )
 
 
 def merge_board_variables(board: Board, variables: VariableValues) -> VariableValues:
@@ -897,13 +872,14 @@ class Executor:
             ) from e
 
         if not result.is_success:
-            err = _query_error_from_result(result, query_name)
+            assert result.error is not None
+            result.error.fields.setdefault("query_name", query_name)
             if should_use_cache:
-                self._cache_failure(query_name, query, variables, err)
+                self._cache_failure(query_name, query, variables, result.error)
             self._query_data_ages.append(
                 (query_name, datetime.now(timezone.utc), original_query.cache, False)
             )
-            raise err
+            raise result.error
 
         # ────────────────────────────────────────────────────────────────
         # Step 6: Cache and return
@@ -1220,7 +1196,9 @@ class Executor:
             tail_query, variables, board=self.board, query_name=query_name
         )
         if not result.is_success:
-            raise _query_error_from_result(result, query_name)
+            assert result.error is not None
+            result.error.fields.setdefault("query_name", query_name)
+            raise result.error
 
         tail_rows: list[dict[str, Any]] = list(  # type-state: explicit_any — rows
             result.data

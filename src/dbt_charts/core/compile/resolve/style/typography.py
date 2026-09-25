@@ -30,8 +30,8 @@ Font family rules (theme-driven; values below are per-theme):
   family). On every shipped theme that's a sans family.
 - Medium + wide object titles resolve to ``style.title.font.family`` (the
   title-slot family) - sans on ``stark``, serif on ``default``/``cream``.
-- Prose content uses the theme's text stack. Prose titles use the theme's
-  title stack at any width via ``use_title_family=True``.
+- ``use_title_family=True`` forces the theme's title stack at any width
+  (used for prose-tagged titles, whatever width tier they land in).
 
 Board/section titles are **purely semantic**: their size depends only on
 ``board.level`` (or an explicit ``style.title.level`` override). Width tiers
@@ -102,7 +102,6 @@ _WIDE_MIN: float = 23.5 * _COLUMN_UNIT  # 1104.5px — essentially full width
 # 540.5px to < 1104.5px → medium
 
 
-_PROSE_WORD_THRESHOLD = 100
 WidthTier: TypeAlias = Literal["tiny", "narrow", "medium", "wide"]
 
 
@@ -153,27 +152,6 @@ def _width_offset(width: float, chart_style_context: ChartStyleContext) -> int:
     if tier == "narrow":
         return wo.narrow
     return wo.tiny
-
-
-def is_prose(text: str) -> bool:
-    """Return True if *text* qualifies as prose.
-
-    Prose is defined as body text with at least ``_PROSE_WORD_THRESHOLD`` words.
-    Prose content uses ``style.text.font.family``. Its surrounding title uses
-    ``style.title.font.family`` at any card width.
-
-    Args:
-        text: Raw text content (Markdown or plain).
-
-    Returns:
-        ``True`` when the word count is ≥ 100.
-    """
-    return len(text.split()) >= _PROSE_WORD_THRESHOLD
-
-
-def board_is_prose(text: str | None) -> bool:
-    """Return whether optional board text qualifies for prose title treatment."""
-    return is_prose(text) if text else False
 
 
 # Anchor level for object titles before adding the width-tier offset.

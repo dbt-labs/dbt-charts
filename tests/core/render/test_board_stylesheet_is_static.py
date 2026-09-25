@@ -50,6 +50,12 @@ def test_the_host_stylesheet_carries_the_bound_control_affordances() -> None:
     assert ".dbt-interactive [data-dbt-variable]:is(" in css
     assert ".dbt-chart-highlight-overlay" in css
 
+    # Themable, not a hardcoded literal: dbt-labs/dbt-charts#36 regression —
+    # this overlay used to paint a literal `stroke: #667eea` instead of the
+    # rest of this stylesheet's `var(--dbt-system-accent, ...)` pattern.
+    overlay_rule = css.split(".dbt-chart-highlight-overlay")[1].split("}")[0]
+    assert "stroke: var(--dbt-system-accent" in overlay_rule
+
 
 _LINKED_PAGED_BOARD = """\
 title: Every kind of interaction a board can draw

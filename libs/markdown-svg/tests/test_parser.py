@@ -518,3 +518,35 @@ class TestListCases:
         assert len(doc) == 1
         assert isinstance(doc[0], UnorderedList)
         assert len(doc[0].items[0].children) == 1
+
+    # --- Group E: loose lists (blank line between marker and nested content) ---
+
+    def test_loose_list_nested_items_not_dropped(self) -> None:
+        """Repro from dbt-labs/dbt-charts#41: a blank line between a parent
+        item and its nested list must not drop the nested items."""
+        doc = parse("1. Item one\n\n   - sub a\n   - sub b\n\n2. Item two")
+        ol = doc[0]
+        assert isinstance(ol, OrderedList)
+        assert len(ol.items) == 2
+        assert _item_text(ol.items[0]) == "Item one"
+        assert len(ol.items[0].children) == 1
+        sub = ol.items[0].children[0]
+        assert isinstance(sub, UnorderedList)
+        assert [_item_text(it) for it in sub.items] == ["sub a", "sub b"]
+        assert _item_text(ol.items[1]) == "Item two"
+
+    def test_loose_list_top_level_blank_lines_stay_flat(self) -> None:
+        """Blank lines between sibling items (no deeper-indented content) must
+        not pull a following sibling into the preceding item's body."""
+        doc = parse("- alpha\n\n- beta\n\n- gamma")
+        ul = doc[0]
+        assert isinstance(ul, UnorderedList)
+        assert [_item_text(it) for it in ul.items] == ["alpha", "beta", "gamma"]
+
+    def test_blank_line_before_flat_paragraph_still_ends_list(self) -> None:
+        """A blank line before a non-indented paragraph still ends the list
+        (guards against the loose-list fix over-extending item bodies)."""
+        doc = parse("- item\n\nParagraph after")
+        assert isinstance(doc[0], UnorderedList)
+        assert isinstance(doc[1], Paragraph)
+        assert len(doc[0].items) == 1

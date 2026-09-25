@@ -11,6 +11,7 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.diagnostics.codes_compile import ERR_JINJA_ERROR
 from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
 from dbt_charts.core.project import Project
 
@@ -120,7 +121,7 @@ class TestExecuteReturnsCleanErrorOnMisconfig:
         assert result.error is not None
         assert result.data == []
         # Error message must mention the missing config — not an AttributeError
-        error_lower = result.error.lower()
+        error_lower = str(result.error).lower()
         assert (
             "profile" in error_lower
             or "profiles" in error_lower
@@ -178,7 +179,8 @@ class TestExecuteReturnsCleanErrorOnMisconfig:
         assert result.error is not None
         assert result.data == []
         # Must mention profiles.yml — makes the new contract explicit in the error
-        assert "profiles.yml" in result.error or "profiles" in result.error.lower()
+        error = str(result.error)
+        assert "profiles.yml" in error or "profiles" in error.lower()
 
 
 class TestReadTargetDict:
@@ -259,7 +261,7 @@ class TestRuntimeMutatingSqlGuard:
             )
             result = adapter._execute(query)
         assert result.error is not None
-        assert "outside the read-only SQL allowlist" in result.error
+        assert "outside the read-only SQL allowlist" in str(result.error)
         adapter._adapter.execute.assert_not_called()
 
     def test_resolved_select_passes(
@@ -706,7 +708,7 @@ class TestParameterizedFilterHelper:
         )
 
         assert result.error is not None
-        assert "singlestore" in result.error
+        assert "singlestore" in str(result.error)
 
     @pytest.mark.parametrize(
         "literal", ["'$1,000+'", "'Really?'", "'https://x.test/a?b=1'"]
@@ -931,7 +933,9 @@ class TestParameterizedFilterHelper:
         """An undefined strict variable must be attributed to template
         rendering, not adapter setup — the mislabel that obscured the
         original filter() bug report ("dbt adapter setup failed:
-        Undefined variable...").
+        Undefined variable..."). Pinned via the error code (ERR_JINJA_ERROR,
+        not an adapter-setup code) plus the undefined variable's name in the
+        message.
         """
         manifest = {
             "nodes": {
@@ -963,8 +967,10 @@ class TestParameterizedFilterHelper:
         )
 
         assert result.error is not None
-        assert result.error.startswith("query template rendering failed:")
-        assert "dbt adapter setup" not in result.error
+        assert result.error.code is ERR_JINJA_ERROR
+        error = str(result.error)
+        assert "missing" in error
+        assert "dbt adapter setup" not in error
         adapter._adapter.execute.assert_not_called()
 
     def test_a_loop_variable_can_be_filtered_on(

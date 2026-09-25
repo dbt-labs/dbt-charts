@@ -110,6 +110,8 @@ def print_diagnostics(
             body_parts.append(f"[dim]Fix:[/] {escape(d.fix)}")
         if d.field:
             body_parts.append(f"[dim]Field:[/] {d.field}")
+        if d.detail:
+            body_parts.append(f"[dim]Detail:[/] {escape(d.detail)}")
         # `fields` also carries programmatic-only metadata (chart_id,
         # severity, confidence) that other consumers key off of — only
         # `detail`/`evidence` are meant for a human to read.

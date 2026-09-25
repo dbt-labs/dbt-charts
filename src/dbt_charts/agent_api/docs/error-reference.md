@@ -1931,10 +1931,10 @@ Fired when a chart or layout reference names a target that cannot be found in th
 **Message template:**
 
 ```
-Could not open the warehouse: {detail}.
+Could not open the warehouse: {reason}
 ```
 
-Fired when opening the connection fails, before any SQL is sent: a database file that is missing, unreadable, or lock-held by another process (DuckDB, SQLite), or bad credentials, an unreachable host, or a missing database/role on a network warehouse (Postgres, Snowflake, BigQuery, Databricks, …). Distinct from ERR-WAREHOUSE-RUNTIME because nothing ever read the SQL: the query may be perfectly good, so callers that judge queries (`dct validate --warehouse`) must not report it as a query defect. Check the source's credentials, host, and network reachability in `dbt_charts.yml` or `profiles.yml`.
+Fired when opening the connection fails, before any SQL is sent: a database file that is missing, unreadable, or lock-held by another process (DuckDB, SQLite), or bad credentials, an unreachable host, or a missing database/role on a network warehouse (Postgres, Snowflake, BigQuery, Databricks, …). Distinct from ERR-WAREHOUSE-RUNTIME because nothing ever read the SQL: the query may be perfectly good, so callers that judge queries (`dct validate --warehouse`) must not report it as a query defect. `{reason}` names the classified cause; the driver's own text (which may carry hostnames, PIDs, or usernames) is not shown here but is available in `dct`'s diagnostics output and server logs. Check the source's credentials, host, and network reachability in `dbt_charts.yml` or `profiles.yml`.
 
 ### ERR-WAREHOUSE-QUERY-INVALID: Query failed warehouse validation
 

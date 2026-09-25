@@ -21,7 +21,7 @@ def _make_query(sql: str) -> SqlQuery:
 
 
 class TestDuckDBBinderErrorCodes:
-    """QueryResult.error_code is set to a typed code for DuckDB binder-class errors."""
+    """QueryResult.error.code is a typed code for DuckDB binder-class errors."""
 
     def test_unknown_column_returns_binder_unknown_column_code(self) -> None:
         """BinderException for a missing column → ERR-BINDER-UNKNOWN-COLUMN."""
@@ -37,8 +37,8 @@ class TestDuckDBBinderErrorCodes:
                 _make_query("SELECT nonexistent_col FROM (SELECT 1 AS a) t")
             )
             assert result.error is not None
-            assert result.error_code is ERR_BINDER_UNKNOWN_COLUMN, (
-                f"expected ERR-BINDER-UNKNOWN-COLUMN, got {result.error_code!r}"
+            assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN, (
+                f"expected ERR-BINDER-UNKNOWN-COLUMN, got {result.error.code!r}"
             )
         finally:
             adapter.close()
@@ -60,8 +60,8 @@ class TestDuckDBBinderErrorCodes:
         exc = duckdb.TypeMismatchException("Cannot add INTEGER and VARCHAR")
         result = _classify_duckdb_error(exc)
         assert result.error is not None
-        assert result.error_code is ERR_BINDER_TYPE_MISMATCH, (
-            f"expected ERR-BINDER-TYPE-MISMATCH, got {result.error_code!r}"
+        assert result.error.code is ERR_BINDER_TYPE_MISMATCH, (
+            f"expected ERR-BINDER-TYPE-MISMATCH, got {result.error.code!r}"
         )
 
     def test_catalog_exception_returns_binder_unknown_column_code(self) -> None:
@@ -76,8 +76,8 @@ class TestDuckDBBinderErrorCodes:
         try:
             result = adapter._execute(_make_query("SELECT * FROM nonexistent_table"))
             assert result.error is not None
-            assert result.error_code is ERR_BINDER_UNKNOWN_COLUMN, (
-                f"expected ERR-BINDER-UNKNOWN-COLUMN, got {result.error_code!r}"
+            assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN, (
+                f"expected ERR-BINDER-UNKNOWN-COLUMN, got {result.error.code!r}"
             )
         finally:
             adapter.close()
@@ -94,7 +94,7 @@ class TestDuckDBBinderErrorCodes:
         exc = duckdb.IOException("could not open file: /no/such/path")
         result = _classify_duckdb_error(exc)
         assert result.error is not None
-        assert result.error_code is ERR_WAREHOUSE_RUNTIME
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
     def test_unparseable_sql_error_keeps_its_own_code_and_fields(self) -> None:
         """UnparseableSqlError raised by validate_select_only *inside* the
@@ -118,14 +118,14 @@ class TestDuckDBBinderErrorCodes:
             ),
         )
         result = _classify_duckdb_error(exc)
-        assert result.error_code is ERR_UNPARSEABLE_SQL
-        assert result.fields is not None
-        assert result.fields["sql_line"] == 1
-        assert result.fields["sql_start_col"] == 12
-        assert result.fields["sql_end_col"] == 14
+        assert result.error is not None
+        assert result.error.code is ERR_UNPARSEABLE_SQL
+        assert result.error.fields["sql_line"] == 1
+        assert result.error.fields["sql_start_col"] == 12
+        assert result.error.fields["sql_end_col"] == 14
         # The line the columns were measured against travels with them — the
         # stamping pass refuses to narrow without it.
-        assert result.fields["sql_line_text"] == "SELECT 1 AS bb"
+        assert result.error.fields["sql_line_text"] == "SELECT 1 AS bb"
 
     def test_mutating_sql_error_keeps_its_own_code(self) -> None:
         """Same delegation for MutatingSqlError — a non-read-only statement
@@ -139,26 +139,26 @@ class TestDuckDBBinderErrorCodes:
 
         exc = MutatingSqlError("Drop", "DROP TABLE foo")
         result = _classify_duckdb_error(exc)
-        assert result.error_code is ERR_MUTATING_SQL
+        assert result.error is not None
+        assert result.error.code is ERR_MUTATING_SQL
 
-    def test_successful_query_has_no_error_code(self) -> None:
-        """Successful queries must leave error_code as None."""
+    def test_successful_query_has_no_error(self) -> None:
+        """Successful queries must leave error as None."""
         adapter = DuckDBAdapter(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         try:
             result = adapter._execute(_make_query("SELECT 1 AS val"))
             assert result.error is None
-            assert result.error_code is None
         finally:
             adapter.close()
 
 
 class TestExecutorSurfacesBinderCode:
-    """QueryError.code propagates the error_code from QueryResult through the executor."""
+    """QueryError.code propagates the code on QueryResult.error through the executor."""
 
     def test_executor_raises_query_error_with_binder_code(self) -> None:
-        """Executor wraps QueryResult.error_code into QueryError.code (not ERR-UNKNOWN-INTERNAL)."""
+        """Executor raises QueryResult.error as-is, code intact (not ERR-UNKNOWN-INTERNAL)."""
         from unittest.mock import Mock
 
         from dbt_charts.core.compile import compile
@@ -190,8 +190,10 @@ rows:
         mock_registry = Mock()
         mock_registry.execute.return_value = QueryResult(
             data=[],
-            error='Binder Error: Referenced column "nonexistent_col" not found',
-            error_code=ERR_BINDER_UNKNOWN_COLUMN,
+            error=QueryError(
+                'Binder Error: Referenced column "nonexistent_col" not found',
+                code=ERR_BINDER_UNKNOWN_COLUMN,
+            ),
         )
 
         executor = Executor(board, adapter_registry=mock_registry)

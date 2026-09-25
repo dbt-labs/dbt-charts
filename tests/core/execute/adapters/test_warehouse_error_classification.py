@@ -36,6 +36,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
 )
+from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.execution import MutatingSqlError, UnparseableSqlError
 from dbt_charts.core.execute.adapters.base import (
     classify_warehouse_error,
@@ -61,11 +62,10 @@ class TestClassifyWarehouseErrorBigQuery:
     def test_unrecognized_name_returns_binder_unknown_column_code(self) -> None:
         exc = Exception("Unrecognized name: 'goals_goal_dollars' at [3:42]")
         result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
-        assert result.error_code is ERR_BINDER_UNKNOWN_COLUMN
+        assert result.error is not None
+        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
         # Original warehouse message is preserved verbatim in the error text.
-        assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in (
-            result.error or ""
-        )
+        assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in str(result.error)
 
     def test_not_found_table_returns_binder_unknown_column_code(self) -> None:
         exc = Exception(
@@ -73,19 +73,22 @@ class TestClassifyWarehouseErrorBigQuery:
             "in location US"
         )
         result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
-        assert result.error_code is ERR_BINDER_UNKNOWN_COLUMN
+        assert result.error is not None
+        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
 
     def test_not_found_dataset_returns_binder_unknown_column_code(self) -> None:
         exc = Exception("Not found: Dataset my-project:no_such_dataset")
         result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
-        assert result.error_code is ERR_BINDER_UNKNOWN_COLUMN
+        assert result.error is not None
+        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
 
     def test_unmatched_bigquery_message_falls_back_to_warehouse_runtime(self) -> None:
         """A BigQuery error we don't have a confident pattern for must not be
         guessed into a specific code — the generic code is still correct."""
         exc = Exception("Resources exceeded during query execution")
         result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
-        assert result.error_code is ERR_WAREHOUSE_RUNTIME
+        assert result.error is not None
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
 
 class TestClassifyWarehouseErrorOtherDialects:
@@ -97,12 +100,14 @@ class TestClassifyWarehouseErrorOtherDialects:
         # as BINDER_UNKNOWN_COLUMN under a different dialect.
         exc = Exception("Unrecognized name: 'foo' at [1:1]")
         result = classify_warehouse_error("dbt SQL execution", exc, "snowflake")
-        assert result.error_code is ERR_WAREHOUSE_RUNTIME
+        assert result.error is not None
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
     def test_databricks_dialect_falls_back_to_warehouse_runtime(self) -> None:
         exc = Exception("[TABLE_OR_VIEW_NOT_FOUND] Table or view not found: foo")
         result = classify_warehouse_error("dbt SQL execution", exc, "databricks")
-        assert result.error_code is ERR_WAREHOUSE_RUNTIME
+        assert result.error is not None
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
 
 class TestClassifyWarehouseErrorPreservesDbtChartsErrorCode:
@@ -118,18 +123,19 @@ class TestClassifyWarehouseErrorPreservesDbtChartsErrorCode:
     def test_mutating_sql_error_keeps_its_own_code(self) -> None:
         exc = MutatingSqlError("Drop", "DROP TABLE foo")
         result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
-        assert result.error_code is ERR_MUTATING_SQL
+        assert result.error is not None
+        assert result.error.code is ERR_MUTATING_SQL
 
     def test_unparseable_sql_error_keeps_its_own_code(self) -> None:
         exc = UnparseableSqlError("unsupported_jinja_node:Call")
         result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
-        assert result.error_code is ERR_UNPARSEABLE_SQL
+        assert result.error is not None
+        assert result.error.code is ERR_UNPARSEABLE_SQL
 
 
 class TestDbtAdapterSurfacesClassifiedErrorCode:
     """End-to-end through DbtAdapter._execute: a warehouse failure gets a
-    typed error_code, not None (which the executor turns into
-    ERR-INTERNAL)."""
+    typed code, not the ERR-INTERNAL fallback."""
 
     def test_bigquery_unrecognized_column_sets_binder_code(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -148,14 +154,14 @@ class TestDbtAdapterSurfacesClassifiedErrorCode:
             query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
             result = adapter._execute(query)
         assert result.error is not None
-        assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in result.error
-        assert result.error_code is ERR_BINDER_UNKNOWN_COLUMN
+        assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in str(result.error)
+        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
 
     def test_generic_failure_still_gets_warehouse_runtime_not_none(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """Any warehouse execution failure gets classified — never left as
-        error_code=None, which the executor defaults to ERR-INTERNAL."""
+        """Any warehouse execution failure gets classified — never left at the
+        ERR-INTERNAL fallback."""
         adapter = DbtAdapter(
             project=local_project(tmp_path),
             dbt_project_path=tmp_path,
@@ -168,7 +174,7 @@ class TestDbtAdapterSurfacesClassifiedErrorCode:
             query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
             result = adapter._execute(query)
         assert result.error is not None
-        assert result.error_code is ERR_WAREHOUSE_RUNTIME
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
     def test_setup_failure_is_not_mislabeled_as_warehouse_rejection(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -183,8 +189,8 @@ class TestDbtAdapterSurfacesClassifiedErrorCode:
         connection to the warehouse, so it stays out of scope for
         ERR-WAREHOUSE-CONNECTION (which is reserved for opening the
         connection itself, see test_connect_failure_returns_warehouse_connection_code
-        below). error_code stays None (the existing ERR-INTERNAL fallback)
-        by deliberate choice, not oversight.
+        below). It stays at the ERR-INTERNAL fallback code by deliberate
+        choice, not oversight.
         """
         adapter = DbtAdapter(
             project=local_project(tmp_path),
@@ -199,8 +205,8 @@ class TestDbtAdapterSurfacesClassifiedErrorCode:
             query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
             result = adapter._execute(query)
         assert result.error is not None
-        assert "Profile 'x' not found in profiles.yml" in result.error
-        assert result.error_code is None
+        assert "Profile 'x' not found in profiles.yml" in str(result.error)
+        assert result.error.code is ERR_INTERNAL
 
     def test_connect_failure_returns_warehouse_connection_code(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -232,8 +238,13 @@ class TestDbtAdapterSurfacesClassifiedErrorCode:
             query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
             result = adapter._execute(query)
         assert result.error is not None
-        assert "Invalid access token" in result.error
-        assert result.error_code is ERR_WAREHOUSE_CONNECTION
+        # databricks has no classifier rules, so the driver text is not
+        # matched into a specific bucket — it must still never reach the
+        # authored message, only .detail.
+        assert "Invalid access token" not in str(result.error)
+        assert result.error.detail is not None
+        assert "Invalid access token" in result.error.detail
+        assert result.error.code is ERR_WAREHOUSE_CONNECTION
         # The connect failure must short-circuit before the query is sent.
         adapter._adapter.execute.assert_not_called()
 
@@ -306,9 +317,11 @@ class TestDbtAdapterConnectFailureSurvivesCleanupCrash:
             result = adapter._execute(SqlQuery(sql="SELECT 1", source="bq"))
 
         assert result.error is not None
-        assert "'NoneType' object has no attribute 'close'" not in result.error
-        assert "Unable to load PEM file" in result.error
-        assert result.error_code is ERR_WAREHOUSE_CONNECTION
+        assert "'NoneType' object has no attribute 'close'" not in str(result.error)
+        assert "Unable to load PEM file" not in str(result.error)
+        assert result.error.detail is not None
+        assert "Unable to load PEM file" in result.error.detail
+        assert result.error.code is ERR_WAREHOUSE_CONNECTION
         adapter._adapter.execute.assert_not_called()
 
     def test_a_release_crash_after_a_clean_open_still_raises(
@@ -371,9 +384,11 @@ class TestDbtAdapterConnectFailureSurvivesCleanupCrash:
             result = adapter._execute(SqlQuery(sql="SELECT 1", source="bq"))
 
         assert result.error is not None
-        assert "'NoneType' object has no attribute 'close'" not in result.error
-        assert "PEM" in result.error
-        assert result.error_code is ERR_WAREHOUSE_CONNECTION
+        assert "'NoneType' object has no attribute 'close'" not in str(result.error)
+        assert "PEM" not in str(result.error)
+        assert result.error.detail is not None
+        assert "PEM" in result.error.detail
+        assert result.error.code is ERR_WAREHOUSE_CONNECTION
 
 
 class TestSqlAdapterSurfacesClassifiedErrorCode:
@@ -402,8 +417,8 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
                 source_config,
             )
         assert result.error is not None
-        assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in result.error
-        assert result.error_code is ERR_BINDER_UNKNOWN_COLUMN
+        assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in str(result.error)
+        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
 
     def test_generic_failure_still_gets_warehouse_runtime_not_none(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -421,7 +436,7 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
                 _prepared("SELECT 1", "snowflake"), query, source_config
             )
         assert result.error is not None
-        assert result.error_code is ERR_WAREHOUSE_RUNTIME
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
     def test_connection_setup_failure_is_not_mislabeled_as_warehouse_rejection(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -453,5 +468,7 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
         finally:
             adapter.close()  # real _SourcePool spun up a ThreadPoolExecutor
         assert result.error is not None
-        assert "Could not automatically determine credentials" in result.error
-        assert result.error_code is ERR_WAREHOUSE_CONNECTION
+        assert "Could not automatically determine credentials" not in str(result.error)
+        assert result.error.detail is not None
+        assert "Could not automatically determine credentials" in result.error.detail
+        assert result.error.code is ERR_WAREHOUSE_CONNECTION

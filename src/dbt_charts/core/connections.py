@@ -97,7 +97,7 @@ _NOT_FOUND_MESSAGE = "The named project or dataset does not exist."
 _BIGQUERY_NOT_FOUND_SUBSTRING = "Not found: Dataset"
 
 
-def _classify_probe_error(source_type: str, exc: Exception) -> WarehouseProbeError:
+def classify_connection_error(source_type: str, exc: Exception) -> WarehouseProbeError:
     """Classify a test_connection driver failure into a WarehouseProbeError.
 
     Every dbt-adapter family this project supports flattens its driver
@@ -426,15 +426,15 @@ def test_connection(
         # other escape rather than propagating its text.
         raise
     except Exception as e:  # noqa: BLE001 — e.g. DuckDB's empty-path DbtRuntimeError
-        return False, _classify_probe_error(source_config.type, e)
+        return False, classify_connection_error(source_config.type, e)
 
     try:
         with open_connection(adapter, "test"):
             adapter.execute("SELECT 1", auto_begin=False, fetch=True)
     except ConnectionSetupFailed as e:
-        return False, _classify_probe_error(source_config.type, e.cause)
+        return False, classify_connection_error(source_config.type, e.cause)
     except Exception as e:  # noqa: BLE001 — classify every driver-level escape
-        return False, _classify_probe_error(source_config.type, e)
+        return False, classify_connection_error(source_config.type, e)
     return True, None
 
 

@@ -44,7 +44,8 @@ class PostgresDialect(SQLDialect):
     def statement_timeout_sql(self, seconds: int) -> str:
         """Generate the session-level statement_timeout SET statement.
 
-        Also inherited by RedshiftDialect (Postgres-compatible).
+        Not inherited by RedshiftDialect — Redshift's fork takes an integer of
+        milliseconds, not this interval-string syntax.
         """
         return f"SET statement_timeout = '{seconds}s'"
 

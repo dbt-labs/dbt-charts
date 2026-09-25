@@ -19,7 +19,11 @@ from google.api_core.exceptions import BadRequest, Forbidden, NotFound
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile_file
 from dbt_charts.core.compile.models.source import BigQuerySourceConfig
-from dbt_charts.core.diagnostics.codes_execute import ERR_WAREHOUSE_RUNTIME
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_WAREHOUSE_CONNECTION,
+    ERR_WAREHOUSE_RUNTIME,
+)
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.execute.adapters.base import (
     QueryResult,
@@ -127,6 +131,42 @@ class TestWarehouseCheckDuckDB:
         assert result.columns_checked is False
         assert result.columns == []
         assert "nope" in result.error
+
+    def test_connect_failure_surfaces_connection_failures_classified_message(
+        self, tmp_path
+    ):
+        """A DuckDB file that can't be opened reaches the wrap path's real
+        ``connection_failure()`` classifier, not a mocked QueryResult — and
+        the caller sees the registry-template text verbatim (no adapter
+        prefix), the one canonical wording decided for this error class.
+        """
+        missing_db = tmp_path / "missing.duckdb"
+        (tmp_path / "dbt_charts.yml").write_text(
+            f"sources:\n  testdb:\n    type: duckdb\n    path: {missing_db}\n"
+        )
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "board.yml").write_text(_BOARD)
+        project = FilesystemProject(tmp_path)
+        compiled = compile_file(project.path("charts/board.yml").read_board())
+        assert compiled.board is not None, compiled.errors
+        registry = build_adapter_registry(project, profile_type="duckdb")
+
+        result = _check(compiled, registry)
+
+        assert result.status == "unchecked"
+        # DuckDB's "does not exist" text has no finer classifier rule, so this
+        # hits the generic bucket; the path moves to .detail.
+        assert result.error == (
+            "Could not open the warehouse: Could not connect to the "
+            "warehouse. Check your connection details and try again."
+        )
+
+        query_result = registry.execute(
+            compiled.query_registry["my_query"], variables={}, board=compiled.board
+        )
+        assert query_result.error is not None
+        assert query_result.error.detail is not None
+        assert str(missing_db) in query_result.error.detail
 
     def test_describe_returns_schema_not_rows(self, tmp_path):
         """DESCRIBE never triggers a full query execution.
@@ -750,7 +790,7 @@ class TestWarehouseCheckBigQuery:
             type="bigquery", project="my-proj", dataset="my-ds"
         )
         registry.prepare_sql.return_value = QueryResult(
-            data=[], error="unresolved dbt ref", error_code=ERR_WAREHOUSE_RUNTIME
+            data=[], error=QueryError("unresolved dbt ref", code=ERR_WAREHOUSE_RUNTIME)
         )
 
         result = _check_sql("SELECT * FROM {{ ref('gone') }}", registry)
@@ -864,8 +904,9 @@ class TestWarehouseCheckExplain:
             "postgres",
             QueryResult(
                 data=[],
-                error='column "customer_id" does not exist',
-                error_code=ERR_WAREHOUSE_RUNTIME,
+                error=QueryError(
+                    'column "customer_id" does not exist', code=ERR_WAREHOUSE_RUNTIME
+                ),
             ),
         )
         result = _check_sql("SELECT customer_id FROM t", registry)
@@ -873,16 +914,11 @@ class TestWarehouseCheckExplain:
         assert "customer_id" in result.error
 
     def test_connection_fault_is_unchecked_not_invalid(self):
-        from dbt_charts.core.diagnostics.codes_execute import (
-            ERR_WAREHOUSE_CONNECTION,
-        )
-
         registry = self._registry(
             "snowflake",
             QueryResult(
                 data=[],
-                error="could not connect",
-                error_code=ERR_WAREHOUSE_CONNECTION,
+                error=QueryError("could not connect", code=ERR_WAREHOUSE_CONNECTION),
             ),
         )
         result = _check_sql("SELECT 1", registry)
@@ -999,8 +1035,10 @@ class TestWarehouseCheckClickHouse:
         registry = self._registry(
             QueryResult(
                 data=[],
-                error="Code: 47. DB::Exception: Unknown expression identifier `nope`",
-                error_code=ERR_WAREHOUSE_RUNTIME,
+                error=QueryError(
+                    "Code: 47. DB::Exception: Unknown expression identifier `nope`",
+                    code=ERR_WAREHOUSE_RUNTIME,
+                ),
             )
         )
         result = _check_sql("SELECT nope FROM orders", registry)

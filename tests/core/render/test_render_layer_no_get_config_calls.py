@@ -157,14 +157,14 @@ def test_g_render_title_uses_title_font_family_param() -> None:
     )
     style = resolve_style(seed)
 
-    result = render_title("My Title", 400.0, prose=True, resolved_style=style)
+    result = render_title("My Title", 400.0, resolved_style=style)
     assert "SentinelFontG" in result
 
 
-def test_g_render_title_uses_title_font_path_for_prose(
+def test_g_render_title_uses_title_font_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """render_title must measure prose title text with the selected title family."""
+    """render_title must measure title text with the selected title family."""
     import mdsvg.renderer
     from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.fonts import SOURCE_SERIF_4_FONT_FAMILY, get_face
@@ -195,18 +195,22 @@ def test_g_render_title_uses_title_font_path_for_prose(
     )
     style = resolve_style(seed)
 
-    render_title("My Prose Title", 400.0, prose=True, resolved_style=style)
+    render_title("My Title", 400.0, resolved_style=style)
 
     assert captured["regular"] == str(get_face(SOURCE_SERIF_4_FONT_FAMILY).measure_path)
 
 
-def test_g_render_title_uses_body_font_path_for_non_prose(
+def test_g_render_title_uses_title_font_path_not_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """render_title(prose=False) must measure with the body text family."""
+    """render_title must measure with the title family, never the body family
+    — even when it's the body family (not the title family) that's set to a
+    distinctive value. A board title is always drawn as a heading, so there
+    is no separate "non-prose" fallback to the body family to test for.
+    """
     import mdsvg.renderer
     from dbt_charts.core.compile.models.primitives import FontStyle
-    from dbt_charts.core.fonts import SOURCE_SERIF_4_FONT_FAMILY, get_face
+    from dbt_charts.core.fonts import INTER_VARIABLE_FONT_FAMILY, get_face
     from dbt_charts.core.render.svg_utils import render_title
 
     captured: dict[str, str] = {}
@@ -229,14 +233,17 @@ def test_g_render_title_uses_body_font_path_for_non_prose(
         update={
             "text": base.text.model_copy(
                 update={"font": FontStyle(family="Source Serif 4, Georgia, serif")}
-            )
+            ),
+            "title": base.title.model_copy(
+                update={"font": FontStyle(family="Inter, sans-serif")}
+            ),
         }
     )
     style = resolve_style(seed)
 
-    render_title("My Non-Prose Title", 400.0, prose=False, resolved_style=style)
+    render_title("My Title", 400.0, resolved_style=style)
 
-    assert captured["regular"] == str(get_face(SOURCE_SERIF_4_FONT_FAMILY).measure_path)
+    assert captured["regular"] == str(get_face(INTER_VARIABLE_FONT_FAMILY).measure_path)
 
 
 # =============================================================================

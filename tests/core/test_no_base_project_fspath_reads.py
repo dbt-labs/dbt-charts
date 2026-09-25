@@ -62,14 +62,14 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/compile/config.py", 565): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 180): (
+    ("core/execute/adapters/adapter_registry.py", 181): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 186): (
+    ("core/execute/adapters/adapter_registry.py", 187): (
         "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
         "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 188): (
+    ("core/execute/adapters/adapter_registry.py", 189): (
         "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),

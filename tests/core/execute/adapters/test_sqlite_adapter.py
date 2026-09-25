@@ -130,9 +130,8 @@ class TestSqliteAdapterExecutes:
         source_cfg = SQLiteSourceConfig(type="sqlite", path=str(db_path))
         result = adapter._execute(query, source_config=source_cfg)
         assert result.error is not None
-        assert (
-            "nonexistent_table_xyz" in result.error or "no such table" in result.error
-        )
+        error = str(result.error)
+        assert "nonexistent_table_xyz" in error or "no such table" in error
 
     def test_sqlite_nonexistent_path_surfaces_error(self, tmp_path: Path) -> None:
         """A path pointing to a nonexistent file surfaces a connection fault.
@@ -151,7 +150,7 @@ class TestSqliteAdapterExecutes:
         source_cfg = SQLiteSourceConfig(type="sqlite", path=str(bad_path))
         result = adapter._execute(query, source_config=source_cfg)
         assert result.error is not None
-        assert result.error_code == ERR_WAREHOUSE_CONNECTION
+        assert result.error.code == ERR_WAREHOUSE_CONNECTION
 
     def test_date_param_executes_correctly(self, tmp_path: Path) -> None:
         """A datetime.date parameter executes without DATE literal syntax errors."""
@@ -527,7 +526,10 @@ class TestSqliteAdapterDataDir:
 
         result = adapter._execute(query, source_config=source_cfg)
 
-        assert result.error_code != ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR
+        assert (
+            result.error is None
+            or result.error.code != ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR
+        )
 
 
 class TestSqliteRegistryRouting:

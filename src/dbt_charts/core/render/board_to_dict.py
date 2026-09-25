@@ -234,7 +234,7 @@ def _render_chart_item(
         return {
             "type": "chart",
             "id": chart.id,
-            "_error": diagnostic.model_dump(exclude_none=True),
+            "_error": diagnostic.model_dump(exclude_none=True, exclude={"detail"}),
         }
     except Exception as e:  # noqa: BLE001
         wrapped = RenderError.from_code(ERR_INTERNAL, message=str(e))
@@ -244,7 +244,7 @@ def _render_chart_item(
         return {
             "type": "chart",
             "id": chart.id,
-            "_error": diagnostic.model_dump(exclude_none=True),
+            "_error": diagnostic.model_dump(exclude_none=True, exclude={"detail"}),
         }
 
 

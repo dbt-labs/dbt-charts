@@ -26,7 +26,12 @@ from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
     is_schema_query,
 )
-from dbt_charts.core.execute.adapters.base import BaseAdapter, QueryParams, QueryResult
+from dbt_charts.core.execute.adapters.base import (
+    BaseAdapter,
+    QueryParams,
+    QueryResult,
+    plain_error,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.execute.adapters import AdapterRegistry
@@ -56,10 +61,7 @@ class SchemaAdapter(BaseAdapter):
         source_config: ResolvedSourceConfig | None = None,
     ) -> QueryResult:
         if not is_schema_query(query):
-            return QueryResult(
-                data=[],
-                error=f"Expected schema query, got {query.query_type}",
-            )
+            return plain_error(f"Expected schema query, got {query.query_type}")
 
         source = query.source
         schema = query.schema_name
@@ -95,10 +97,7 @@ class SchemaAdapter(BaseAdapter):
                 envelope.get("sources", {}).get(source, {}).get("schemas", {})
             )
             if schema not in source_schemas:
-                return QueryResult(
-                    data=[],
-                    error=f"Schema {schema!r} not found in source {source!r}",
-                )
+                return plain_error(f"Schema {schema!r} not found in source {source!r}")
             tables: dict[str, Any] = source_schemas[schema].get("tables", {})
             rows = [{**m, "name": n} for n, m in tables.items()]
             return QueryResult(data=query.project(query.apply_limit(rows)))
@@ -113,9 +112,8 @@ class SchemaAdapter(BaseAdapter):
                 .get("tables", {})
             )
             if table not in all_tables:
-                return QueryResult(
-                    data=[],
-                    error=f"Table {schema}.{table} not found in source {source!r}",
+                return plain_error(
+                    f"Table {schema}.{table} not found in source {source!r}"
                 )
             columns: dict[str, Any] = all_tables[table].get("columns") or {}
             rows = [{**m, "name": n} for n, m in columns.items()]
@@ -145,14 +143,10 @@ class SchemaAdapter(BaseAdapter):
                 .get("tables", {})
             )
             if not table_found:
-                return QueryResult(
-                    data=[],
-                    error=f"Table {schema}.{table} not found in source {source!r}",
+                return plain_error(
+                    f"Table {schema}.{table} not found in source {source!r}"
                 )
-            return QueryResult(
-                data=[],
-                error=f"Column {column!r} not found in {schema}.{table}",
-            )
+            return plain_error(f"Column {column!r} not found in {schema}.{table}")
         return QueryResult(data=query.project([{**col_map[column], "name": column}]))
 
 

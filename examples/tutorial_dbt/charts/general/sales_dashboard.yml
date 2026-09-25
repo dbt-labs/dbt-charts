@@ -1,5 +1,5 @@
 title: Sales Overview
-source: duckdb_local
+source: dbt_charts_examples
 text: |
   **Monthly Revenue Analysis**
 

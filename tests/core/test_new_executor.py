@@ -341,15 +341,7 @@ rows:
         mock_registry = Mock()
         mock_result = Mock()
         mock_result.is_success = False
-        mock_result.error = "Table not found"
-        # Unclassified failure: real adapters default error_code/fields to
-        # None (dbt_charts.core.execute.adapters.base.QueryResult) when they
-        # haven't produced a structured code, which routes
-        # _query_error_from_result through the legacy `result.error` path.
-        # Mock() auto-vivifies these as truthy Mock objects if left unset,
-        # which would wrongly take the structured-fields branch.
-        mock_result.error_code = None
-        mock_result.fields = None
+        mock_result.error = QueryError("Table not found")
         mock_registry.execute.return_value = mock_result
 
         executor = Executor(

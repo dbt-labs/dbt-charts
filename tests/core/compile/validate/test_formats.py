@@ -71,6 +71,17 @@ def test_native_formatter_rejected_on_vega_number_format() -> None:
     assert result.errors[0].code == "ERR-FORMAT-NATIVE-IN-VEGA-SLOT"
 
 
+def test_native_formatter_remedy_never_names_a_percent_spec_without_the_division() -> (
+    None
+):
+    """These formats hold whole-number values; `.1%` alone paints them 100x
+    too large, so the message may name it only after the divide-by-100."""
+    for name in ("percent_number", "percentage_points_delta"):
+        message = compile_board(_board_with_format(name)).errors[0].message
+        assert message.count(".1%") == 1
+        assert message.index("divide by 100") < message.index(".1%")
+
+
 def test_year_alias_compiles_clean() -> None:
     """year is a theme alias (resolving to the raw d3 spec "d") — must not error."""
     result = compile_board(_board_with_format("year"))

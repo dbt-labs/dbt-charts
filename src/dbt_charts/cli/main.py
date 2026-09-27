@@ -822,7 +822,8 @@ def render(
             "--no-warnings",
             help=(
                 "Suppress warning output to stderr. Warnings are still included "
-                "in --format json output so agents and consumers always see them."
+                "in --format json/text output so agents and consumers always see "
+                "them."
             ),
         ),
     ] = False,

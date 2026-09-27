@@ -86,7 +86,7 @@ def _bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _ = (
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
         _bake_cartesian_axes(
             rcs,
             fixture_chart_for_type("bar"),

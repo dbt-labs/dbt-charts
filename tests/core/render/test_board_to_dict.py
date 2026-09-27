@@ -156,7 +156,9 @@ def test_render_chart_item_error_diagnostic_carries_authored_path(
     executor.execute_chart.side_effect = ExecutionError("timeout")
     collector: list[Any] = []
 
-    _render_chart_item(chart, executor, {}, error_collector=collector)
+    _render_chart_item(
+        chart, executor, {}, _default_chart_style_context(), error_collector=collector
+    )
 
     assert collector[0].path == f"charts.{chart.id}"
 

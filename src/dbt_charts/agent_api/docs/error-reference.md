@@ -411,10 +411,10 @@ Fired when a predefined format name from one half of the vocabulary lands in a s
 **Message template:**
 
 ```
-Format {spec!r} at {field_path} is a Python-only native formatter and cannot be used in Vega-rendered slots (axis labels, mark value labels, number_format, time_format, support_table). Use it only in KPI or table format fields. Valid alternatives: {available}.
+Format {spec!r} at {field_path} is a Python-only native formatter and cannot be used in Vega-rendered slots (axis labels, mark value labels, number_format, time_format, support_table). Move it to a KPI value or table cell, or transform the value in the query to match a plain d3 spec (for a whole-number percent, divide by 100 and then use a d3 percent spec such as ".1%"). Valid alternatives: {available}.
 ```
 
-Fired when `percent_number`, `percent_number_delta`, or `percentage_points_delta` appears in a Vega-rendered format slot such as an axis label, mark value-label format, number_format, time_format, or support_table format. These names bypass d3 entirely and are only valid in Python-rendered slots (KPI headline and table cells). For Vega-rendered slots, use a d3 percent spec (e.g. `.1%`) or another predefined name.
+Fired when `percent_number`, `percent_number_delta`, or `percentage_points_delta` appears in a Vega-rendered format slot such as an axis label, mark value-label format, number_format, time_format, or support_table format. These names bypass d3 entirely and are only valid in Python-rendered slots (KPI headline and table cells). To keep the value in a Vega-rendered slot, transform it in the query to match a plain d3 spec: for a whole-number percent, divide by 100 and then use a d3 percent spec such as `.1%`.
 
 ### ERR-FORMAT-PREDEFINED-SHADOW: style.formats key shadows an engine-predefined format name
 

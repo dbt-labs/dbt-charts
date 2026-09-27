@@ -134,14 +134,17 @@ def _bake_cartesian_axes(
     axis_overrides: AxisOverrides,
     multiples: MultiplesConfig | None = None,
     y: str | list[str] | None = None,
-) -> tuple[AxisXStyle, AxisYStyle, float | None, float | None, bool, bool]:
+) -> tuple[AxisXStyle, AxisYStyle, float | None, float | None, bool, bool, str | None]:
     """Walk the 13-layer axis cascade for axis_x and axis_y, returning the
     merged, theme-typed axis pair, each axis's band_position (None unless
     that channel classified ordinal/nominal and a band override authored it),
-    and axis_y's format_authored/format_is_alias flags (see
-    ``_merge_axis_cascade``) — NOT yet built into the frozen
-    ``ResolvedAxisStyle``. axis_x's format_authored/format_is_alias are
-    discarded — no caller threads them into ``build_resolved_axis`` today,
+    axis_y's format_authored/format_is_alias flags (see
+    ``_merge_axis_cascade``), and axis_y's raw pre-resolve format string
+    (``ay_format_raw``, None unless ``ay_format_authored`` — see
+    ``ResolvedAxisStyle.format_authored_raw``), captured here before this
+    function's own ``resolve_format()`` call overwrites it. axis_x's
+    format_authored/format_is_alias are discarded — no caller threads them
+    into ``build_resolved_axis`` today,
     since no caller passes ``tick_values`` for axis_x.
 
     ``ay_format_is_alias`` returned here is NOT just ``_merge_axis_cascade``'s
@@ -195,7 +198,7 @@ def _bake_cartesian_axes(
     # own isinstance-guarded access — _bake_cartesian_axes is only ever
     # called with a cartesian family in practice, but its declared parameter
     # type is the full Chart union.
-    ax, ax_band_position, _, _ = _merge_axis_cascade(
+    ax, ax_band_position, _, _, _ = _merge_axis_cascade(
         chart_style_context,
         "axis_x",
         x_channel_type,
@@ -209,7 +212,13 @@ def _bake_cartesian_axes(
         chart_type=chart_type,
         label_authored=bool(getattr(chart, "x_label", None)),
     )
-    ay, ay_band_position, ay_format_authored, ay_format_is_alias = _merge_axis_cascade(
+    (
+        ay,
+        ay_band_position,
+        ay_format_authored,
+        ay_format_is_alias,
+        ay_format_raw,
+    ) = _merge_axis_cascade(
         chart_style_context,
         "axis_y",
         y_channel_type,
@@ -253,6 +262,14 @@ def _bake_cartesian_axes(
                 "labels": ax.labels.model_copy(update={"format": resolved_ax_format})
             }
         )
+    # ay_format_raw (unpacked from _merge_axis_cascade above) is the raw
+    # pre-alias-resolution name/spec, kept only when an authored cascade
+    # layer actually set it (never a bare theme default) -- see
+    # ResolvedAxisStyle.format_authored_raw. It must be read off that return
+    # value, not re-derived from ay.labels.format here: the chart-format-
+    # fallback layer (Layer 10, below in _merge_axis_cascade) already
+    # resolves its own contribution to ay.labels.format before returning, so
+    # by this point the raw name is gone for that layer's case.
     if ay.labels.format is not None:
         # ay.labels.format is still the raw pre-resolve string here -- the
         # final winner of the whole 13-layer cascade, whichever layer set it
@@ -296,6 +313,7 @@ def _bake_cartesian_axes(
         ay_band_position,
         ay_format_authored,
         ay_format_is_alias,
+        ay_format_raw,
     )
 
 

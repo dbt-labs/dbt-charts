@@ -16,6 +16,7 @@ from dbt_charts.ai.tool_schemas import (
     QUERY_BOARD,
     RENDER_BOARD,
     SUGGEST_BOARD_PLACEMENT,
+    restrict_enum,
     subset_tool,
 )
 
@@ -115,6 +116,41 @@ class TestSubsetTool:
         (tool,) = normalize_openai_tools([subset_tool(RENDER_BOARD, ["yaml_content"])])
         assert tool["strict"] is True
         assert not strict_mode_violations(tool["parameters"])
+
+
+class TestRestrictEnum:
+    """restrict_enum narrows one property's allowed values in the canonical
+    shape — A lIe offers render_board.format but must exclude 'svg' (its own
+    routes.py renders the SVG; offering it makes the model paste raw SVG into
+    its narrative)."""
+
+    def test_narrows_the_named_property_enum(self) -> None:
+        narrowed = restrict_enum(RENDER_BOARD, "format", ["text", "json"])
+        schema = narrowed["input_schema"]["properties"]["format"]
+        (enum_branch,) = [b for b in schema["anyOf"] if "enum" in b]
+        assert enum_branch["enum"] == ["text", "json"]
+
+    def test_leaves_the_source_tool_untouched(self) -> None:
+        restrict_enum(RENDER_BOARD, "format", ["text"])
+        schema = RENDER_BOARD["input_schema"]["properties"]["format"]
+        (enum_branch,) = [b for b in schema["anyOf"] if "enum" in b]
+        assert "svg" in enum_branch["enum"]
+
+    def test_unknown_property_raises(self) -> None:
+        with pytest.raises(ValueError, match="no property"):
+            restrict_enum(RENDER_BOARD, "fromat", ["text"])
+
+    def test_unknown_allowed_value_raises(self) -> None:
+        """A typo'd allowed value must fail loudly, not silently offer nothing."""
+        with pytest.raises(ValueError, match="not a valid"):
+            restrict_enum(RENDER_BOARD, "format", ["txt"])
+
+    def test_composes_with_subset_tool(self) -> None:
+        narrowed = subset_tool(
+            restrict_enum(RENDER_BOARD, "format", ["text", "json"]),
+            ["path", "format"],
+        )
+        assert set(narrowed["input_schema"]["properties"]) == {"path", "format"}
 
 
 class TestSuggestBoardPlacement:

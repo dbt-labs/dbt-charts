@@ -541,6 +541,18 @@ class ResolvedAxisStyle:
     # or unpinned data close enough to 0 for the axis to reach it on its
     # own. False on a non-measure axis or when no anchor decision ran.
     zero_anchored: bool = False
+    # The authored value-axis format name/spec, pre-alias-resolution — e.g.
+    # "currency", not "$.3~s" — captured by the cartesian resolve path
+    # (``_bake_cartesian_axes``) before its own ``resolve_format()`` call
+    # overwrites ``labels.format`` with the resolved d3 spec that axis
+    # painting needs. None when no cascade layer authored a format (a bare
+    # axis using the theme default). Only bar/line/area/scatter's axis_y
+    # populates this; every other axis (axis_x, non-cartesian families)
+    # leaves it None. A reader that needs to re-format a raw value the way
+    # this axis does — applying house notation, the sub-unit fallback — must
+    # use this field, not ``labels.format``: the latter is already resolved
+    # and re-feeding a resolved spec through the format functions skips both.
+    format_authored_raw: str | None = None
 
     def __post_init__(self) -> None:
         if self.ruler is not None and self.tick_label is not None:

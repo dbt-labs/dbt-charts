@@ -15,10 +15,26 @@ from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
-from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
+    BarChart,
+    Chart,
+    LineChart,
+    ScatterChart,
+)
+from dbt_charts.core.compile.models.chart.resolved import (
+    FormatState,
+    ResolvedAreaChart,
+    ResolvedBarChart,
+    ResolvedKpiChart,
+    ResolvedLineChart,
+    ResolvedScatterChart,
+)
+from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.variable.authored import INTERNAL_VARIABLE_FIELDS
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.execute.chart_resolution import collect_shared_y_datasets
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
@@ -27,6 +43,25 @@ from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 #: unbounded default keeps the cap a required, always-comparable int instead
 #: of an Optional threaded through every layer.
 NO_ROW_CAP = sys.maxsize
+
+#: Cartesian families whose value axis (y) carries a chart-authored
+#: number_format worth surfacing to the text formatter — narrows the
+#: discriminated Chart union so `.style.number_format` type-checks (KPI,
+#: table, and the other families don't declare that field). Histogram shares
+#: BarChart's normalized class; heatmap and layered are out of scope.
+_CARTESIAN_VALUE_AXIS_CLASSES = (BarChart, LineChart, AreaChart, ScatterChart)
+_CartesianValueAxisChart = BarChart | LineChart | AreaChart | ScatterChart
+
+#: The resolved-model counterparts of ``_CARTESIAN_VALUE_AXIS_CLASSES``, for
+#: narrowing the ``resolved`` (post-``resolve()``) union — a separate
+#: isinstance check because narrowing ``chart`` (pre-resolve) does not carry
+#: over to the differently-typed ``resolved`` variable.
+_RESOLVED_CARTESIAN_VALUE_AXIS_CLASSES = (
+    ResolvedBarChart,
+    ResolvedLineChart,
+    ResolvedAreaChart,
+    ResolvedScatterChart,
+)
 
 #: Fields to emit on a chart definition, in readable order. Shared by the
 #: ``yaml`` and ``data`` formats so there is one chart projection rather than
@@ -170,12 +205,119 @@ def kept_rows_phrase(truncated: dict[str, int]) -> str:
     return f"first {truncated['head']} of {truncated['total']} rows"
 
 
+def _cartesian_y_range_display(
+    chart: _CartesianValueAxisChart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — query row
+    value_axis_format: FormatState,
+    formats: dict[str, str] | None,
+) -> str | None:
+    """Format the y column's min-max range the way the value axis draws it.
+
+    ``value_axis_format`` is passed through unresolved (the authored
+    name/spec, not a pre-resolved d3 spec) so ``format_value`` can apply
+    house notation and the sub-unit fallback internally.
+    """
+    if value_axis_format is None or not isinstance(chart.y, str):
+        return None
+    from dbt_charts.core.render.format_utils import format_value
+
+    values = [row[chart.y] for row in data if row.get(chart.y) is not None]
+    if not values or not all(isinstance(v, (int, float)) for v in values):
+        return None
+    lo, hi = min(values), max(values)
+    return (
+        f"{format_value(lo, value_axis_format, formats)}"
+        f"–{format_value(hi, value_axis_format, formats)}"
+    )
+
+
+def _kpi_display_text(
+    prefix: str,
+    number_str: str,
+    suffix: str,
+    format_input: FormatState,
+    cell: Any,  # type-state: explicit_any — a raw query row cell, dynamically typed
+    is_numeric: bool,
+) -> str:
+    """Combine formatted parts; append the raw cell in parens when a format changed it.
+
+    Only numeric cells disambiguate this way — a plain string/status cell's
+    formatted value already IS the raw cell, and an unformatted numeric
+    cell's plain digits have nothing to disambiguate against.
+    """
+    formatted = f"{prefix}{number_str}{suffix}"
+    if not is_numeric or format_input is None:
+        return formatted
+    raw = str(cell)
+    return formatted if formatted == raw else f"{formatted} ({raw})"
+
+
+def _kpi_text_parts(
+    resolved: ResolvedKpiChart,
+    row: dict[str, Any],  # type-state: explicit_any — a query row, dynamically typed
+    formats: dict[str, str] | None,
+) -> dict[str, str]:
+    """Format a KPI's headline value and support line as the SVG renderer draws them.
+
+    Routes through kpi.py's own ``_resolve_value``/``_format_value_parts`` —
+    the canonical mapper the SVG renderer draws with — working from the live
+    resolved model rather than its JSON-dumped form, so sub-unit money,
+    temporal cells, and SI-compaction thresholds all agree with what the
+    chart actually paints. A missing value/support column raises
+    ``ChartDataError``, same as the render layer.
+    """
+    from dbt_charts.core.render.chart.kpi import _format_value_parts, _resolve_value
+
+    chart_id = resolved.id
+    cell, _ = _resolve_value(resolved.value, row, chart_id)
+    prefix, number_str, suffix, is_numeric = _format_value_parts(
+        cell,
+        resolved.format,
+        chart_id,
+        formats,
+        native=resolved.format_native,
+        format_may_be_cascaded=True,
+    )
+    display = _kpi_display_text(
+        prefix, number_str, suffix, resolved.format, cell, is_numeric
+    )
+    # Headline glyph (e.g. "▲"): a style setting (chart/kpi.py:548 draws it
+    # from the same slot), distinct from the support glyph below, which is
+    # per-instance authored on the support block itself.
+    kpi_style = resolved.style.kpi
+    glyph_char = kpi_style.glyph.character if kpi_style is not None else None
+    if glyph_char:
+        display = f"{glyph_char} {display}"
+    parts: dict[str, str] = {"value": display}
+
+    support = resolved.support
+    if support is not None:
+        value_str = ""
+        if support.value is not None:
+            s_cell, _ = _resolve_value(support.value, row, chart_id)
+            s_prefix, s_number_str, s_suffix, s_is_numeric = _format_value_parts(
+                s_cell, support.format, chart_id, formats
+            )
+            value_str = _kpi_display_text(
+                s_prefix, s_number_str, s_suffix, support.format, s_cell, s_is_numeric
+            )
+        glyph = support.glyph or ""  # type-state: silent_fallback — unauthored
+        label = support.label or ""  # type-state: silent_fallback — unauthored
+        support_line = " ".join(part for part in (glyph, value_str, label) if part)
+        if support_line:
+            parts["support"] = support_line
+    return parts
+
+
 def _render_chart_item(
     chart: Chart,
     executor: Executor,
     variables: VariableValues,
+    chart_style_context: ChartStyleContext,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
+    *,
+    include_text_format: bool = False,
 ) -> dict[str, Any]:
     """Execute, resolve, and serialize a single chart item.
 
@@ -184,16 +326,28 @@ def _render_chart_item(
     latest points of an ascending time series (the chart's right edge) both
     survive. Truncation is always explicit via a
     ``rows_truncated: {head, tail, total}`` record on the item.
+
+    ``chart_style_context`` is the board's own compiled cascade context
+    (``board.chart_style_context``, threaded down by ``_render_board_items``)
+    — the same one every other render-layer consumer resolves a chart
+    against, so a board's own ``style.formats`` aliases apply here too.
+
+    ``include_text_format`` is True only when ``render_board_text`` is the
+    caller. It gates the ``kpi_text``/``y_range_display`` keys, which are
+    text-only presentation, never part of the json/yaml/data wire shape —
+    and, unlike the rest of this function, can raise on a value the chart
+    paints fine (e.g. ``ERR-PERCENT-RANGE``). Gating them keeps that failure
+    mode entirely off the json/yaml/data path, which never sets this flag,
+    while the existing per-chart try/except below still isolates it for text:
+    one bad chart degrades to an error line, the rest of the text render
+    survives.
     """
-    from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
     from dbt_charts.core.diagnostics.execution import ExecutionError
     from dbt_charts.core.render.errors import RenderError
 
     try:
         data = executor.execute_chart(chart, variables)
-        chart_style_context = resolve_chart_style_context(get_theme_style())
         datasets = collect_shared_y_datasets(chart, data, executor, variables)
         # Resolve against the full result so data-aware resolution (auto type,
         # auto fields) is unaffected by the cap; only the emitted rows shrink.
@@ -206,7 +360,8 @@ def _render_chart_item(
             head = max_rows_per_query - tail
             rows_truncated = {"head": head, "tail": tail, "total": len(data)}
             data = data[:head] + (data[-tail:] if tail else [])
-        return {
+
+        item: dict[str, Any] = {  # type-state: explicit_any — the wire dict
             "type": "chart",
             # Exclude resolved-internal fields that have no authored-schema counterpart
             # and would break yaml-format round-trip re-compile.
@@ -227,6 +382,31 @@ def _render_chart_item(
             "data": data,
             **({"rows_truncated": rows_truncated} if rows_truncated else {}),
         }
+
+        if include_text_format:
+            if isinstance(chart, _CARTESIAN_VALUE_AXIS_CLASSES) and isinstance(
+                resolved, _RESOLVED_CARTESIAN_VALUE_AXIS_CLASSES
+            ):
+                value_axis_format = resolved.style.axis_y.format_authored_raw
+                y_range_display = _cartesian_y_range_display(
+                    chart, data, value_axis_format, chart_style_context.formats
+                )
+                if y_range_display:
+                    item["y_range_display"] = y_range_display
+            if isinstance(resolved, ResolvedKpiChart):
+                if not data:
+                    # Matches _render_kpi_svg_core's own guard (chart/kpi.py) —
+                    # a KPI with no data is an authoring mistake there, not a
+                    # blank card, so text must not silently render an empty
+                    # KPI section either.
+                    raise ChartDataError(
+                        f"KPI chart '{chart.id}' has no data — query returned 0 rows",
+                        chart_id=chart.id,
+                    )
+                item["kpi_text"] = _kpi_text_parts(
+                    resolved, data[0], chart_style_context.formats
+                )
+        return item
     except (RenderError, ExecutionError, DbtChartsError) as e:
         diagnostic = stamp_chart_diagnostic(e, chart.id, chart.source_path)
         if error_collector is not None:
@@ -254,6 +434,8 @@ def _render_board_items(
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
+    *,
+    include_text_format: bool = False,
 ) -> list[dict[str, Any]]:
     """Walk layout items and serialize each."""
     results: list[dict[str, Any]] = []
@@ -261,7 +443,13 @@ def _render_board_items(
         if item.type == "chart" and item.chart:
             results.append(
                 _render_chart_item(
-                    item.chart, executor, variables, error_collector, max_rows_per_query
+                    item.chart,
+                    executor,
+                    variables,
+                    board.chart_style_context,
+                    error_collector,
+                    max_rows_per_query,
+                    include_text_format=include_text_format,
                 )
             )
         elif item.type == "board" and item.board:
@@ -274,6 +462,7 @@ def _render_board_items(
                         variables,
                         error_collector,
                         max_rows_per_query,
+                        include_text_format=include_text_format,
                     ),
                 }
             )
@@ -286,6 +475,8 @@ def board_to_dict(
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
+    *,
+    include_text_format: bool = False,
 ) -> dict[str, Any]:
     """Convert a board to a JSON-serializable dict.
 
@@ -293,6 +484,11 @@ def board_to_dict(
     model-facing output where an unbounded dump would blow out context.
     Truncation is never silent: capped items carry ``rows_truncated``.
     Defaults to ``NO_ROW_CAP`` (embed everything).
+
+    ``include_text_format`` is for ``render_board_text`` only — see
+    ``_render_chart_item``'s docstring. Every other caller (json/yaml/data)
+    leaves it False, so this function's output for those formats is
+    unaffected by the text formatter's own presentation-only keys.
     """
     if max_rows_per_query < 1:
         from dbt_charts.core.render.errors import RenderError
@@ -307,7 +503,12 @@ def board_to_dict(
         "id": board.id,
         "title": board.title,
         "items": _render_board_items(
-            board, executor, variables, error_collector, max_rows_per_query
+            board,
+            executor,
+            variables,
+            error_collector,
+            max_rows_per_query,
+            include_text_format=include_text_format,
         ),
     }
     if board.variables:

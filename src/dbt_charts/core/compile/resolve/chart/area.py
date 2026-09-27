@@ -527,6 +527,7 @@ def _resolve_area(
         ax_edge=None,
         ay_format_authored=plan.ay_format_authored,
         ay_format_is_alias=plan.ay_format_is_alias,
+        ay_format_raw=plan.ay_format_raw,
         ticks=_CartesianTickResolution(
             area_ticks.ticks, area_domain_max, area_domain_min
         ),

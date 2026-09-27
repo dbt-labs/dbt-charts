@@ -95,7 +95,7 @@ def _axis_x_with_scale(chart_type: str, scale: ResolvedScaleStyle) -> Any:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, _, ax_band_position, _, _, _ = _bake_cartesian_axes(
+    ax_merged, _, ax_band_position, _, _, _, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,

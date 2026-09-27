@@ -55,7 +55,7 @@ def _sparse_daily_data() -> list[dict[str, Any]]:
 def _temporal_bar_axes():
     """Bake axis_x/axis_y for a bar chart with a temporal x channel."""
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _ = (
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
         _bake_cartesian_axes(
             chart_style_context,
             fixture_chart_for_type("bar"),

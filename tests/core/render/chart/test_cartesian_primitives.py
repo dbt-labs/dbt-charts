@@ -50,7 +50,7 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
     chart_style_context = resolve_chart_style_context(
         get_theme_style(get_default_theme_name())
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _ = (
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
         _bake_cartesian_axes(
             chart_style_context,
             fixture_chart_for_type("line"),
@@ -349,7 +349,7 @@ class TestPinNormalizeAxisFormat:
         chart_style_context = resolve_chart_style_context(
             get_theme_style(get_default_theme_name())
         )
-        _, ay_merged, _, ay_band_position, ay_format_authored, ay_format_is_alias = (
+        _, ay_merged, _, ay_band_position, ay_format_authored, ay_format_is_alias, _ = (
             _bake_cartesian_axes(
                 chart_style_context,
                 fixture_chart_for_type("line"),

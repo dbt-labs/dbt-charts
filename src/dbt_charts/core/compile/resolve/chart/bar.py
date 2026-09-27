@@ -1173,6 +1173,7 @@ def _resolve_bar(
         ax_edge=x_edge,
         ay_format_authored=plan.ay_format_authored,
         ay_format_is_alias=plan.ay_format_is_alias,
+        ay_format_raw=plan.ay_format_raw,
         ticks=_CartesianTickResolution(tick_values, bar_domain_max, bar_domain_min),
         column_forming=orientation != "horizontal",
         measure_tooltip_format=_measure_tooltip_format(

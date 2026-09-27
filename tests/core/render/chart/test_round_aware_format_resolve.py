@@ -73,6 +73,7 @@ def _resolved_axis_y_for_format(format_spec: str) -> object:
         ay_band,
         ay_format_authored,
         ay_format_is_alias,
+        _ay_format_raw,
     ) = _bake_cartesian_axes(
         chart_style_context, chart, "bar", "ordinal", "quantitative", AxisOverrides()
     )

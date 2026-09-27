@@ -202,7 +202,7 @@ def _scatter(scatter_style: ResolvedScatterStyle) -> ResolvedScatterChart:
     from ...conftest import fixture_chart_for_type
 
     _rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _ = (
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
         _bake_cartesian_axes(
             _rcs,
             fixture_chart_for_type("scatter"),
@@ -320,7 +320,7 @@ def _baked_axes_for(chart_type: str) -> tuple[Any, Any]:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _ = (
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
         _bake_cartesian_axes(
             rcs,
             fixture_chart_for_type(chart_type),
@@ -1330,7 +1330,7 @@ def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -
     overrides = AxisOverrides(
         x=AxisXStylePatch.model_validate({"time_unit": "yearquarter"})
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _ = (
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
         _bake_cartesian_axes(
             rcs,
             fixture_chart_for_type("line"),
@@ -1537,6 +1537,7 @@ def test_heatmap_emitter_color_ignores_chart_color_fallback() -> None:
         _hm_ay_merged,
         _hm_ax_band_position,
         _hm_ay_band_position,
+        _,
         _,
         _,
     ) = _bake_cartesian_axes(
@@ -1795,7 +1796,7 @@ def _baked_bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _ = (
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
         _bake_cartesian_axes(
             rcs,
             fixture_chart_for_type("bar"),

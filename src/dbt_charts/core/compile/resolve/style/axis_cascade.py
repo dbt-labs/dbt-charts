@@ -248,6 +248,7 @@ def build_resolved_axis(
     column_forming: bool = True,
     format_authored: bool,
     format_is_alias: bool,
+    format_authored_raw: str | None = None,
     is_quantitative: bool = False,
     quantitative_for_alignment: bool | None = None,
     zero_anchored: bool = False,
@@ -303,6 +304,14 @@ def build_resolved_axis(
     type error, not a silent wrong answer. A caller passing
     ``format_authored=False`` may pass ``False`` here too — the value is
     inert whenever the format was never authored at all.
+
+    ``format_authored_raw`` is baked straight onto
+    ``ResolvedAxisStyle.format_authored_raw`` — see that field's docstring.
+    Optional and unrelated to ``format_authored``/``format_is_alias``
+    above: only the cartesian resolve path (``_bake_cartesian_axes`` via
+    ``build_cartesian_axes``) has a pre-resolve raw string left to offer by
+    this point, since it is the only caller whose own ``axis.labels.format``
+    already got overwritten with the resolved d3 spec before reaching here.
 
     ``is_quantitative`` is a channel-type fact: is this axis's field numeric
     rather than categorical. It is baked straight onto
@@ -704,6 +713,7 @@ def build_resolved_axis(
         domain_min=None if domain_min is ... else domain_min,
         is_quantitative=is_quantitative,
         zero_anchored=zero_anchored,
+        format_authored_raw=format_authored_raw,
     )
 
 
@@ -804,6 +814,17 @@ def _patch_format_is_alias(patch: BaseModel) -> bool:
     return raw_spec in ALL_PREDEFINED_NAMES
 
 
+def _patch_format_raw(patch: BaseModel) -> str | None:
+    """Return a patch's authored ``labels.format`` raw string, pre-resolution.
+
+    Same precondition and ``model_dump()`` detour as ``_patch_format_is_alias``
+    (call only once ``_patch_authors_format(patch)`` is True) — this is the
+    same read, returning the string itself instead of collapsing it to a bool.
+    """
+    labels = patch.model_dump().get("labels")
+    return labels.get("format") if isinstance(labels, dict) else None
+
+
 @overload
 def _merge_axis_cascade(
     chart_style_context: ChartStyleContext,
@@ -815,7 +836,7 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
-) -> tuple[AxisXStyle, float | None, bool, bool]: ...
+) -> tuple[AxisXStyle, float | None, bool, bool, str | None]: ...
 
 
 @overload
@@ -829,7 +850,7 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
-) -> tuple[AxisYStyle, float | None, bool, bool]: ...
+) -> tuple[AxisYStyle, float | None, bool, bool, str | None]: ...
 
 
 def _merge_axis_cascade(
@@ -842,7 +863,7 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
-) -> tuple[AxisXStyle | AxisYStyle, float | None, bool, bool]:
+) -> tuple[AxisXStyle | AxisYStyle, float | None, bool, bool, str | None]:
     """Walk the 13-layer axis cascade and return the merged, channel-typed axis,
     any band_position found along the way, whether an authored layer set
     ``labels.format``, and whether that authored value's raw string was a
@@ -972,6 +993,7 @@ def _merge_axis_cascade(
     # ChartsStyle), so there is no board-level band slot here.
     format_authored = False
     format_is_alias = False
+    format_raw: str | None = None
 
     # model_dump values are dynamic; each is re-validated into a typed patch below.
     _cbo_data: dict[str, Any]  # type-state: explicit_any — Pydantic model_dump result
@@ -995,6 +1017,7 @@ def _merge_axis_cascade(
             if _patch_authors_format(_patch):
                 format_authored = True
                 format_is_alias = _patch_format_is_alias(_patch)
+                format_raw = _patch_format_raw(_patch)
 
     # Layer 10: chart-level format fallback (chart.format / style.number_format /
     # style.time_format).  Sits after all board layers so chart-authored format
@@ -1009,6 +1032,7 @@ def _merge_axis_cascade(
         if _fallback_spec is None:
             _fallback_spec = ""
         format_is_alias = _fallback_spec in ALL_PREDEFINED_NAMES
+        format_raw = _fallback_spec or None
         _resolved_fallback_fmt = resolve_format(
             chart_fallback_format, chart_style_context.formats
         )
@@ -1037,6 +1061,7 @@ def _merge_axis_cascade(
         ):
             format_authored = True
             format_is_alias = _patch_format_is_alias(axis_overrides.global_)
+            format_raw = _patch_format_raw(axis_overrides.global_)
         if channel_type == "quantitative":
             base = merge_onto_base(base, axis_overrides.quantitative)
             if axis_overrides.quantitative is not None and _patch_authors_format(
@@ -1044,6 +1069,7 @@ def _merge_axis_cascade(
             ):
                 format_authored = True
                 format_is_alias = _patch_format_is_alias(axis_overrides.quantitative)
+                format_raw = _patch_format_raw(axis_overrides.quantitative)
         elif channel_type in ("ordinal", "nominal", "band"):
             band_patch = axis_overrides.band
             if band_patch is not None:
@@ -1052,11 +1078,13 @@ def _merge_axis_cascade(
             if band_patch is not None and _patch_authors_format(band_patch):
                 format_authored = True
                 format_is_alias = _patch_format_is_alias(band_patch)
+                format_raw = _patch_format_raw(band_patch)
         _channel_patch = axis_overrides.x if axis_name == "axis_x" else axis_overrides.y
         base = merge_onto_base(base, _channel_patch)
         if _channel_patch is not None and _patch_authors_format(_channel_patch):
             format_authored = True
             format_is_alias = _patch_format_is_alias(_channel_patch)
+            format_raw = _patch_format_raw(_channel_patch)
     else:
         # v1 path: read chart-local patches from effective (set by build_chart_style_context).
         base = merge_onto_base(base, chart_style_context.axis_overrides_global)
@@ -1064,6 +1092,7 @@ def _merge_axis_cascade(
         if _global_patch is not None and _patch_authors_format(_global_patch):
             format_authored = True
             format_is_alias = _patch_format_is_alias(_global_patch)
+            format_raw = _patch_format_raw(_global_patch)
         if channel_type == "quantitative":
             base = merge_onto_base(
                 base, chart_style_context.axis_overrides_quantitative
@@ -1072,6 +1101,7 @@ def _merge_axis_cascade(
             if _quant_patch is not None and _patch_authors_format(_quant_patch):
                 format_authored = True
                 format_is_alias = _patch_format_is_alias(_quant_patch)
+                format_raw = _patch_format_raw(_quant_patch)
         elif channel_type in ("ordinal", "nominal", "band"):
             band_patch = chart_style_context.axis_overrides_band
             if band_patch is not None:
@@ -1080,11 +1110,13 @@ def _merge_axis_cascade(
             if band_patch is not None and _patch_authors_format(band_patch):
                 format_authored = True
                 format_is_alias = _patch_format_is_alias(band_patch)
+                format_raw = _patch_format_raw(band_patch)
         _channel_patch = getattr(chart_style_context, f"axis_overrides_{axis_name[-1]}")
         base = merge_onto_base(base, _channel_patch)
         if _channel_patch is not None and _patch_authors_format(_channel_patch):
             format_authored = True
             format_is_alias = _patch_format_is_alias(_channel_patch)
+            format_raw = _patch_format_raw(_channel_patch)
 
     # mirror.format is an authored per-edge relabel (AxisMirrorStyle, y-axis
     # only) that never passes through the labels.format cascade above — it
@@ -1110,7 +1142,7 @@ def _merge_axis_cascade(
             }
         )
 
-    return base, band_position, format_authored, format_is_alias
+    return base, band_position, format_authored, format_is_alias, format_raw
 
 
 def resolved_axis_style(
@@ -1191,7 +1223,7 @@ def resolved_axis_style(
     position is known) call ``_merge_axis_cascade`` + ``build_resolved_axis``
     directly instead of this wrapper.
     """
-    base, band_position, format_authored, format_is_alias = _merge_axis_cascade(
+    base, band_position, format_authored, format_is_alias, _ = _merge_axis_cascade(
         chart_style_context,
         axis_name,
         channel_type,

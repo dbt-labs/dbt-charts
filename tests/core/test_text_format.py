@@ -1,9 +1,14 @@
 """Tests for text render output format."""
 
+import dataclasses
+import json
+from datetime import datetime
 from unittest.mock import MagicMock
 
+from dbt_charts.core.compile.compiler import CompileResult
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.renderer import render
 
@@ -16,14 +21,56 @@ def _make_executor(data: list[dict]) -> MagicMock:
     ``cache_hit_ats`` must be a real (empty) list, not the default MagicMock
     attribute: render() now draws the board for every format (not just svg),
     and the svg footer/timestamp code iterates this attribute directly.
+
+    ``execute_query`` must also return real data, not the default MagicMock
+    attribute: render_warnings comes from that same draw pass (it always
+    runs, even for a data-bearing format — see renderer.py), and a stubbed
+    ``execute_chart`` alone leaves the draw pass reading a MagicMock as if it
+    were a zero-row query result, firing a spurious
+    WARN-QUERY-RETURNED-ZERO-ROWS into every test's text output.
     """
     executor = MagicMock(spec=Executor)
     executor.execute_chart.return_value = data
+    executor.execute_query.return_value = data
     executor.cache_hit_ats = []
     return executor
 
 
-def _make_board(charts: list[Chart], title: str = "Test Board") -> Board:
+def _make_compiled_executor(
+    compile_result: CompileResult, data: list[dict]
+) -> Executor:
+    """Build a real Executor for a ``compile()`` result, returning ``data``
+    for every query.
+
+    A real ``Executor`` (not a bare ``MagicMock``) is needed here, not
+    ``_make_executor`` above: this helper backs tests that assert on a
+    board's *authored* style (chart-local and board-level), which only
+    exists once ``compile()`` has produced a real ``Board`` to resolve
+    against -- a hand-built ``Board`` + mocked ``execute_chart`` never
+    exercises the axis cascade's board/chart-local layers.
+    """
+    from unittest.mock import Mock
+
+    ok = Mock()
+    ok.is_success = True
+    ok.data = data
+    ok.column_descriptions = None
+    ok.resolved_relations = None
+    ok.truncated_reason = None
+    mock_registry = Mock()
+    mock_registry.execute.return_value = ok
+    return Executor(
+        compile_result.board,
+        adapter_registry=mock_registry,
+        query_registry=compile_result.query_registry,
+    )
+
+
+def _make_board(
+    charts: list[Chart],
+    title: str = "Test Board",
+    chart_style_context: ChartStyleContext | None = None,
+) -> Board:
     """Create a Board with chart items in a rows layout."""
     items = [
         LayoutItem(type="chart", chart=chart, width=600, height=300) for chart in charts
@@ -33,7 +80,7 @@ def _make_board(charts: list[Chart], title: str = "Test Board") -> Board:
         title=title,
         layout=Layout(type="rows", items=items, width=600, height=600),
         resolved_style=_default_resolved_style(),
-        chart_style_context=_default_chart_style_context(),
+        chart_style_context=chart_style_context or _default_chart_style_context(),
         level=1,
     )
 
@@ -130,7 +177,15 @@ class TestTextFormat:
         assert "8 distinct" in result
 
     def test_kpi_chart(self, make_chart):
-        """KPI charts show value = formatted number."""
+        """KPI charts show value = formatted number.
+
+        4,200,000 crosses the KPI engine's own SI-compaction threshold
+        (finalize_kpi_value_format, >= 1000) even with no authored format, so
+        resolve() bakes a compaction spec and the raw cell shows alongside
+        the formatted one to disambiguate — the exact notation is a theme
+        default and not pinned here (dbt-charts/AGENTS.md's "don't pin
+        theme/default values in tests").
+        """
         data = [{"revenue": 4200000}]
         chart = make_chart("kpi", value="revenue", x=None, y=None)
         board = _make_board([chart])
@@ -139,8 +194,7 @@ class TestTextFormat:
         result = render(board, executor, format="text").output
 
         assert "kpi" in result.lower()
-        # KPI uses chart.title (or empty); the formatted value carries the data.
-        assert "4,200,000" in result
+        assert "4200000" in result
 
     def test_nested_board(self, make_chart):
         """Nested boards use deeper heading levels."""
@@ -205,3 +259,522 @@ class TestTextFormat:
         result = render(board, executor, format="text", max_rows_per_query=2).output
 
         assert "first 1 and last 1 of 7 rows" in result
+
+    def test_kpi_formatted_value_shows_currency(self, make_chart):
+        """A currency-formatted KPI shows the value as it will be drawn, plus raw."""
+        data = [{"revenue": 210.0}]
+        chart = make_chart(
+            "kpi",
+            value="revenue",
+            x=None,
+            y=None,
+            style={"value": {"format": "currency_whole"}},
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "$210" in result
+        assert "210.0" in result
+
+    def test_kpi_support_line_shows_formatted_value_and_label(self, make_chart):
+        """The support block shows its formatted value alongside its label."""
+        data = [{"revenue": 210.0, "delta": 0.05}]
+        chart = make_chart(
+            "kpi",
+            value="revenue",
+            x=None,
+            y=None,
+            support={
+                "value": "delta",
+                "label": "vs last month",
+                "format": "percent",
+            },
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "5.0%" in result
+        assert "vs last month" in result
+
+    def test_kpi_no_format_unchanged(self, make_chart):
+        """A small, unformatted KPI value keeps the plain comma-grouped digits.
+
+        Below the KPI engine's SI-compaction threshold (1000), an unauthored
+        format resolves to no format at all, so there is nothing to show
+        alongside the raw value.
+        """
+        data = [{"revenue": 420}]
+        chart = make_chart("kpi", value="revenue", x=None, y=None)
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "420" in result
+        assert "(" not in result.split("value:")[1].splitlines()[0]
+
+    def test_cartesian_numeric_range_uses_axis_format(self, make_chart):
+        """A bar chart's numeric range is formatted with its axis number_format."""
+        data = [
+            {"month": "Jan", "revenue": 80},
+            {"month": "Feb", "revenue": 120},
+        ]
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="revenue",
+            style={"number_format": "currency_whole"},
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "$80" in result
+        assert "$120" in result
+
+    def test_cartesian_numeric_range_unformatted_by_default(self, make_chart):
+        """No number_format configured keeps today's plain range output."""
+        data = [
+            {"month": "Jan", "revenue": 80},
+            {"month": "Feb", "revenue": 120},
+        ]
+        chart = make_chart("bar", x="month", y="revenue")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "revenue: 80–120" in result
+        assert "$" not in result
+
+    def test_table_columns_show_resolved_labels_and_formats(self, make_chart):
+        """Table columns line lists each column's resolved label and format.
+
+        `columns:` is left unauthored (that authors a pivot's column
+        dimension) so the flat table shows every query column, in query
+        order, with the ``style.columns`` display override merged in.
+        """
+        data = [
+            {"account": "Acme", "industry": "Tech", "revenue": 100000.0},
+        ]
+        chart = make_chart(
+            "table",
+            style={
+                "columns": {"revenue": {"format": "currency_whole", "label": "Revenue"}}
+            },
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "columns: account, industry, Revenue (currency_whole)" in result
+
+    def test_table_no_column_style_lists_plain_columns(self, make_chart):
+        """A table with no style.columns still lists its columns, unadorned."""
+        data = [{"account": "Acme", "revenue": 100000.0}]
+        chart = make_chart("table")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "columns: account, revenue" in result
+
+    def test_table_columns_over_cap_collapse_to_more_tail(self, make_chart):
+        """A wide table's columns line caps at 20 names, then a "+N more" tail."""
+        data = [{f"col{i}": i for i in range(25)}]
+        chart = make_chart("table")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "+5 more" in result
+        assert "col19" in result
+        assert "col20" not in result
+
+    def test_table_hidden_column_omitted_from_summary(self, make_chart):
+        """A style.columns visible: false column never reaches the text summary."""
+        data = [{"account": "Acme", "internal_id": "abc123", "revenue": 100000.0}]
+        chart = make_chart(
+            "table", style={"columns": {"internal_id": {"visible": False}}}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "columns: account, revenue" in result
+        assert "internal_id" not in result
+
+
+class TestTextFormatFormattingCorrectness:
+    """Regression coverage for text-render formatting correctness and error isolation."""
+
+    def test_kpi_sub_unit_currency_not_multiplied(self, make_chart):
+        """A sub-$1 KPI must not take the SI spec meant for $500m-scale values."""
+        data = [{"amount": 0.45}]
+        chart = make_chart(
+            "kpi",
+            value="amount",
+            x=None,
+            y=None,
+            style={"value": {"format": "currency"}},
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "$0.45" in result
+        assert "$450m" not in result
+
+    def test_cartesian_numeric_range_sub_unit_not_multiplied(self, make_chart):
+        """A sub-$1 axis range must not take the SI spec ($500m instead of $0.50)."""
+        data = [
+            {"month": "Jan", "revenue": 0.5},
+            {"month": "Feb", "revenue": 0.9},
+        ]
+        chart = make_chart(
+            "bar", x="month", y="revenue", style={"number_format": "currency"}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "$0.50" in result
+        assert "$0.90" in result
+        assert "$500m" not in result
+        assert "$900m" not in result
+
+    def test_board_owned_format_alias_applies_to_kpi(self, make_chart):
+        """A board's own style.formats alias resolves in text, not just SVG."""
+        ctx = dataclasses.replace(
+            _default_chart_style_context(), formats={"myfmt": "$,.0f"}
+        )
+        data = [{"revenue": 4200}]
+        chart = make_chart(
+            "kpi", value="revenue", x=None, y=None, style={"value": {"format": "myfmt"}}
+        )
+        board = _make_board([chart], chart_style_context=ctx)
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "$4,200" in result
+        assert "[chart error:" not in result
+
+    def test_cartesian_numeric_range_uses_axis_y_labels_format(self, make_chart):
+        """style.axis_y.labels.format also drives the range format, not just number_format."""
+        data = [
+            {"month": "Jan", "revenue": 80},
+            {"month": "Feb", "revenue": 120},
+        ]
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="revenue",
+            style={"axis_y": {"labels": {"format": "currency_whole"}}},
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "$80" in result
+        assert "$120" in result
+
+    def test_cartesian_axis_y_labels_format_wins_over_number_format(self) -> None:
+        """style.axis_y.labels.format outranks style.number_format for the text range.
+
+        Mirrors the axis cascade's own precedence (axis_cascade.py's 13-layer
+        order: chart-level number_format is Layer 10, chart-local
+        axis_y.labels.format is Layer 13 -- the later layer wins). Authors
+        both to different currencies on the same chart so only the correct
+        winner's formatting can satisfy the assertion.
+        """
+        from dbt_charts.core.compile import compile as compile_board
+
+        board_yaml = """\
+title: Probe
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      number_format: currency_full
+      axis_y:
+        labels:
+          format: currency_whole
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - c
+"""
+        result = compile_board(board_yaml)
+        assert result.success and result.board is not None, result.errors
+
+        data = [
+            {"month": "Jan", "revenue": 80},
+            {"month": "Feb", "revenue": 120},
+        ]
+        executor = _make_compiled_executor(result, data)
+
+        output = render(result.board, executor, format="text").output
+
+        assert "revenue: $80–$120" in output
+        assert "$80.00" not in output
+
+    def test_board_level_axis_quantitative_format_reaches_text_range(self) -> None:
+        """A board-level style.charts.axis_quantitative.labels.format applies
+        even when the chart itself authors no chart-local style at all.
+        """
+        from dbt_charts.core.compile import compile as compile_board
+
+        board_yaml = """\
+title: Probe
+style:
+  charts:
+    axis_quantitative:
+      labels:
+        format: currency_whole
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - c
+"""
+        result = compile_board(board_yaml)
+        assert result.success and result.board is not None, result.errors
+
+        data = [
+            {"month": "Jan", "revenue": 80},
+            {"month": "Feb", "revenue": 120},
+        ]
+        executor = _make_compiled_executor(result, data)
+
+        output = render(result.board, executor, format="text").output
+
+        assert "revenue: $80–$120" in output
+
+    def test_kpi_temporal_value_matches_svg_date_format(self, make_chart):
+        """A temporal KPI value renders through the same date_short path as
+        SVG, not its raw str() form.
+        """
+        data = [{"as_of": datetime(2024, 1, 15)}]
+        chart = make_chart("kpi", value="as_of", x=None, y=None)
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "15 Jan 2024" in result
+        assert "2024-01-15 00:00:00" not in result
+
+    def test_kpi_percent_range_error_isolates_only_that_chart(self, make_chart):
+        """A mis-scaled percent format degrades its own chart in text, not the render."""
+        data = [{"revenue": 100, "ratio": 27.6}]
+        good = make_chart("kpi", id="good", value="revenue", x=None, y=None)
+        bad = make_chart(
+            "kpi",
+            id="bad",
+            value="ratio",
+            x=None,
+            y=None,
+            style={"value": {"format": "percent"}},
+        )
+        board = _make_board([good, bad])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "## good (kpi)" in result
+        assert "value: 100" in result
+        assert "ERR-PERCENT-RANGE" in result
+        assert "[chart error:" in result
+
+    def test_cartesian_percent_range_error_isolates_only_that_chart(self, make_chart):
+        """A mis-scaled percent axis format degrades that chart, not the render."""
+        data = [
+            {"month": "Jan", "ratio": 27.6},
+            {"month": "Feb", "ratio": 31.2},
+        ]
+        chart = make_chart(
+            "bar", x="month", y="ratio", style={"number_format": "percent"}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "ERR-PERCENT-RANGE" in result
+        assert "[chart error:" in result
+
+    def test_json_format_unaffected_by_percent_range_kpi(self, make_chart):
+        """--format json still serializes a percent-range-triggering KPI's data.
+
+        Formatting (which can raise ERR-PERCENT-RANGE) runs only on the text
+        path -- board_to_dict's shared output for json/yaml/data must stay
+        exactly what it was before text formatting existed.
+        """
+        data = [{"ratio": 27.6}]
+        chart = make_chart(
+            "kpi", value="ratio", x=None, y=None, style={"value": {"format": "percent"}}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="json").output
+
+        payload = json.loads(result)
+        item = payload["items"][0]
+        assert "_error" not in item
+        assert item["data"] == data
+        assert "kpi_text" not in item
+
+    def test_json_format_unaffected_by_percent_range_cartesian(self, make_chart):
+        """--format json still serializes a percent-range-triggering bar's data."""
+        data = [
+            {"month": "Jan", "ratio": 27.6},
+            {"month": "Feb", "ratio": 31.2},
+        ]
+        chart = make_chart(
+            "bar", x="month", y="ratio", style={"number_format": "percent"}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="json").output
+
+        payload = json.loads(result)
+        item = payload["items"][0]
+        assert "_error" not in item
+        assert item["data"] == data
+        assert "y_range_display" not in item
+        assert "format_aliases" not in item
+
+    def test_kpi_headline_glyph_appears_in_text(self, make_chart):
+        """An authored headline glyph shows in text, matching chart/kpi.py's draw order."""
+        data = [{"revenue": 210.0}]
+        chart = make_chart(
+            "kpi", value="revenue", x=None, y=None, style={"glyph": {"character": "▲"}}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "▲ 210" in result
+
+    def test_kpi_support_missing_column_raises_chart_error(self, make_chart):
+        """A support column absent from the query result errors that chart,
+        the way the render layer does for the same authoring mistake --
+        not a silently dropped value.
+        """
+        data = [{"revenue": 210.0}]
+        chart = make_chart(
+            "kpi",
+            value="revenue",
+            x=None,
+            y=None,
+            support={"value": "delta", "label": "vs last month"},
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "[chart error:" in result
+        assert "vs last month" not in result
+
+    def test_kpi_zero_rows_raises_chart_error(self, make_chart):
+        """A KPI with no data errors that chart in text, matching the SVG
+        renderer's own guard (chart/kpi.py raises for the same case) --
+        not a silently empty KPI section.
+        """
+        data: list[dict] = []
+        chart = make_chart("kpi", value="revenue", x=None, y=None)
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "[chart error:" in result
+
+
+class TestTextFormatWarnings:
+    """Render-time warnings surface inline under a `## Warnings` heading."""
+
+    def test_render_warning_appears_in_text_output(self) -> None:
+        from unittest.mock import Mock
+
+        from dbt_charts.core.compile import compile as compile_board
+        from dbt_charts.core.execute import Executor
+
+        board_yaml = """\
+title: Probe
+charts:
+  c:
+    query: q
+    type: table
+    columns:
+      - x
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - c
+"""
+        result = compile_board(board_yaml)
+        assert result.success and result.board is not None, result.errors
+
+        ok = Mock()
+        ok.is_success = True
+        ok.data = [{"x": 1}, {"x": 2}, {"x": 3}]
+        ok.column_descriptions = None
+        ok.resolved_relations = None
+        ok.truncated_reason = "max_rows"
+        mock_registry = Mock()
+        mock_registry.execute.return_value = ok
+        executor = Executor(
+            result.board,
+            adapter_registry=mock_registry,
+            query_registry=result.query_registry,
+        )
+
+        render_result = render(result.board, executor, format="text")
+
+        assert "## Warnings" in render_result.output
+        assert "WARN-QUERY-RESULT-TRUNCATED" in render_result.output
+
+    def test_no_warnings_section_when_clean(self, make_chart) -> None:
+        # "count" (not "revenue"/"price"/etc.) so the render doesn't also trip
+        # WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER — this test is
+        # only about the absence of the `## Warnings` heading itself.
+        data = [{"month": "Jan", "count": 100}]
+        chart = make_chart("bar", x="month", y="count")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "## Warnings" not in result

@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: 'The `dct mcp` and `dbt_charts.ai` `render_board` tool now defaults to `format: text`, a compact markdown summary, instead of `json`, the full resolved chart semantics plus every executed row. An omitted `format` therefore returns a string, not a dict. `json` stays fully offered; request it explicitly to get every row. `agent_api`''s own `ProjectSession.render_board` default and the CLI''s `--format` flag are unaffected.'
+time: 2026-09-26T22:41:11.580528-07:00

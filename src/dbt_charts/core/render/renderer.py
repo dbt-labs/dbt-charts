@@ -895,6 +895,14 @@ def render(
                 board_error = RenderError.from_code(
                     ERR_INTERNAL, message=str(e)
                 ).to_diagnostic()
+        if format == "text" and output is not None:
+            # Warnings live in render_warnings (computed above, outside this
+            # format-specific walk) — appended here rather than threaded into
+            # render_board_text so every _DATA_FORMATS renderer keeps the same
+            # DataFormatRenderer signature.
+            from dbt_charts.core.render.text_format import render_warnings_section
+
+            output += render_warnings_section(render_warnings)
         # Keyed on (fields["chart_id"], code) — chart_id is the identity
         # channel both streams stamp (chart_diagnostics.stamp_chart_diagnostic;
         # `Diagnostic.chart` is not set on either side of this merge), but a

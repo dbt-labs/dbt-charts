@@ -287,7 +287,7 @@ class TestFormatAuthoredProvenance:
     """
 
     def test_theme_default_is_not_authored(self) -> None:
-        _merged, _band, format_authored, format_is_alias = _merge_axis_cascade(
+        _merged, _band, format_authored, format_is_alias, _ = _merge_axis_cascade(
             _board(), "axis_y", "quantitative", chart_type="", label_authored=False
         )
         assert format_authored is False
@@ -296,7 +296,7 @@ class TestFormatAuthoredProvenance:
     def test_chart_fallback_format_is_authored(self) -> None:
         """Layer 10 — ``chart.format`` / ``style.number_format``, a literal
         spec, not one of the theme's format aliases."""
-        _merged, _band, format_authored, format_is_alias = _merge_axis_cascade(
+        _merged, _band, format_authored, format_is_alias, _ = _merge_axis_cascade(
             _board(),
             "axis_y",
             "quantitative",
@@ -312,7 +312,7 @@ class TestFormatAuthoredProvenance:
         engine-owned predefined format) still counts as authored, and its raw
         pre-resolution string is recognized as a predefined/alias key.
         """
-        _merged, _band, format_authored, format_is_alias = _merge_axis_cascade(
+        _merged, _band, format_authored, format_is_alias, _ = _merge_axis_cascade(
             _board(),
             "axis_y",
             "quantitative",
@@ -333,7 +333,7 @@ class TestFormatAuthoredProvenance:
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
         )
-        _merged, _band, format_authored, format_is_alias = _merge_axis_cascade(
+        _merged, _band, format_authored, format_is_alias, _ = _merge_axis_cascade(
             result, "axis_y", "quantitative", chart_type="", label_authored=False
         )
         assert format_authored is True
@@ -354,19 +354,23 @@ class TestFormatAuthoredProvenance:
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
         )
-        _merged_v1, _band, format_authored_v1, format_is_alias_v1 = _merge_axis_cascade(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+        _merged_v1, _band, format_authored_v1, format_is_alias_v1, _ = (
+            _merge_axis_cascade(
+                result, "axis_y", "quantitative", chart_type="", label_authored=False
+            )
         )
         assert format_authored_v1 is True
         assert format_is_alias_v1 is True
 
-        _merged_v2, _band, format_authored_v2, format_is_alias_v2 = _merge_axis_cascade(
-            _board(),
-            "axis_y",
-            "quantitative",
-            axis_overrides=AxisOverrides(y=axis_y_patch),
-            chart_type="",
-            label_authored=False,
+        _merged_v2, _band, format_authored_v2, format_is_alias_v2, _ = (
+            _merge_axis_cascade(
+                _board(),
+                "axis_y",
+                "quantitative",
+                axis_overrides=AxisOverrides(y=axis_y_patch),
+                chart_type="",
+                label_authored=False,
+            )
         )
         assert format_authored_v2 is True
         assert format_is_alias_v2 is True
@@ -374,7 +378,7 @@ class TestFormatAuthoredProvenance:
     def test_theme_chart_type_patch_is_not_authored(self) -> None:
         """Layer 4 sets the same field but is a theme patch, not an author's."""
         chart_type_patch = AxisYStylePatch(labels=AxisLabelStylePatch(format="$,.0f"))
-        merged, _band, format_authored, format_is_alias = _merge_axis_cascade(
+        merged, _band, format_authored, format_is_alias, _ = _merge_axis_cascade(
             _board(),
             "axis_y",
             "quantitative",
@@ -403,26 +407,30 @@ class TestFormatAuthoredProvenance:
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
         )
-        merged_v1, _band, format_authored_v1, format_is_alias_v1 = _merge_axis_cascade(
-            result,
-            "axis_y",
-            "quantitative",
-            chart_fallback_format="currency",
-            chart_type="",
-            label_authored=False,
+        merged_v1, _band, format_authored_v1, format_is_alias_v1, _ = (
+            _merge_axis_cascade(
+                result,
+                "axis_y",
+                "quantitative",
+                chart_fallback_format="currency",
+                chart_type="",
+                label_authored=False,
+            )
         )
         assert merged_v1.labels.format == "$,.0f"
         assert format_authored_v1 is True
         assert format_is_alias_v1 is False
 
-        merged_v2, _band, format_authored_v2, format_is_alias_v2 = _merge_axis_cascade(
-            _board(),
-            "axis_y",
-            "quantitative",
-            chart_fallback_format="currency",
-            axis_overrides=AxisOverrides(y=axis_y_patch),
-            chart_type="",
-            label_authored=False,
+        merged_v2, _band, format_authored_v2, format_is_alias_v2, _ = (
+            _merge_axis_cascade(
+                _board(),
+                "axis_y",
+                "quantitative",
+                chart_fallback_format="currency",
+                axis_overrides=AxisOverrides(y=axis_y_patch),
+                chart_type="",
+                label_authored=False,
+            )
         )
         assert merged_v2.labels.format == "$,.0f"
         assert format_authored_v2 is True
@@ -440,7 +448,7 @@ class TestFormatAuthoredProvenance:
             {"charts": {"axis": {"labels": {"format": "$,.0f"}}}}
         )
         ctx = resolve_chart_style_context(get_theme_style(), board_patch)
-        _, _, format_authored, _ = _merge_axis_cascade(
+        _, _, format_authored, _, _ = _merge_axis_cascade(
             ctx, "axis_y", "quantitative", chart_type="", label_authored=False
         )
         assert format_authored is True
@@ -457,7 +465,7 @@ class TestFormatAuthoredProvenance:
             {"charts": {"axis_quantitative": {"labels": {"format": "$,.0f"}}}}
         )
         ctx = resolve_chart_style_context(get_theme_style(), board_patch)
-        _, _, format_authored, _ = _merge_axis_cascade(
+        _, _, format_authored, _, _ = _merge_axis_cascade(
             ctx, "axis_y", "quantitative", chart_type="", label_authored=False
         )
         assert format_authored is True
@@ -475,7 +483,7 @@ class TestFormatAuthoredProvenance:
         )
         ctx = resolve_chart_style_context(get_theme_style(), board_patch)
         bar_axis_y_patch = chart_type_axis_patch(ctx, "bar", "axis_y")
-        _, _, format_authored, _ = _merge_axis_cascade(
+        _, _, format_authored, _, _ = _merge_axis_cascade(
             ctx,
             "axis_y",
             "quantitative",
@@ -655,8 +663,10 @@ class TestChartTypeAxisAlignCascade:
         assert patch.labels is not None
         assert patch.labels.align == "inward"
 
-        merged, band_position, _format_authored, _format_is_alias = _merge_axis_cascade(
-            board, "axis_x", "ordinal", patch, chart_type="", label_authored=False
+        merged, band_position, _format_authored, _format_is_alias, _ = (
+            _merge_axis_cascade(
+                board, "axis_x", "ordinal", patch, chart_type="", label_authored=False
+            )
         )
         assert (
             build_resolved_axis(
@@ -703,13 +713,15 @@ class TestChartTypeAxisAlignCascade:
         assert patch.labels is not None
         assert patch.labels.align == "inward"
 
-        merged, band_position, _format_authored, _format_is_alias = _merge_axis_cascade(
-            custom_charts,
-            "axis_x",
-            "ordinal",
-            patch,
-            chart_type="",
-            label_authored=False,
+        merged, band_position, _format_authored, _format_is_alias, _ = (
+            _merge_axis_cascade(
+                custom_charts,
+                "axis_x",
+                "ordinal",
+                patch,
+                chart_type="",
+                label_authored=False,
+            )
         )
         assert (
             build_resolved_axis(
@@ -734,13 +746,15 @@ class TestChartTypeAxisAlignCascade:
         assert patch.labels is not None
         assert patch.labels.align == "inward"
 
-        merged, band_position, _format_authored, _format_is_alias = _merge_axis_cascade(
-            custom_charts,
-            "axis_y",
-            "nominal",
-            patch,
-            chart_type="",
-            label_authored=False,
+        merged, band_position, _format_authored, _format_is_alias, _ = (
+            _merge_axis_cascade(
+                custom_charts,
+                "axis_y",
+                "nominal",
+                patch,
+                chart_type="",
+                label_authored=False,
+            )
         )
         assert (
             build_resolved_axis(
@@ -768,7 +782,7 @@ class TestOwnSideAlignEdgeMapping:
         self, label_align: str | None, title_align: str | None = None
     ) -> AxisXStyle:
         board = _board()
-        merged, _, _, _ = _merge_axis_cascade(
+        merged, _, _, _, _ = _merge_axis_cascade(
             board, "axis_x", "ordinal", chart_type="", label_authored=False
         )
         label = merged.labels.model_copy(update={"align": label_align})

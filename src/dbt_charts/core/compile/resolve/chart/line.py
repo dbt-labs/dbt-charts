@@ -318,6 +318,7 @@ def _resolve_line(
         ax_edge=None,
         ay_format_authored=plan.ay_format_authored,
         ay_format_is_alias=plan.ay_format_is_alias,
+        ay_format_raw=plan.ay_format_raw,
         ticks=line_ticks,
         column_forming=True,
         measure_tooltip_format=_measure_tooltip_format(

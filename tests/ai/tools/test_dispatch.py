@@ -211,6 +211,47 @@ class TestDispatchWireShape:
         assert result["status"] == "ok"
         assert "url" not in result, f"expected url to be absent, got {result}"
 
+    def test_render_board_defaults_to_text_format(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        """An omitted 'format' returns the compact markdown summary (str data),
+        not the full json payload (dict data) — an A/B found text on quality
+        with json and cheaper, so agent-facing tools default to it."""
+        result = dispatch_tool_call(
+            "render_board",
+            {
+                "yaml_content": (
+                    "title: T\nqueries:\n  q:\n    columns: [v]\n"
+                    "    values:\n      - [1]\n"
+                    "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
+                    "rows:\n  - c\n"
+                )
+            },
+            context=context,
+        )
+        assert result["status"] == "ok"
+        assert isinstance(result["data"], str)
+
+    def test_render_board_json_format_still_selectable(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        """'json' stays fully offered — an agent asks for it explicitly to get rows."""
+        result = dispatch_tool_call(
+            "render_board",
+            {
+                "yaml_content": (
+                    "title: T\nqueries:\n  q:\n    columns: [v]\n"
+                    "    values:\n      - [1]\n"
+                    "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
+                    "rows:\n  - c\n"
+                ),
+                "format": "json",
+            },
+            context=context,
+        )
+        assert result["status"] == "ok"
+        assert isinstance(result["data"], dict)
+
 
 class TestAsLinkDispatch:
     """render_board(as_link=True) returns URL without executing queries."""

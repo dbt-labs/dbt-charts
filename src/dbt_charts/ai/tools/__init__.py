@@ -70,7 +70,7 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
         variables=(
             _vars_to_dict(parsed.variables) if parsed.variables is not None else None
         ),
-        format=parsed.format or "json",
+        format=parsed.format or "text",
         as_link=parsed.as_link,
         server_port=ctx.server_port,
         max_rows_per_query=MODEL_MAX_ROWS_PER_QUERY,

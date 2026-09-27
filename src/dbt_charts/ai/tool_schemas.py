@@ -145,6 +145,51 @@ SUGGEST_BOARD_PLACEMENT = _ai_tool("suggest_board_placement", SuggestBoardPlacem
 AGENT_TOOLS: list[dict[str, Any]] = ALL_TOOLS + FILE_TOOLS
 
 
+def restrict_enum(
+    tool: dict[str, Any], property: str, allowed: list[str]
+) -> dict[str, Any]:
+    """A canonical tool definition with *property*'s enum values narrowed to
+    *allowed* — for a host that may offer a property but not every value it
+    accepts. A lIe offers ``render_board.format`` but excludes ``svg``: its
+    own ``routes.py`` renders the SVG, and offering the model the ``svg``
+    value makes it paste raw SVG into its narrative instead of clean prose.
+
+    Only handles the ``anyOf: [{enum: [...]}, {type: null}]`` shape pydantic
+    emits for an optional ``Literal`` field — the one shape this repo's tool
+    schemas produce for such fields today.
+    """
+    schema = tool["input_schema"]
+    prop_schema = schema["properties"].get(property)
+    if prop_schema is None:
+        raise ValueError(f"{tool['name']} has no property {property!r}")
+    enum_branches = [b for b in prop_schema.get("anyOf", []) if "enum" in b]
+    if len(enum_branches) != 1:
+        raise ValueError(
+            f"{tool['name']}.{property} has no single enum branch to restrict"
+        )
+    (enum_branch,) = enum_branches
+    unknown = [v for v in allowed if v not in enum_branch["enum"]]
+    if unknown:
+        raise ValueError(
+            f"{unknown} not a valid value for {tool['name']}.{property} "
+            f"(allowed: {enum_branch['enum']})"
+        )
+    narrowed_branch = {**enum_branch, "enum": allowed}
+    narrowed_any_of = [
+        narrowed_branch if b is enum_branch else b for b in prop_schema["anyOf"]
+    ]
+    return {
+        **tool,
+        "input_schema": {
+            **schema,
+            "properties": {
+                **schema["properties"],
+                property: {**prop_schema, "anyOf": narrowed_any_of},
+            },
+        },
+    }
+
+
 def subset_tool(tool: dict[str, Any], properties: list[str]) -> dict[str, Any]:
     """A canonical tool definition narrowed to *properties*.
 

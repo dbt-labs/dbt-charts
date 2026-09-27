@@ -1,0 +1,3 @@
+kind: Features
+body: "`dct render --format text` shows values as an agent will actually see them: a KPI's formatted value (plus its raw cell and support line), a cartesian chart's value range formatted by its authored `style.number_format`, a table's resolved column labels and formats, and render-time warnings under a `## Warnings` heading."
+time: 2026-09-21T02:44:18.000000-00:00

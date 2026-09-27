@@ -174,7 +174,7 @@ def _v2_axes(
             ),
         )
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _ = (
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
         _bake_cartesian_axes(
             chart_style_context,
             fixture_chart_for_type(chart_type),

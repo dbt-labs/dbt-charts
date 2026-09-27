@@ -86,7 +86,7 @@ def _axis_y_with_domain(chart_type: str, domain: list[float]) -> Any:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -158,7 +158,7 @@ def test_v2_bar_authored_domain_drives_tick_span(bar_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("bar"),
         "bar",
@@ -290,7 +290,7 @@ def test_v2_area_authored_domain_drives_tick_span(area_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("area"),
         "area",
@@ -364,7 +364,7 @@ def test_v2_scatter_authored_domain_emitted_in_vl_scale(scatter_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("scatter"),
         "scatter",
@@ -425,7 +425,7 @@ def test_v2_scatter_authored_domain_drives_tick_span(scatter_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("scatter"),
         "scatter",

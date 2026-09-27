@@ -211,7 +211,7 @@ Hand your coding agent one sentence. `dct skills intro` teaches it the tool and 
 skill to read next:
 
 ```text
-Make charts of this with dbt Charts. Start with: uv tool install dbt-charts && dct skills intro
+I want to make charts of this data with dbt Charts. Run `uv tool install dbt-charts`, then `dct skills intro`, and follow what it prints.
 ```
 
 ### Manually

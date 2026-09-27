@@ -50,7 +50,7 @@ def _merged_ay(chart_type: str = "line", y_channel_type: str = "quantitative"):
     """Return a merged AxisYStyle from the default theme for the given chart type."""
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     chart = fixture_chart_for_type(chart_type)
-    _, ay, _, ay_band_pos, _, _ = _bake_cartesian_axes(
+    _, ay, _, ay_band_pos, _, _, _ = _bake_cartesian_axes(
         ctx,
         chart,
         chart_type,

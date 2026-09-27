@@ -903,11 +903,17 @@ ERR_FORMAT_NATIVE_IN_VEGA_SLOT = REGISTRY.register(
         code="ERR-FORMAT-NATIVE-IN-VEGA-SLOT",
         domain="compile",
         title="Native formatter used in a Vega-rendered format slot",
+        # These members hold whole-number values, so a bare d3 percent spec
+        # paints them 100x too large: the remedy names the division, never
+        # ".1%" on its own.
         message_template=(
             "Format {spec!r} at {field_path} is a Python-only native formatter "
             "and cannot be used in Vega-rendered slots (axis labels, mark value "
-            "labels, number_format, time_format, support_table). Use it only in KPI "
-            "or table format fields. Valid alternatives: {available}."
+            "labels, number_format, time_format, support_table). Move it to a "
+            "KPI value or table cell, or transform the value in the query to "
+            "match a plain d3 spec (for a whole-number percent, divide by 100 "
+            'and then use a d3 percent spec such as ".1%"). Valid alternatives: '
+            "{available}."
         ),
         doc=(
             "Fired when `percent_number`, `percent_number_delta`, or "
@@ -915,8 +921,9 @@ ERR_FORMAT_NATIVE_IN_VEGA_SLOT = REGISTRY.register(
             "such as an axis label, mark value-label format, number_format, "
             "time_format, or support_table format. These names bypass d3 entirely "
             "and are only valid in Python-rendered slots (KPI headline and table "
-            "cells). For Vega-rendered slots, use a d3 percent spec (e.g. `.1%`) "
-            "or another predefined name."
+            "cells). To keep the value in a Vega-rendered slot, transform it in "
+            "the query to match a plain d3 spec: for a whole-number percent, "
+            "divide by 100 and then use a d3 percent spec such as `.1%`."
         ),
         summary="Python-only native formatter used in a Vega-rendered slot.",
         docs_topic="charts",

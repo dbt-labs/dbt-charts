@@ -306,7 +306,7 @@ def test_theme_family_axis_leaf_loses_to_board_channel():
     ctx = resolve_chart_style_context(get_theme_style(), board_patch)
     bar_axis_x_patch = get_chart_type_axis_patch(ctx, "bar", "axis_x")
     # Layer 4 carries theme-authored padding 6.0; board layer 6 must win.
-    merged, _, _, _ = _merge_axis_cascade(
+    merged, _, _, _, _ = _merge_axis_cascade(
         ctx,
         "axis_x",
         "ordinal",
@@ -333,7 +333,7 @@ def test_board_title_visible_false_beats_label_forced_default():
             {"charts": {"axis_y": {"title": {"visible": False}}}}
         ),
     )
-    merged, _, _, _ = _merge_axis_cascade(
+    merged, _, _, _, _ = _merge_axis_cascade(
         ctx, "axis_y", "quantitative", chart_type="", label_authored=True
     )
     assert merged.title.visible is False
@@ -345,7 +345,7 @@ def test_label_forced_title_default_shows_without_board_override():
     #7278's behavior, preserved through the board-tier integration.
     """
     ctx = resolve_chart_style_context(get_theme_style())
-    merged, _, _, _ = _merge_axis_cascade(
+    merged, _, _, _, _ = _merge_axis_cascade(
         ctx, "axis_y", "quantitative", chart_type="", label_authored=True
     )
     assert merged.title.visible is True

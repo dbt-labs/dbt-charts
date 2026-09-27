@@ -58,6 +58,7 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
         ay_band,
         ay_format_authored,
         ay_format_is_alias,
+        _ay_format_raw,
     ) = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("bar"),

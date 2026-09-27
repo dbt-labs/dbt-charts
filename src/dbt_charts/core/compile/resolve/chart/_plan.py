@@ -131,6 +131,7 @@ class CartesianPlan:
     ay_band_position: float | None
     ay_format_authored: bool
     ay_format_is_alias: bool
+    ay_format_raw: str | None
 
 
 def plan_cartesian(
@@ -175,6 +176,7 @@ def plan_cartesian(
         ay_band_position,
         ay_format_authored,
         ay_format_is_alias,
+        ay_format_raw,
     ) = _bake_cartesian_axes(
         chart_style_context,
         normalized,
@@ -194,6 +196,7 @@ def plan_cartesian(
         ay_band_position=ay_band_position,
         ay_format_authored=ay_format_authored,
         ay_format_is_alias=ay_format_is_alias,
+        ay_format_raw=ay_format_raw,
     )
 
 
@@ -216,6 +219,7 @@ def build_cartesian_axes(
     ax_is_quantitative: bool,
     ay_is_quantitative: bool,
     ay_quantitative_for_alignment: bool | None = None,
+    ay_format_raw: str | None = None,
 ) -> tuple[ResolvedAxisStyle, _StyleTail]:
     """Run the shared cartesian postlude: the resolved y-axis + the style tail.
 
@@ -292,6 +296,12 @@ def build_cartesian_axes(
     axis the alignment gate is about, so bar passes the orientation-derived
     bool here instead. Every other family leaves this ``None`` — the two
     questions coincide there, so ``ay_is_quantitative`` alone answers both.
+
+    ``ay_format_raw`` is the cascade's raw pre-resolve value-axis format
+    (``CartesianPlan.ay_format_raw``, see ``_bake_cartesian_axes``), passed
+    straight to ``build_resolved_axis``. Heatmap/histogram leave it at the
+    default ``None`` along with their hardcoded ``ay_format_authored`` —
+    neither axis carries a real cascade-authored format for this to describe.
     """
     ax = build_resolved_axis(
         ax_merged,
@@ -312,6 +322,7 @@ def build_cartesian_axes(
         tick_values=ticks.ticks,
         format_authored=ay_format_authored,
         format_is_alias=ay_format_is_alias,
+        format_authored_raw=ay_format_raw,
         is_quantitative=ay_is_quantitative,
         quantitative_for_alignment=ay_quantitative_for_alignment,
         zero_anchored=zero_anchor,

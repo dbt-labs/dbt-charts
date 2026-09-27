@@ -92,6 +92,7 @@ def _merged_axis_y():
         _ay_band_position,
         _ay_format_authored,
         _ay_format_is_alias,
+        _ay_format_raw,
     ) = _bake_cartesian_axes(
         chart_style_context,
         chart,

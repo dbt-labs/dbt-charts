@@ -43,8 +43,72 @@ def _ai_tool(name: str, model: type[BaseModel]) -> dict[str, Any]:
     }
 
 
+def subset_tool(tool: dict[str, Any], properties: list[str]) -> dict[str, Any]:
+    """*tool* narrowed to *properties* (drop-only)."""
+    schema = tool["input_schema"]
+    unknown = [p for p in properties if p not in schema["properties"]]
+    if unknown:
+        raise ValueError(f"{tool['name']} has no properties {unknown}")
+    narrowed = {
+        **schema,
+        "properties": {
+            k: v for k, v in schema["properties"].items() if k in properties
+        },
+    }
+    if "required" in schema:
+        narrowed["required"] = [r for r in schema["required"] if r in properties]
+    return {**tool, "input_schema": narrowed}
+
+
+#: Appended to render_board's agent-facing description -- the default text
+#: summary already carries these, so a model rarely needs anything past it.
+_SUMMARY_CONTENTS_NOTE = (
+    " The response already includes row counts, each field's value range, "
+    "category values, KPI values, and a preview of table rows."
+)
+
+
+#: Shared across every agent-facing render_board schema, including Cloud
+#: MCP's own hand-written inputSchema (a different wire shape, same words) --
+#: never hand-copy this description elsewhere.
+INCLUDE_RAW_DATA_PROPERTY: dict[str, Any] = {
+    "type": "boolean",
+    "description": (
+        "Also return the raw query rows. Large; the summary already has "
+        "counts, ranges, categories, KPI values and table previews. Set "
+        "true only when you need a specific value the summary lacks."
+    ),
+}
+
+
+def _render_board_tool() -> dict[str, Any]:
+    """render_board's agent-facing shape: renders always return the text
+    summary, with 'include_raw_data' appending full rows in place of 'format'.
+
+    ``additionalProperties: false`` is set explicitly (not left to
+    ``normalize_openai_tools``'s ``setdefault``) because dct's local MCP
+    server serves this schema straight to the MCP SDK, with no normalize
+    pass -- without it, a caller could send 'format' anyway and get it
+    silently honored.
+    """
+    tool = _ai_tool("render_board", RenderBoardArgs)
+    schema = tool["input_schema"]
+    properties = {k: v for k, v in schema["properties"].items() if k != "format"}
+    properties["include_raw_data"] = INCLUDE_RAW_DATA_PROPERTY
+    return {
+        **tool,
+        "description": tool["description"] + _SUMMARY_CONTENTS_NOTE,
+        "input_schema": {
+            **schema,
+            "properties": properties,
+            "required": [r for r in schema.get("required", []) if r != "format"],
+            "additionalProperties": False,
+        },
+    }
+
+
 VALIDATE_BOARD = _ai_tool("validate_board", ValidateBoardArgs)
-RENDER_BOARD = _ai_tool("render_board", RenderBoardArgs)
+RENDER_BOARD = _render_board_tool()
 EXECUTE_QUERY = _ai_tool("execute_query", ExecuteQueryArgs)
 DESCRIBE_QUERY = _ai_tool("describe_query", DescribeQueryArgs)
 SEARCH_BOARDS = _ai_tool("search_boards", SearchBoardsArgs)
@@ -143,71 +207,3 @@ class SuggestBoardPlacementArgs(BaseModel):
 SUGGEST_BOARD_PLACEMENT = _ai_tool("suggest_board_placement", SuggestBoardPlacementArgs)
 
 AGENT_TOOLS: list[dict[str, Any]] = ALL_TOOLS + FILE_TOOLS
-
-
-def restrict_enum(
-    tool: dict[str, Any], property: str, allowed: list[str]
-) -> dict[str, Any]:
-    """A canonical tool definition with *property*'s enum values narrowed to
-    *allowed* — for a host that may offer a property but not every value it
-    accepts. A lIe offers ``render_board.format`` but excludes ``svg``: its
-    own ``routes.py`` renders the SVG, and offering the model the ``svg``
-    value makes it paste raw SVG into its narrative instead of clean prose.
-
-    Only handles the ``anyOf: [{enum: [...]}, {type: null}]`` shape pydantic
-    emits for an optional ``Literal`` field — the one shape this repo's tool
-    schemas produce for such fields today.
-    """
-    schema = tool["input_schema"]
-    prop_schema = schema["properties"].get(property)
-    if prop_schema is None:
-        raise ValueError(f"{tool['name']} has no property {property!r}")
-    enum_branches = [b for b in prop_schema.get("anyOf", []) if "enum" in b]
-    if len(enum_branches) != 1:
-        raise ValueError(
-            f"{tool['name']}.{property} has no single enum branch to restrict"
-        )
-    (enum_branch,) = enum_branches
-    unknown = [v for v in allowed if v not in enum_branch["enum"]]
-    if unknown:
-        raise ValueError(
-            f"{unknown} not a valid value for {tool['name']}.{property} "
-            f"(allowed: {enum_branch['enum']})"
-        )
-    narrowed_branch = {**enum_branch, "enum": allowed}
-    narrowed_any_of = [
-        narrowed_branch if b is enum_branch else b for b in prop_schema["anyOf"]
-    ]
-    return {
-        **tool,
-        "input_schema": {
-            **schema,
-            "properties": {
-                **schema["properties"],
-                property: {**prop_schema, "anyOf": narrowed_any_of},
-            },
-        },
-    }
-
-
-def subset_tool(tool: dict[str, Any], properties: list[str]) -> dict[str, Any]:
-    """A canonical tool definition narrowed to *properties*.
-
-    For a host that must not advertise a parameter — A lIe hides
-    ``render_board.format`` because offering ``svg`` makes the model paste raw
-    SVG into its prose. Canonical shape in, canonical shape out, so the result
-    still goes through ``normalize_openai_tools`` like every other tool.
-    """
-    schema = tool["input_schema"]
-    unknown = [p for p in properties if p not in schema["properties"]]
-    if unknown:
-        raise ValueError(f"{tool['name']} has no properties {unknown}")
-    narrowed = {
-        **schema,
-        "properties": {
-            k: v for k, v in schema["properties"].items() if k in properties
-        },
-    }
-    if "required" in schema:
-        narrowed["required"] = [r for r in schema["required"] if r in properties]
-    return {**tool, "input_schema": narrowed}

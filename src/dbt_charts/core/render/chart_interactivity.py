@@ -1,6 +1,5 @@
 """Core-owned chart hover interactivity runtime."""
 
-import html
 import json
 from functools import cache
 from importlib.resources import files
@@ -8,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.render.comment_stripping import strip_js_comments
+from dbt_charts.core.render.svg_utils import attr_name, escape_attr
 from dbt_charts.core.text.format_d3 import NULL_DISPLAY
 
 if TYPE_CHECKING:
@@ -113,4 +113,4 @@ def hover_runtime_attributes(resolved_style: "ResolvedStyle") -> str:
             _build_hover_emphasis_dict(resolved_style)
         ),
     }
-    return "".join(f' {k}="{html.escape(v, quote=True)}"' for k, v in values.items())
+    return "".join(f' {attr_name(k)}="{escape_attr(v)}"' for k, v in values.items())

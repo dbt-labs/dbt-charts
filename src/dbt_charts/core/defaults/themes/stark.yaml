@@ -37,7 +37,6 @@ style:
   title:
     font:
       family: *font_sans
-      color: *color_ink
     subtitle:
       font:
         family: *font_sans

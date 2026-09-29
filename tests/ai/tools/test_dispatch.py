@@ -252,6 +252,51 @@ class TestDispatchWireShape:
         assert result["status"] == "ok"
         assert isinstance(result["data"], dict)
 
+    def test_render_board_text_data_format_still_selectable(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        """A direct 'format': 'text-data' call still appends a '## Data'
+        section -- a caller that already resolved include_raw_data itself
+        (or a direct agent_api/CLI caller) can ask for it explicitly."""
+        result = dispatch_tool_call(
+            "render_board",
+            {
+                "yaml_content": (
+                    "title: T\nqueries:\n  q:\n    columns: [v]\n"
+                    "    values:\n      - [1]\n"
+                    "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
+                    "rows:\n  - c\n"
+                ),
+                "format": "text-data",
+            },
+            context=context,
+        )
+        assert result["status"] == "ok"
+        assert isinstance(result["data"], str)
+        assert "## Data" in result["data"]
+
+    def test_render_board_include_raw_data_appends_data_section(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        """The agent-facing 'include_raw_data' boolean resolves to the
+        'text-data' format and appends a '## Data' section."""
+        result = dispatch_tool_call(
+            "render_board",
+            {
+                "yaml_content": (
+                    "title: T\nqueries:\n  q:\n    columns: [v]\n"
+                    "    values:\n      - [1]\n"
+                    "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
+                    "rows:\n  - c\n"
+                ),
+                "include_raw_data": True,
+            },
+            context=context,
+        )
+        assert result["status"] == "ok"
+        assert isinstance(result["data"], str)
+        assert "## Data" in result["data"]
+
 
 class TestAsLinkDispatch:
     """render_board(as_link=True) returns URL without executing queries."""

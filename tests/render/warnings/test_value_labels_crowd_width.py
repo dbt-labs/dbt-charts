@@ -227,6 +227,57 @@ class TestDetectorReadsThePreEmitPanelWidth:
         assert unit["width"] == vl["spec"]["width"]
 
 
+def test_fires_on_narrative_house_register_not_raw_d3() -> None:
+    """A house-register format (``number`` -> SI spec ``.3~s``) paints the
+    narrative register (``4.23bn``) via a Vega ``calculate`` transform
+    (``_house_register_text_encoding``, value_labels.py) -- not the bare d3
+    SI suffix (``4.23G``) the plain ``text.format`` path would produce. At
+    17 categories in 600px (35.3px slots), ``4.23bn`` (~37px) overflows its
+    slot while ``4.23G`` (~32px) does not -- so measuring the wrong string
+    misses the warning entirely.
+    """
+    board = _board("bar", {"position": "middle", "format": "number"})
+    rows = [{"cat": f"c{i}", "val": 4_228_000_000} for i in range(17)]
+    chart = _bar()
+    resolved = resolve(chart, rows, chart_style_context=board)
+    resolved_board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=resolved_board,
+        chart_results={resolved.id: rows},
+        vega_specs={
+            resolved.id: {"width": 600, "encoding": {"x": {"type": "nominal"}}}
+        },
+    )
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_VALUE_LABELS_CROWD_WIDTH.code
+
+
+def test_no_fire_on_span_label_measures_signed_diff_not_raw_end_value() -> None:
+    """A bar with ``y_start`` paints the signed CHANGE between ``y_start``
+    and ``y`` (``_span_label_text_expr``, value_labels.py) -- ``+0.10000``,
+    not the plain end value ``123,456.78901``. At 8 categories in 560px
+    (70px slots) the plain end value (~83px) would overflow while the
+    actual signed-diff text (~54px) fits -- measuring the wrong value
+    fires a false warning.
+    """
+    board = _board("bar", {"position": "above", "format": ",.5f"})
+    rows = [
+        {"cat": f"c{i}", "val": 123456.78901, "base": 123456.68901} for i in range(8)
+    ]
+    chart = _bar(y_start="base")
+    resolved = resolve(chart, rows, chart_style_context=board)
+    resolved_board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=resolved_board,
+        chart_results={resolved.id: rows},
+        vega_specs={
+            resolved.id: {"width": 560, "encoding": {"x": {"type": "nominal"}}}
+        },
+    )
+    assert detector.detect(ctx) == []
+
+
 def test_widest_panel_count_not_a_flat_one_when_domain_subset_narrows() -> None:
     """Small multiples over a DIFFERENT field (`grp`, not x's own field
     `cat`) where each panel still holds a proper subset of the x domain —

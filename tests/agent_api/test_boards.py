@@ -534,6 +534,17 @@ rows:
         )
         assert args.format == "terminal"
 
+    def test_render_args_accepts_text_data_format(self) -> None:
+        """'text-data' is a real format value, not a separate include_raw_data flag —
+        agent tool surfaces map their include_raw_data boolean to it before calling
+        render_board (see dbt_charts.ai.tools.resolve_render_format)."""
+        from dbt_charts.agent_api.boards import RenderBoardArgs
+
+        args = RenderBoardArgs.model_validate(
+            {"yaml_content": "title: x", "format": "text-data"}
+        )
+        assert args.format == "text-data"
+
     def test_render_terminal_returns_text(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:

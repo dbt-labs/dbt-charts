@@ -2551,6 +2551,10 @@ def _label_period_filter_expr(
         measurer = get_font_measurer(font.family)
         dates = sorted(datetime.date.fromisoformat(str(v)[:10]) for v in x_distinct)
         band = (spec_width * resolved_chart_style.label_usable_ratio) / len(dates)
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            authored_time_format,
+        )
+
         visibility_tu, _ = resolve_temporal_label_visibility(
             dates,
             base_time_unit,
@@ -2565,6 +2569,10 @@ def _label_period_filter_expr(
                 else False
             ),
             edge_labels_flushed=temporal_edge_labels_flushed("temporal", axis_st),
+            # Same strings the axis itself measures — an authored time format
+            # is what Vega paints on every tick, and this filter must agree
+            # with the cadence that measurement picks.
+            authored_format=authored_time_format(axis_st),
         )
         if visibility_tu == base_time_unit:
             return None

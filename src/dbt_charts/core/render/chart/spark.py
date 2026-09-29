@@ -28,6 +28,7 @@ from typing import Any
 from dbt_charts.core.compile.models.primitives import FontStyle, SpacingValues
 from dbt_charts.core.compile.models.style.resolved import ResolvedChartDefaults
 from dbt_charts.core.compile.models.style.theme import SparkStyle
+from dbt_charts.core.render.svg_utils import escape_attr
 
 _SPARK_WIDTH = 80.0
 _SPARK_HEIGHT = 24.0
@@ -156,7 +157,7 @@ def _normalize_points(
 
 
 def _svg_wrapper(content: str, width: float | int, height: float | int) -> str:
-    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{content}</svg>'
+    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{escape_attr(width)}" height="{escape_attr(height)}" viewBox="0 0 {escape_attr(width)} {escape_attr(height)}">{content}</svg>'
 
 
 def _render_empty_spark(
@@ -167,10 +168,10 @@ def _render_empty_spark(
     empty_config = spark_style.empty
     y = height / 2
     content = (
-        f'<line x1="{empty_config.inset_x}" y1="{y}" '
-        f'x2="{width - empty_config.inset_x}" y2="{y}" '
-        f'stroke="{empty_config.stroke.color}" stroke-width="{empty_config.stroke.width}" '
-        f'stroke-dasharray="{empty_config.stroke.dasharray}"/>'
+        f'<line x1="{escape_attr(empty_config.inset_x)}" y1="{escape_attr(y)}" '
+        f'x2="{escape_attr(width - empty_config.inset_x)}" y2="{escape_attr(y)}" '
+        f'stroke="{escape_attr(empty_config.stroke.color)}" stroke-width="{escape_attr(empty_config.stroke.width)}" '
+        f'stroke-dasharray="{escape_attr(empty_config.stroke.dasharray)}"/>'
     )
     return _svg_wrapper(content, width, height)
 
@@ -184,11 +185,14 @@ def _render_single_value_line(
 ) -> str:
     single_value = spark_style.single_value
     y = height / 2
-    escaped_color = html.escape(color or "")
+    color_value = (
+        color
+        or ""  # type-state: silent_fallback — this helper's own signature still accepts color: str | None even though today's two callers already resolved it via _resolve_spark_color; "" is only reachable for a hypothetical direct None call, and paints no stroke
+    )
     content = (
-        f'<line x1="{single_value.inset_x}" y1="{y}" x2="{width - single_value.inset_x}" y2="{y}" '
-        f'stroke="{escaped_color}" stroke-width="{stroke_width}"/>'
-        f'<circle cx="{width / 2}" cy="{y}" r="{single_value.marker_radius}" fill="{escaped_color}"/>'
+        f'<line x1="{escape_attr(single_value.inset_x)}" y1="{escape_attr(y)}" x2="{escape_attr(width - single_value.inset_x)}" y2="{escape_attr(y)}" '
+        f'stroke="{escape_attr(color_value)}" stroke-width="{escape_attr(stroke_width)}"/>'
+        f'<circle cx="{escape_attr(width / 2)}" cy="{escape_attr(y)}" r="{escape_attr(single_value.marker_radius)}" fill="{escape_attr(color_value)}"/>'
     )
     return _svg_wrapper(content, width, height)
 
@@ -217,25 +221,26 @@ def render_spark_line(
         return _render_single_value_line(width, height, color, stroke_width, spark_cfg)
 
     norm = _normalize_points(values, width, height, spark_cfg)
-    escaped_color = html.escape(color or "")
+    color_value = (
+        color
+        or ""  # type-state: silent_fallback — color was already resolved to a non-optional str by _resolve_spark_color above; this or "" cannot fire, kept as-is (no behavior change)
+    )
 
     polyline = (
-        f'<polyline points="{" ".join(norm.points)}" fill="none" '
-        f'stroke="{escaped_color}" stroke-width="{stroke_width}" '
+        f'<polyline points="{escape_attr(" ".join(norm.points))}" fill="none" '
+        f'stroke="{escape_attr(color_value)}" stroke-width="{escape_attr(stroke_width)}" '
         f'stroke-linecap="round" stroke-linejoin="round"/>'
     )
 
     markers = ""
     if last_visible:
         last_point = norm.points[-1].split(",")
-        markers += f'<circle cx="{last_point[0]}" cy="{last_point[1]}" r="2.5" fill="{escaped_color}"/>'
+        markers += f'<circle cx="{escape_attr(last_point[0])}" cy="{escape_attr(last_point[1])}" r="2.5" fill="{escape_attr(color_value)}"/>'
 
     if min_max_visible:
         for idx in [norm.min_idx, norm.max_idx]:
             pt = norm.points[idx].split(",")
-            markers += (
-                f'<circle cx="{pt[0]}" cy="{pt[1]}" r="2" fill="{escaped_color}"/>'
-            )
+            markers += f'<circle cx="{escape_attr(pt[0])}" cy="{escape_attr(pt[1])}" r="2" fill="{escape_attr(color_value)}"/>'
 
     return _svg_wrapper(polyline + markers, width, height)
 
@@ -265,7 +270,10 @@ def render_spark_area(
         return _render_single_value_line(width, height, color, stroke_width, spark_cfg)
 
     norm = _normalize_points(values, width, height, spark_cfg)
-    escaped_color = html.escape(color or "")
+    color_value = (
+        color
+        or ""  # type-state: silent_fallback — color was already resolved to a non-optional str by _resolve_spark_color above; this or "" cannot fire, kept as-is (no behavior change)
+    )
 
     bottom_y = height - norm.padding.bottom
     first_x = norm.padding.left
@@ -274,17 +282,17 @@ def render_spark_area(
         f"{first_x},{bottom_y} " + " ".join(norm.points) + f" {last_x},{bottom_y}"
     )
 
-    polygon = f'<polygon points="{polygon_points}" fill="{escaped_color}" fill-opacity="{fill_opacity}"/>'
+    polygon = f'<polygon points="{escape_attr(polygon_points)}" fill="{escape_attr(color_value)}" fill-opacity="{escape_attr(fill_opacity)}"/>'
     polyline = (
-        f'<polyline points="{" ".join(norm.points)}" fill="none" '
-        f'stroke="{escaped_color}" stroke-width="{stroke_width}" '
+        f'<polyline points="{escape_attr(" ".join(norm.points))}" fill="none" '
+        f'stroke="{escape_attr(color_value)}" stroke-width="{escape_attr(stroke_width)}" '
         f'stroke-linecap="round" stroke-linejoin="round"/>'
     )
 
     markers = ""
     if last_visible:
         last_point = norm.points[-1].split(",")
-        markers = f'<circle cx="{last_point[0]}" cy="{last_point[1]}" r="2.5" fill="{escaped_color}"/>'
+        markers = f'<circle cx="{escape_attr(last_point[0])}" cy="{escape_attr(last_point[1])}" r="2.5" fill="{escape_attr(color_value)}"/>'
 
     return _svg_wrapper(polygon + polyline + markers, width, height)
 
@@ -327,10 +335,11 @@ def render_spark_columns(
     total_gap = gap * (num_bars - 1)
     bar_width = (width - total_gap) / num_bars
 
-    escaped_color = html.escape(color or "")
-    escaped_negative = (
-        html.escape(resolved_style.tones.negative) if negative_color else None
+    color_value = (
+        color
+        or ""  # type-state: silent_fallback — color was already resolved to a non-optional str by _resolve_spark_color above; this or "" cannot fire, kept as-is (no behavior change)
     )
+    negative_fill = resolved_style.tones.negative if negative_color else None
     bars: list[str] = []
     # Non-finite values (NaN, ±Infinity) follow the same null rule as every
     # other numeric-cell consumer (utils.coerce_numeric_cell): no color, no
@@ -353,13 +362,11 @@ def render_spark_columns(
             bar_height = max(spark_cfg.columns.min_bar_height, signed.fraction * half)
             y = mid_y if signed.is_negative else mid_y - bar_height
             fill = (
-                escaped_negative
-                if (signed.is_negative and escaped_negative)
-                else escaped_color
+                negative_fill if (signed.is_negative and negative_fill) else color_value
             )
             bars.append(
                 f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" '
-                f'height="{bar_height:.1f}" fill="{fill}" rx="{spark_cfg.columns.border.radius}"/>'
+                f'height="{bar_height:.1f}" fill="{escape_attr(fill)}" rx="{escape_attr(spark_cfg.columns.border.radius)}"/>'
             )
     else:
         min_val = min(finite_values, default=0.0)
@@ -380,7 +387,7 @@ def render_spark_columns(
             y = height - padding - bar_height
             bars.append(
                 f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" '
-                f'height="{bar_height:.1f}" fill="{escaped_color}" rx="{spark_cfg.columns.border.radius}"/>'
+                f'height="{bar_height:.1f}" fill="{escape_attr(color_value)}" rx="{escape_attr(spark_cfg.columns.border.radius)}"/>'
             )
 
     return _svg_wrapper("".join(bars), width, height)
@@ -487,18 +494,15 @@ def render_spark_bar(
     else:
         fill_color = spark_cfg.bar.color
 
-    escaped_fill = html.escape(fill_color)
-
     bg_rect = ""
     if normalize:
-        escaped_bg = html.escape(background)
         bg_rect = (
-            f'<rect x="0" y="0" width="{width}" height="{height}" '
-            f'fill="{escaped_bg}" rx="{border_radius}"/>'
+            f'<rect x="0" y="0" width="{escape_attr(width)}" height="{escape_attr(height)}" '
+            f'fill="{escape_attr(background)}" rx="{escape_attr(border_radius)}"/>'
         )
     fill_rect = (
-        f'<rect x="{fill_x}" y="0" width="{fill_width:.1f}" height="{height}" '
-        f'fill="{escaped_fill}" rx="{border_radius}"/>'
+        f'<rect x="{escape_attr(fill_x)}" y="0" width="{fill_width:.1f}" height="{escape_attr(height)}" '
+        f'fill="{escape_attr(fill_color)}" rx="{escape_attr(border_radius)}"/>'
         if fill_width > 0
         else ""
     )
@@ -529,10 +533,10 @@ def render_spark_bar(
         ) or resolved_style.table.font.family
         assert _label_family is not None
         value_label = (
-            f'<text x="{text_x}" y="{text_y}" '
-            f'font-size="{fs}" fill="{bar_config.label.fill}" fill-opacity="{bar_config.label.fill_opacity}" '
+            f'<text x="{escape_attr(text_x)}" y="{escape_attr(text_y)}" '
+            f'font-size="{escape_attr(fs)}" fill="{escape_attr(bar_config.label.fill)}" fill-opacity="{escape_attr(bar_config.label.fill_opacity)}" '
             f'text-anchor="end" dominant-baseline="central" '
-            f'font-family="{html.escape(str(_label_family))}" '
+            f'font-family="{escape_attr(str(_label_family))}" '
             f'style="font-variant-numeric: tabular-nums lining-nums;">'
             f"{html.escape(display)}</text>"
         )
@@ -605,12 +609,10 @@ def render_spark_column(
     else:
         fill_color = spark_cfg.bar.color
 
-    escaped_fill = html.escape(fill_color)
-
     fill_rect = (
         f'<rect x="0" y="{fill_y:.1f}" '
-        f'width="{width}" height="{fill_height:.1f}" '
-        f'fill="{escaped_fill}" rx="{border_radius}"/>'
+        f'width="{escape_attr(width)}" height="{fill_height:.1f}" '
+        f'fill="{escape_attr(fill_color)}" rx="{escape_attr(border_radius)}"/>'
         if fill_height > 0
         else ""
     )

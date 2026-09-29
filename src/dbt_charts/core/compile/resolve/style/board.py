@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel
 
-from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
+from dbt_charts.core.compile.merge import merge_onto_base, merge_patches, to_title_style
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     ResolvedFontStyle,
@@ -481,11 +481,21 @@ def _finalize_chart_style_context(
             "style.palettes / style.roles are unset after the theme cascade; "
             "the _base theme seeds both for every built-in theme."
         )
+    # ChartsStyle.title's InheritSlot(from_path="Style.title") already filled
+    # every unset leaf from the board title during apply_inherit (including
+    # copying whole unset sub-objects wholesale via each one's own
+    # container-level link) -- to_title_style only re-validates the
+    # cascade's own result into the compiled type; it does no merging itself.
+    charts_title = cascaded.charts.title
+    assert charts_title is not None, (
+        "ChartsStyle.title must be populated by apply_inherit's title "
+        "InheritSlot container-level copy link"
+    )
     return _build_chart_style_context(
         cascaded.charts,
         base_background,
         font_family=resolved_root_font.family,
-        title=cascaded.title,
+        title=to_title_style(charts_title),
         spark=cascaded.charts.table.spark,
         pagination=cascaded.charts.table.pagination,
         bold_font_weight=font_weight_as_css(cascaded.text.bold.weight),

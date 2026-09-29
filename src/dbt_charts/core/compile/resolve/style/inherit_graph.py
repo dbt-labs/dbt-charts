@@ -172,12 +172,25 @@ def _build_graph(
                     slot_exclude=slot_exclude if skip_marker.cascade else frozenset(),
                 )
             elif slot_marker is not None and not skip_slots:
-                if slot_at is not None:
+                if slot_at is not None and slot_from is not None:
                     # Already inside an outer slot expansion.  The inner InheritSlot
                     # applies at the canonical source path, not at this derived-axis
                     # path.  Preserve the outer slot so leaves still expand as
                     # axis_x.labels.font.color → axis.labels.font.color rather than
                     # jumping directly to charts.font.color.
+                    #
+                    # Also emit a container-level copy link at the outer slot's own
+                    # derived path (same mechanism as SkipInheritSlots(cascade=True)
+                    # below) — unconditionally, not gated on this field's own
+                    # (non-patch) annotation being nullable: the *outer* slot is what
+                    # makes this position a sparse patch at runtime, regardless of
+                    # whether the compiled type itself declares the field Optional.
+                    # Without this, a patch that sets some sibling field and leaves
+                    # this whole nested container unset can't be filled — leaf links
+                    # alone can't write through a None intermediate.
+                    outer_suffix: StylePath = current[len(slot_at) :]
+                    fallback_path = _path_str(slot_from + outer_suffix)
+                    graph[_path_str(current)] = fallback_path
                     _build_graph(
                         nested,
                         current,

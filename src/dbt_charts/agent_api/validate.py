@@ -16,14 +16,18 @@ from dbt_charts.core.diagnostics import (
     ERR_CHART_COLUMN_NOT_IN_RESULT,
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
-    ERR_META_SCHEMA,
     ERR_WAREHOUSE_QUERY_INVALID,
     WARN_COLUMN_CHECK_UNAVAILABLE,
     WARN_WAREHOUSE_CHECK_UNAVAILABLE,
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.project import CHARTS_SUBDIR, Project, ProjectPath
+from dbt_charts.core.project import (
+    CHARTS_SUBDIR,
+    PROJECT_CONFIG_NAME,
+    Project,
+    ProjectPath,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.compiler import CompileResult
@@ -169,47 +173,6 @@ def _validate_one_path(
     return [_validate_resolved(pf, project, adapter_registry) for pf in boards]
 
 
-def _validate_meta_file(resolved: ProjectPath) -> ValidateResult:
-    """Validate a meta.yml as a BoardPatch fragment — no layout required."""
-    from pydantic import ValidationError as PydanticValidationError
-
-    from dbt_charts.core.compile.errors import CompilationError
-    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
-    from dbt_charts.core.compile.parse.meta import load_meta_file
-
-    relpath = resolved.relpath
-    try:
-        meta_data, _ = load_meta_file(resolved)
-    except CompilationError as exc:
-        return ValidateResult(
-            success=False,
-            path=relpath,
-            errors=[
-                DbtChartsError.from_code(
-                    ERR_META_SCHEMA, message=str(exc)
-                ).to_diagnostic(file=relpath)
-            ],
-        )
-
-    try:
-        BOARD_PATCH_ADAPTER.validate_python(meta_data)
-    except PydanticValidationError as exc:
-        errors = [
-            DbtChartsError.from_code(
-                ERR_META_SCHEMA,
-                message=(
-                    f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}"
-                    if e["loc"]
-                    else e["msg"]
-                ),
-            ).to_diagnostic(file=relpath)
-            for e in exc.errors()
-        ]
-        return ValidateResult(success=False, path=relpath, errors=errors)
-
-    return ValidateResult(success=True, path=relpath)
-
-
 def validate(path: Path, *, project: Project) -> ValidateResult:
     """Fast YAML schema + cross-reference validation. No warehouse, no execute."""
     try:
@@ -252,8 +215,19 @@ def _validate_resolved(
             ],
         )
 
-    if resolved.is_meta:
-        return _validate_meta_file(resolved)
+    if resolved.relpath == PROJECT_CONFIG_NAME:
+        from dbt_charts.agent_api._paths import project_config_diagnostics
+
+        errors = project_config_diagnostics(resolved)
+        return ValidateResult(success=not errors, path=resolved.relpath, errors=errors)
+
+    from dbt_charts.agent_api._paths import is_patch_fragment
+
+    if is_patch_fragment(resolved):
+        from dbt_charts.agent_api._paths import patch_file_diagnostics
+
+        errors = patch_file_diagnostics(resolved)
+        return ValidateResult(success=not errors, path=resolved.relpath, errors=errors)
 
     from dbt_charts.core.compile.errors import CompilationError
 

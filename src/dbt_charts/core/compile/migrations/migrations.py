@@ -131,6 +131,39 @@ class Deletion:
 
 
 @dataclasses.dataclass(frozen=True)
+class MapKeyDeletion:
+    """Strike a fixed, closed set of literal keys from a declared open-map field.
+
+    ``Deletion``/``_declares_tail`` refuse to reach into ``additionalProperties``
+    by design (see ``migrations/AGENTS.md``): an author-named key must never be
+    mistaken for a retired one. A palette *role* name (``category_dark``) is
+    exactly that kind of key -- a literal convention this project retired,
+    sitting inside ``style.palettes`` (``dict[str, PaletteName]``), where the
+    schema can never distinguish it from a role an author invented themselves.
+
+    ``container_path`` names a **declared** field (``style.palettes`` is a
+    real property of ``Style``, not an open-map arm) so the walk only ever
+    fires where that container is genuinely present at this position; once
+    there, ``messages`` strikes a fixed, closed set of literal key names
+    inside it -- never a wildcard, never a value match, never a key the
+    schema could confuse with an author's own.
+
+    Unlike ``Deletion``, there is no live/retired distinction to gate on: the
+    container field itself (``style.palettes``) is never retired, only these
+    specific keys' meaning, so ``_live_declares_tail``'s "still declared
+    elsewhere" check has nothing to ask here.
+    """
+
+    source_schema: str
+    target_schema: str
+    container_path: YamlKeyPath
+    # struck key -> the author-facing message for that key. Every firing is
+    # reported (unlike Deletion.reason, which is optional): a role name
+    # silently disappearing is not the routine case a dead field's removal is.
+    messages: Mapping[str, str]
+
+
+@dataclasses.dataclass(frozen=True)
 class ConditionalMove:
     """A relocation that fires only when its destination's parent mapping already exists.
 
@@ -173,12 +206,14 @@ class MigrationRegistry:
         moves: Iterable[Move],
         deletions: Iterable[Deletion] = (),
         conditional_moves: Iterable[ConditionalMove] = (),
+        map_key_deletions: Iterable[MapKeyDeletion] = (),
         *,
         catalog: YamlSchemaCatalog,
     ) -> None:
         self.moves = tuple(moves)
         self.deletions = tuple(deletions)
         self.conditional_moves = tuple(conditional_moves)
+        self.map_key_deletions = tuple(map_key_deletions)
         self.catalog = catalog
         self._moves_by_source: dict[str, tuple[Move, ...]] = {}
         for move in self.moves:
@@ -202,6 +237,15 @@ class MigrationRegistry:
                 *existing,
                 cond_move,
             )
+        self._map_key_deletions_by_source: dict[str, tuple[MapKeyDeletion, ...]] = {}
+        for map_key_deletion in self.map_key_deletions:
+            existing_mkd = self._map_key_deletions_by_source.setdefault(
+                map_key_deletion.source_schema, ()
+            )
+            self._map_key_deletions_by_source[map_key_deletion.source_schema] = (
+                *existing_mkd,
+                map_key_deletion,
+            )
 
     def transition_from(self, identifier: str) -> tuple[Move, ...]:
         if identifier not in self._moves_by_source:
@@ -217,6 +261,11 @@ class MigrationRegistry:
         if identifier not in self._cond_moves_by_source:
             return ()
         return self._cond_moves_by_source[identifier]
+
+    def map_key_deletions_from(self, identifier: str) -> tuple[MapKeyDeletion, ...]:
+        if identifier not in self._map_key_deletions_by_source:
+            return ()
+        return self._map_key_deletions_by_source[identifier]
 
 
 def suffix_rename_moves(
@@ -303,8 +352,9 @@ def _apply_identity_moves(
 ) -> JsonObject:
     """Apply every declared identity-path Move's value-only rename.
 
-    An identity-path Move (``old_path == new_path`` — today, only dbt
-    charts' ``theme:`` retired-name rename) has no structural signal the
+    An identity-path Move (``old_path == new_path`` — dbt charts' ``theme:``
+    retired-name rename, and ``TokenRespell``'s retired color-token/palette-
+    name respell, ``versions/v0_9_0.py``) has no structural signal the
     rest of this module's recognition machinery can act on: the key it
     touches never disappears from any grammar, so ``_recognize``'s
     JSON-Schema-diff check (``_current_schema_rejections``) can never see
@@ -364,6 +414,85 @@ def _theme_value_needs_recheck(mapping: Mapping[str, JsonValue]) -> bool:
     return isinstance(theme_value, str) and theme_value not in get_args(ThemeName)
 
 
+def _retired_categorical_token_needs_recheck(mapping: Mapping[str, JsonValue]) -> bool:
+    """Cheap pre-filter: does *mapping* carry a retired categorical-variant
+    token, palette name, or ``style.palettes`` role key, without building the
+    migration registry to find out?
+
+    Plays the same role for ``TokenRespell``/``MapKeyDeletion`` that
+    ``_theme_value_needs_recheck`` plays for the ``theme:`` rename, but it
+    cannot be an O(1) top-level check the way that one is: a retired token
+    can be authored at any chart or nested-board position, not just one known
+    key. So this is a whole-document walk instead — still registry-free
+    (no catalog, no schema, no ``@cache``d ``_board_migration_context()``
+    build), just a value-shape check against the frozen, closed data
+    ``versions.v0_9_0`` declares. Over-triggering here only costs one extra
+    registry build; under-triggering would leave a retired spelling
+    unmigrated, which is the actual bug to avoid.
+    """
+    from dbt_charts.core.compile.migrations.versions.v0_9_0 import (
+        RETIRED_PALETTE_ROLE_KEYS,
+        RETIRED_TOKEN_VALUE_MAP,
+    )
+
+    def scan(node: JsonValue) -> bool:
+        if isinstance(node, str):
+            # `RETIRED_TOKEN_VALUE_MAP` also carries a handful of current
+            # spellings mapped to themselves (see its own docstring) -- a
+            # plain membership check would treat every one of those as a
+            # retired token too, so this only fires on an entry the map
+            # actually *changes*.
+            return (
+                RETIRED_TOKEN_VALUE_MAP.get(
+                    node, node
+                )  # type-state: silent_fallback — absent-from-map means "not a retired spelling at all", the same as a self-mapped current entry; both compare equal to node and correctly report False
+                != node
+            )
+        if isinstance(node, dict):
+            palettes = node.get("palettes")
+            if isinstance(palettes, dict) and any(
+                role in palettes for role in RETIRED_PALETTE_ROLE_KEYS
+            ):
+                return True
+            return any(scan(value) for value in node.values())
+        if isinstance(node, list):
+            return any(scan(item) for item in node)
+        return False
+
+    # mapping is always a concrete dict at every real call site (board YAML
+    # always parses to one); Mapping is this function's read-only parameter
+    # type, matching _transition_applies' identical cast for the same reason.
+    return scan(cast(JsonObject, mapping))  # type-state: cast — always a dict here
+
+
+def _apply_map_key_deletions_eagerly(
+    mapping: JsonObject,
+    deletions: Sequence[MapKeyDeletion],
+    catalog: YamlSchemaCatalog,
+) -> JsonObject:
+    """Strike every declared ``MapKeyDeletion``'s keys directly, ahead of the currency check.
+
+    Parallel to ``_apply_identity_moves``, and for the same reason: a retired
+    ``style.palettes`` role key is a perfectly valid open-map entry, so it
+    leaves no trace ``prepare_board_mapping``'s pydantic check could ever see.
+    """
+    if not deletions:
+        return mapping
+    result = copy.deepcopy(mapping)
+    messages, struck = _apply_map_key_deletions(result, deletions, catalog)
+    if not struck:
+        return mapping
+    warnings.warn(
+        "dbt charts migrated this YAML in memory; `dct migrate` may be able "
+        "to update the file.",
+        SchemaMigrationWarning,
+        stacklevel=3,
+    )
+    for msg in messages:
+        warnings.warn(msg, SchemaMigrationWarning, stacklevel=3)
+    return result
+
+
 def prepare_board_mapping(
     mapping: Mapping[str, JsonValue],
     *,
@@ -396,9 +525,37 @@ def prepare_board_mapping(
 
     currency_model = model if model is not None else AuthoredBoard
 
+    identity_moves_applied = False
     if _theme_value_needs_recheck(mapping):
         catalog, registry = _board_migration_context()
         mapping = _apply_identity_moves(mapping, registry, catalog)
+        identity_moves_applied = True
+
+    if _retired_categorical_token_needs_recheck(mapping):
+        catalog, registry = _board_migration_context()
+        # MapKeyDeletion before TokenRespell's Moves, not after: the wildcard
+        # Move on `style.palettes.*` (see versions/v0_9_0.py) reaches every
+        # role's value, retired-role keys included -- run second and it would
+        # respell `category_dark`'s value right before that key gets struck
+        # anyway, wasted work but harmless in memory. Run *first* is required
+        # for the text path (`migrate_yaml_text`, same ordering below): the
+        # text writer would otherwise queue a `set_board_values` update for a
+        # key `_delete_paths_in_yaml_text` already removed, reintroducing it.
+        mapping = _apply_map_key_deletions_eagerly(
+            dict(mapping), registry.map_key_deletions, catalog
+        )
+        # A document matching both predicates already had every identity
+        # Move applied above (`_apply_identity_moves` applies the whole
+        # registry's identity moves in one pass, theme rename and
+        # TokenRespell alike) -- running it again would be a no-op walk
+        # (`_identity_value_would_change` finds nothing left to change) but
+        # a wasted deep-copy of the whole mapping. This predicate can still
+        # fire on its own after the theme pass, though: it also checks for
+        # retired `style.palettes` *role keys*, which `_apply_identity_moves`
+        # never touches (that's `_apply_map_key_deletions_eagerly`'s job,
+        # just above).
+        if not identity_moves_applied:
+            mapping = _apply_identity_moves(mapping, registry, catalog)
 
     try:
         currency_model.model_validate(mapping)
@@ -560,6 +717,7 @@ def _build_board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegist
     all_moves: list[Move] = []
     all_deletions: list[Deletion] = []
     all_conditional_moves: list[ConditionalMove] = []
+    all_map_key_deletions: list[MapKeyDeletion] = []
     for entry in catalog.entries:
         if entry.predecessor is None:
             continue
@@ -581,8 +739,18 @@ def _build_board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegist
                     entry.predecessor, entry.version, catalog=catalog
                 )
             )
+        if hasattr(module, "map_key_deletions"):
+            all_map_key_deletions.extend(
+                module.map_key_deletions(
+                    entry.predecessor, entry.version, catalog=catalog
+                )
+            )
     return catalog, MigrationRegistry(
-        all_moves, all_deletions, all_conditional_moves, catalog=catalog
+        all_moves,
+        all_deletions,
+        all_conditional_moves,
+        all_map_key_deletions,
+        catalog=catalog,
     )
 
 
@@ -598,12 +766,14 @@ def _load_migration_module(dotted: str) -> types.ModuleType | None:
         not hasattr(module, "moves")
         and not hasattr(module, "deletions")
         and not hasattr(module, "conditional_moves")
+        and not hasattr(module, "map_key_deletions")
     ):
         raise MigrationError(
             f"{dotted} was found but does not define "
             "moves(source_schema, target_schema, *, catalog) -> tuple[Move, ...] "
             "or deletions(source_schema, target_schema, *, catalog) -> tuple[Deletion, ...] "
-            "or conditional_moves(source_schema, target_schema, *, catalog) -> tuple[ConditionalMove, ...]"
+            "or conditional_moves(source_schema, target_schema, *, catalog) -> tuple[ConditionalMove, ...] "
+            "or map_key_deletions(source_schema, target_schema, *, catalog) -> tuple[MapKeyDeletion, ...]"
         )
     return module
 
@@ -652,14 +822,24 @@ def migrate_mapping(
         moves = registry.transition_from(identifier)
         deletions = registry.deletions_from(identifier)
         cond_moves = registry.conditional_moves_from(identifier)
-        if not moves and not deletions and not cond_moves:
+        map_key_deletions = registry.map_key_deletions_from(identifier)
+        if not moves and not deletions and not cond_moves and not map_key_deletions:
             break
+        # MapKeyDeletion before Moves: see prepare_board_mapping's ordering
+        # comment -- a wildcard Move can reach a key MapKeyDeletion is about
+        # to strike (`style.palettes.*` vs. the four retired role keys), and
+        # running the strike first is what keeps the two from racing.
+        drop_warnings.extend(
+            _apply_map_key_deletions(result, map_key_deletions, catalog)[0]
+        )
         for move in moves:
             _apply_move(result, move, catalog)
         drop_warnings.extend(_apply_deletions(result, deletions, catalog)[0])
         for cond_move in cond_moves:
             drop_warnings.extend(_apply_conditional_move(result, cond_move, catalog))
-        identifier = (moves or deletions or cond_moves)[0].target_schema
+        identifier = (moves or deletions or cond_moves or map_key_deletions)[
+            0
+        ].target_schema
 
     # A transition's declared moves may not cover every field a source schema
     # allowed (a deleted field has no lossless Move). Recognizing an older
@@ -741,17 +921,18 @@ def _verify_reachable_via_moves_and_deletions(
     registry: MigrationRegistry,
     identifier: str,
 ) -> tuple[str, ...]:
-    """Continue an in-memory walk from *identifier* to the DEV version, Move/Deletion only.
+    """Continue an in-memory walk from *identifier* to the DEV version, Move/Deletion/MapKeyDeletion only.
 
     Used to verify a capped ``migrate_yaml_text`` result is on a genuinely
     completable path (see its docstring) without pretending the on-disk
     writer is more capable than it is: the writer's own loop applies
-    ``Move``/``Deletion`` only, never ``ConditionalMove`` (it can't express one
-    positionally in text). Calling ``migrate_mapping`` here instead -- which
-    does resolve ``ConditionalMove`` -- would make a board whose only
-    remaining retired construct needs one verify clean while the actual
-    written file still carries it untouched, exactly the "raise rather than
-    silently leave or corrupt" guarantee
+    ``Move``/``Deletion``/``MapKeyDeletion``, never ``ConditionalMove`` (it
+    can't express one positionally in text; ``MapKeyDeletion`` *can* -- it is
+    a plain key strike, the same text-rewrite shape as ``Deletion``). Calling
+    ``migrate_mapping`` here instead -- which does resolve ``ConditionalMove``
+    -- would make a board whose only remaining retired construct needs one
+    verify clean while the actual written file still carries it untouched,
+    exactly the "raise rather than silently leave or corrupt" guarantee
     ``test_migrate_yaml_text_raises_for_kpi_with_style_tone`` pins for the
     uncapped path. Getting stuck here (a ``ConditionalMove``-only construct,
     or a genuinely undeclared one) is reported the same way that test expects.
@@ -763,12 +944,21 @@ def _verify_reachable_via_moves_and_deletions(
     while identifier != catalog.dev.version:
         moves = registry.transition_from(identifier)
         deletions = registry.deletions_from(identifier)
-        if not moves and not deletions:
+        map_key_deletions = registry.map_key_deletions_from(identifier)
+        if not moves and not deletions and not map_key_deletions:
             break
+        # MapKeyDeletion before Moves: same ordering, same reason, as the
+        # real applying loop this verifies against (`migrate_mapping`'s own
+        # ordering comment) -- a wildcard Move can reach a key
+        # MapKeyDeletion is about to strike, and running the strike first is
+        # what keeps the two from racing. A mismatched order here would let
+        # this verification reach a different result than the path it is
+        # supposed to be checking.
+        _apply_map_key_deletions(result, map_key_deletions, catalog)
         for move in moves:
             _apply_move(result, move, catalog)
         _apply_deletions(result, deletions, catalog)
-        identifier = (moves or deletions)[0].target_schema
+        identifier = (moves or deletions or map_key_deletions)[0].target_schema
     return _current_schema_rejections(result, catalog)
 
 
@@ -849,20 +1039,43 @@ def migrate_yaml_text(
     while identifier != catalog.dev.version and identifier != stop_target:
         moves = registry.transition_from(identifier)
         deletions = registry.deletions_from(identifier)
-        if not moves and not deletions:
+        map_key_deletions = registry.map_key_deletions_from(identifier)
+        if not moves and not deletions and not map_key_deletions:
             break
+        # MapKeyDeletion before Moves, both in `staged` and in `yaml_text`:
+        # see prepare_board_mapping's ordering comment. Doing this after
+        # queuing the Moves' text `updates` would have `set_board_values`
+        # write a respelled value back onto a key
+        # `_delete_paths_in_yaml_text` already struck -- reintroducing it and
+        # diverging `staged` (key gone) from the rewritten text (key back).
+        map_key_reasons, map_key_struck_paths = _apply_map_key_deletions(
+            staged, map_key_deletions, catalog
+        )
+        deletion_reasons.extend(map_key_reasons)
+        yaml_text = _delete_paths_in_yaml_text(yaml_text, map_key_struck_paths)
         for move in moves:
             for parent, key, bindings in list(
                 move_source_locations(staged, move, catalog)
             ):
-                if isinstance(parent, list):
+                if isinstance(parent, list) and move.old_path != move.new_path:
+                    # A list-item destination only ever arises from an
+                    # identity-path Move's trailing wildcard -- no declared
+                    # Move relocates *into* a list index, only respells the
+                    # value already sitting at one. A genuine relocation
+                    # ending inside a list has no representation
+                    # set_board_values can address positionally and still
+                    # needs manual migration.
                     raise MigrationError(
                         f"Cannot rewrite {_format_path(move.old_path)!r}: "
                         "list-item paths require "
                         "manual migration."
                     )
-                assert isinstance(key, str)
-                value = parent[key]
+                if isinstance(parent, list):
+                    assert isinstance(key, int)
+                    value = parent[key]
+                else:
+                    assert isinstance(key, str)
+                    value = parent[key]
                 source = _substitute_wildcards(move.old_path, bindings)
                 destination = _substitute_wildcards(move.new_path, bindings)
                 # A pure rename (same parent, only the final segment's spelling
@@ -899,7 +1112,7 @@ def migrate_yaml_text(
         reasons, struck_paths = _apply_deletions(staged, deletions, catalog)
         deletion_reasons.extend(reasons)
         yaml_text = _delete_paths_in_yaml_text(yaml_text, struck_paths)
-        identifier = (moves or deletions)[0].target_schema
+        identifier = (moves or deletions or map_key_deletions)[0].target_schema
 
     # Uncapped, staged already reached the DEV version: check it directly
     # against the live schema. Capped, staged deliberately stops short of the
@@ -990,13 +1203,26 @@ def _recognize(
     above.
     """
     current_errors = _current_schema_rejections(mapping, catalog)
-    if not current_errors:
+    # A retired categorical token or `style.palettes` role key is a valid
+    # string / a valid open-map entry at every grammar, so it never shows up
+    # in current_errors -- the early return below would otherwise treat a
+    # document carrying one as current, and TokenRespell/MapKeyDeletion (both
+    # identity-path/no schema-visible-trace declarations, see
+    # `migrations/AGENTS.md`) would never be reached by `dct migrate`.
+    if not current_errors and not _retired_categorical_token_needs_recheck(mapping):
         return catalog.dev.version
     for identifier in reversed(catalog.versions):
         if identifier == catalog.dev.version:
             continue
         if _transition_applies(mapping, identifier, catalog, registry):
             return identifier
+    if not current_errors:
+        # The schema was already current; only the token/role-key presence
+        # predicate suppressed the early return above, and no declared
+        # transition actually matched (a predicate false positive -- e.g. a
+        # string that happens to equal a retired spelling but sits somewhere
+        # TokenRespell's declared paths don't reach). Nothing to migrate.
+        return catalog.dev.version
     raise _unsupported_schema_error(current_errors[0])
 
 
@@ -1065,6 +1291,13 @@ def _transition_applies(
     for cond_move in registry.conditional_moves_from(identifier):
         schema = catalog.schema_for(cond_move.source_schema)
         if _conditional_move_would_fire(document, cond_move, schema, [schema]):
+            return True
+    map_key_deletions = registry.map_key_deletions_from(identifier)
+    if map_key_deletions:
+        source_schema = catalog.schema_for(map_key_deletions[0].source_schema)
+        if _map_key_deletion_would_fire(
+            document, map_key_deletions, source_schema, [source_schema]
+        ):
             return True
     return False
 
@@ -1158,6 +1391,45 @@ def _conditional_move_would_fire(
         item_positions = _item_positions(schema, positions)
         return any(
             _conditional_move_would_fire(item, rule, schema, item_positions)
+            for item in node
+        )
+    return False
+
+
+def _map_key_deletion_would_fire(
+    node: JsonValue,
+    deletions: Sequence[MapKeyDeletion],
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+) -> bool:
+    """Read-only mirror of ``_delete_map_keys_recursive``: would any ``MapKeyDeletion`` actually fire?
+
+    Same ``_plausible_positions``/``_declares_tail`` walk (identity, not
+    validity -- see ``_delete_map_keys_recursive``'s docstring for why),
+    checked with a plain ``key in container`` membership test in place of the
+    pop -- nothing here mutates *node*, so the same walk serves as
+    ``_transition_applies``'s dry run.
+    """
+    if isinstance(node, dict):
+        plausible = _plausible_positions(schema, positions, node)
+        for deletion in deletions:
+            if not _declares_tail(schema, plausible, deletion.container_path):
+                continue
+            container = _tail_value(node, deletion.container_path)
+            if isinstance(container, dict) and any(
+                key in container for key in deletion.messages
+            ):
+                return True
+        return any(
+            _map_key_deletion_would_fire(
+                child, deletions, schema, _child_positions(schema, positions, key)
+            )
+            for key, child in node.items()
+        )
+    if isinstance(node, list):
+        item_positions = _item_positions(schema, positions)
+        return any(
+            _map_key_deletion_would_fire(item, deletions, schema, item_positions)
             for item in node
         )
     return False
@@ -1551,6 +1823,113 @@ def _delete_tails_recursive(
                 struck,
                 (*prefix, index),
             )
+
+
+def _apply_map_key_deletions(
+    document: JsonObject,
+    deletions: Sequence[MapKeyDeletion],
+    catalog: YamlSchemaCatalog,
+) -> tuple[list[str], list[DocumentPath]]:
+    """Strike every declared ``MapKeyDeletion``'s literal keys in one document walk.
+
+    Mirrors ``_apply_deletions``'s shape exactly (messages + struck paths) so
+    ``migrate_yaml_text`` replays both kinds through the same
+    ``_delete_paths_in_yaml_text`` call -- no second lane.
+
+    Unlike ``_apply_deletions``, whose only caller is the per-boundary
+    migration loop (so "all of a boundary's deletions share its source
+    grammar" holds by construction), this also runs from
+    ``_apply_map_key_deletions_eagerly`` with the *whole* registry's
+    ``map_key_deletions`` handed over unfiltered -- that path runs ahead of
+    ``_recognize`` and does not yet know which single boundary the board is
+    on. Grouped by ``source_schema`` here so each group's own schema drives
+    its own walk; today there is exactly one boundary in the map (v0_9_0),
+    so this is a latent-bug fix, not yet an observable one.
+    """
+    if not deletions:
+        return [], []
+    by_source: dict[str, list[MapKeyDeletion]] = {}
+    for deletion in deletions:
+        by_source.setdefault(deletion.source_schema, []).append(deletion)
+    messages: list[str] = []
+    struck: list[DocumentPath] = []
+    for source_schema_name, group in by_source.items():
+        source_schema = catalog.schema_for(source_schema_name)
+        _delete_map_keys_recursive(
+            document, group, source_schema, [source_schema], messages, struck, ()
+        )
+    return messages, struck
+
+
+def _delete_map_keys_recursive(
+    node: JsonValue,
+    deletions: Sequence[MapKeyDeletion],
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+    messages: list[str],
+    struck: list[DocumentPath],
+    prefix: DocumentPath,
+) -> None:
+    """Strike every declared ``MapKeyDeletion``'s keys wherever its container is declared, throughout *node*.
+
+    Identity, not validity (``migrations/AGENTS.md``): ``_plausible_positions``,
+    not ``_matching_positions``. A document ``MapKeyDeletion`` reaches is
+    mid-migration by the same construction a ``Move`` target is -- a sibling
+    key's value inside the same ``style.palettes`` dict this walk needs to
+    recognize may not yet match every schema in the chain being checked;
+    whole-node validity would refuse the position that value sits in and
+    silently skip striking the key beside it. The tail check itself stops at
+    the **container** (a declared property, e.g. ``style.palettes``) rather
+    than at the individual key: those keys are
+    never declared properties -- exactly why ``Deletion`` cannot express this
+    -- so once the container is confirmed, its own dict is checked directly
+    against the fixed key set.
+    """
+    if isinstance(node, dict):
+        plausible = _plausible_positions(schema, positions, node)
+        for deletion in deletions:
+            if not _declares_tail(schema, plausible, deletion.container_path):
+                continue
+            container = _tail_value(node, deletion.container_path)
+            if not isinstance(container, dict):
+                continue
+            for key, message in deletion.messages.items():
+                if key in container:
+                    del container[key]
+                    messages.append(message)
+                    struck.append((*prefix, *deletion.container_path, key))
+        for key in list(node.keys()):
+            _delete_map_keys_recursive(
+                node[key],
+                deletions,
+                schema,
+                _child_positions(schema, positions, key),
+                messages,
+                struck,
+                (*prefix, key),
+            )
+    elif isinstance(node, list):
+        item_positions = _item_positions(schema, positions)
+        for index, item in enumerate(node):
+            _delete_map_keys_recursive(
+                item,
+                deletions,
+                schema,
+                item_positions,
+                messages,
+                struck,
+                (*prefix, index),
+            )
+
+
+def _tail_value(node: JsonObject, tail: YamlKeyPath) -> JsonValue | None:
+    """The value at *tail* rooted at *node*, or ``None`` if any segment is absent."""
+    current: JsonValue = node
+    for part in tail:
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
 
 
 def _live_declares_tail(
@@ -2186,11 +2565,23 @@ def _move_value(
             )
         parent = value
     if isinstance(parent, list):
-        raise MigrationError(
-            f"Cannot move {_format_path(move.old_path)!r} to "
-            f"{_format_path(move.new_path)!r}: destination ends inside a "
-            "list. Migrate this field manually."
-        )
+        # A list-item destination only ever arises from an identity-path
+        # Move's trailing wildcard (old_path == new_path) -- no declared
+        # Move relocates *into* a list index, only respells the value
+        # already sitting at one (TokenRespell's palette/single_series_palette
+        # list-item Moves). Rewrite in place: there is no pop-and-conflict
+        # question the way a dict destination has, since source and
+        # destination are structurally the same slot.
+        if move.old_path != move.new_path:
+            raise MigrationError(
+                f"Cannot move {_format_path(move.old_path)!r} to "
+                f"{_format_path(move.new_path)!r}: destination ends inside a "
+                "list. Migrate this field manually."
+            )
+        index = int(destination[-1])
+        if move.value_map is not None:
+            parent[index] = _mapped_value(move.value_map, move.old_path, parent[index])
+        return
     destination_key = destination[-1]
     # An identity-path Move (old_path == new_path) pops and reassigns the same
     # slot -- source_parent and parent are the same object and the key hasn't
@@ -2357,6 +2748,17 @@ def _schema_path_exists(schema: JsonObject, path: YamlKeyPath) -> bool:
                     child = branch.get("additionalProperties")
                     if child is None:
                         child = branch.get("items")
+                    if child is None and branch.get("type") == "array":
+                        # JSON Schema: an array with no `items` keyword
+                        # accepts any item -- the items schema defaults to
+                        # an open `{}`, not "no items allowed". Authoring-
+                        # shorthand unions (`ScalePaletteName | list[str] |
+                        # str | None`) render their list arm as exactly this
+                        # bare `{"type": "array"}`; without this, a trailing
+                        # wildcard can never prove a destination inside one,
+                        # and a Move that should reach a list item can never
+                        # be declared.
+                        child = {}
                 else:
                     properties = branch.get("properties")
                     child = (

@@ -195,7 +195,7 @@ def render_command(
                default is stdout. Use "-" to force stdout. Ignored for terminal
                format (always prints to stdout).
         format: Output format (svg, html, png, pdf, terminal, json, text,
-                yaml, data)
+                text-data, yaml, data)
         project: The resolved dbt charts project (injected by @with_project)
         variables: Variable values to pass to the render (key=value pairs)
         use_cache: Whether to use cached query results. False (--no-cache) skips
@@ -300,7 +300,7 @@ def render_command_from_yaml(
                renders/ file under project_dir; json/text/yaml/data go to stdout.
                Use "-" to force stdout. Ignored for terminal format.
         format: Output format (svg, html, png, pdf, terminal, json, text,
-                yaml, data)
+                text-data, yaml, data)
         project: The resolved dbt charts project (injected by @with_project)
         variables: Variable values to pass to the render
         use_cache: Whether to use cached query results. False (--no-cache) skips
@@ -394,7 +394,7 @@ def _write_output(
     # ANSI-formatted preview. Every other text format honors --output when set
     # and defaults to stdout otherwise (no implicit `renders/` write).
     if format == "terminal" or (
-        format in ("json", "text", "yaml", "data") and output is None
+        format in ("json", "text", "text-data", "yaml", "data") and output is None
     ):
         text_output = (
             rendered_content.decode()

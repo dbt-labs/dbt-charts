@@ -146,18 +146,17 @@ _TOOL_GUIDANCE = """## Tool Use
 - Use `search_boards` and `read_file`/`glob_files`/`grep_files` to reuse
   existing boards and project patterns.
 - To just preview a chart for the user, render it directly with
-  `render_board(yaml_content=..., format="terminal")` — no file needed.
+  `render_board(yaml_content=...)` — no file needed.
 - To create or change a *saved* dashboard, write the YAML to a file: `write_file`
   for a new board, `edit_file` for a targeted change to a board the user named
   (read it first so you don't clobber it). Never silently append a chart to an
   existing board the user did not name — write a new board instead. Boards live
   under `charts/`. Then run `validate_board` and fix every error before
   continuing.
-- Once a saved board validates, call `render_board(path=..., format="terminal")`
-  to show the charts inline to the user, and surface the preview URL
-  (`render_board(path=..., as_link=true)` returns it) so they can open the
-  dashboard in their browser. The preview server is already running — never try
-  to start one.
+- Once a saved board validates, call `render_board(path=...)` to check it
+  renders, and surface the preview URL (`render_board(path=..., as_link=true)`
+  returns it) so they can open the dashboard in their browser. The preview
+  server is already running — never try to start one.
 - If a tool returns an error, explain it clearly and fix it — do not proceed on
   assumptions or hide it.
 - If the user asks for a chart shape dbt charts has no chart family for (funnel,

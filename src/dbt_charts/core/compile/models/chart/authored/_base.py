@@ -27,7 +27,6 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.chart.authored._layer import (
-    BarChartLayer,
     CartesianLayer,
 )
 from dbt_charts.core.compile.models.markers import Channel, Color, DisplayText, Url
@@ -323,7 +322,7 @@ class _SharedChartFields(_BaseChartFields):
 def reject_multi_series_channel_conflicts(
     family: str,
     y: str | list[str] | None,
-    layers: Sequence[CartesianLayer | BarChartLayer] | None,
+    layers: Sequence[CartesianLayer] | None,
 ) -> None:
     """Reject encodings that carry their own series alongside a list-valued `y:`.
 

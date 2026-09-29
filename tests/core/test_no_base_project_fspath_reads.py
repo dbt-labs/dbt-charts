@@ -59,17 +59,17 @@ _PROJECT_ISH_RE = re.compile(r"project", re.IGNORECASE)
 # sanctioned: the local/parameter is explicitly typed FilesystemProject, or
 # narrowed via isinstance immediately above. Ratchet — shrink, don't grow.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("core/compile/config.py", 565): (
+    ("core/compile/config.py", 567): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 181): (
+    ("core/execute/adapters/adapter_registry.py", 189): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 187): (
+    ("core/execute/adapters/adapter_registry.py", 195): (
         "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
         "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 189): (
+    ("core/execute/adapters/adapter_registry.py", 197): (
         "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
@@ -89,36 +89,36 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/serve/server.py", 605): (
         "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1006): (
+    ("core/serve/server.py", 1008): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1007): (
+    ("core/serve/server.py", 1009): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1046): (
+    ("core/serve/server.py", 1048): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1076): (
+    ("core/serve/server.py", 1078): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1088): (
+    ("core/serve/server.py", 1090): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1172): (
+    ("core/serve/server.py", 1174): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1258): (
+    ("core/serve/server.py", 1260): (
         "get_board: app.state.project is always FilesystemProject (dct serve is "
         "filesystem-only); the local a few lines below makes this explicit"
-    ),
-    ("core/serve/server.py", 1361): (
-        "get_board: project explicitly typed FilesystemProject just above"
     ),
     ("core/serve/server.py", 1363): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
-    ("core/serve/server.py", 1385): (
+    ("core/serve/server.py", 1365): (
+        "get_board: project explicitly typed FilesystemProject just above"
+    ),
+    ("core/serve/server.py", 1387): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (
@@ -137,13 +137,13 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 114): (
+    ("agent_api/_paths.py", 334): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 169): (
+    ("agent_api/_paths.py", 389): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 319): (
+    ("agent_api/_paths.py", 533): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
     ("agent_api/project_session.py", 300): (

@@ -19,6 +19,7 @@ from mdsvg import (
 )
 from mdsvg.fonts import FontFace, FontFaces, FontMeasurer, _cached_measurer
 from mdsvg.renderer import SVGRenderer
+from mdsvg.utils import escape_xml
 
 # Class names carry a hash-derived scope (see TestClassPrefixScoping) so two
 # boards' SVGs sharing one HTML page can't collide on `.md-heading`. Tests
@@ -1324,7 +1325,8 @@ class TestBlockquoteFontOverrides:
         style = Style(font_family="'Body Serif', serif")
         svg = render("> A quote", style=style)
         assert _has_md_class(svg, "blockquote")
-        assert "font-family: 'Body Serif', serif" in svg
+        expected_family = escape_xml("'Body Serif', serif")
+        assert f"font-family: {expected_family}" in svg
 
     def test_blockquote_font_size_applies(self) -> None:
         """blockquote_font_size sets the font-size in the .md-blockquote CSS class."""
@@ -1360,7 +1362,8 @@ class TestHeadingFontFamily:
         style = Style(font_family="'Body Serif', serif")
         svg = render("# A heading", style=style)
         assert _has_md_class(svg, "heading")
-        assert "font-family: 'Body Serif', serif" in svg
+        expected_family = escape_xml("'Body Serif', serif")
+        assert f"font-family: {expected_family}" in svg
 
     def test_heading_font_family_independent_of_body_font_family(self) -> None:
         """A heading override does not change the body text's own family."""
@@ -1370,7 +1373,8 @@ class TestHeadingFontFamily:
         )
         svg = render("# A heading\n\nSome body text.", style=style)
         assert "Heading Sans" in svg
-        assert "font-family: 'Body Serif', serif" in svg
+        expected_family = escape_xml("'Body Serif', serif")
+        assert f"font-family: {expected_family}" in svg
 
 
 class TestBoldFontWeight:

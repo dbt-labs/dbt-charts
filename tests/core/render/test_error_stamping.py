@@ -60,6 +60,7 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("chart/time_unit_detect.py", "_next_bucket"),
         ("chart/time_unit_detect.py", "_floor_to_bucket_start"),
         ("chart/time_unit_detect.py", "next_coarser_label_unit"),
+        ("chart/time_unit_detect.py", "cadence_label_text"),
         ("chart/time_unit_detect.py", "_cadence_token_width"),
         # chart/type_inference.py
         ("chart/type_inference.py", "<module>"),

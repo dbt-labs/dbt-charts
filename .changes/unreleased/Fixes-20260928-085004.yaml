@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'The value-label crowding warning now measures the text a chart paints: the narrative house register (`4.23bn`, not `4.23G`) and a span bar''s signed change (`+$28`, not its end value). It could previously miss crowded labels or fire falsely.'
+time: 2026-09-28T08:50:04-07:00

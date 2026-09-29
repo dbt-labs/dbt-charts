@@ -319,8 +319,14 @@ def bake_line_stroke(
     Returns the mark unchanged when any of the following are true:
     - ``adaptive <= 0`` — no adaptive value computed (no data, no x field, etc.)
     - ``mark.stroke is None`` — no stroke slot to update
-    - ``mark.stroke.width == 0.0`` — the zero-sentinel ("no stroke"); must never
-      be resurrected by the adaptive pass
+    - ``mark.stroke.width is not None`` — some tier of the cascade already
+      pinned a width (including the ``0.0`` zero-sentinel, "no stroke");
+      a pin always wins outright and must never be resurrected or
+      overwritten by the adaptive pass. This is the single place that
+      decision is made — callers pass the already-merged mark, so a width
+      inherited from any tier (theme, board, chart-local, or a layer's own
+      patch) is treated identically; a caller must not re-derive its own
+      "is this pinned" check before calling in.
 
     Otherwise returns a model_copy with ``stroke.width`` replaced by
     ``adaptive``.
@@ -333,7 +339,7 @@ def bake_line_stroke(
         A ``model_copy`` with the baked width, or the original mark unchanged
         when any of the conditions above hold.
     """
-    if adaptive <= 0 or mark.stroke is None or mark.stroke.width == 0.0:
+    if adaptive <= 0 or mark.stroke is None or mark.stroke.width is not None:
         return mark
     return mark.model_copy(
         update={"stroke": mark.stroke.model_copy(update={"width": adaptive})}

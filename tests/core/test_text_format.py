@@ -148,6 +148,17 @@ class TestTextFormat:
         assert "100" in result
         assert "1200" in result
 
+    def test_numeric_x_shows_range(self, make_chart):
+        """A numeric x column shows its min-max range, like y does."""
+        data = [{"x": 5, "y": 1}, {"x": 50, "y": 2}, {"x": 25, "y": 3}]
+        chart = make_chart("scatter", x="x", y="y")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "x: 5–50" in result
+
     def test_categorical_few_values(self, make_chart):
         """String columns with <=5 values show the values."""
         data = [
@@ -177,14 +188,11 @@ class TestTextFormat:
         assert "8 distinct" in result
 
     def test_kpi_chart(self, make_chart):
-        """KPI charts show value = formatted number.
+        """KPI charts show only the formatted value — no raw-value parenthetical.
 
-        4,200,000 crosses the KPI engine's own SI-compaction threshold
-        (finalize_kpi_value_format, >= 1000) even with no authored format, so
-        resolve() bakes a compaction spec and the raw cell shows alongside
-        the formatted one to disambiguate — the exact notation is a theme
-        default and not pinned here (dbt-charts/AGENTS.md's "don't pin
-        theme/default values in tests").
+        The exact compaction notation is a theme default and not pinned here
+        (dbt-charts/AGENTS.md's "don't pin theme/default values in tests");
+        this only asserts the raw cell no longer appears alongside it.
         """
         data = [{"revenue": 4200000}]
         chart = make_chart("kpi", value="revenue", x=None, y=None)
@@ -194,7 +202,93 @@ class TestTextFormat:
         result = render(board, executor, format="text").output
 
         assert "kpi" in result.lower()
-        assert "4200000" in result
+        assert "4200000" not in result
+
+    def test_titleless_childless_container_heading_dropped(self, make_chart):
+        """An empty, titleless layout container contributes no heading at all."""
+        empty_row = Board(
+            id="row0",
+            title="",
+            layout=Layout(type="rows", items=[], width=600, height=100),
+            resolved_style=_default_resolved_style(),
+            chart_style_context=_default_chart_style_context(),
+            level=2,
+        )
+        outer = Board(
+            id="outer",
+            title="Outer Dashboard",
+            layout=Layout(
+                type="rows",
+                items=[
+                    LayoutItem(type="board", board=empty_row, width=600, height=100)
+                ],
+                width=600,
+                height=600,
+            ),
+            resolved_style=_default_resolved_style(),
+            chart_style_context=_default_chart_style_context(),
+            level=1,
+        )
+        executor = _make_executor([{"x": 1}])
+
+        result = render(outer, executor, format="text").output
+
+        assert "row0" not in result
+        assert result == "# Outer Dashboard"
+
+    def test_titleless_container_with_only_container_children_heading_dropped(
+        self, make_chart
+    ):
+        """A titleless row whose only children are containers (not direct
+        chart/KPI/table items) drops its own heading, but its content
+        children still render at their own depth."""
+        data = [{"month": "Jan", "revenue": 100}]
+        chart = make_chart("bar", x="month", y="revenue")
+        col = Board(
+            id="row1_col0",
+            title="",
+            layout=Layout(
+                type="rows",
+                items=[LayoutItem(type="chart", chart=chart, width=300, height=300)],
+                width=300,
+                height=300,
+            ),
+            resolved_style=_default_resolved_style(),
+            chart_style_context=_default_chart_style_context(),
+            level=3,
+        )
+        row = Board(
+            id="row1",
+            title="",
+            layout=Layout(
+                type="cols",
+                items=[LayoutItem(type="board", board=col, width=300, height=300)],
+                width=600,
+                height=300,
+            ),
+            resolved_style=_default_resolved_style(),
+            chart_style_context=_default_chart_style_context(),
+            level=2,
+        )
+        outer = Board(
+            id="outer",
+            title="Outer Dashboard",
+            layout=Layout(
+                type="rows",
+                items=[LayoutItem(type="board", board=row, width=600, height=300)],
+                width=600,
+                height=600,
+            ),
+            resolved_style=_default_resolved_style(),
+            chart_style_context=_default_chart_style_context(),
+            level=1,
+        )
+        executor = _make_executor(data)
+
+        result = render(outer, executor, format="text").output
+
+        assert "\n## row1\n" not in result
+        assert "### row1_col0" in result
 
     def test_nested_board(self, make_chart):
         """Nested boards use deeper heading levels."""
@@ -261,7 +355,7 @@ class TestTextFormat:
         assert "first 1 and last 1 of 7 rows" in result
 
     def test_kpi_formatted_value_shows_currency(self, make_chart):
-        """A currency-formatted KPI shows the value as it will be drawn, plus raw."""
+        """A currency-formatted KPI shows only the value as it will be drawn."""
         data = [{"revenue": 210.0}]
         chart = make_chart(
             "kpi",
@@ -276,7 +370,7 @@ class TestTextFormat:
         result = render(board, executor, format="text").output
 
         assert "$210" in result
-        assert "210.0" in result
+        assert "210.0" not in result
 
     def test_kpi_support_line_shows_formatted_value_and_label(self, make_chart):
         """The support block shows its formatted value alongside its label."""
@@ -398,6 +492,76 @@ class TestTextFormat:
         assert "+5 more" in result
         assert "col19" in result
         assert "col20" not in result
+
+    def test_overlay_layer_y_field_appears_in_field_mappings(self, make_chart):
+        """A layered chart's overlay `layers[].y` is listed alongside the base y."""
+        data = [
+            {"month": "Jan", "created": 10, "solved": 4},
+            {"month": "Feb", "created": 20, "solved": 8},
+        ]
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="created",
+            layers=[{"type": "line", "y": "solved"}],
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "y: created" in result
+        assert "y: solved" in result
+
+    def test_overlay_layer_y_field_range_appears_in_data_summary(self, make_chart):
+        """The overlay layer's y column gets its own min-max range, distinct
+        from the base y column's range."""
+        data = [
+            {"month": "Jan", "created": 10, "solved": 4},
+            {"month": "Feb", "created": 20, "solved": 8},
+        ]
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="created",
+            layers=[{"type": "line", "y": "solved"}],
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "created: 10–20" in result
+        assert "solved: 4–8" in result
+
+    def test_table_shows_row_preview(self, make_chart):
+        """A table chart shows its first few rows as a compact markdown table."""
+        data = [
+            {"account": "Acme", "revenue": 100000.0},
+            {"account": "Globex", "revenue": 250000.0},
+        ]
+        chart = make_chart("table")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "Acme" in result
+        assert "100000" in result
+        assert "Globex" in result
+
+    def test_table_row_preview_caps_and_notes_truncation(self, make_chart):
+        """A table wider than the preview cap shows a truncation note, not silence."""
+        data = [{"account": f"Acct{i}", "revenue": i} for i in range(10)]
+        chart = make_chart("table")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "Acct0" in result
+        assert "Acct9" not in result
+        assert "showing" in result.lower()
 
     def test_table_hidden_column_omitted_from_summary(self, make_chart):
         """A style.columns visible: false column never reaches the text summary."""
@@ -778,3 +942,129 @@ rows:
         result = render(board, executor, format="text").output
 
         assert "## Warnings" not in result
+
+
+class TestTextDataFormat:
+    """``format="text-data"`` appends grouped-by-query row tables to the text
+    summary — the exact rows, not just the compact per-chart summary above."""
+
+    def test_text_data_appends_query_rows(self, make_chart):
+        data = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200}]
+        chart = make_chart("bar", x="month", y="revenue")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text-data").output
+
+        assert "## Data" in result
+        assert "Jan" in result
+        assert "100" in result
+        assert "Feb" in result
+        assert "200" in result
+
+    def test_plain_text_format_omits_data_section(self, make_chart):
+        data = [{"month": "Jan", "revenue": 100}]
+        chart = make_chart("bar", x="month", y="revenue")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "## Data" not in result
+
+    def test_text_data_groups_shared_query_once(self, make_chart):
+        """Two charts sharing a query name get the rows dumped exactly once."""
+        data = [{"month": "Jan", "revenue": 100}]
+        chart1 = make_chart("bar", id="c1", x="month", y="revenue", query_name="q")
+        chart2 = make_chart("line", id="c2", x="month", y="revenue", query_name="q")
+        board = _make_board([chart1, chart2])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text-data").output
+
+        assert result.count("### q") == 1
+
+    def test_text_data_caps_rows_with_explicit_note(self, make_chart):
+        """Row dumps are capped by max_rows_per_query, the same cap every
+        other row-embedding format uses (head+tail, never silent) — the cap
+        an agent dispatch site actually renders with."""
+        data = [{"month": f"m{i}", "revenue": i} for i in range(60)]
+        chart = make_chart("bar", x="month", y="revenue")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(
+            board, executor, format="text-data", max_rows_per_query=50
+        ).output
+
+        assert "showing first 25 and last 25 of 60 rows" in result
+        # The gap row lands exactly between the last head row (m24, head=25)
+        # and the first tail row (m35, of the last 25 of 60) -- never
+        # mid-chunk, never missing.
+        last_head_to_first_tail = result.split("| m24 |", 1)[1].split("| m35 |", 1)[0]
+        assert "| ... |" in last_head_to_first_tail
+        assert "| m25 |" not in last_head_to_first_tail
+
+    def test_text_data_uncapped_by_default(self, make_chart):
+        """No max_rows_per_query means no truncation note and no gap marker —
+        matching every other row-embedding format's default."""
+        data = [{"month": f"m{i}", "revenue": i} for i in range(60)]
+        chart = make_chart("bar", x="month", y="revenue")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text-data").output
+
+        assert "showing" not in result.split("## Data", 1)[1]
+        assert "m59" in result
+
+    def test_text_data_trims_float_noise_past_double_precision(self, make_chart):
+        """Raw-precision noise (13356.399999999998, from float arithmetic)
+        is trimmed, but real digits are not rounded away."""
+        data = [{"month": "Jan", "revenue": 13356.399999999998}]
+        chart = make_chart("bar", x="month", y="revenue")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text-data").output
+        data_section = result.split("## Data", 1)[1]
+
+        assert "13356.399999999998" not in data_section
+        assert "13356.4" in data_section
+
+    def test_text_data_keeps_exact_cents_on_a_large_value(self, make_chart):
+        """Exact values are the point of the Data section — large values
+        must not lose precision (a 6-sig-fig round would turn 1234567.89
+        into 1234570.0), whether they carry cents, more digits than that,
+        or are a whole number stored as a float."""
+        data = [
+            {"month": "Jan", "revenue": 1234567.89},
+            {"month": "Feb", "revenue": 13356789.99},
+            {"month": "Mar", "revenue": 1234567.0},
+        ]
+        chart = make_chart("bar", x="month", y="revenue")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text-data").output
+        data_section = result.split("## Data", 1)[1]
+
+        assert "1234567.89" in data_section
+        assert "13356789.99" in data_section
+        assert "1234567.0" in data_section
+
+    def test_text_data_rounds_to_significant_digits_not_decimal_places(
+        self, make_chart
+    ):
+        """A small value must round to significant digits, not decimal
+        places — round(value, 4) would zero out 0.00004."""
+        data = [{"month": "Jan", "conversion_rate": 0.00004}]
+        chart = make_chart("bar", x="month", y="conversion_rate")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text-data").output
+        data_section = result.split("## Data", 1)[1]
+
+        assert "0.0 " not in data_section
+        assert "4e-05" in data_section

@@ -350,3 +350,50 @@ def test_render_dashboard_in_memory_board_resolves_boards_relative_ref(
     )
 
     assert result.status == "ok", result.validation_errors
+
+
+class TestEmptyYamlDocumentDiagnostic:
+    """An empty board file (e.g. dct init's comment-only meta.yml,
+    fed to a verb that treats it as a board) must not surface as ERR-INTERNAL —
+    that code signals a bug, not a well-understood input shape."""
+
+    _COMMENT_ONLY = "# just a comment, nothing else\n"
+
+    def test_compile_reports_its_own_code_not_internal(self) -> None:
+        result = compile(self._COMMENT_ONLY, file="charts/meta.yml")
+
+        assert not result.success
+        assert len(result.errors) == 1
+        assert result.errors[0].code == "ERR-EMPTY-YAML-DOCUMENT"
+
+    def test_compile_names_the_file_in_the_message(self) -> None:
+        result = compile(self._COMMENT_ONLY, file="charts/meta.yml")
+
+        assert "charts/meta.yml" in result.errors[0].message
+
+    def test_compile_file_reports_its_own_code_not_internal(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        board_path = tmp_path / "charts" / "meta.yml"
+        board_path.parent.mkdir(parents=True)
+        board_path.write_text(self._COMMENT_ONLY)
+
+        project = local_project(tmp_path)
+        result = compile_file(project.path("charts/meta.yml").read_board())
+
+        assert not result.success
+        error = result.errors[0]
+        assert error.code == "ERR-EMPTY-YAML-DOCUMENT"
+        assert "charts/meta.yml" in error.message
+
+    def test_compile_without_a_file_still_gets_its_own_code(self) -> None:
+        """No board identity available (e.g. raw stdin content) — still not
+        ERR-INTERNAL, and the message still reads sensibly with no filename
+        to name (regression: deleting the `file or "..."` fallback default
+        still type-checks and silently renders "Empty YAML document: None.")."""
+        result = compile(self._COMMENT_ONLY)
+
+        assert result.errors[0].code == "ERR-EMPTY-YAML-DOCUMENT"
+        assert (
+            result.errors[0].message == "Empty YAML document: the given YAML content."
+        )

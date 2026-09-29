@@ -1460,6 +1460,95 @@ def test_time_alias_on_number_format_fails_compile() -> None:
     assert "number_format" in result.errors[0].message
 
 
+# ── Date-format slot messaging: no directive, and unsupported directives ────
+
+
+def test_date_format_with_no_directive_names_the_slot_a_date_format() -> None:
+    """`MMM YYYY` has no `%` directive -- it fails the d3 number-spec parse too,
+    but the slot (time_format) is a definitively known date/time slot, so the
+    message must not call it a "number format"."""
+    result = compile_board(_board_with_time_format('"MMM YYYY"'))
+
+    assert not result.success
+    error = result.errors[0]
+    assert error.code == "ERR-FORMAT-INVALID"
+    assert "date" in error.message.lower()
+    assert "number format" not in error.message.lower()
+    assert "%b %Y" in error.message, "should suggest a d3 time pattern"
+    assert "d3-format spec" not in error.message, (
+        "a date slot's typo isn't a number-spec parse failure"
+    )
+
+
+def test_iso_date_pattern_with_no_directive_also_names_a_date_format() -> None:
+    """`YYYY-MM-DD` is the other common no-directive pattern authors type."""
+    result = compile_board(_board_with_time_format('"YYYY-MM-DD"'))
+
+    assert not result.success
+    error = result.errors[0]
+    assert error.code == "ERR-FORMAT-INVALID"
+    assert "date" in error.message.lower()
+    assert "number format" not in error.message.lower()
+
+
+def test_unsupported_strftime_directive_fails_compile_not_at_render() -> None:
+    """%K has a directive but neither d3-time-format nor the engine's Python
+    painter implements it. This must be a compile-time validation error
+    (ERR-FORMAT-INVALID) that lists the accepted directives, never
+    ERR-INTERNAL -- the fallback code for an unclassified crash.
+    """
+    result = compile_board(_board_with_time_format('"%K"'))
+
+    assert not result.success
+    error = result.errors[0]
+    assert error.code == "ERR-FORMAT-INVALID"
+    assert "%K" in error.message
+    assert "%b" in error.message, "the accepted directives should be listed"
+
+
+def test_unsupported_directive_on_axis_format_also_fails_compile() -> None:
+    """The same directive check applies wherever a raw strftime spec is legal."""
+    board = """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::DATE AS month, 100 AS revenue
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      axis_x:
+        labels:
+          format: "%K"
+rows:
+  - revenue
+"""
+    result = compile_board(board)
+    assert not result.success
+    assert result.errors[0].code == "ERR-FORMAT-INVALID"
+
+
+def test_d3_only_millisecond_directive_compiles_clean_on_time_format() -> None:
+    """%L (milliseconds) is d3-time-format vocabulary Vega paints directly,
+    even though Python's portable_strftime has no computer for it -- the
+    compile-time check accepts either engine's directive set.
+    """
+    result = compile_board(_board_with_time_format('"%H:%M:%S.%L"'))
+    assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_d3_only_millisecond_directive_compiles_clean_in_style_formats_alias() -> None:
+    """The same d3-only directive is legal through a `style.formats` alias."""
+    result = compile_board(
+        _board_with_time_format("ms", formats='  formats:\n    ms: "%H:%M:%S.%L"\n')
+    )
+    assert result.success, f"Compile failed: {result.errors}"
+
+
 def test_time_alias_on_a_kind_agnostic_format_slot_compiles_clean() -> None:
     """An axis label format is either kind — its column decides, not the field.
 

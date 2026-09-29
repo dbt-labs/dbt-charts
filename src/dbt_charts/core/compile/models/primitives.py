@@ -495,7 +495,10 @@ class StrokeStyle(BaseModel):
 
     None semantics per field:
       - color: line/area use the mark's own fill color; other families require it.
-      - width: absent = VL default (1 px). Required by most compiled families.
+      - width: absent = VL default (1 px) for most compiled families; line and
+        area instead fall back to chart_rendering.stroke.fallback_width /
+        .stacked_fallback_width once the cascade and adaptive bake both leave
+        it unset — see _apply_stroke_width_fallback.
       - cap/join: absent = VL default (butt/miter). Only line/arc set these.
       - dasharray: absent = solid line. Only spark.empty sets this.
     """
@@ -632,7 +635,7 @@ VEGA_SCHEME_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _might_be_palette_role(value: str) -> bool:
+def might_be_palette_role(value: str) -> bool:
     """True when ``value`` could still name a theme palette role.
 
     Deliberately shape-only: a role is whatever a theme's ``palettes:`` block
@@ -720,7 +723,7 @@ class ScaleTargetPaletteValidationMixin(BaseModel):
                     "bucketed/quantized color scales yet — use the continuous "
                     f"scheme '{base}' instead."
                 ) from None
-            if _might_be_palette_role(value):
+            if might_be_palette_role(value):
                 # A theme palette role, unresolvable until the extends chain has
                 # merged. `expand_palette_refs` substitutes it the moment the
                 # role map is final, and raises there if it is not one.
@@ -957,7 +960,7 @@ class CategoricalColorStyle(BaseModel):
             try:
                 stops, requested = resolve_palette_alias(value)
             except UnknownPaletteError:
-                if not _might_be_palette_role(value):
+                if not might_be_palette_role(value):
                     raise
                 # Possibly a theme palette role (`category`). Roles are not
                 # knowable here: the theme's `palettes:` map is not final until

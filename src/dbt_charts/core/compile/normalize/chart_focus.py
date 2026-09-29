@@ -44,6 +44,9 @@ from dbt_charts.core.compile.models.board.normalized import (
 )
 from dbt_charts.core.compile.sizing import chart_slot_width
 
+# Read by compile/validate/board_warnings.py to judge WARN-UNREFERENCED-CHART.
+PRE_FOCUS_PLACED_CHARTS_META_KEY = "pre_focus_placed_chart_ids"
+
 
 def focus_on_chart(board: Board, chart_id: str) -> Board:
     """Transform a compiled board to focus on a single chart.
@@ -104,6 +107,9 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
         if name in chart.variable_dependencies
     }
 
+    # The layout as written, before focus narrows it to one chart.
+    pre_focus_placed = sorted(c.id for c in board.placed_charts() if c.id)
+
     # Pin the dashboard slot width so the focused chart keeps the exact
     # geometry it had on the board (band widths, axis-label fit). The board
     # container hugs the pinned width the same way it hugs preferred widths.
@@ -148,6 +154,7 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
             "authored_style": authored,
             "resolved_style": resolved_style,
             "chart_style_context": chart_style_context,
+            "meta": {**board.meta, PRE_FOCUS_PLACED_CHARTS_META_KEY: pre_focus_placed},
         }
     )
 

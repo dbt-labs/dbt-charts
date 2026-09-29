@@ -224,7 +224,7 @@ Authored patch for bar and histogram charts; histogram adds automatic x binning.
 | `width` | int \| float | Chart width in pixels. Positive number only. In a rows layout the chart's slot pins to this width (a fixed footprint, capped at the row). In cols and grid layouts it contributes to the dashboard's intrinsic width measurement when the board has no width of its own, and the layout still owns the final slot. Valid on cartesian chart families (area, bar, heatmap, histogram, line, scatter), pie/donut, and geo families (geoshape, map, point_map, bubble_map). Other chart families use renderer-owned or layout-owned sizing contracts. |
 | `y_start` | str | Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as y: both numeric, or both dates. Not with stacking. |
 | `style` | [BarChartStyle](#barchartstyle) | Appearance overrides for this chart alone. |
-| `layers` | list[[BarChartBarLayer](#barchartbarlayer) \| [LineLayer](#linelayer) \| [AreaLayer](#arealayer) \| [ScatterLayer](#scatterlayer)] | Extra marks drawn over this chart, each with its own type and columns. Not supported when type: histogram: a histogram bins x and aggregates to a count, so there is no shared y measure for an overlay to plot against. |
+| `layers` | list[[BarLayer](#barlayer) \| [LineLayer](#linelayer) \| [AreaLayer](#arealayer) \| [ScatterLayer](#scatterlayer)] | Extra marks drawn over this chart, each with its own type and columns. Not supported when type: histogram: a histogram bins x and aggregates to a count, so there is no shared y measure for an overlay to plot against. |
 
 <a id="linechart"></a>
 ## LineChart
@@ -640,7 +640,7 @@ Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
 | `footer` | [FooterStyle](#footerstyle) | Page footer chrome visibility. |
 | `timestamp` | [TimestampStyle](#timestampstyle) | Data-freshness chrome: visibility, placement, format, and font. |
 | `formats` | dict[str, str] | Format alias map; None means no aliases at this cascade level. |
-| `palettes` | dict[str, one of: 'category-6-tonal-blue', 'category-6-tonal-brown', 'category-6-tonal-green', 'category-6-tonal-orange', 'category-6-tonal-purple', 'dbt-creams', 'dbt-div-blue-red', 'dbt-div-blue-red-dark', 'dbt-div-coolwarm', 'dbt-div-coolwarm-dark', 'dbt-div-crimson-green', 'dbt-div-crimson-green-dark', 'dbt-div-orange-teal', 'dbt-div-orange-teal-dark', 'dbt-div-sunset', 'dbt-div-sunset-dark', 'dbt-grays', 'dbt-seq-amber', 'dbt-seq-amber-dark', 'dbt-seq-blue', 'dbt-seq-blue-dark', 'dbt-seq-brown', 'dbt-seq-brown-dark', 'dbt-seq-gray', 'dbt-seq-gray-dark', 'dbt-seq-green', 'dbt-seq-green-dark', 'dbt-seq-purple', 'dbt-seq-purple-dark', 'dbt-seq-rust', 'dbt-seq-rust-dark', 'dbt-seq-teal', 'dbt-seq-teal-dark', 'editorial-10', 'editorial-10-dark', 'editorial-10-ghost', 'editorial-10-ink', 'editorial-10-light', 'hero-6', 'info', 'negative', 'positive', 'tableau', 'vivid-10', 'vivid-10-dark', 'vivid-10-ghost', 'vivid-10-ink', 'vivid-10-light', 'warning'] | Theme palette role assignments: open dict mapping role name to palette file name. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge. |
+| `palettes` | dict[str, one of: 'category-6-tonal-blue', 'category-6-tonal-blue.dark', 'category-6-tonal-blue.deep', 'category-6-tonal-blue.light', 'category-6-tonal-blue.pale', 'category-6-tonal-brown', 'category-6-tonal-brown.dark', 'category-6-tonal-brown.deep', 'category-6-tonal-brown.light', 'category-6-tonal-brown.pale', 'category-6-tonal-green', 'category-6-tonal-green.dark', 'category-6-tonal-green.deep', 'category-6-tonal-green.light', 'category-6-tonal-green.pale', 'category-6-tonal-orange', 'category-6-tonal-orange.dark', 'category-6-tonal-orange.deep', 'category-6-tonal-orange.light', 'category-6-tonal-orange.pale', 'category-6-tonal-purple', 'category-6-tonal-purple.dark', 'category-6-tonal-purple.deep', 'category-6-tonal-purple.light', 'category-6-tonal-purple.pale', 'dbt-creams', 'dbt-div-blue-red', 'dbt-div-blue-red-dark', 'dbt-div-coolwarm', 'dbt-div-coolwarm-dark', 'dbt-div-crimson-green', 'dbt-div-crimson-green-dark', 'dbt-div-orange-teal', 'dbt-div-orange-teal-dark', 'dbt-div-sunset', 'dbt-div-sunset-dark', 'dbt-grays', 'dbt-seq-amber', 'dbt-seq-amber-dark', 'dbt-seq-blue', 'dbt-seq-blue-dark', 'dbt-seq-brown', 'dbt-seq-brown-dark', 'dbt-seq-gray', 'dbt-seq-gray-dark', 'dbt-seq-green', 'dbt-seq-green-dark', 'dbt-seq-purple', 'dbt-seq-purple-dark', 'dbt-seq-rust', 'dbt-seq-rust-dark', 'dbt-seq-teal', 'dbt-seq-teal-dark', 'editorial-10', 'editorial-10.dark', 'editorial-10.deep', 'editorial-10.light', 'editorial-10.pale', 'hero-6', 'hero-6.dark', 'hero-6.deep', 'hero-6.light', 'hero-6.pale', 'info', 'negative', 'positive', 'tableau', 'tableau.dark', 'tableau.deep', 'tableau.light', 'tableau.pale', 'vivid-10', 'vivid-10.dark', 'vivid-10.deep', 'vivid-10.light', 'vivid-10.pale', 'warning'] | Theme palette role assignments: open dict mapping role name to palette file name. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge. |
 | `tones` | [KpiTonesStyle](#kpitonesstyle) | Semantic tone color palette (positive/negative/warning/info) for KPI support rows, table conditional glyphs, and spark negative_color. |
 | `roles` | dict[str, str] | Optional top-level theme role aliases: bare name → role.alias. e.g. ink: chrome.heading |
 | `padding` | [SpacingValues](#spacingvalues) | Per-board padding override (CSS shorthand or structured). |
@@ -735,9 +735,9 @@ Authored overlay for BarChartStyle. Bar chart style: chart-level fields + marks 
 | `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed on stacked bars instead of in a legend. |
 | `marks` | [BarChartMarksStyle](#barchartmarksstyle) | Bar-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
 
-<a id="barchartbarlayer"></a>
-## BarChartBarLayer
-A bar-type layer on a bar chart, which may start somewhere other than zero.
+<a id="barlayer"></a>
+## BarLayer
+A bar-type layer on a cartesian chart.
 
 **Required**
 
@@ -849,28 +849,6 @@ Authored overlay for LineChartStyle. Line chart style: chart-level fields + mark
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed at the end of each line instead of in a legend. |
 | `marks` | [LineChartMarksStyle](#linechartmarksstyle) | Line-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
-
-<a id="barlayer"></a>
-## BarLayer
-A bar-type layer on a cartesian chart.
-
-**Required**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | const: "bar" |  |
-
-**Optional**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `query` | str | Query name for this layer's data (overrides chart-level query). |
-| `x` | str | X-axis column name for this layer. |
-| `y` | str | Y-axis column name for this layer. |
-| `label` | str | Name for this layer's measure wherever the layer is identified. Defaults to its y column name. |
-| `color` | str | Column whose values split this layer into colored series; bare column name only. |
-| `axis_y` | [LayerAxisYStyle](#layeraxisystyle) | This layer's own y axis: which side it sits on, its title, scale, ticks, grid. |
-| `style` | [BarLayerStyle](#barlayerstyle) | Appearance overrides for this layer's bar marks. |
 
 <a id="areachartstyle"></a>
 ## AreaChartStyle
@@ -1276,7 +1254,7 @@ Authored overlay for ChartsStyle. Registry of all chart-type styles plus shared 
 | `preferred_width` | float | Preferred chart width in pixels. |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. |
 | `background` | str | Chart canvas background; None inherits from the board background via apply_inherit. Falls back to [`style.background`](#style). |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. Unset fields fall back to [`style.title`](#style). |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). |
 | `min_height` | float | Minimum chart height in pixels. |
 | `max_height` | float | Maximum chart height in pixels. |
@@ -2405,7 +2383,7 @@ Authored overlay for ScaleTargetConfig. Scale configuration for a single style t
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `palette` | str \| list[str] \| list[float] \| enum: "accent", "bluegreen", "blueorange", "bluepurple", "blues", "brownbluegreen", "browns", "category-6-tonal-blue", "category-6-tonal-brown", "category-6-tonal-green", "category-6-tonal-orange", "category-6-tonal-purple", "category10", "category20", "category20b", "category20c", "cividis", "dark2", "darkblue", "darkgold", … (92 more; see the JSON Schema) | Which colors the scale draws from: a built-in palette name or Vega scheme, a CSS color list for categorical, or a float list for relative stops. |
+| `palette` | str \| list[str] \| list[float] \| enum: "accent", "bluegreen", "blueorange", "bluepurple", "blues", "brownbluegreen", "browns", "category-6-tonal-blue", "category-6-tonal-blue.dark", "category-6-tonal-blue.deep", "category-6-tonal-blue.light", "category-6-tonal-blue.pale", "category-6-tonal-brown", "category-6-tonal-brown.dark", "category-6-tonal-brown.deep", "category-6-tonal-brown.light", "category-6-tonal-brown.pale", "category-6-tonal-green", "category-6-tonal-green.dark", "category-6-tonal-green.deep", … (120 more; see the JSON Schema) | Which colors the scale draws from: a built-in palette name or Vega scheme, a CSS color list for categorical, or a float list for relative stops. |
 | `domain` | const: "data" | Scale domain source ('data' uses the data extent, widened to nice round bounds when nice is true; None uses explicit min/max). |
 | `min` | float \| int | Minimum scale domain value (overrides data minimum). |
 | `max` | float \| int | Maximum scale domain value (overrides data maximum). |
@@ -2420,8 +2398,8 @@ Authored overlay for CategoricalColorStyle. Categorical palette config: per-seri
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `palette` | str \| list[str] \| enum: "category-6-tonal-blue", "category-6-tonal-brown", "category-6-tonal-green", "category-6-tonal-orange", "category-6-tonal-purple", "dbt-creams", "dbt-div-blue-red", "dbt-div-blue-red-dark", "dbt-div-coolwarm", "dbt-div-coolwarm-dark", "dbt-div-crimson-green", "dbt-div-crimson-green-dark", "dbt-div-orange-teal", "dbt-div-orange-teal-dark", "dbt-div-sunset", "dbt-div-sunset-dark", "dbt-grays", "dbt-seq-amber", "dbt-seq-amber-dark", "dbt-seq-blue", … (25 more; see the JSON Schema) | Categorical color palette: list of stops or a named palette. Expanded to list[str] at validation time. |
-| `single_series_palette` | str \| list[str] \| enum: "category-6-tonal-blue", "category-6-tonal-brown", "category-6-tonal-green", "category-6-tonal-orange", "category-6-tonal-purple", "dbt-creams", "dbt-div-blue-red", "dbt-div-blue-red-dark", "dbt-div-coolwarm", "dbt-div-coolwarm-dark", "dbt-div-crimson-green", "dbt-div-crimson-green-dark", "dbt-div-orange-teal", "dbt-div-orange-teal-dark", "dbt-div-sunset", "dbt-div-sunset-dark", "dbt-grays", "dbt-seq-amber", "dbt-seq-amber-dark", "dbt-seq-blue", … (25 more; see the JSON Schema) | Ordered list of single-series mark inks (must be non-empty when set), or a palette name. |
+| `palette` | str \| list[str] \| enum: "category-6-tonal-blue", "category-6-tonal-blue.dark", "category-6-tonal-blue.deep", "category-6-tonal-blue.light", "category-6-tonal-blue.pale", "category-6-tonal-brown", "category-6-tonal-brown.dark", "category-6-tonal-brown.deep", "category-6-tonal-brown.light", "category-6-tonal-brown.pale", "category-6-tonal-green", "category-6-tonal-green.dark", "category-6-tonal-green.deep", "category-6-tonal-green.light", "category-6-tonal-green.pale", "category-6-tonal-orange", "category-6-tonal-orange.dark", "category-6-tonal-orange.deep", "category-6-tonal-orange.light", "category-6-tonal-orange.pale", … (53 more; see the JSON Schema) | Categorical color palette: list of stops or a named palette. Expanded to list[str] at validation time. |
+| `single_series_palette` | str \| list[str] \| enum: "category-6-tonal-blue", "category-6-tonal-blue.dark", "category-6-tonal-blue.deep", "category-6-tonal-blue.light", "category-6-tonal-blue.pale", "category-6-tonal-brown", "category-6-tonal-brown.dark", "category-6-tonal-brown.deep", "category-6-tonal-brown.light", "category-6-tonal-brown.pale", "category-6-tonal-green", "category-6-tonal-green.dark", "category-6-tonal-green.deep", "category-6-tonal-green.light", "category-6-tonal-green.pale", "category-6-tonal-orange", "category-6-tonal-orange.dark", "category-6-tonal-orange.deep", "category-6-tonal-orange.light", "category-6-tonal-orange.pale", … (53 more; see the JSON Schema) | Ordered list of single-series mark inks (must be non-empty when set), or a palette name. |
 
 <a id="dimensionticksstyle"></a>
 ## DimensionTicksStyle
@@ -3308,15 +3286,15 @@ DuckDB source configuration.
 | `path` | str | DuckDB file path or ':memory:' for an in-memory database. |
 | `schema` | str | Default schema for unqualified table names (sets search_path). |
 | `duckdb_config` | dict[str, str \| int \| float \| bool] | DuckDB connection configuration values, such as enable_external_access. |
-| `extensions` | list[str \| dict[str, str]] | DuckDB extensions to install and load. |
+| `extensions` | list[str \| DuckDBExtensionConfig] | DuckDB extensions to install and load. |
 | `settings` | dict[str, str \| int \| float \| bool] | DuckDB settings and pragma values. |
-| `secrets` | list[dict[str, str \| int \| float \| bool]] | DuckDB secret definitions for external services. |
+| `secrets` | list[DuckDBSecretConfig] | DuckDB secret definitions for external services. |
 | `external_root` | str | Root path for dbt-duckdb external materializations. |
-| `use_credential_provider` | str | Credential-provider chain used for external services. |
+| `use_credential_provider` | str | Not supported; remove this field from the source config. |
 | `attach` | list[DuckDBAttachmentConfig] | Databases to attach to the DuckDB connection. |
-| `filesystems` | list[dict[str, str \| int \| float \| bool]] | fsspec filesystem configurations attached to DuckDB. |
-| `remote` | DuckDBRemoteConfig | Remote DuckDB connection configuration. |
-| `plugins` | list[DuckDBPluginConfig] | dbt-duckdb plugin configurations. |
+| `filesystems` | list[dict[str, str \| int \| float \| bool]] | Not supported; remove this field from the source config. |
+| `remote` | DuckDBRemoteConfig | Not supported; remove this field from the source config. |
+| `plugins` | list[DuckDBPluginConfig] | Not supported; remove this field from the source config. |
 | `disable_transactions` | bool | Whether dbt-duckdb disables statement transactions. |
 | `keep_open` | bool | Whether dbt-duckdb holds its connection open between queries. Off by default: a held handle pins the database file at one DuckDB config, and DuckDB refuses any other connection to a pinned file whose config differs. Ignored for ':memory:' and MotherDuck, which dbt-duckdb holds open either way; closing an in-memory database would destroy it. |
 | `module_paths` | list[str] | Python module paths dbt-duckdb loads. |

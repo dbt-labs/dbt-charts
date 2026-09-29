@@ -5,13 +5,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import resolve_format, resolve_label_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored._layer import (
     AreaLayer,
-    BarChartBarLayer,
-    BarChartLayer,
     BarLayer,
     CartesianLayer,
     LayerAxisYStyle,
@@ -26,6 +25,7 @@ from dbt_charts.core.compile.models.chart.resolved._layer import (
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve.chart._marks import (
+    _apply_stroke_width_fallback,
     _build_resolved_area_line,
     _build_resolved_area_mark,
     _build_resolved_line_mark,
@@ -122,14 +122,10 @@ def _resolve_one_layer(
         )
         _layer_line_patch = line_marks.line if line_marks is not None else None
         line_merged = merge_onto_base(line_parent.marks.line, _layer_line_patch)
-        # Bake adaptive only when the layer author left stroke unset.
-        # bake_line_stroke handles the zero-sentinel (stroke.width==0.0) guard.
-        if (
-            _layer_line_patch is None
-            or _layer_line_patch.stroke is None
-            or _layer_line_patch.stroke.width is None
-        ):
-            line_merged = bake_line_stroke(line_merged, line_adaptive_stroke)
+        # bake_line_stroke itself skips a mark whose width is already pinned
+        # by any cascade tier -- inherited from line_parent as much as this
+        # layer's own patch -- so no separate gate is needed here.
+        line_merged = bake_line_stroke(line_merged, line_adaptive_stroke)
         pre_fallback_point_mark = merge_onto_base(
             line_parent.marks.point,
             line_marks.point if line_marks is not None else None,
@@ -151,6 +147,12 @@ def _resolve_one_layer(
             line_label_is_house if line_labels.visible is True else point_label_is_house
         )
         line_merged_final = line_merged.model_copy(update={"labels": line_labels})
+        # A layer is always its own trend line, never a separator — the
+        # stacked-perimeter fallback constant is base-chart-recipe-specific
+        # and does not apply here.
+        line_merged_final = _apply_stroke_width_fallback(
+            line_merged_final, get_chart_rendering().stroke.fallback_width
+        )
         resolved_line_layer_mark = _build_resolved_line_mark(line_merged_final)
         line_layer_point_mark = pre_fallback_point_mark.model_copy(
             update={"labels": point_labels}
@@ -187,13 +189,10 @@ def _resolve_one_layer(
         )
         _layer_area_patch = area_marks.line if area_marks is not None else None
         area_line_merged = merge_onto_base(area_parent.marks.line, _layer_area_patch)
-        # Bake adaptive only when the layer author left stroke unset.
-        if (
-            _layer_area_patch is None
-            or _layer_area_patch.stroke is None
-            or _layer_area_patch.stroke.width is None
-        ):
-            area_line_merged = bake_line_stroke(area_line_merged, line_adaptive_stroke)
+        # bake_line_stroke itself skips a mark whose width is already pinned
+        # by any cascade tier -- inherited from area_parent as much as this
+        # layer's own patch -- so no separate gate is needed here.
+        area_line_merged = bake_line_stroke(area_line_merged, line_adaptive_stroke)
         area_fmt, area_label_is_house = resolve_label_format(
             area_line_merged.labels.format, chart_style_context.formats
         )
@@ -202,6 +201,12 @@ def _resolve_one_layer(
         )
         area_line_merged_final = area_line_merged.model_copy(
             update={"labels": area_line_labels}
+        )
+        # A layer is always its own trend line, never a separator — the
+        # stacked-perimeter fallback constant is base-chart-recipe-specific
+        # and does not apply here.
+        area_line_merged_final = _apply_stroke_width_fallback(
+            area_line_merged_final, get_chart_rendering().stroke.fallback_width
         )
         return ResolvedAreaLayer(
             type="area",
@@ -243,7 +248,7 @@ def _resolve_one_layer(
             axis_y=axis_y,
             x=layer.x,
             y=layer.y,
-            y_start=layer.y_start if isinstance(layer, BarChartBarLayer) else None,
+            y_start=layer.y_start,
             label=layer.label,
             color=layer.color,
             query_name=query_name,
@@ -307,7 +312,7 @@ def _check_layers_y_domain(
 
 
 def _resolve_layer_list(
-    layers: Sequence[CartesianLayer | BarChartLayer],
+    layers: Sequence[CartesianLayer],
     chart_style_context: ChartStyleContext,
     base_type: str,
     base_family_style: Any,

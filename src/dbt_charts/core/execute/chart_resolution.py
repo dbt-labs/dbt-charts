@@ -11,6 +11,7 @@ from types import EllipsisType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.chart.authored import BarLayer
 from dbt_charts.core.compile.models.chart.normalized.area import AreaChart
 from dbt_charts.core.compile.models.chart.normalized.bar import BarChart
 from dbt_charts.core.compile.models.chart.normalized.line import LineChart
@@ -37,14 +38,19 @@ def collect_shared_y_datasets(
     executor: Executor,
     variables: VariableValues,
 ) -> dict[str, CacheRows]:
-    """Return base and own-query rows drawn against the primary y scale."""
+    """Return base and own-query rows drawn against the primary y scale, plus
+    any bar layer with y_start, whose span columns compile checks."""
     datasets: dict[str, CacheRows] = {}
     if not isinstance(chart, (BarChart, LineChart, AreaChart, ScatterChart)):
         return datasets
     if chart.query_name is not None:
         datasets[chart.query_name] = data
     for layer in chart.layers:
-        if layer.axis_y is not None and layer.axis_y.position == "right":
+        if (
+            layer.axis_y is not None
+            and layer.axis_y.position == "right"
+            and not (isinstance(layer, BarLayer) and layer.y_start is not None)
+        ):
             continue
         query_name = layer.query
         if query_name is not None and query_name not in datasets:

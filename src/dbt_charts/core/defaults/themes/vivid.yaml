@@ -26,7 +26,6 @@ style:
     color: &faint dbt-grays.grid-emphasis
   title:
     font:
-      color: *high
       weight: 600
     subtitle:
       font:

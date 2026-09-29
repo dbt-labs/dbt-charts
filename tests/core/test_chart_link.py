@@ -409,6 +409,16 @@ def test_svg_postprocess_strips_sentinel_and_fixes_href_attribute():
     assert 'xlink:href="http://dct.invalid' not in result
 
 
+def test_svg_postprocess_does_not_double_escape_multi_param_link():
+    from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
+
+    svg_input = '<a xlink:href="http://dct.invalid/detail?x=1&amp;y=2"><path/></a>'
+    result = _fix_chart_click_hrefs(svg_input)
+
+    assert '<a href="/detail?x=1&amp;y=2">' in result
+    assert "&amp;amp;" not in result
+
+
 def test_svg_postprocess_leaves_external_hrefs_untouched():
     """Non-sentinel xlink:href values (external navigation) are left as-is."""
     from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs

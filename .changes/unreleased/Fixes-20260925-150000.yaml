@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'The static column check no longer gives up on a model that ends with `select * from final` — the shape the dbt style guide recommends. The trailing star now resolves through the `final` CTE''s own known columns (chained through further same-statement CTEs), so a board''s typo''d column reference is still caught instead of only producing an unresolved-columns warning.'
+time: 2026-09-25T15:00:00Z
+custom:
+  DbtChartsIssue: 40

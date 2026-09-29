@@ -315,6 +315,9 @@ else:
     ChartsStylePatch = register_patch(ChartsStyle)(build_patch_model(ChartsStyle))
 
 
+# build_patch_model_ext is @cache'd: theme/_chart_base.py already built this
+# exact TitleStylePatch class (for the chart-local title sentinel field), so
+# this call returns that same object rather than generating a second one.
 if TYPE_CHECKING:
 
     class TitleStylePatch(TitleStyle):
@@ -322,6 +325,7 @@ if TYPE_CHECKING:
 
 else:
     TitleStylePatch = build_patch_model(TitleStyle)
+
 
 # Style itself under TYPE_CHECKING: the patch carries Style's field names, so a
 # reader typed against Style is checking real ones. Without this alias the class

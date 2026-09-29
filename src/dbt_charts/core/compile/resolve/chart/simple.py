@@ -107,7 +107,12 @@ def _resolve_kpi(
             kpi.value.format, _headline_numeric_value(normalized.value, data)
         ),
         format_native=format_native,
-        style=ResolvedKpiStyle(kpi=kpi, title_font=_tf),
+        # chart_local_style_context.title is build_chart_style_context()'s own
+        # board -> family-theme -> chart-local title merge (shared by every
+        # family) -- already the complete, final TitleStyle.
+        style=ResolvedKpiStyle(
+            kpi=kpi, title_font=_tf, title=chart_local_style_context.title
+        ),
     )
 
 

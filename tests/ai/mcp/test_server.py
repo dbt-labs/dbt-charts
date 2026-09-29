@@ -448,17 +448,14 @@ class TestThinShimLOCGuards:
             # uncached unless opted in, then 303→308 for routing dct://boards
             # through Project.
             ("ai/mcp/server.py", 308),
-            # tools/__init__.py limit raised 325→350 after adding diagnostic-code handlers,
-            # then 350→390 after adding five project-file tool handlers (read/write/edit/glob/grep),
-            # then 390→394 after DbtChartsAIContext -> DbtChartsAIContext pushed several
-            # per-handler signatures past the 88-col wrap threshold, then 394→410 after
-            # adding tool_call_outcome, the single predicate beside dispatch_tool_call
-            # that classifies a tool result's ok/partial/error outcome. 410, not the
-            # file's own 400: this guard flags scope creep, and a limit set to the
-            # current length makes the next one-line edit fail for something else.
-            ("ai/tools/__init__.py", 410),
-            # tool_schemas.py limit raised 195->215 after adding restrict_enum.
-            ("ai/tool_schemas.py", 215),
+            # This guard flags scope creep; raise it only alongside real new
+            # domain logic (most recently: resolve_render_format, the
+            # include_raw_data->format mapping every dispatch site calls).
+            ("ai/tools/__init__.py", 409),
+            # This guard flags scope creep; raise it only alongside real new
+            # domain logic (most recently: INCLUDE_RAW_DATA_PROPERTY and
+            # RENDER_BOARD's own include_raw_data/no-format shape).
+            ("ai/tool_schemas.py", 209),
         ],
         ids=["server.py", "tools/__init__.py", "tool_schemas.py"],
     )
@@ -542,7 +539,7 @@ class TestMCPInputSchemaShape:
                     "yaml_content",
                     "chart",
                     "variables",
-                    "format",
+                    "include_raw_data",
                     "as_link",
                 },
                 None,

@@ -11,6 +11,7 @@ from dbt_charts.core.fonts import (
     WEIGHT_FACE_ALIASES,
     get_fonts_dir,
 )
+from dbt_charts.core.render.svg_utils import escape_attr
 
 _vl_convert_registered = False
 
@@ -39,6 +40,10 @@ _CSS_VAR_STYLE_PATTERN = re.compile(
 )
 
 
+def _replace_inter_family(match: re.Match[str]) -> str:
+    return f"{match.group(1)}{INTER_VARIABLE_FONT_FAMILY}{match.group(2)}"
+
+
 def normalize_svg_font_families_for_vl_convert(svg_content: str) -> str:
     """Map public font family names to vendored font names for vl-convert only.
 
@@ -55,15 +60,9 @@ def normalize_svg_font_families_for_vl_convert(svg_content: str) -> str:
     """
     normalized = svg_content
     if INTER_FONT_FAMILY in svg_content:
-        normalized = _FONT_FAMILY_ATTR_PATTERN.sub(
-            rf"\1{INTER_VARIABLE_FONT_FAMILY}\2", normalized
-        )
-        normalized = _FONT_FAMILY_STYLE_PATTERN.sub(
-            rf"\1{INTER_VARIABLE_FONT_FAMILY}\2", normalized
-        )
-        normalized = _CSS_VAR_STYLE_PATTERN.sub(
-            rf"\1{INTER_VARIABLE_FONT_FAMILY}\2", normalized
-        )
+        normalized = _FONT_FAMILY_ATTR_PATTERN.sub(_replace_inter_family, normalized)
+        normalized = _FONT_FAMILY_STYLE_PATTERN.sub(_replace_inter_family, normalized)
+        normalized = _CSS_VAR_STYLE_PATTERN.sub(_replace_inter_family, normalized)
     # dbt Sans Tabular, the dbt serif oldstyle faces, and Source Serif 4 need no alias
     # rewrite: their public family names already match the vendored files' internal
     # family names, which vl-convert discovers from the registered font directory.
@@ -120,7 +119,9 @@ def normalize_svg_font_weights_for_vl_convert(svg_content: str) -> str:
     pair with no row in ``WEIGHT_FACE_ALIASES`` (no static face registered for it)
     passes through unchanged, same as any weight outside the covered set.
     """
-    if not any(f'font-weight="{w}"' in svg_content for w in _COVERED_WEIGHTS):
+    if not any(
+        f'font-weight="{escape_attr(w)}"' in svg_content for w in _COVERED_WEIGHTS
+    ):
         return svg_content
     return _TAG_PATTERN.sub(
         lambda m: _rewrite_weight_face_in_tag(m.group(0)), svg_content

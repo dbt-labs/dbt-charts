@@ -42,6 +42,7 @@ def _literal_block(var_name: str, values: list[str]) -> str:
 
 
 def main() -> None:
+    from dbt_charts.core.colors import VARIANT_WORDS
     from dbt_charts.core.compile.config import get_theme_style, list_built_in_themes
     from dbt_charts.core.compile.models.primitives import VEGA_SCHEME_NAMES
     from dbt_charts.core.compile.resolve.style.palette import (
@@ -72,7 +73,16 @@ def main() -> None:
     number_format_aliases = sorted(PREDEFINED_SPECS)
     time_format_aliases = sorted(PREDEFINED_TIME_SPECS)
     format_aliases = sorted({*number_format_aliases, *time_format_aliases})
-    palette_names = sorted(list_palettes())
+    # Every categorical palette derives every literal variant tier live
+    # (variant(), compile/resolve/style/palette.py) -- no companion file, so
+    # every categorical name gets a completion for all four, mechanically,
+    # never hand-listed.
+    categorical_variant_names = sorted(
+        f"{name}.{tier}"
+        for name in list_palettes("categorical")
+        for tier in VARIANT_WORDS
+    )
+    palette_names = sorted({*list_palettes(), *categorical_variant_names})
     # A `palette:` field takes stops, and a tone resolves to none: `palette()`
     # raises `ToneAsPaletteError` on every one, so naming a tone there parses
     # and dies at resolve with ERR-PALETTE-UNKNOWN. The role map keeps the whole

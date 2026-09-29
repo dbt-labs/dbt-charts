@@ -13,12 +13,8 @@ style:
   font:
     color: dbt-creams.ink
   title:
-    # Board title color is one step lighter than `heading` (the structural
-    # default from stark). Same softening pattern the `clarity` theme applies
-    # with dbt-grays.inactive — keeps the board title authoritative without
-    # competing with the chart titles below it in the title-inline band.
-    font:
-      color: dbt-creams.inactive
+    # No color pin here — the InheritSlot carries `font.color`, so titles
+    # and headings read the same ink as prose.
     subtitle:
       font:
         color: dbt-creams.subtitle
@@ -48,7 +44,7 @@ style:
         # crossing into cool territory. Stops sit at OKLCH L 0.32–0.35
         # alongside clarity's cool cycle (matched ink-band weight). Named
         # roles preserve the intended hues if the family is reordered again.
-        single_series_palette: [category_ink.brown, category_ink.gold, category_ink.orange]
+        single_series_palette: [category.brown.deep, category.gold.deep, category.orange.deep]
     # bar.border.color now tracks theme.background via self-reference at the
     # structural-root level (see stark.yaml), so the cream knockout
     # falls out of theme.background = cream-025 automatically. No explicit

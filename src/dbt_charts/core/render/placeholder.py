@@ -24,6 +24,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.models.chart.normalized import _CartesianChartFields
+from dbt_charts.core.render.svg_utils import escape_attr
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -321,7 +322,10 @@ def add_placeholder_overlay(
     import html as html_module
 
     overlay = resolved_style.placeholder.overlay
-    font_family = html_module.escape(font.family or "")
+    font_family = (
+        font.family
+        or ""  # type-state: silent_fallback — no override font passed; an empty font-family lets the SVG/CSS cascade inherit the ambient family instead of forcing one
+    )
     display_text = text if text is not None else overlay.text
     _overlay_case = font.case
     if _overlay_case is not None and _overlay_case != "none":
@@ -339,16 +343,16 @@ def add_placeholder_overlay(
     # Create overlay elements
     # Semi-transparent overlay rectangle
     overlay_rect = (
-        f'<rect class="dbt-pointer-inert" x="0" y="0" width="{width}" height="{height}" '
-        f'fill="{overlay.background}"/>'
+        f'<rect class="dbt-pointer-inert" x="0" y="0" width="{escape_attr(width)}" height="{escape_attr(height)}" '
+        f'fill="{escape_attr(overlay.background)}"/>'
     )
 
     # Text element centered on chart
     overlay_text = (
-        f'<text class="dbt-pointer-inert" x="{center_x}" y="{center_y}" '
+        f'<text class="dbt-pointer-inert" x="{escape_attr(center_x)}" y="{escape_attr(center_y)}" '
         f'text-anchor="middle" dominant-baseline="middle" '
-        f'font-family="{font_family}" '
-        f'font-size="{overlay.font.size}" font-weight="{overlay.font.weight}" fill="{overlay.font.color}">'
+        f'font-family="{escape_attr(font_family)}" '
+        f'font-size="{escape_attr(overlay.font.size)}" font-weight="{escape_attr(overlay.font.weight)}" fill="{escape_attr(overlay.font.color)}">'
         f"{escaped_text}"
         f"</text>"
     )
@@ -399,5 +403,5 @@ def apply_placeholder_opacity(
         return svg
 
     opening_tag, content, closing_tag = match.groups()
-    wrapped_content = f'<g opacity="{effective_opacity}">{content}</g>'
+    wrapped_content = f'<g opacity="{escape_attr(effective_opacity)}">{content}</g>'
     return f"{opening_tag}{wrapped_content}{closing_tag}"

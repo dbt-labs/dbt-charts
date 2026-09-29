@@ -4,8 +4,6 @@
 # then family explanations and demos below. Most-used data palettes
 # (categorical → sequential → diverging) come first; UI scaffolds and
 # semantic role palettes follow, leading into the semantic demo at the end.
-#
-# Source-of-truth palette files: dbt-charts/src/dbt_charts/core/defaults/palettes/
 
 title: "Color Palettes"
 notes: "Every dbt charts color palette: categorical, sequential, diverging, scaffold, and tone."
@@ -31,15 +29,16 @@ rows:
   - text: "## Categorical"
   - text: |
       Discrete hues for unordered categories. `vivid-10` is the chroma-pushed
-      default the `vivid` and `neon` themes cycle through; `vivid-10-dark`,
-      `vivid-10-light`, `vivid-10-ghost`, and `vivid-10-ink` are its
-      slot-paired companions. `editorial-10` is the muted, cycling-discipline
-      counterpart used by `clarity` and `paper`, with
-      matching dark, light, ghost, and ink companions. A board can still pin
-      the same fixed dark `dbt-grays.heading` single-series mark via
-      `single_series_palette: [dbt-grays.heading]` (see
-      `labs/gray-single-series`). Tonal
-      variants stay within a single hue family for editorial restraint.
+      default the `vivid` and `neon` themes cycle through; `editorial-10` is
+      the muted, cycling-discipline counterpart used by `clarity` and `paper`.
+      Every categorical palette derives four literal tiers live --
+      `dark`/`light`/`pale`/`deep` -- computed from its own stops (`variant()`,
+      no companion file to author or keep in sync); address one with a
+      trailing token segment (`vivid-10.dark`, `category.blue.pale`). A board
+      can still pin the same fixed dark `dbt-grays.heading` single-series mark
+      via `single_series_palette: [dbt-grays.heading]` (see
+      `labs/gray-single-series`). The `category-6-tonal-*` palettes stay
+      within a single hue family for editorial restraint.
 
   - cols:
       - width: "180px"
@@ -80,149 +79,149 @@ rows:
 
   - cols:
       - width: "180px"
-        text: "**vivid-10-dark**"
+        text: "**vivid-10.dark**"
       - cols:
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.1"}
+            style: {background: "vivid-10.1.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.2"}
+            style: {background: "vivid-10.2.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.3"}
+            style: {background: "vivid-10.3.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.4"}
+            style: {background: "vivid-10.4.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.5"}
+            style: {background: "vivid-10.5.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.6"}
+            style: {background: "vivid-10.6.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.7"}
+            style: {background: "vivid-10.7.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.8"}
+            style: {background: "vivid-10.8.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.9"}
+            style: {background: "vivid-10.9.dark"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-dark.10"}
+            style: {background: "vivid-10.10.dark"}
         style: {gap: "4px"}
     height: "28px"
 
   - cols:
       - width: "180px"
-        text: "**vivid-10-light**"
+        text: "**vivid-10.light**"
       - cols:
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.1"}
+            style: {background: "vivid-10.1.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.2"}
+            style: {background: "vivid-10.2.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.3"}
+            style: {background: "vivid-10.3.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.4"}
+            style: {background: "vivid-10.4.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.5"}
+            style: {background: "vivid-10.5.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.6"}
+            style: {background: "vivid-10.6.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.7"}
+            style: {background: "vivid-10.7.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.8"}
+            style: {background: "vivid-10.8.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.9"}
+            style: {background: "vivid-10.9.light"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-light.10"}
+            style: {background: "vivid-10.10.light"}
         style: {gap: "4px"}
     height: "28px"
 
   - cols:
       - width: "180px"
-        text: "**vivid-10-ghost**"
+        text: "**vivid-10.pale**"
       - cols:
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.1"}
+            style: {background: "vivid-10.1.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.2"}
+            style: {background: "vivid-10.2.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.3"}
+            style: {background: "vivid-10.3.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.4"}
+            style: {background: "vivid-10.4.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.5"}
+            style: {background: "vivid-10.5.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.6"}
+            style: {background: "vivid-10.6.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.7"}
+            style: {background: "vivid-10.7.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.8"}
+            style: {background: "vivid-10.8.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.9"}
+            style: {background: "vivid-10.9.pale"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ghost.10"}
+            style: {background: "vivid-10.10.pale"}
         style: {gap: "4px"}
     height: "28px"
 
   - cols:
       - width: "180px"
-        text: "**vivid-10-ink**"
+        text: "**vivid-10.deep**"
       - cols:
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.1"}
+            style: {background: "vivid-10.1.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.2"}
+            style: {background: "vivid-10.2.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.3"}
+            style: {background: "vivid-10.3.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.4"}
+            style: {background: "vivid-10.4.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.5"}
+            style: {background: "vivid-10.5.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.6"}
+            style: {background: "vivid-10.6.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.7"}
+            style: {background: "vivid-10.7.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.8"}
+            style: {background: "vivid-10.8.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.9"}
+            style: {background: "vivid-10.9.deep"}
           - text: " "
             width: "28px"
-            style: {background: "vivid-10-ink.10"}
+            style: {background: "vivid-10.10.deep"}
         style: {gap: "4px"}
     height: "28px"
 
@@ -265,149 +264,149 @@ rows:
 
   - cols:
       - width: "180px"
-        text: "**editorial-10-dark**"
+        text: "**editorial-10.dark**"
       - cols:
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.1"}
+            style: {background: "editorial-10.1.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.2"}
+            style: {background: "editorial-10.2.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.3"}
+            style: {background: "editorial-10.3.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.4"}
+            style: {background: "editorial-10.4.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.5"}
+            style: {background: "editorial-10.5.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.6"}
+            style: {background: "editorial-10.6.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.7"}
+            style: {background: "editorial-10.7.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.8"}
+            style: {background: "editorial-10.8.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.9"}
+            style: {background: "editorial-10.9.dark"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-dark.10"}
+            style: {background: "editorial-10.10.dark"}
         style: {gap: "4px"}
     height: "28px"
 
   - cols:
       - width: "180px"
-        text: "**editorial-10-light**"
+        text: "**editorial-10.light**"
       - cols:
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.1"}
+            style: {background: "editorial-10.1.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.2"}
+            style: {background: "editorial-10.2.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.3"}
+            style: {background: "editorial-10.3.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.4"}
+            style: {background: "editorial-10.4.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.5"}
+            style: {background: "editorial-10.5.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.6"}
+            style: {background: "editorial-10.6.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.7"}
+            style: {background: "editorial-10.7.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.8"}
+            style: {background: "editorial-10.8.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.9"}
+            style: {background: "editorial-10.9.light"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-light.10"}
+            style: {background: "editorial-10.10.light"}
         style: {gap: "4px"}
     height: "28px"
 
   - cols:
       - width: "180px"
-        text: "**editorial-10-ghost**"
+        text: "**editorial-10.pale**"
       - cols:
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.1"}
+            style: {background: "editorial-10.1.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.2"}
+            style: {background: "editorial-10.2.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.3"}
+            style: {background: "editorial-10.3.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.4"}
+            style: {background: "editorial-10.4.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.5"}
+            style: {background: "editorial-10.5.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.6"}
+            style: {background: "editorial-10.6.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.7"}
+            style: {background: "editorial-10.7.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.8"}
+            style: {background: "editorial-10.8.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.9"}
+            style: {background: "editorial-10.9.pale"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ghost.10"}
+            style: {background: "editorial-10.10.pale"}
         style: {gap: "4px"}
     height: "28px"
 
   - cols:
       - width: "180px"
-        text: "**editorial-10-ink**"
+        text: "**editorial-10.deep**"
       - cols:
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.1"}
+            style: {background: "editorial-10.1.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.2"}
+            style: {background: "editorial-10.2.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.3"}
+            style: {background: "editorial-10.3.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.4"}
+            style: {background: "editorial-10.4.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.5"}
+            style: {background: "editorial-10.5.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.6"}
+            style: {background: "editorial-10.6.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.7"}
+            style: {background: "editorial-10.7.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.8"}
+            style: {background: "editorial-10.8.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.9"}
+            style: {background: "editorial-10.9.deep"}
           - text: " "
             width: "28px"
-            style: {background: "editorial-10-ink.10"}
+            style: {background: "editorial-10.10.deep"}
         style: {gap: "4px"}
     height: "28px"
 
@@ -470,6 +469,43 @@ rows:
           - text: " "
             width: "28px"
             style: {background: "tableau.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**tableau.dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.1.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.2.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.3.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.4.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.5.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.6.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.7.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.8.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.9.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.10.dark"}
         style: {gap: "4px"}
     height: "28px"
 
@@ -1881,30 +1917,31 @@ rows:
       palette at all — they paint with the active theme's
       `single_series_palette[0]` ink.
 
-      `vivid-10-dark`, `vivid-10-light`, `vivid-10-ghost`, and `vivid-10-ink`
-      are positional companions to `vivid-10`. The dark companion inks direct
-      text labels (e.g. right-pane endpoint labels on multi-series lines,
-      segment names on stacked bars). The light companion is a moderate
-      positive lightness shift. The ghost companion is the pale
-      dim-the-chorus de-emphasis band. The ink companion is its symmetric
-      opposite — every stop dropped into a tight dark band (L 0.30–0.36),
-      the theme-level default ink for single-encoding marks (the vivid-family
-      themes inline subsets of it into `single_series_palette`). The pairing
-      is positional: slot N in each companion pairs with slot N in `vivid-10`.
-
-      These companions are exposed as typed palettes here, but driving
-      label or de-emphasis color from a single `color:` field (so a chart's
-      marks and companion states share one author intent but resolve through
-      different transforms) is still an open typed-surface question.
+      Every categorical palette derives four literal tiers live from its own
+      stops — `dark`, `light`, `pale`, and `deep` — computed by `variant()`,
+      no companion file to author or keep in sync. Address one with a
+      trailing token segment on any form: `vivid-10.dark` (whole list),
+      `vivid-10.3.dark` (one slot), `category.blue.dark` (role + alias).
+      `dark` inks direct text labels (e.g. right-pane endpoint labels on
+      multi-series lines, segment names on stacked bars) — though the
+      engine derives label ink live from each mark's own color against the
+      chart's canvas (`label_ink()`) rather than reading a fixed variant
+      slot, which is what keeps labels legible on dark themes like `neon`
+      with no theme-level rebind. `light` is a moderate positive lightness
+      shift; `pale` is the dim-the-chorus de-emphasis band, every stop
+      pulled toward one uniform light band; `deep` is `pale`'s symmetric
+      opposite — every stop dropped into a tight dark band, the
+      theme-level default ink for single-encoding marks (the vivid-family
+      themes bind `single_series_palette` to a `deep` slot). The pairing is
+      positional: variant slot N derives from base slot N in `vivid-10`.
 
       `editorial-10` is the quieter 10-color cycle used by `clarity` and
       `paper`. Its order is blue, sky, green, purple,
-      gold, rust, teal, brown, gray, graphite. `editorial-10-dark`, `editorial-10-light`,
-      `editorial-10-ghost`, and `editorial-10-ink` are its slot-paired
-      companions for direct labels, moderate light states, ghosted
-      de-emphasis states, and dark single-encoding ink. Clarity fixes one ink
-      (blue, `category_dark.blue`) for every single-series chart — no
-      rotation; paper still cycles brown/gold/orange. At
+      gold, rust, teal, brown, gray, graphite. Its four variants read the
+      same way: `dark` for direct labels, `light` for a moderate lift,
+      `pale` for de-emphasis, `deep` for single-encoding ink. Clarity fixes
+      one ink (blue, `category.blue.deep`) for every single-series chart —
+      no rotation; paper still cycles brown/gold/orange. At
       N=10 weighted Leonardo CVD scoring this palette outperforms `vivid-10`,
       The Economist, and Apache ECharts.
 
@@ -1917,7 +1954,7 @@ rows:
       swap-invariant: `category.green`
       resolves to the green of whichever palette the active theme binds to the
       `category` role, and switching themes keeps green green without touching
-      the board. The `-dark`/`-light`/`-ghost`/`-ink` companions carry the same
+      the board. The `dark`/`light`/`pale`/`deep` variants carry the same
       names against their own slots. The names are a slot bijection. `orange`
       maps to editorial rust, `sage` maps to editorial teal, and `charcoal`
       maps to editorial graphite. Roles preserve semantic intent across a
@@ -2006,7 +2043,7 @@ rows:
         `#608470` · `#ad9c7f` · `#d49656` · `#775770` · `#ae6349` · `#a0b6b7` ·
         `#7a8895` · `#5c6668`
       - **vivid** (`vivid-10`): `#0073c2` · `#00c8ee` · `#00ad75` · `#7a5531` ·
-        `#e1a500` · `#a46fb2` · `#da5a23` · `#6a9228` · `#949daa` · `#505b6b`
+        `#e1a500` · `#a86c9d` · `#da5a23` · `#6a8f47` · `#949daa` · `#505b6b`
 
   - cols:
       - width: "180px"

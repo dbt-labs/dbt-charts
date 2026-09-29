@@ -83,8 +83,12 @@ obviously screaming*. Hold these when touching `compile/`:
 - **`theme:` is permanent authoring sugar for `extends:`** — rewritten at parse time;
   using both is an error. Prefer `extends:` (it accepts lists and path refs).
 - **Underscore-prefixed boards are hidden building blocks**: excluded from listings
-  and search, valid as extends targets, still validated standalone — a template board
-  cannot be an empty shell.
+  and search, valid as extends targets, and renderable directly like any board.
+  `dct validate`/the LSP check a private YAML file standalone as a `BoardPatch`
+  fragment, like `meta.yml`: its own top-level validators are dropped and
+  required fields inside `grid`/`tabs`/`details` become optional, so it can pass
+  validate and still fail at render. Nested boards under `rows:`/`cols:` run
+  `AuthoredBoard` in full.
 - **Root-only board frame.** Outer dimensions and padding are computed once at
   the root; nested boards render into the parent's grid and their `FrameStyle`
   is ignored.

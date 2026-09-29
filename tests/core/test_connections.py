@@ -32,6 +32,7 @@ from dbt_charts.core.connections import (
     WarehouseUnreachableError,
     build_bigquery_client,
     bulk_schema_for_config,
+    classify_connection_error,
     dataset_location,
     list_datasets,
     probe_relation_readability,
@@ -978,6 +979,24 @@ def test_test_connection_classifies_bigquery_invalid_grant(
     assert success is False
     assert type(exc) is WarehouseAuthError
     assert driver_text in exc.detail
+
+
+def test_bigquery_invalid_grant_message_mentions_key_propagation() -> None:
+    """This shape also fires for a service-account key minted seconds
+    ago (IAM propagation delay), not just a genuinely bad credential. The
+    display message must say so and suggest retrying — without ever leaking
+    `.detail`, which can carry a username or process id (see module docstring).
+    """
+    driver_text = (
+        "Unable to generate access token: ('invalid_grant: Invalid grant:"
+        " account not found')"
+    )
+    exc = classify_connection_error("bigquery", RuntimeError(driver_text))
+
+    assert type(exc) is WarehouseAuthError
+    assert "propagat" in str(exc).lower()
+    assert "again" in str(exc).lower()
+    assert driver_text not in str(exc)
 
 
 def test_test_connection_classifies_bigquery_permission_denied(

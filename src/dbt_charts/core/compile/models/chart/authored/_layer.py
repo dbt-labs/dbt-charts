@@ -176,15 +176,6 @@ class BarLayer(TypedLayerBase):
             default=None, description="Appearance overrides for this layer's bar marks."
         ),
     ] = None
-
-
-class BarChartBarLayer(BarLayer):
-    """A bar-type layer on a bar chart, which may start somewhere other than zero.
-
-    Only a bar chart's layers take `y_start`: its bar and theirs share the one
-    value axis whose span rules the bar chart checks.
-    """
-
     y_start: str | None = Field(
         default=None,
         description="Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as the chart's y: both numeric, or both dates.",
@@ -243,12 +234,6 @@ class ScatterLayer(TypedLayerBase):
 # `type` key before validating the rest of the fields.
 CartesianLayer = Annotated[
     BarLayer | LineLayer | AreaLayer | ScatterLayer,
-    Field(discriminator="type"),
-]
-
-# A bar chart's layers: the same, with a bar layer that may take y_start.
-BarChartLayer = Annotated[
-    BarChartBarLayer | LineLayer | AreaLayer | ScatterLayer,
     Field(discriminator="type"),
 ]
 

@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 import dbt_charts as _dbt_charts_pkg
+from dbt_charts.core.compile.config import user_facing_theme_names
 
 DBT_CHARTS_PKG_DIR = Path(_dbt_charts_pkg.__file__).resolve().parent
 
@@ -201,3 +202,19 @@ def test_list_built_in_themes_enumerates_via_iterdir_not_glob(
         config_mod.list_built_in_themes.cache_clear()
 
     assert names == ["alpha", "mid", "zeta"]
+
+
+@pytest.mark.parametrize("theme_name", user_facing_theme_names())
+def test_title_color_matches_prose_color_in_every_built_in_theme(
+    theme_name: str,
+) -> None:
+    """Titles, headings, and prose share one ink in every built-in theme.
+
+    style.title.font is an InheritSlot: no pin means it inherits font.color.
+    """
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+
+    resolved_style = resolve_style(get_theme_style(theme_name))
+
+    assert resolved_style.title.font.color == resolved_style.font.color

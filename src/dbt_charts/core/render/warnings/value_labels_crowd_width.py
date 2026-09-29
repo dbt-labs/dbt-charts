@@ -26,7 +26,10 @@ from dbt_charts.core.compile.models.style.theme import MarkLabelsStyle
 from dbt_charts.core.diagnostics import WARN_VALUE_LABELS_CROWD_WIDTH, Diagnostic
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart.emitters._cartesian import widest_panel_distinct_count
-from dbt_charts.core.render.format_utils import format_value
+from dbt_charts.core.render.chart.features.value_labels import (
+    painted_label_text,
+    painted_span_label_text,
+)
 from dbt_charts.core.render.warnings.base import (
     WarningContext,
     encoding_channel_type,
@@ -50,14 +53,27 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         # warning marks where they were switched on. Area labels ride the
         # overlaid *line* mark, which is why it is not always the family name.
         mark_key: str
+        # The paint path's own register flag (`_label_format_fallback`,
+        # compile/resolve/chart/_marks.py).
+        is_house: bool
+        # Same gate as `_build_bar_span_text_layer` (features/value_labels.py).
+        span_start_field: str | None = None
         if isinstance(chart, ResolvedBarChart):
             if chart.orientation == "horizontal":
                 continue
             labels = chart.style.mark.labels
             mark_key = "bar"
-        elif isinstance(chart, (ResolvedLineChart, ResolvedAreaChart)):
+            is_house = chart.style.label_is_house
+            if labels.field is None:
+                span_start_field = chart.y_start
+        elif isinstance(chart, ResolvedLineChart):
             labels = chart.style.line_mark.labels
             mark_key = "line"
+            is_house = chart.style.line_label_is_house
+        elif isinstance(chart, ResolvedAreaChart):
+            labels = chart.style.line_mark.labels
+            mark_key = "line"
+            is_house = chart.style.label_is_house
         else:
             continue
 
@@ -123,7 +139,15 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             value = row.get(label_field)
             if not isinstance(value, (int, float)):
                 continue
-            text = format_value(value, labels.format)
+            if span_start_field is not None:
+                start_value = row.get(span_start_field)
+                if not isinstance(start_value, (int, float)):
+                    continue
+                text = painted_span_label_text(
+                    value, start_value, labels.format, is_house
+                )
+            else:
+                text = painted_label_text(value, labels.format, is_house)
             width = measurer.measure(text, size)
             widest = max(widest, width)
         if widest <= slot:

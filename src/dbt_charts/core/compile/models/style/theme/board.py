@@ -268,7 +268,7 @@ class TitleStyle(BaseModel):
     font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
         default_factory=FontStyle, description="Title font style overrides."
     )
-    compact_weight: Annotated[str | float, SkipInheritSlots()] = Field(
+    compact_weight: str | float = Field(
         description="Object-title font weight on tiny cards."
     )
     sizes: Annotated[list[float], Merge(Strategy.OVERRIDE)] = Field(
@@ -279,19 +279,28 @@ class TitleStyle(BaseModel):
             "fixed object-title anchor to pick a slot."
         )
     )
-    width_offsets: TitleWidthOffsetsStyle = Field(
-        description=(
-            "Additive level offsets by card width (tiny/narrow/medium/wide). "
-            "Object titles add the tier offset to a fixed anchor to pick an H "
-            "slot from ``sizes``. Board/prose titles are level-only and do not "
-            "consult these."
+    # SkipInheritSlots(cascade=True): a no-op at this field's own canonical
+    # position (Style.title.width_offsets), but inside an outer slot (e.g.
+    # ChartsStyle.title) it gives apply_inherit a container-level link, so a
+    # patch that sets some *other* title field and leaves width_offsets
+    # entirely unset still copies it wholesale — apply_inherit's leaf writes
+    # can't fill a field whose own parent container is None.
+    width_offsets: Annotated[TitleWidthOffsetsStyle, SkipInheritSlots(cascade=True)] = (
+        Field(
+            description=(
+                "Additive level offsets by card width (tiny/narrow/medium/wide). "
+                "Object titles add the tier offset to a fixed anchor to pick an H "
+                "slot from ``sizes``. Board/prose titles are level-only and do not "
+                "consult these."
+            )
         )
     )
     min_height: float = Field(description="Minimum title row height in pixels.")
     overflow: OverflowMode = Field(
         description="Text overflow mode (clip, truncate, wrap-two, wrap)."
     )
-    position: TitlePositionStyle = Field(
+    # SkipInheritSlots(cascade=True): see width_offsets above.
+    position: Annotated[TitlePositionStyle, SkipInheritSlots(cascade=True)] = Field(
         description="Vega-Lite title positioning: anchor, angle, offset, baseline."
     )
     # Author/theme override for heading level. "auto" = compute from titled-ancestor count;
@@ -304,8 +313,9 @@ class TitleStyle(BaseModel):
             "locks all titles in this board and its descendants to that H-level."
         ),
     )
-    # VL subtitle font config (color lives inside font, not as a sibling field)
-    subtitle: TitleSubtitleStyle = Field(
+    # VL subtitle font config (color lives inside font, not as a sibling field).
+    # SkipInheritSlots(cascade=True): see width_offsets above.
+    subtitle: Annotated[TitleSubtitleStyle, SkipInheritSlots(cascade=True)] = Field(
         default_factory=TitleSubtitleStyle,
         description="Subtitle font styles.",
     )

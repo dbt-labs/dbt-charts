@@ -438,6 +438,39 @@ def test_a_current_document_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> 
     assert _recognize(board, catalog, registry) == catalog.dev.version
 
 
+def test_a_retired_token_at_an_undeclared_position_is_current_not_an_error() -> None:
+    """The token/role-key presence predicate is deliberately over-eager (a
+    whole-document string scan), so it can fire on a board no declared
+    transition can reach: here the only retired token sits inside a nested
+    sub-board's own `charts:` map -- a full `AuthoredBoard` as a `rows:` item,
+    the self-nesting position `_relative_field_paths`' `seen` guard leaves out
+    of every TokenRespell path (`versions/v0_9_0.py`'s reach paragraph). The
+    live grammar accepts the document, so `current_errors` is empty -- and
+    with the presence predicate having suppressed the early return, the probe
+    loop matches nothing. That is "nothing to migrate", not an unsupported
+    schema: `_recognize` must answer the DEV version rather than index into an
+    empty error list.
+    """
+    catalog, registry = _board_migration_context()
+    nested_board = {
+        "title": "Inner",
+        "queries": {"q": {"columns": ["a", "b"], "values": [[1, 2]]}},
+        "charts": {
+            "c": {
+                "type": "bar",
+                "query": "q",
+                "x": "a",
+                "y": "b",
+                "style": {"color": {"static": "category_dark[2]"}},
+            }
+        },
+        "rows": ["c"],
+    }
+    board = cast(JsonObject, {"title": "t", "rows": [nested_board]})
+
+    assert _recognize(board, catalog, registry) == catalog.dev.version
+
+
 def test_an_expired_grammar_is_announced_not_raised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

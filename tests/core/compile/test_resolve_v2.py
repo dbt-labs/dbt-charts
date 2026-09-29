@@ -827,6 +827,29 @@ def test_kpi_resolve_style_slice_populated() -> None:
     assert resolved.style.kpi is not None
 
 
+def test_kpi_resolve_family_title_override_reaches_resolved_style() -> None:
+    """A per-family style.charts.kpi.title override is merged onto the board
+    title at resolve time (build_chart_style_context) and lands complete on
+    ResolvedKpiChart.style.title, so render reads one field unconditionally
+    instead of choosing between a sparse per-family value and the board
+    default itself."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+
+    theme = get_theme_style(get_default_theme_name())
+    patch = StylePatch.model_validate(
+        {"charts": {"kpi": {"title": {"min_height": 40}}}}
+    )
+    ctx = resolve_chart_style_context(theme, patch)
+    default_ctx = _default_board_style()
+
+    resolved = resolve(_kpi_compiled(), _KPI_DATA, ctx)
+    assert resolved.style.title.min_height == 40
+    assert resolved.style.title.font.family == default_ctx.title.font.family
+
+
 def test_kpi_resolved_style_has_palette() -> None:
     from dbt_charts.core.compile.resolve import resolve
 
@@ -2266,18 +2289,23 @@ def test_bar_chart_local_bracket_role_token_resolves_per_theme() -> None:
     from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
+    from dbt_charts.core.compile.resolve.style.palette import (
+        palette as resolve_palette,
+        variant,
+    )
 
     for theme, family in (("stark", "vivid-10"), ("clarity", "editorial-10")):
         compiled = _bar_compiled(
             style=BarChartStylePatch.model_validate(
-                {"color": {"categorical": {"palette": ["category_dark[3]"]}}}
+                {"color": {"categorical": {"palette": ["category[3].dark"]}}}
             )
         )
         resolved = resolve(
             compiled, _BAR_DATA, resolve_chart_style_context(get_theme_style(theme))
         )
-        assert list(resolved.palette) == [resolve_palette(family + "-dark")[2]], (
+        assert list(resolved.palette) == [
+            variant(resolve_palette(family)[2], "dark")
+        ], (
             f"chart-local bracket token must follow the {theme} theme's "
-            f"category_dark role; got {list(resolved.palette)!r}"
+            f"category role, dark variant; got {list(resolved.palette)!r}"
         )

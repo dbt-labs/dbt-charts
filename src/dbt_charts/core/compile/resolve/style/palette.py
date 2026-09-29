@@ -9,7 +9,6 @@ Entry points
     color(token) -> str
     color_from_theme(token, *, palettes, roles=None) -> str
     resolve_alias_chain(key, aliases, *, colors) -> str
-    palette_metadata(name) -> dict
     list_palettes(family=None) -> list[str]
     select_default_palette(data_shape) -> str
 
@@ -50,12 +49,14 @@ import functools
 import re
 from collections.abc import Mapping, Sequence
 from importlib.resources import files
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import yaml
 
 from dbt_charts.core.colors import (
+    VARIANT_WORDS,
     InvalidColorError,
+    Variant,
     composite_over,
     css_named_color_to_hex,
     ensure_readable_ink,
@@ -72,6 +73,7 @@ from dbt_charts.core.colors import (
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.config import ChartRenderingConfig
 from dbt_charts.core.compile.models.palette import Palette
+from dbt_charts.core.diagnostics.hints import respell_retired_variant_token
 
 # ============================================================================
 # Exceptions
@@ -333,7 +335,30 @@ def _load_spine_raw(name: str) -> Palette:
     if entry is None:
         raise UnknownPaletteError(_unknown_palette_message(name))
     data = yaml.safe_load(entry["path"].read_text(encoding="utf-8"))
-    return Palette.model_validate(data)
+    spine = Palette.model_validate(data)
+    # The four variant words are reserved on a categorical palette's own
+    # aliases: a third-segment token (`category.dark`) always means the
+    # `dark` variant of role `category`, never an alias literally named
+    # "dark" -- scaffold/tone aliases (`dbt-grays.ink`) are untouched, since
+    # "ink" is not one of the four words and scaffold/tone tokens never carry
+    # a third segment in the first place (color()'s stop-list branch is the
+    # only one that reaches a categorical palette's own aliases -- see
+    # docstring there -- and it never consults `aliases:` at all).
+    #
+    # A contributor tripwire on shipped package data, not a live check on a
+    # board author's own input: `name` here only ever names a catalog entry
+    # (`_PALETTES_DIR`), and an inline board palette (`palette: ["#4e79a7",
+    # ...]`) has no `aliases:` concept to collide in the first place. This
+    # fires when someone adds a new shipped categorical palette YAML whose
+    # own alias happens to collide, not when a user writes a board.
+    if entry["family"] == "categorical" and spine.aliases:
+        for alias in spine.aliases:
+            if alias in get_args(Variant):
+                raise ValueError(
+                    f"categorical palette '{name}' alias '{alias}' collides "
+                    "with the variant segment; rename the alias."
+                )
+    return spine
 
 
 def _load_spine_merged(name: str, _seen: frozenset[str] | None = None) -> Palette:
@@ -392,7 +417,46 @@ def _load_spine(name: str) -> Palette:
     return spine
 
 
-def _unknown_palette_message(name: str) -> str:
+# Retired role/family spellings (category_dark[2], vivid-10-dark.3, ...) ->
+# the literal-variant replacement. `respell_retired_variant_token`
+# (`core/diagnostics/hints.py`) is the one transformation, shared with
+# `versions/v0_9_0.py`'s migration value-map so the replacement this hint
+# names is the exact string the migration would have written -- not
+# imported from v0_9_0.py directly, since migrations sits downstream of the
+# resolver, not the other way round. It respells only a *closed* set of
+# shapes: a continuous palette's own shipped `-dark` fork
+# (`dbt-seq-blue-dark`, thirteen of them) is a live name, not a retired one,
+# and a typo of one (`dbt-seq-tael-dark`) must still reach the ordinary
+# `difflib` "did you mean" suggestion below rather than being told it "was
+# retired". Fuzzy matching is actively wrong for a genuine rename
+# (`RETIRED_FORMAT_SUCCESSORS`' own reasoning, `core/diagnostics/hints.py`):
+# the nearest shipped name to `vivid-10-dark` is `vivid-10`, which resolves
+# clean and silently drops the darkening the author wrote it for.
+
+
+def _retired_companion_hint(token: str) -> str:
+    """A sentence naming the replacement for retired *token* -- the whole
+    authored token, so the suggestion is one that resolves -- or "" when
+    *token* is not a retired companion spelling."""
+    replacement = respell_retired_variant_token(token)
+    if replacement is None:
+        return ""
+    return f" '{token}' was retired; use '{replacement}' instead."
+
+
+def _unknown_palette_message(name: str, authored: str | None = None) -> str:
+    """The "unknown palette" message for *name*, with a retirement hint or a
+    "did you mean" suggestion.
+
+    *authored* is the whole token the author wrote when *name* is only its
+    palette-name segment (``color()``'s ``vivid-10-dark.3``): the retirement
+    hint then respells what they typed, not a fragment whose replacement
+    (``vivid-10.dark``, the whole-list spelling) would not resolve in that
+    slot. ``None`` means *name* is the authored value itself.
+    """
+    hint = _retired_companion_hint(name if authored is None else authored)
+    if hint:
+        return f"unknown palette '{name}'.{hint}"
     idx = _get_index()
     candidates = list(idx.keys())
     suggestions = difflib.get_close_matches(name, candidates, n=1, cutoff=0.6)
@@ -437,6 +501,47 @@ def _parse_palette_reference(ref: str) -> tuple[str, int | None, bool]:
     if not name:
         raise ValueError(f"palette reference is missing name: {ref!r}")
     return (name, steps, reverse)
+
+
+_VARIANT_BY_NAME: dict[str, Variant] = {word: word for word in VARIANT_WORDS}
+
+
+def _split_trailing_variant(name: str) -> tuple[str, Variant | None]:
+    """Split a trailing ``.dark``/``.light``/``.pale``/``.deep`` segment off *name*.
+
+    Checked before anything else -- the ``:N``/``_r`` shorthand
+    (``_parse_palette_reference``), a role lookup (``resolve_palette_ref``),
+    a bracket or dotted color-token dispatch (``color_from_theme``) -- because
+    a variant is always the outermost, rightmost thing an author can write
+    (``vivid-10:4.dark``, ``category.blue.dark``, ``category[2].dark``). Only
+    an exact ``.<word>`` suffix counts: a base name that happens to end in one
+    of these four words with no preceding dot (there is no such shipped name
+    today) is never touched, and a name with no dot at all returns unchanged.
+    """
+    if "." in name:
+        base, _, tail = name.rpartition(".")
+        variant_word = _VARIANT_BY_NAME.get(tail)
+        if base and variant_word is not None:
+            return base, variant_word
+    return name, None
+
+
+def _split_trailing_variants(name: str) -> tuple[str, tuple[Variant, ...]]:
+    """Split every trailing variant segment off *name*, in application order.
+
+    A chain (``vivid-10.deep.pale``) is never something an author types -- no
+    enum admits it on an authored field -- it is what ``resolve_palette_ref``
+    produces when a whole-list ref that carries its own variant
+    (``category.pale``) goes through a role bound to a variant spelling
+    (``palettes: {category: vivid-10.deep}``): the binding's variant first,
+    the ref's second, the same order the single-color path composes them.
+    """
+    variants: list[Variant] = []
+    while True:
+        name, trailing = _split_trailing_variant(name)
+        if trailing is None:
+            return name, tuple(reversed(variants))
+        variants.append(trailing)
 
 
 # ============================================================================
@@ -502,7 +607,21 @@ def palette(
     ``text_color`` applies only to ``surface="table"``: the carve keeps stops
     that hold that body-text color (defaults to the dark ink). It has no effect
     on chart-fill (``surface`` default) resolution.
+
+    A trailing variant segment (``vivid-10.dark``, ``vivid-10:4.pale``) is
+    split off before anything else and applied to every resolved stop last,
+    after the base palette resolves; a chain of them (only ever produced by
+    ``resolve_palette_ref`` composing a bound variant with the ref's own --
+    see ``_split_trailing_variants``) applies left to right. Categorical
+    only: a continuous palette's own stops already encode a monotonic
+    lightness order, ``variant()``'s pole-move would double up on it (and
+    double-darken the ``surface="table"`` dark-canvas swap above), so a
+    variant on any other family raises ``UnknownPaletteError`` instead of
+    silently resolving.
     """
+    authored = name
+    name, requested_variants = _split_trailing_variants(name)
+
     # Shorthand parsing from strings.
     if ":" in name or name.endswith("_r"):
         parsed_name, parsed_steps, parsed_rev = _parse_palette_reference(name)
@@ -522,7 +641,7 @@ def palette(
 
     entry = _get_index().get(name)
     if entry is None:
-        raise UnknownPaletteError(_unknown_palette_message(name))
+        raise UnknownPaletteError(_unknown_palette_message(name, authored=authored))
 
     family = entry["family"]
 
@@ -533,26 +652,44 @@ def palette(
         )
 
     if family in ("categorical", "scaffold"):
-        return _resolve_discrete(name, family, surface, steps, reverse)
+        stops = _resolve_discrete(name, family, surface, steps, reverse)
+    else:
+        # Dark-canvas table swap: on a dark canvas (light cell text) a pinned
+        # sequential/diverging table palette resolves to its <name>-dark twin, so the
+        # carve has a dark neutral that holds the light text — otherwise the light
+        # palette's near-white neutral fails WCAG and the whole chart drops out.
+        # Mirrors the categorical light/dark <name>-dark convention; the trigger is
+        # the text_color already threaded here, so no dark-canvas flag is needed.
+        # Light themes (dark text) never trigger; scoped to surface="table".
+        if (
+            surface == "table"
+            and not name.endswith("-dark")
+            and _is_dark_canvas_text(text_color)
+            and _has_continuous_dark_companion(name)
+        ):
+            name = f"{name}-dark"
+            family = _get_index()[name]["family"]
 
-    # Dark-canvas table swap: on a dark canvas (light cell text) a pinned
-    # sequential/diverging table palette resolves to its <name>-dark twin, so the
-    # carve has a dark neutral that holds the light text — otherwise the light
-    # palette's near-white neutral fails WCAG and the whole chart drops out.
-    # Mirrors the categorical light/dark <name>-dark convention; the trigger is
-    # the text_color already threaded here, so no dark-canvas flag is needed.
-    # Light themes (dark text) never trigger; scoped to surface="table".
-    if (
-        surface == "table"
-        and not name.endswith("-dark")
-        and _is_dark_canvas_text(text_color)
-        and _has_continuous_dark_companion(name)
-    ):
-        name = f"{name}-dark"
-        family = _get_index()[name]["family"]
+        # sequential or diverging.
+        stops = _resolve_continuous(name, family, surface, steps, reverse, text_color)
 
-    # sequential or diverging.
-    return _resolve_continuous(name, family, surface, steps, reverse, text_color)
+    if requested_variants:
+        # variant() moves lightness toward a fixed pole -- meaningful for a
+        # categorical family's independent hues, not for a continuous ramp,
+        # whose own stops already encode a monotonic lightness order the
+        # move would double up on (and, on `surface="table"`'s own dark-canvas
+        # swap above, double-darken: the swap already picked the `-dark`
+        # twin). The grammar's `.dark`/`.light`/`.pale`/`.deep` segment is
+        # categorical-only by design (see `palettes.md`'s Variants section);
+        # this is where that's enforced, not just documented.
+        if family != "categorical":
+            raise UnknownPaletteError(
+                f"unknown palette '{name}.{'.'.join(requested_variants)}'. "
+                "Variants apply to categorical palettes."
+            )
+        for requested_variant in requested_variants:
+            stops = [variant(stop, requested_variant) for stop in stops]
+    return stops
 
 
 def resolve_palette_ref(ref: str, palettes: Mapping[str, str]) -> str:
@@ -563,15 +700,35 @@ def resolve_palette_ref(ref: str, palettes: Mapping[str, str]) -> str:
     palette. The whole-palette counterpart to ``color_from_theme()``'s
     ``category[2]``, which indirects a single color through the same map.
 
-    Only the name is substituted; the ``:N``/``_r`` shorthand rides along. A ref
-    naming no role is returned unchanged, so a catalog name still means itself.
+    Only the name is substituted; the ``:N``/``_r`` shorthand and a trailing
+    variant segment (``category.pale``) both ride along -- variant is split
+    off first (before the role lookup, per the grammar), then re-appended to
+    the substituted name; actually *applying* the variant to hex happens
+    downstream, in ``palette()``, whichever caller resolves the substituted
+    name next. A ref naming no role is returned unchanged, so a catalog name
+    still means itself.
+
+    The bound value may itself carry a variant (``palettes: {category:
+    vivid-10.deep}``). It is split off the same way, before the ref's
+    shorthand is re-attached, so the result is a spelling ``palette()``
+    parses -- ``category:4`` becomes ``vivid-10:4.deep``, never
+    ``vivid-10.deep:4`` -- and it precedes the ref's own variant
+    (``category.pale`` becomes ``vivid-10.deep.pale``: binding first, ref
+    second, the order the single-color path composes them). The single-color
+    counterpart is ``_bound_palette``.
     """
-    name, _, _ = _parse_palette_reference(ref)
+    base, requested_variant = _split_trailing_variant(ref)
+    name, _, _ = _parse_palette_reference(base)
     target = palettes.get(name)
     if target is None:
         return ref
-    # `_parse_palette_reference` only strips suffixes, so `name` prefixes `ref`.
-    return target + ref[len(name) :]
+    target_name, bound_variant = _split_trailing_variant(target)
+    # `_parse_palette_reference` only strips suffixes, so `name` prefixes `base`.
+    substituted = target_name + base[len(name) :]
+    for trailing in (bound_variant, requested_variant):
+        if trailing is not None:
+            substituted = f"{substituted}.{trailing}"
+    return substituted
 
 
 def resolve_palette_alias(name: str) -> tuple[list[str], str | None]:
@@ -587,7 +744,13 @@ def resolve_palette_alias(name: str) -> tuple[list[str], str | None]:
     shorthand-stripped ``name`` when it is a known anti-pattern alias, else
     ``None``.
     """
-    parsed_name = name
+    # Variant first, shorthand second -- the same order `palette()` and
+    # `_split_trailing_variant`'s own docstring mandate. `name` may carry
+    # both (`vivid-10:4.dark`): parsing the shorthand before splitting the
+    # variant feeds `_parse_palette_reference` a `:N` segment with a
+    # non-numeric tail (`"4.dark"`), which raises -- on a path `palette()`
+    # itself handles correctly, since it splits in this order.
+    parsed_name, _ = _split_trailing_variant(name)
     if ":" in parsed_name or parsed_name.endswith("_r"):
         parsed_name, _, _ = _parse_palette_reference(parsed_name)
     requested = parsed_name if parsed_name in _WARN_ALIASES else None
@@ -766,7 +929,46 @@ def color(token: str) -> str:
     position.
     For role-indirected tokens (``chrome.ink`` where ``chrome`` is a theme
     palette role), use ``color_from_theme()`` instead.
+
+    A trailing variant segment (``vivid-10.3.dark``) is tried *after* the
+    unmodified token first, not before: a scaffold/tone palette's own
+    ``aliases:`` are not restricted to avoid the four variant words (only a
+    categorical palette's are, ``_load_spine_raw``'s reserved-word check) --
+    ``gamma.deep`` legitimately means "gamma's alias literally named deep"
+    when one exists, and only falls back to "gamma, deep variant" when it
+    does not. A categorical palette can never define such an alias, so this
+    fallback is the only path a categorical variant token ever takes.
     """
+    try:
+        return _color_without_variant(token)
+    except UnknownColorError as original:
+        base, requested_variant = _split_trailing_variant(token)
+        if requested_variant is None:
+            raise
+        try:
+            resolved = _color_without_variant(base)
+        except UnknownColorError:
+            # The split-off base doesn't resolve either -- re-raise the
+            # *original* error, which names the token as authored
+            # (`dbt-grays.light`), not the post-split base (`dbt-grays`,
+            # which fails for an unrelated reason: no dot at all).
+            raise original from None
+        # Categorical only, the same restriction palette() enforces: a
+        # sequential/diverging slot's own position already encodes a
+        # monotonic lightness order, and a scaffold alias is a fixed named
+        # step -- variant()'s pole-move has no coherent meaning on either.
+        # `base` resolved above, so it is guaranteed dotted; its family
+        # decides, not a second raw string search.
+        palette_name, _, _ = base.partition(".")
+        if _get_index()[palette_name]["family"] != "categorical":
+            raise UnknownColorError(
+                f"unknown color token {token!r}. Variants apply to "
+                "categorical palettes."
+            ) from None
+        return variant(resolved, requested_variant)
+
+
+def _color_without_variant(token: str) -> str:
     if "." not in token:
         raise UnknownColorError(
             f"color token must be dotted 'palette.slot', got {token!r}"
@@ -774,7 +976,7 @@ def color(token: str) -> str:
     palette_name, _, slot = token.partition(".")
     entry = _get_index().get(palette_name)
     if entry is None:
-        raise UnknownColorError(_unknown_palette_message(palette_name))
+        raise UnknownColorError(_unknown_palette_message(palette_name, authored=token))
     family = entry["family"]
     spine = _load_spine(palette_name)
 
@@ -860,7 +1062,114 @@ def color_from_theme(
     Raises:
         UnknownColorError: Token is unresolvable (unknown role, missing alias,
             out-of-range index, cycle, or missing colors array).
+
+    A trailing variant segment (``category[1].dark``, ``chrome.ink.dark``) is
+    tried *after* the unmodified token first, the same "original wins"
+    ordering ``color()`` uses and for the same reason: a scaffold/tone
+    palette's own ``aliases:`` are not restricted against the four variant
+    words, only a categorical palette's are, so ``chrome.deep`` legitimately
+    means "chrome's alias literally named deep" when the palette bound to
+    ``chrome`` defines one. Tried independently at every level of the
+    bare-name recursion, so a variant an author writes on a bare role
+    (``ink.dark``) and one a theme's own ``roles:`` target already carries
+    (``roles: {ink: chrome.heading.dark}``) both apply, provided the token
+    ultimately bottoms out on a categorical palette -- see ``palette()``'s
+    identical categorical-only restriction; a continuous or scaffold target
+    raises instead.
     """
+    return _color_from_theme_resolve(
+        token, palettes, roles, single_series_palette, _visited_roles
+    )[0]
+
+
+def _color_from_theme_resolve(
+    token: str,
+    palettes: Mapping[str, str],
+    roles: dict[str, str] | None,
+    single_series_palette: Sequence[str] | None,
+    _visited_roles: frozenset[str] | None,
+) -> tuple[str, str]:
+    """Resolve *token* to ``(hex, family)``.
+
+    The categorical-only variant check needs the family of whichever
+    concrete palette *token* ultimately bottoms out on, however many
+    ``roles:`` levels of indirection sit between it and that palette.
+    ``_color_from_theme_dispatch``'s bare-name branch recurses back into
+    this function (not straight into itself), so `family` threads through
+    every level as a normal return value -- no second walk over the token
+    string re-deriving what the dispatch already knows.
+    """
+    try:
+        return _color_from_theme_dispatch(
+            token, palettes, roles, single_series_palette, _visited_roles
+        )
+    except UnknownColorError as original:
+        base, requested_variant = _split_trailing_variant(token)
+        if requested_variant is None:
+            raise
+        try:
+            resolved, family = _color_from_theme_dispatch(
+                base, palettes, roles, single_series_palette, _visited_roles
+            )
+        except UnknownColorError:
+            # The split-off base doesn't resolve either -- re-raise the
+            # *original* error, which names the token as authored, not the
+            # post-split base (see `color()`'s identical re-raise).
+            raise original from None
+        # The same restriction palette()/color() enforce -- see color()'s
+        # identical check for why -- guards palette *names*: a continuous
+        # ramp or a scaffold alias a variant would corrupt. A "literal"
+        # family is a bare, already-resolved color (a `single_series[N]`
+        # stop), never a palette, and takes the variant as plain color math.
+        if family not in ("categorical", "literal"):
+            raise UnknownColorError(
+                f"unknown color token {token!r}. Variants apply to "
+                "categorical palettes."
+            ) from None
+        return variant(resolved, requested_variant), family
+
+
+def _bound_palette(
+    role: str, token: str, palettes: Mapping[str, str]
+) -> tuple[str, Variant | None, str, Palette]:
+    """The palette a theme role binds, for the bracket and dotted forms.
+
+    A role's bound value may carry a trailing variant (``palettes: {category:
+    vivid-10.deep}`` -- the enum admits every ``<categorical>.<variant>``
+    spelling), which is split off here and returned for the caller to apply
+    to the one stop it picks; the base name is what the catalog is asked
+    for. A variant on the token itself (``category[2].dark``) is applied
+    after it by ``_color_from_theme_resolve``. The whole-list counterpart is
+    ``resolve_palette_ref``, which splits the bound value the same way and
+    orders the ref's shorthand and variant after it.
+    """
+    bound = palettes.get(role)
+    if bound is None:
+        raise UnknownColorError(
+            f"theme has no palette assigned to role '{role}'."
+            f"{_retired_companion_hint(token)} "
+            f"Defined roles: {sorted(palettes)}"
+        )
+    palette_name, bound_variant = _split_trailing_variant(bound)
+    entry = _get_index().get(palette_name)
+    if entry is None:
+        raise UnknownColorError(
+            f"palette '{palette_name}' (role '{role}') not found in catalog"
+        )
+    return palette_name, bound_variant, entry["family"], _load_spine(palette_name)
+
+
+def _apply_bound_variant(color: str, bound_variant: Variant | None) -> str:
+    return color if bound_variant is None else variant(color, bound_variant)
+
+
+def _color_from_theme_dispatch(
+    token: str,
+    palettes: Mapping[str, str],
+    roles: dict[str, str] | None,
+    single_series_palette: Sequence[str] | None,
+    _visited_roles: frozenset[str] | None,
+) -> tuple[str, str]:
     # Bracket form: role[N] / single_series[N]
     bracket_match = re.match(r"^([A-Za-z][A-Za-z0-9_-]*)\[(\d+)\]$", token)
     if bracket_match:
@@ -880,19 +1189,15 @@ def color_from_theme(
                     f"single-series palette has {len(single_series_palette)} slot(s); "
                     f"requested slot {n} (1-indexed)"
                 )
-            return single_series_palette[n - 1]
-        palette_name = palettes.get(role)
-        if palette_name is None:
-            raise UnknownColorError(
-                f"theme has no palette assigned to role '{role}'. "
-                f"Defined roles: {sorted(palettes)}"
-            )
-        entry = _get_index().get(palette_name)
-        if entry is None:
-            raise UnknownColorError(
-                f"palette '{palette_name}' (role '{role}') not found in catalog"
-            )
-        spine = _load_spine(palette_name)
+            # A resolved single-series stop is a bare color, like an inline
+            # hex -- `stark` authors its list from a scaffold stop
+            # (`[dbt-grays.black]`), so the family of whatever palette the
+            # author drew it from is neither known here nor relevant: a
+            # trailing variant on it is plain color math.
+            return single_series_palette[n - 1], "literal"
+        palette_name, bound_variant, family, spine = _bound_palette(
+            role, token, palettes
+        )
         if spine.colors is None:
             raise UnknownColorError(
                 f"palette '{palette_name}' (role '{role}') has no 'colors:' array; "
@@ -903,30 +1208,33 @@ def color_from_theme(
                 f"palette '{palette_name}' has {len(spine.colors)} slot(s); "
                 f"requested slot {n} (1-indexed)"
             )
-        return spine.colors[n - 1]
+        return _apply_bound_variant(spine.colors[n - 1], bound_variant), family
 
     # Dotted form: role.alias
     if "." in token:
         role, _, alias = token.partition(".")
-        palette_name = palettes.get(role)
-        if palette_name is None:
-            raise UnknownColorError(
-                f"theme has no palette assigned to role '{role}'. "
-                f"Defined roles: {sorted(palettes)}"
-            )
-        entry = _get_index().get(palette_name)
-        if entry is None:
-            raise UnknownColorError(
-                f"palette '{palette_name}' (role '{role}') not found in catalog"
-            )
-        spine = _load_spine(palette_name)
+        palette_name, bound_variant, family, spine = _bound_palette(
+            role, token, palettes
+        )
         aliases_raw = spine.aliases or {}
         if alias not in aliases_raw:
+            # An alias containing a dot means a third segment was appended
+            # after a real alias (`category.blue.darker`) -- `partition`
+            # folds it into `alias` whole ("blue.darker"), so this is the
+            # unknown-alias error, not a separate "unknown variant" one, and
+            # it names what a variant word actually is rather than leaving
+            # the author to guess from the unknown "blue.darker" spelling.
+            variant_hint = (
+                f" If you meant a variant, the four are: {', '.join(VARIANT_WORDS)}."
+                if "." in alias
+                else ""
+            )
             raise UnknownColorError(
                 f"palette '{palette_name}' (role '{role}') has no alias '{alias}'. "
-                f"Known aliases: {sorted(aliases_raw)}"
+                f"Known aliases: {sorted(aliases_raw)}.{variant_hint}"
             )
-        return resolve_alias_chain(alias, aliases_raw, colors=spine.colors)
+        resolved = resolve_alias_chain(alias, aliases_raw, colors=spine.colors)
+        return _apply_bound_variant(resolved, bound_variant), family
 
     # Bare name: look up in roles
     effective_roles = roles or {}
@@ -941,8 +1249,13 @@ def color_from_theme(
     visited = _visited_roles or frozenset()
     if token in visited:
         raise UnknownColorError(f"theme.roles cycle detected involving '{token}'")
-    # Recurse on the resolved target (which must be a dotted or bracket form)
-    return color_from_theme(
+    # Recurse through _color_from_theme_resolve (not this dispatcher calling
+    # itself) so the resolved target gets its own independent "try original,
+    # fall back to variant-split" pass -- a theme's `roles:` table may point
+    # at an already-varianted token (`roles: {ink: chrome.heading.dark}`) --
+    # and so its own family comes back as an ordinary return value instead
+    # of needing to be re-derived by a second, separate walk afterward.
+    return _color_from_theme_resolve(
         target,
         palettes=palettes,
         roles=effective_roles,
@@ -955,11 +1268,11 @@ def color_from_theme(
 # Public API — variant() / label_ink() — literal tiers, canvas-aware ink
 # ============================================================================
 
-# A literal tier of a base color: `dark` is never lighter than its base and
-# `light` never darker, on every theme. Which variant a role uses on a dark
-# canvas is the theme's decision, not the engine's -- see label_ink() for the
-# one automatic, canvas-aware derivation.
-Variant = Literal["dark", "light", "pale", "deep"]
+# `Variant` (`dark`/`light`/`pale`/`deep`) lives in core/colors.py, below
+# this module -- a literal tier of a base color: `dark` is never lighter
+# than its base and `light` never darker, on every theme. Which variant a
+# role uses on a dark canvas is the theme's decision, not the engine's --
+# see label_ink() for the one automatic, canvas-aware derivation.
 
 
 @functools.lru_cache(maxsize=4096)
@@ -993,7 +1306,7 @@ def _variant_cached(
     if kind == "deep":
         return oklch_to_hex(min(L, L + (config.deep_pole - L) * config.deep_k), C, H)
     raise ValueError(
-        f"unknown variant {kind!r}; expected one of dark, light, pale, deep"
+        f"unknown variant {kind!r}; expected one of {', '.join(VARIANT_WORDS)}"
     )
 
 
@@ -1127,20 +1440,6 @@ def mark_ink(color: str, canvas: str) -> str:
 # ============================================================================
 # Public API — discovery
 # ============================================================================
-
-
-def palette_metadata(name: str) -> dict[str, Any]:
-    """Return palette metadata without loading the full stops."""
-    entry = _get_index().get(name)
-    if entry is None:
-        raise UnknownPaletteError(_unknown_palette_message(name))
-    spine = _load_spine(name)
-    return {
-        "name": spine.name,
-        "family": entry["family"],
-        "description": spine.description or "",
-        "design_notes": spine.design_notes or "",
-    }
 
 
 def list_palettes(

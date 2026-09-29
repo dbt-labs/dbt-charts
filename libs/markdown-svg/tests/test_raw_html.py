@@ -290,6 +290,18 @@ class TestRawHtmlXmlWellFormedness:
         svg = renderer.render(blocks, width=400)
         ET.fromstring(svg)
 
+    def test_attribute_value_escaped_exactly_once(self) -> None:
+        """An & in an attribute value round-trips, not double-escaped."""
+        import xml.etree.ElementTree as ET
+
+        renderer = SVGRenderer(allow_raw_html=True)
+        blocks = parse('<a href="https://example.com/?a=1&amp;b=2">link</a>')
+        svg = renderer.render(blocks, width=400)
+        root = ET.fromstring(svg)
+        anchors = [el for el in root.iter() if el.tag.endswith("}a")]
+        assert anchors, f"no <a> element found in {svg!r}"
+        assert anchors[0].get("href") == "https://example.com/?a=1&b=2"
+
 
 # OWASP XSS Filter Evasion Cheat Sheet payload corpus.
 # Reference: https://owasp.org/www-community/xss-filter-evasion-cheatsheet

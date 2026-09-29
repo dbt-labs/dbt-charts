@@ -56,7 +56,6 @@ def _table_chart(table_style: TableChartStyle | None = None):
 def _kpi_chart(kpi_style=None):
     """Build a minimal V2 ResolvedKpiChart, optionally with a kpi-style override."""
     from dbt_charts.core.compile.models.chart.normalized import KpiChart
-    from dbt_charts.core.compile.models.style.resolved.kpi import ResolvedKpiStyle
     from dbt_charts.core.compile.resolve import resolve as _resolve
 
     chart = KpiChart.model_validate(
@@ -71,7 +70,9 @@ def _kpi_chart(kpi_style=None):
     )
     resolved = _resolve(chart, [{"revenue": 42000}], chart_style_context=_ctx())
     if kpi_style is not None:
-        return resolved.model_copy(update={"style": ResolvedKpiStyle(kpi=kpi_style)})
+        return resolved.model_copy(
+            update={"style": resolved.style.model_copy(update={"kpi": kpi_style})}
+        )
     return resolved
 
 

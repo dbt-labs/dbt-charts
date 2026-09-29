@@ -231,27 +231,6 @@ def _cartesian_y_range_display(
     )
 
 
-def _kpi_display_text(
-    prefix: str,
-    number_str: str,
-    suffix: str,
-    format_input: FormatState,
-    cell: Any,  # type-state: explicit_any — a raw query row cell, dynamically typed
-    is_numeric: bool,
-) -> str:
-    """Combine formatted parts; append the raw cell in parens when a format changed it.
-
-    Only numeric cells disambiguate this way — a plain string/status cell's
-    formatted value already IS the raw cell, and an unformatted numeric
-    cell's plain digits have nothing to disambiguate against.
-    """
-    formatted = f"{prefix}{number_str}{suffix}"
-    if not is_numeric or format_input is None:
-        return formatted
-    raw = str(cell)
-    return formatted if formatted == raw else f"{formatted} ({raw})"
-
-
 def _kpi_text_parts(
     resolved: ResolvedKpiChart,
     row: dict[str, Any],  # type-state: explicit_any — a query row, dynamically typed
@@ -270,7 +249,7 @@ def _kpi_text_parts(
 
     chart_id = resolved.id
     cell, _ = _resolve_value(resolved.value, row, chart_id)
-    prefix, number_str, suffix, is_numeric = _format_value_parts(
+    prefix, number_str, suffix, _is_numeric = _format_value_parts(
         cell,
         resolved.format,
         chart_id,
@@ -278,9 +257,7 @@ def _kpi_text_parts(
         native=resolved.format_native,
         format_may_be_cascaded=True,
     )
-    display = _kpi_display_text(
-        prefix, number_str, suffix, resolved.format, cell, is_numeric
-    )
+    display = f"{prefix}{number_str}{suffix}"
     # Headline glyph (e.g. "▲"): a style setting (chart/kpi.py:548 draws it
     # from the same slot), distinct from the support glyph below, which is
     # per-instance authored on the support block itself.
@@ -295,12 +272,10 @@ def _kpi_text_parts(
         value_str = ""
         if support.value is not None:
             s_cell, _ = _resolve_value(support.value, row, chart_id)
-            s_prefix, s_number_str, s_suffix, s_is_numeric = _format_value_parts(
+            s_prefix, s_number_str, s_suffix, _s_is_numeric = _format_value_parts(
                 s_cell, support.format, chart_id, formats
             )
-            value_str = _kpi_display_text(
-                s_prefix, s_number_str, s_suffix, support.format, s_cell, s_is_numeric
-            )
+            value_str = f"{s_prefix}{s_number_str}{s_suffix}"
         glyph = support.glyph or ""  # type-state: silent_fallback — unauthored
         label = support.label or ""  # type-state: silent_fallback — unauthored
         support_line = " ".join(part for part in (glyph, value_str, label) if part)

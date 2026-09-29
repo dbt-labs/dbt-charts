@@ -43,6 +43,19 @@ _NEW_BLOCK_INDENT = 2
 # Columns a `- ` prefix occupies; an item's keys are indented by exactly this
 # much relative to the dash.
 _ITEM_KEY_OFFSET = 2
+# A block-sequence item that is a plain scalar -- quoted either way, or bare
+# -- with an optional trailing comment. Bare excludes `{`/`[`, which read as
+# flow-style structure, not a scalar this setter can rewrite in place.
+_SEQUENCE_SCALAR_ITEM_RE = re.compile(
+    r"^( *)- "
+    r'(?:"(?P<dq>[^"]*)"|\'(?P<sq>[^\']*)\'|'
+    # A `#` mid-value (`abc#def`) is a literal character, not a comment
+    # marker -- YAML only starts a comment at whitespace-then-`#`. The
+    # lookahead lets `bare` consume such a `#`, stopping only where
+    # `trail`'s own `[ \t]+` could actually begin one.
+    r"(?P<bare>[^\s#{\[](?:(?!\s+#).)*?))"
+    r"(?P<trail>(?:[ \t]+(?:#.*)?)?)$"
+)
 
 
 @dataclass
@@ -373,6 +386,33 @@ def _format_scalar(value: ScalarLeaf) -> str:
     return rendered
 
 
+def _rewrite_scalar_sequence_item(line: str, value: str) -> str | None:
+    """Rewrite a block-sequence item's plain scalar value in place.
+
+    Keeps `line`'s indent, quote style (or its bareness), and trailing
+    comment; only the value between them changes. Returns `None` when
+    `line` isn't a single-line plain scalar item -- a nested mapping/list
+    item, or a shape this narrow rewriter doesn't parse -- so the caller
+    falls back to its existing refusal rather than guessing.
+    """
+    if _ITEM_KEY_RE.match(line) is not None:
+        # `- key: value` -- a mapping item's first key riding the dash
+        # line, not a scalar. The bare arm below can't tell a colon-bearing
+        # key from a colon-bearing scalar value, so this is checked first.
+        return None
+    match = _SEQUENCE_SCALAR_ITEM_RE.match(line)
+    if match is None:
+        return None
+    indent, trail = match.group(1), match.group("trail")
+    if match.group("dq") is not None:
+        new_value = f'"{value}"'
+    elif match.group("sq") is not None:
+        new_value = f"'{value}'"
+    else:
+        new_value = value
+    return f"{indent}- {new_value}{trail}"
+
+
 def _prune_emptied_parents(
     lines: list[str], parents: list[tuple[str, _KeyMatch]], path: str
 ) -> list[str]:
@@ -433,10 +473,27 @@ def _apply_update(lines: list[str], path: str, value: ScalarLeaf | None) -> list
                 lines, start, end, indent, int(segment), path
             )
             if is_leaf:
-                raise ValueError(
+                refusal = ValueError(
                     f"Cannot set {path!r}: {segment!r} addresses a whole "
                     "sequence item, not a scalar leaf."
                 )
+                # A block-style scalar item's own value is this leaf -- the
+                # one shape a numeric segment can end on and still rewrite
+                # in place, rather than refuse. Delete and non-string values
+                # keep the refusal: deleting a list item renumbers every
+                # later index (the same reason a mapping-key delete of an
+                # item's only key refuses above), and a non-string value
+                # has no single scalar-item spelling to substitute into.
+                if (
+                    value is None
+                    or not isinstance(value, str)
+                    or _has_content(lines, item_start + 1, item_end)
+                ):
+                    raise refusal
+                rewritten = _rewrite_scalar_sequence_item(lines[item_start], value)
+                if rewritten is None:
+                    raise refusal
+                return lines[:item_start] + [rewritten] + lines[item_start + 1 :]
             start, end = item_start, item_end
             indent += _ITEM_KEY_OFFSET
             continue

@@ -547,6 +547,8 @@ def resolve_cache_boot(
     ``path`` opens that file (created if absent, resolved relative to the
     project root); no path opens the zero-config in-memory default.
 
+    ``CacheBoot.path`` is always returned absolute and symlink-resolved.
+
     Reads only the ``cache:`` section of ``dbt_charts.yml`` (like
     ``get_project_server_config``'s narrow ``server:`` read) rather than the
     whole file through ``load_config`` — dbt_charts.yml also serves as a
@@ -556,14 +558,14 @@ def resolve_cache_boot(
     if no_cache:
         return CacheBoot(enabled=False, path=None)
     if cache_path is not None:
-        return CacheBoot(enabled=True, path=cache_path)
+        return CacheBoot(enabled=True, path=cache_path.resolve())
 
     project_cache = get_project_cache_root(project)
     if not project_cache.path:
         return CacheBoot(enabled=True, path=None)
     candidate = Path(project_cache.path)
     resolved_path = candidate if candidate.is_absolute() else project.root / candidate
-    return CacheBoot(enabled=True, path=resolved_path)
+    return CacheBoot(enabled=True, path=resolved_path.resolve())
 
 
 def get_project_cache_root(project: Project) -> ProjectCacheConfig:
@@ -622,40 +624,23 @@ def get_project_markdown_metadata_table(project: Project) -> bool:
 
 
 def _load_palettes() -> dict[str, Any]:
-    """Load palette YAMLs from defaults/palettes/ into the config tree.
+    """Load scaffold palette YAMLs from defaults/palettes/ into the config tree.
 
-    Returns a dict with:
-      - ``palettes``: categorical palettes keyed by name (vivid-10, hero-6, …)
-        from ``defaults/palettes/categorical/*.yml``.
-      - ``dbt_grays`` / ``dbt_creams``: flat hex mappings from
-        ``defaults/palettes/scaffold/dbt-grays.yml`` and ``dbt-creams.yml``.
+    Returns a dict with ``dbt_grays`` / ``dbt_creams``: flat hex mappings
+    from ``defaults/palettes/scaffold/dbt-grays.yml`` and ``dbt-creams.yml``.
 
-    Sequential, diverging, and tone palettes are accessed via
-    ``dbt_charts.core.compile.resolve.style.palette`` — not the config tree.
+    Categorical, sequential, diverging, and tone palettes are all accessed
+    via ``dbt_charts.core.compile.resolve.style.palette`` — not the config
+    tree. Categorical used to be scanned into ``Config.palettes`` here too;
+    that scan is gone (the resolver's own name index already answers "what
+    categorical palettes exist", and nothing else ever read the config
+    copy) -- ``Config.palettes`` stays declared, unpopulated, for the reason
+    its neighboring dead fields (``sources``, ``dbt_project_dir``) give.
 
     Shipped YAMLs are expected to be well-formed. Any malformed file raises —
     no silent skip.
     """
     overlay: dict[str, Any] = {}
-    cat_dir = _palettes_dir.joinpath("categorical")
-    if cat_dir.is_dir():
-        palettes: dict[str, list[str]] = {}
-        for path in sorted(
-            (p for p in cat_dir.iterdir() if p.name.endswith(".yml")),
-            key=lambda p: p.name,
-        ):
-            data = _load_yaml_data(path)
-            name = data.get("name") if isinstance(data, Mapping) else None
-            # Categorical files use colors: (renamed from stops:).
-            colors = data.get("colors") if isinstance(data, Mapping) else None
-            if not isinstance(name, str) or not isinstance(colors, list):
-                raise ValueError(
-                    f"{path}: categorical palette YAML must have string 'name' "
-                    f"and list 'colors' keys"
-                )
-            palettes[name] = list(colors)
-        if palettes:
-            overlay["palettes"] = palettes
 
     for legacy_attr, palette_name in (
         ("dbt_grays", "dbt-grays"),
@@ -796,24 +781,6 @@ def get_default_theme_name() -> str:
     return env_value if env_value else SHIPPED_DEFAULT_THEME_NAME
 
 
-def get_palette(name: str = "default") -> list[str]:
-    """Get a named color palette."""
-    if name == "default":
-        _categorical = get_theme_style().charts.color.categorical
-        assert _categorical is not None and _categorical.palette is not None, (
-            "charts.color.categorical.palette must be populated by the theme"
-        )
-        return list(_categorical.palette)
-    config = get_config()
-    palettes = config.palettes
-    if name not in palettes:
-        raise KeyError(f"Unknown palette '{name}'")
-    palette_val = palettes[name]
-    if not isinstance(palette_val, list):
-        raise TypeError(f"Palette '{name}' must be a list")
-    return list(palette_val)
-
-
 # ============================================================================
 # PROJECT SOURCES
 # ============================================================================
@@ -840,8 +807,32 @@ def load_project_sources(project: FilesystemProject) -> ProjectSourcesConfig:
     ``sources.default`` is not supported at the project level; set
     ``source: <name>`` on the board or folder ``meta.yml`` instead.
     """
-    # dbt_charts.yml sources — default key is rejected
     filename, sources_section = _dbt_charts_yml_mapping_section(project, "sources")
+    normalized = _validate_sources_section(sources_section, filename)
+    sources = _absolutize_source_paths(normalized, project)
+    return ProjectSourcesConfig(sources=sources)
+
+
+# The raw `sources:` YAML block (name -> untyped entry) and its normalized,
+# still-not-absolutized counterpart (name -> entry, guaranteed a dict) -
+# typed by parse_source_config during _validate_source_registry below, not here.
+_RawSourcesBlock = dict[str, Any]  # type-state: explicit_any — raw source entries
+_NormalizedSources = dict[str, dict[str, Any]]  # type-state: explicit_any — normalized
+
+
+def _validate_sources_section(
+    sources_section: _RawSourcesBlock | None, filename: str
+) -> _NormalizedSources:
+    """Schema-validate a raw ``sources:`` mapping: the disk-independent part
+    of ``load_project_sources``, shared with ``validate_project_config_data``
+    so an already-parsed (not-yet-absolutized) mapping validates identically
+    on both paths.
+
+    Raises:
+        TypeError: ``sources.default`` is set (removed; see docstring above).
+        CompilationError: a source entry fails typed ``SourceConfig``
+            validation, or carries a raw credential literal.
+    """
     if sources_section is None:
         sources_section = {}
     elif "default" in sources_section:
@@ -858,8 +849,50 @@ def load_project_sources(project: FilesystemProject) -> ProjectSourcesConfig:
 
     normalized = _normalize_project_sources(all_sources)
     _validate_source_registry(normalized, filename)
-    sources = _absolutize_source_paths(normalized, project)
-    return ProjectSourcesConfig(sources=sources)
+    return normalized
+
+
+def validate_project_config_data(
+    data: Any,  # type-state: explicit_any — raw YAML-decoded content, not yet known to be a mapping; _as_mapping below is the type check
+    *,
+    filename: str,
+) -> None:
+    """Schema-validate already-parsed ``dbt_charts.yml`` content: the
+    engine-knob schema (``Config``) plus the per-entry ``sources:`` schema -
+    without publishing anything to process-global state.
+
+    Unlike ``load_config``/``load_project_sources``, this never rebinds the
+    module-global ``_config`` or clears the theme cache, so it is safe for a
+    caller that does not own the process's live config: an editor validating
+    an unsaved buffer, or a multi-tenant worker checking one project's
+    dbt_charts.yml while compiling for another.
+
+    It is a read-only replay of ``load_config``/``load_project_sources``'s
+    validation, not a new schema: see ``Raises`` below for the exact faults.
+
+    Args:
+        data: Parsed dbt_charts.yml content: the raw YAML-decoded value, not
+            yet known to be a mapping (``None`` for an empty file).
+        filename: Display name for error messages (the caller's own file
+            identity: a disk path or a buffer's logical path).
+
+    Raises:
+        pydantic.ValidationError: unknown top-level key, or an invalid value.
+        TypeError: ``sources.default`` is set, or ``data`` is a non-mapping,
+            non-``None`` value (e.g. a bare scalar or list document).
+        CompilationError: a source entry fails ``SourceConfig`` validation,
+            or carries a raw credential literal.
+    """
+    mapping = {} if data is None else _as_mapping(data, filename)
+    Config.model_validate(deep_merge_dict(_load_defaults(), mapping))
+
+    sources_value = mapping.get("sources")
+    sources_section = (
+        _as_mapping(sources_value, f"{filename} sources section")
+        if sources_value is not None
+        else None
+    )
+    _validate_sources_section(sources_section, filename)
 
 
 def _validate_source_registry(

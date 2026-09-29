@@ -17,7 +17,7 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.authored import (
-    BarChartBarLayer,
+    BarLayer,
     LayerAxisYStyle,
     LineLayer,
     ScatterLayer,
@@ -453,7 +453,7 @@ def _bullet_spec(*, layer_query: str | None) -> dict[str, Any]:
         y="size",
         color="band",
         layers=[
-            BarChartBarLayer.model_validate(
+            BarLayer.model_validate(
                 {
                     "type": "bar",
                     "y": "actual",
@@ -928,7 +928,7 @@ def _candlestick_spec(*, color_on_base: bool) -> dict[str, Any]:
             y_start="low",
             color="session" if color_on_base else None,
             layers=[
-                BarChartBarLayer.model_validate(
+                BarLayer.model_validate(
                     {"type": "bar", "y": "close", "y_start": "open", "color": "session"}
                 )
             ],

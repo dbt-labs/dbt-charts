@@ -22,8 +22,8 @@ queries:
   # the last real close, so "now" is defined off CLOSED business only,
   # truncated to a month boundary. window_start drops the dataset's partial
   # opening month the same way; both edges of the fixture are partial
-  # calendar months (see examples/AGENTS.md), so every monthly series below
-  # starts at window_start and stops before period_end.
+  # calendar months, so every monthly series below starts at window_start
+  # and stops before period_end.
   report_window:
     sql: |
       SELECT

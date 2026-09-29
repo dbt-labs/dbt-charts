@@ -42,7 +42,12 @@ from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.chart.rendering import render_layout_item
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.sizing import resolve_active_tab_index
-from dbt_charts.core.render.svg_utils import border_dash_attrs, px, translate_group
+from dbt_charts.core.render.svg_utils import (
+    border_dash_attrs,
+    escape_attr,
+    px,
+    translate_group,
+)
 
 __all__ = [
     "is_details_expanded",
@@ -66,11 +71,11 @@ def _bg_rect(
 ) -> str:
     """Return a background rect SVG element."""
     stroke_attr = (
-        f' stroke="{html.escape(stroke)}" stroke-width="{stroke_width}"'
+        f' stroke="{escape_attr(stroke)}" stroke-width="{escape_attr(stroke_width)}"'
         if stroke
         else ""
     )
-    return f'<rect x="{x}" y="{y}" width="{width}" height="{height}" fill="{html.escape(fill)}"{stroke_attr} rx="{rx}"/>'
+    return f'<rect x="{escape_attr(x)}" y="{escape_attr(y)}" width="{escape_attr(width)}" height="{escape_attr(height)}" fill="{escape_attr(fill)}"{stroke_attr} rx="{escape_attr(rx)}"/>'
 
 
 def render_rows_layout(
@@ -396,21 +401,21 @@ def render_tabs_layout(
         # Always emit the rect so the border stroke delineates tabs; use
         # fill="none" when the theme omits header/stripe background.
         _tab_rect = (
-            f'<rect x="{x}" y="0" width="{tab_width}" height="{tab_bar_height}" '
-            f'fill="{_fill or "none"}" '
-            f'stroke="{resolved_style.border.color}" stroke-width="{tabs_config.border.width}"'
+            f'<rect x="{escape_attr(x)}" y="0" width="{escape_attr(tab_width)}" height="{escape_attr(tab_bar_height)}" '
+            f'fill="{escape_attr(_fill or "none")}" '  # type-state: silent_fallback — no tab fill authored; fill="none" is the real SVG value the comment above already documents, not a fabricated color
+            f'stroke="{escape_attr(resolved_style.border.color)}" stroke-width="{escape_attr(tabs_config.border.width)}"'
             f"{border_dash_attrs(tabs_config.border)}/>"
         )
         tab_svg = (
             _tab_rect
-            + f'<text x="{x + tab_width / 2}" y="{tab_bar_height / 2 + tabs_config.title_baseline_offset}" '
-            f'text-anchor="middle" font-size="{tabs_config.font.size}" fill="{resolved_style.title.font.color if is_active else resolved_style.variables.font.color}" '
-            f'font-weight="{weight}">{html.escape(title)}</text>'
+            + f'<text x="{escape_attr(x + tab_width / 2)}" y="{escape_attr(tab_bar_height / 2 + tabs_config.title_baseline_offset)}" '
+            f'text-anchor="middle" font-size="{escape_attr(tabs_config.font.size)}" fill="{escape_attr(resolved_style.title.font.color if is_active else resolved_style.variables.font.color)}" '
+            f'font-weight="{escape_attr(weight)}">{html.escape(title)}</text>'
         )
 
         if tab_variable and not is_active:
             href = _build_toggle_url(variables, tab_variable, slug)
-            tab_bar_parts.append(f'<a href="{html.escape(href)}">{tab_svg}</a>')
+            tab_bar_parts.append(f'<a href="{escape_attr(href)}">{tab_svg}</a>')
         else:
             tab_bar_parts.append(tab_svg)
 
@@ -506,17 +511,17 @@ def render_details_summary(
     # Always emit the rect so the border stroke is visible; fall back to
     # fill="none" when neither header nor stripe has a background color.
     _summary_rect = (
-        f'<rect x="0" y="0" width="{available_width}" height="{summary_height}" '
-        f'fill="{_summary_fill or "none"}" '
-        f'stroke="{resolved_style.border.color}" stroke-width="{details_config.border.width}"'
+        f'<rect x="0" y="0" width="{escape_attr(available_width)}" height="{escape_attr(summary_height)}" '
+        f'fill="{escape_attr(_summary_fill or "none")}" '  # type-state: silent_fallback — no summary fill authored; fill="none" is the real SVG value the comment above already documents, not a fabricated color
+        f'stroke="{escape_attr(resolved_style.border.color)}" stroke-width="{escape_attr(details_config.border.width)}"'
         f"{border_dash_attrs(details_config.border)} "
-        f'rx="{details_config.border.radius}" class="dbt-details-toggle"/>'
+        f'rx="{escape_attr(details_config.border.radius)}" class="dbt-details-toggle"/>'
     )
     return (
-        f'<a href="{html.escape(href)}">'
+        f'<a href="{escape_attr(href)}">'
         + _summary_rect
-        + f'<text x="{details_config.arrow.x}" y="{summary_height / 2 + details_config.text_baseline_offset}" font-size="{details_config.arrow.font.size}" fill="{resolved_style.title.font.color}">{arrow}</text>'
-        + f'<text x="{details_config.label_x}" y="{summary_height / 2 + details_config.text_baseline_offset}" font-size="{details_config.font.size}" '
-        + f'fill="{resolved_style.title.font.color}" font-weight="500">{html.escape(label or "")}</text>'
+        + f'<text x="{escape_attr(details_config.arrow.x)}" y="{escape_attr(summary_height / 2 + details_config.text_baseline_offset)}" font-size="{escape_attr(details_config.arrow.font.size)}" fill="{escape_attr(resolved_style.title.font.color)}">{arrow}</text>'
+        + f'<text x="{escape_attr(details_config.label_x)}" y="{escape_attr(summary_height / 2 + details_config.text_baseline_offset)}" font-size="{escape_attr(details_config.font.size)}" '
+        + f'fill="{escape_attr(resolved_style.title.font.color)}" font-weight="500">{html.escape(label or "")}</text>'  # type-state: silent_fallback — no summary label authored; empty text paints an empty run, not a fabricated label
         + "</a>"
     )

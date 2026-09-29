@@ -17,8 +17,13 @@ from pydantic import TypeAdapter
 from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.config import get_chart_rendering, get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import StrokeStyle
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.style.theme.marks import PointMarkStyle
+from dbt_charts.core.compile.models.style.authored import StylePatch
+from dbt_charts.core.compile.models.style.theme.marks import (
+    AreaStackedMarkStyle,
+    PointMarkStyle,
+)
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     adaptive_stroke,
@@ -32,6 +37,20 @@ from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 _QUERY = SqlQuery(sql="SELECT 1", source="src")
+
+
+def _board_style_with_patch(charts_patch: dict[str, Any]) -> Any:
+    """A ChartStyleContext with a board/theme-tier ``style.charts.*`` override.
+
+    Mirrors what ``extends:``-ing a custom theme or authoring ``style:`` in a
+    board/``meta.yml`` produces (``compile_board_resolved_style``'s
+    ``own_patch`` -> ``resolve_chart_style_context(base, own_patch)``) -- as
+    opposed to ``_BOARD_STYLE``, which carries no author overrides at all,
+    and a chart-local ``style:`` patch (``_line_chart``'s own
+    ``stroke_width=`` kwarg), which is a third, narrower authoring tier.
+    """
+    patch = StylePatch.model_validate({"charts": charts_patch})
+    return resolve_chart_style_context(get_theme_style(), patch)
 
 
 # ---------------------------------------------------------------------------
@@ -48,9 +67,14 @@ def _line_chart(
     point_size: float | None = None,
     point_stroke_width: float | None = None,
     multiples_columns: str | None = None,
-    with_line_layer: bool = False,
+    layer_type: str | None = None,
 ) -> tuple[Chart, list[dict[str, Any]], float]:
-    """Return (chart, data, width) for a simple line chart."""
+    """Return (chart, data, width) for a simple line chart.
+
+    ``layer_type``: adds one overlay layer of that mark type (``"line"`` or
+    a cross-family ``"area"``), reading ``y2`` off the same rows as the base
+    series' ``y``.
+    """
     marks_patch: dict[str, Any] = {}
     if stroke_width is not None:
         marks_patch["line"] = {"stroke": {"width": stroke_width}}
@@ -81,8 +105,8 @@ def _line_chart(
         chart_dict["style"] = style_dict
     if multiples is not None:
         chart_dict["multiples"] = multiples
-    if with_line_layer:
-        chart_dict["layers"] = [{"type": "line", "y": "y2"}]
+    if layer_type is not None:
+        chart_dict["layers"] = [{"type": layer_type, "y": "y2"}]
 
     chart = TypeAdapter(Chart).validate_python(chart_dict)
 
@@ -96,7 +120,7 @@ def _line_chart(
         data = [{"x": i, "y": float(i), "facet": "cat0"} for i in range(n_points)] + [
             {"x": i, "y": float(i), "facet": "cat1"} for i in range(n_points)
         ]
-    elif with_line_layer:
+    elif layer_type is not None:
         data = [{"x": i, "y": float(i), "y2": float(i) * 2} for i in range(n_points)]
     else:
         data = [{"x": i, "y": float(i)} for i in range(n_points)]
@@ -111,13 +135,24 @@ def _area_chart(
     color: str | None = None,
     stroke_width: float | None = None,
     multiples_columns: str | None = None,
+    stack: str | None = None,
+    layer_type: str | None = None,
 ) -> tuple[Chart, list[dict[str, Any]], float]:
-    """Return (chart, data, width) for a simple area chart."""
+    """Return (chart, data, width) for a simple area chart.
+
+    ``layer_type``: adds one overlay layer of that mark type (``"area"`` or
+    a cross-family ``"line"``), reading ``y2`` off the same rows as the base
+    series' ``y``.
+    """
     marks_patch: dict[str, Any] = {}
     if stroke_width is not None:
         marks_patch["line"] = {"stroke": {"width": stroke_width}}
 
-    style_dict: dict[str, Any] = {"marks": marks_patch} if marks_patch else {}
+    style_dict: dict[str, Any] = {}
+    if marks_patch:
+        style_dict["marks"] = marks_patch
+    if stack is not None:
+        style_dict["stack"] = stack
 
     chart_dict: dict[str, Any] = {
         "id": "t",
@@ -132,6 +167,8 @@ def _area_chart(
         chart_dict["style"] = style_dict
     if multiples_columns is not None:
         chart_dict["multiples"] = {"columns": multiples_columns}
+    if layer_type is not None:
+        chart_dict["layers"] = [{"type": layer_type, "y": "y2"}]
 
     chart = TypeAdapter(Chart).validate_python(chart_dict)
 
@@ -147,8 +184,12 @@ def _area_chart(
             for i in range(n_points)
         ]
     elif color is not None:
-        data = [{"x": i, "y": float(i), "series": "A"} for i in range(n_points)] + [
-            {"x": i, "y": float(i) * 2, "series": "B"} for i in range(n_points)
+        data = [
+            {"x": i, "y": float(i), "y2": float(i) * 0.5, "series": "A"}
+            for i in range(n_points)
+        ] + [
+            {"x": i, "y": float(i) * 2, "y2": float(i), "series": "B"}
+            for i in range(n_points)
         ]
     elif multiples_columns is not None:
         # Two facet panels each with n_points sharing the same x values — the bug
@@ -482,6 +523,67 @@ class TestLineChartAdaptiveStroke:
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
         assert resolved.style.line_mark.stroke.width == pinned
 
+    def test_board_level_family_stroke_width_pin_bypasses_adaptive(self) -> None:
+        """style.charts.line.marks.line.stroke.width (extends/board/meta.yml
+        tier, dbt-labs/dbt-charts#37) → baked verbatim, no adaptive override --
+        the chart itself authors no style: block at all."""
+        pinned = 3.7
+        board_style = _board_style_with_patch(
+            {"line": {"marks": {"line": {"stroke": {"width": pinned}}}}}
+        )
+        chart, data, w = _line_chart(50, width=600.0)
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_global_marks_stroke_width_pin_bypasses_adaptive(self) -> None:
+        """style.charts.marks.line.stroke.width (global tier, shared across
+        every chart-family's line mark) → baked verbatim, no adaptive
+        override."""
+        pinned = 3.7
+        board_style = _board_style_with_patch(
+            {"marks": {"line": {"stroke": {"width": pinned}}}}
+        )
+        chart, data, w = _line_chart(50, width=600.0)
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_theme_tier_stroke_width_pin_bypasses_adaptive(self) -> None:
+        """A built-in theme's own literal charts.line.marks.line.stroke.width
+        (not a board/extends-theme *patch* -- the theme's own resolved Style)
+        now bypasses adaptive too, the same as a board/chart pin. Previously
+        a theme-tier literal was structurally unable to win (it was always
+        the cascade's ``base``, never a patch, and the required-field
+        baseline made every theme's width indistinguishable from "unset")."""
+        pinned = 3.7
+        theme = get_theme_style()
+        line_family = theme.charts.line
+        pinned_line_mark = line_family.marks.line.model_copy(
+            update={
+                "stroke": (line_family.marks.line.stroke or StrokeStyle()).model_copy(
+                    update={"width": pinned}
+                )
+            }
+        )
+        theme_with_pin = theme.model_copy(
+            update={
+                "charts": theme.charts.model_copy(
+                    update={
+                        "line": line_family.model_copy(
+                            update={
+                                "marks": line_family.marks.model_copy(
+                                    update={"line": pinned_line_mark}
+                                )
+                            }
+                        )
+                    }
+                )
+            }
+        )
+        board_style = resolve_chart_style_context(theme_with_pin)
+        chart, data, w = _line_chart(50, width=600.0)
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
     def test_companion_point_stroke_width(self) -> None:
         """When adaptive fires, baked point.stroke_width matches line stroke."""
         chart, data, w = _line_chart(20, width=600.0)
@@ -549,7 +651,7 @@ class TestLineChartAdaptiveStroke:
             ResolvedLineLayer,
         )
 
-        chart, data, w = _line_chart(20, width=600.0, with_line_layer=True)
+        chart, data, w = _line_chart(20, width=600.0, layer_type="line")
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
         assert resolved.style.point_mark.size > 0.0
         assert len(resolved.layers) == 1
@@ -589,8 +691,6 @@ class TestLineChartAdaptiveStroke:
         companion then reads resolved_line_mark.stroke.width==0.0 and applies
         π·0²=0, it silently kills the visible points.
         """
-        from dbt_charts.core.compile.models.primitives import StrokeStyle
-
         theme = get_theme_style()
         line_style = theme.charts.line
         # Set theme-level stroke.width=0.0 (sentinel: no stroke)
@@ -611,8 +711,8 @@ class TestLineChartAdaptiveStroke:
                 }
             )
         )
-        # Author does NOT pin stroke — so _line_stroke_authored=False and
-        # _adaptive_stroke > 0, but bake is skipped (zero sentinel).
+        # Author does NOT pin stroke width — so the adaptive width is > 0,
+        # but bake_line_stroke skips it (zero sentinel).
         # Companion block must NOT then zero the visible points.
         chart, data, w = _line_chart(20, width=600.0)  # no authored stroke
         resolved = resolve(
@@ -624,11 +724,14 @@ class TestLineChartAdaptiveStroke:
         assert resolved.style.point_mark.size > 0.0
 
     def test_fallback_when_no_data(self) -> None:
-        """When data is empty, fallback to theme literal (no crash)."""
+        """When data is empty, fallback to chart_rendering.stroke.fallback_width
+        (no crash) -- no tier pinned a width and adaptive cannot compute one."""
         chart, _, w = _line_chart(0, width=600.0)
         resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE, width=w)
-        # Should not raise; stroke should be the theme literal (positive)
-        assert resolved.style.line_mark.stroke.width > 0.0
+        assert (
+            resolved.style.line_mark.stroke.width
+            == get_chart_rendering().stroke.fallback_width
+        )
         # The ring tracks that stroke even with no density to measure — the
         # base-series half of the same rule TestUnbakedLineOverlayRing pins
         # for overlay layers.
@@ -638,10 +741,14 @@ class TestLineChartAdaptiveStroke:
         )
 
     def test_fallback_when_no_width(self) -> None:
-        """Width of 0 cannot determine px_per_point; falls back to theme literal."""
+        """Width of 0 cannot determine px_per_point; falls back to
+        chart_rendering.stroke.fallback_width."""
         chart, data, _ = _line_chart(20, width=0.0)
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=0.0)
-        assert resolved.style.line_mark.stroke.width > 0.0
+        assert (
+            resolved.style.line_mark.stroke.width
+            == get_chart_rendering().stroke.fallback_width
+        )
         assert (
             resolved.style.point_mark.stroke_width
             == resolved.style.line_mark.stroke.width
@@ -682,6 +789,336 @@ class TestAreaChartAdaptiveStroke:
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
         assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_board_level_family_stroke_width_pin_bypasses_adaptive(self) -> None:
+        """style.charts.area.marks.line.stroke.width (extends/board/meta.yml
+        tier, dbt-labs/dbt-charts#37) → baked verbatim, no adaptive override --
+        the chart itself authors no style: block at all. Overlap recipe
+        (colored) -- the top-edge line's own stroke is what paints there."""
+        pinned = 3.7
+        board_style = _board_style_with_patch(
+            {"area": {"marks": {"line": {"stroke": {"width": pinned}}}}}
+        )
+        chart, data, w = _area_chart(50, width=600.0, color="series")
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_global_marks_line_stroke_width_pin_bypasses_adaptive(self) -> None:
+        """style.charts.marks.line.stroke.width (global tier) → baked
+        verbatim on the overlap recipe (colored), where the shared line-mark
+        tier -- not the stacked-perimeter recipe -- is what actually paints
+        the edge."""
+        pinned = 3.7
+        board_style = _board_style_with_patch(
+            {"marks": {"line": {"stroke": {"width": pinned}}}}
+        )
+        chart, data, w = _area_chart(50, width=600.0, color="series")
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_theme_tier_overlap_stroke_width_pin_bypasses_adaptive(self) -> None:
+        """A built-in theme's own literal charts.area.marks.line.stroke.width
+        (the theme's own resolved Style, not a board/extends-theme patch) now
+        bypasses adaptive on the overlap recipe -- previously structurally
+        unable to win, same reasoning as the line-chart theme-tier test."""
+        pinned = 3.7
+        theme = get_theme_style()
+        area_family = theme.charts.area
+        pinned_area_line = area_family.marks.line.model_copy(
+            update={
+                "stroke": (area_family.marks.line.stroke or StrokeStyle()).model_copy(
+                    update={"width": pinned}
+                )
+            }
+        )
+        theme_with_pin = theme.model_copy(
+            update={
+                "charts": theme.charts.model_copy(
+                    update={
+                        "area": area_family.model_copy(
+                            update={
+                                "marks": area_family.marks.model_copy(
+                                    update={"line": pinned_area_line}
+                                )
+                            }
+                        )
+                    }
+                )
+            }
+        )
+        board_style = resolve_chart_style_context(theme_with_pin)
+        chart, data, w = _area_chart(50, width=600.0, color="series")
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_board_level_stacked_family_stroke_width_pin_bypasses_adaptive(
+        self,
+    ) -> None:
+        """style.charts.area.marks.area.stacked.stroke.width (extends/board/
+        meta.yml tier) → baked verbatim on the stacked recipe (colorless),
+        where marks.area.stacked.stroke -- not marks.line.stroke -- replaces
+        the perimeter stroke wholesale."""
+        pinned = 3.7
+        board_style = _board_style_with_patch(
+            {"area": {"marks": {"area": {"stacked": {"stroke": {"width": pinned}}}}}}
+        )
+        chart, data, w = _area_chart(50, width=600.0)
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_global_stacked_marks_stroke_width_pin_bypasses_adaptive(self) -> None:
+        """style.charts.marks.area.stacked.stroke.width (global tier) →
+        baked verbatim on the stacked recipe (colorless)."""
+        pinned = 3.7
+        board_style = _board_style_with_patch(
+            {"marks": {"area": {"stacked": {"stroke": {"width": pinned}}}}}
+        )
+        chart, data, w = _area_chart(50, width=600.0)
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_theme_tier_stacked_stroke_width_pin_bypasses_adaptive(self) -> None:
+        """A built-in theme's own literal
+        charts.area.marks.area.stacked.stroke.width (the theme's own resolved
+        Style, not a board/extends-theme patch) now bypasses adaptive on the
+        stacked recipe (colorless) -- previously structurally unable to win.
+        ``marks.area.stacked`` is None straight off ``get_theme_style()`` (its
+        ``SkipInheritSlots(cascade=True)`` whole-object inherit only expands
+        later, inside ``resolve_chart_style_context``'s per-board pass) --
+        same reasoning as ``marks.line.stroke`` in the sibling tests above, so
+        this constructs a fresh override rather than reading one back; cap/join
+        left unset here are backfilled field-by-field from the base theme by
+        that same inherit pass before area.py's completeness check runs (see
+        the sibling tests' resolved cap/join for the same backfill in
+        action)."""
+        pinned = 3.7
+        theme = get_theme_style()
+        area_family = theme.charts.area
+        stacked = area_family.marks.area.stacked or AreaStackedMarkStyle()
+        pinned_stacked = stacked.model_copy(
+            update={
+                "stroke": (stacked.stroke or StrokeStyle()).model_copy(
+                    update={"width": pinned}
+                )
+            }
+        )
+        theme_with_pin = theme.model_copy(
+            update={
+                "charts": theme.charts.model_copy(
+                    update={
+                        "area": area_family.model_copy(
+                            update={
+                                "marks": area_family.marks.model_copy(
+                                    update={
+                                        "area": area_family.marks.area.model_copy(
+                                            update={"stacked": pinned_stacked}
+                                        )
+                                    }
+                                )
+                            }
+                        )
+                    }
+                )
+            }
+        )
+        board_style = resolve_chart_style_context(theme_with_pin)
+        chart, data, w = _area_chart(50, width=600.0)
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        assert resolved.style.line_mark.stroke.width == pinned
+
+    def test_fallback_when_no_data_overlap(self) -> None:
+        """Overlap recipe (colored), no data anywhere in the cascade: falls
+        back to chart_rendering.stroke.fallback_width, not the stacked
+        recipe's constant -- these are two distinct engine-config values."""
+        chart, _, w = _area_chart(0, width=600.0, color="series")
+        resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE, width=w)
+        assert (
+            resolved.style.line_mark.stroke.width
+            == get_chart_rendering().stroke.fallback_width
+        )
+
+    def test_fallback_when_no_data_stacked(self) -> None:
+        """Stacked recipe (colorless), no data anywhere in the cascade: falls
+        back to chart_rendering.stroke.stacked_fallback_width -- the
+        stacked-recipe's own, thinner constant, not the overlap one. The
+        stacked recipe's pre-bake cap comparison must source this same
+        constant."""
+        chart, _, w = _area_chart(0, width=600.0)
+        resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE, width=w)
+        assert (
+            resolved.style.line_mark.stroke.width
+            == get_chart_rendering().stroke.stacked_fallback_width
+        )
+
+
+class TestLayerInheritsCascadePinnedStroke:
+    """An overlay layer must see a width pinned anywhere in the BASE chart's
+    own cascade (chart-local or board/family tier), not just the layer's own
+    local style patch. Regression: the layer gate only peeked at the layer's
+    own ``style:`` patch, missing an inherited pin and letting the freshly
+    computed adaptive value silently overwrite it -- even though the base
+    chart's own bake (``bake_line_stroke`` in adaptive_stroke.py) already
+    honors the same pin correctly.
+    """
+
+    def test_area_layer_honors_chart_local_pin_on_stacked_area(self) -> None:
+        pinned = 3.7
+        chart, data, w = _area_chart(
+            40,
+            width=600.0,
+            color="series",
+            stack="zero",
+            stroke_width=pinned,
+            layer_type="area",
+        )
+        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
+        layer = resolved.layers[0]
+        assert layer.line_mark.stroke.width == pinned
+
+    def test_area_layer_honors_board_tier_pin_on_stacked_area(self) -> None:
+        pinned = 3.7
+        board_style = _board_style_with_patch(
+            {"area": {"marks": {"line": {"stroke": {"width": pinned}}}}}
+        )
+        chart, data, w = _area_chart(
+            40, width=600.0, color="series", stack="zero", layer_type="area"
+        )
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        layer = resolved.layers[0]
+        assert layer.line_mark.stroke.width == pinned
+
+    def test_line_layer_honors_board_tier_pin_on_line_base(self) -> None:
+        """Same-family case: a line-type layer on a line base, pinned at the
+        board tier -- pins the line-side gate deleted from ``_layers.py``
+        (the area-side gates above already cover that removal for area)."""
+        pinned = 3.7
+        board_style = _board_style_with_patch(
+            {"line": {"marks": {"line": {"stroke": {"width": pinned}}}}}
+        )
+        chart, data, w = _line_chart(40, width=600.0, layer_type="line")
+        resolved = resolve(chart, data, chart_style_context=board_style, width=w)
+        layer = resolved.layers[0]
+        assert layer.line_mark.stroke.width == pinned
+
+
+class TestUnpinnedOverlayLayerStillGetsAdaptiveWidth:
+    """A pin on the BASE mark must not starve an unrelated, UNPINNED overlay
+    layer of its own density-adaptive width. Regression: line.py/area.py each
+    ran their own "is the base pinned" check and zeroed the shared adaptive
+    value before handing it to ``_resolve_layer_list`` whenever the base was
+    pinned -- even for a cross-family overlay (e.g. an area layer on a line
+    base) whose own cascade parent carries no pin at all.
+    ``bake_line_stroke`` already no-ops on a pinned mark, so the resolver
+    doesn't need its own gate; the fix is to always compute the adaptive
+    value and let that shared no-op handle the base.
+    """
+
+    def test_area_layer_on_pinned_line_base_gets_same_width_as_unpinned_control(
+        self,
+    ) -> None:
+        pinned_style = _board_style_with_patch(
+            {"line": {"marks": {"line": {"stroke": {"width": 3.7}}}}}
+        )
+        chart, data, w = _line_chart(20, width=600.0, layer_type="area")
+        pinned = resolve(chart, data, chart_style_context=pinned_style, width=w)
+        control = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
+        assert (
+            pinned.layers[0].line_mark.stroke.width
+            == control.layers[0].line_mark.stroke.width
+        )
+
+    def test_line_layer_on_pinned_area_base_gets_same_width_as_unpinned_control(
+        self,
+    ) -> None:
+        pinned_style = _board_style_with_patch(
+            {"area": {"marks": {"line": {"stroke": {"width": 3.7}}}}}
+        )
+        chart, data, w = _area_chart(20, width=600.0, color="series", layer_type="line")
+        pinned = resolve(chart, data, chart_style_context=pinned_style, width=w)
+        control = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
+        assert (
+            pinned.layers[0].line_mark.stroke.width
+            == control.layers[0].line_mark.stroke.width
+        )
+
+
+class TestAuthoredNullStrokeRejected:
+    """Authored ``stroke: null`` on a line/area mark must still hit the
+    builder's own "stroke is None after cascade" error -- never a silently
+    manufactured default stroke. Regression: ``_apply_stroke_width_fallback``
+    used to build a full ``StrokeStyle()`` out of nothing (``mark.stroke or
+    StrokeStyle()``) whenever ``mark.stroke`` was None, resurrecting the
+    exact mark the guard below exists to reject.
+
+    Only the chart's own local ``style:`` patch, or a board/theme-tier patch
+    at the GLOBAL ``style.charts.marks.line.stroke`` slot, can genuinely
+    clear this cascade slot to None. The chart-local patch is applied via
+    the terminal ``merge_onto_base`` (explicit ``None`` clears); the global
+    slot is likewise a real null once merged, and both raise on ``main`` and
+    here alike. The one slot that can't author a meaningful null is the
+    FAMILY tier (``style.charts.line.marks.line.stroke: null``): it merges
+    via the cascade-aware ``merge_patches``, where ``stroke``'s
+    ``SkipInheritSlots(cascade=True)`` marker treats an unset OR
+    explicitly-null family-tier value identically as "inherit the whole
+    object from the parent tier" -- so there is nothing to regression-test
+    at that one slot.
+    """
+
+    def test_chart_local_null_stroke_raises_on_line(self) -> None:
+        chart_dict: dict[str, Any] = {
+            "id": "t",
+            "type": "line",
+            "x": "x",
+            "y": "y",
+            "query": _QUERY,
+            "query_name": "q",
+            "style": {"marks": {"line": {"stroke": None}}},
+        }
+        chart = TypeAdapter(Chart).validate_python(chart_dict)
+        data = [{"x": i, "y": float(i)} for i in range(20)]
+        with pytest.raises(ValueError, match="stroke is None after cascade"):
+            resolve(chart, data, chart_style_context=_BOARD_STYLE, width=600.0)
+
+    def test_chart_local_null_stroke_raises_on_area(self) -> None:
+        # Multi-series (color) keeps the chart on the overlap recipe, where
+        # marks.line.stroke governs the edge directly. The stacked/
+        # single-series recipe instead REPLACES marks.line.stroke wholesale
+        # with marks.area.stacked.stroke, which would mask this null.
+        chart_dict: dict[str, Any] = {
+            "id": "t",
+            "type": "area",
+            "x": "x",
+            "y": "y",
+            "color": "series",
+            "query": _QUERY,
+            "query_name": "q",
+            "style": {"marks": {"line": {"stroke": None}}},
+        }
+        chart = TypeAdapter(Chart).validate_python(chart_dict)
+        data = [{"x": i, "y": float(i), "series": "A"} for i in range(20)] + [
+            {"x": i, "y": float(i) * 2, "series": "B"} for i in range(20)
+        ]
+        with pytest.raises(ValueError, match="stroke is None after cascade"):
+            resolve(chart, data, chart_style_context=_BOARD_STYLE, width=600.0)
+
+    def test_global_tier_null_stroke_raises_on_line(self) -> None:
+        """The GLOBAL slot (``style.charts.marks.line.stroke``, not the
+        family-scoped ``style.charts.line.marks.line.stroke``) genuinely
+        nulls the cascade -- unlike the family tier, it has no parent object
+        to inherit from instead."""
+        board_style = _board_style_with_patch({"marks": {"line": {"stroke": None}}})
+        chart_dict: dict[str, Any] = {
+            "id": "t",
+            "type": "line",
+            "x": "x",
+            "y": "y",
+            "query": _QUERY,
+            "query_name": "q",
+        }
+        chart = TypeAdapter(Chart).validate_python(chart_dict)
+        data = [{"x": i, "y": float(i)} for i in range(20)]
+        with pytest.raises(ValueError, match="stroke is None after cascade"):
+            resolve(chart, data, chart_style_context=board_style, width=600.0)
 
 
 class TestStreamgraphStrokeCap:
@@ -727,6 +1164,16 @@ class TestStreamgraphStrokeCap:
         stream_sparse = self._stream_stroke(5, 600.0, stack="center")
         stream_dense = self._stream_stroke(300, 600.0, stack="center")
         assert stream_sparse == stream_dense
+
+    def test_streamgraph_edge_caps_at_stacked_fallback_width_constant(self) -> None:
+        """The cap value itself is chart_rendering.stroke.stacked_fallback_width:
+        the pre-bake cap comparison in area.py must source this engine
+        constant, not the (now-deleted) marks.area.stacked.stroke.width theme
+        literal, or an unpinned dense streamgraph would ride the uncapped
+        adaptive curve (1.5-4.0px) instead of staying at this thin separator
+        weight."""
+        stream_dense = self._stream_stroke(300, 600.0, stack="center")
+        assert stream_dense == get_chart_rendering().stroke.stacked_fallback_width
 
 
 # ---------------------------------------------------------------------------

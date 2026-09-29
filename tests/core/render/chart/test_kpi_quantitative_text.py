@@ -1152,7 +1152,7 @@ def test_kpi_label_color_no_longer_inherits_style_title_font_color():
     Pre-cascade-rename, the KPI renderer read ``chart.style.title.font.color``
     directly off the authored Patch and used it as the label color, falling
     back to body color when None. After the cascade rename the resolved
-    ``title.font.color`` is always populated by the theme default — keeping
+    ``title.font.color`` is always populated by the cascade — keeping
     the legacy coupling would silently flip from body to title color across
     the whole label corpus on any theme.
 

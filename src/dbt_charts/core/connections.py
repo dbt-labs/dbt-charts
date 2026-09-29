@@ -91,6 +91,13 @@ _GENERIC_PROBE_MESSAGE = (
 _UNREACHABLE_MESSAGE = "Could not reach the warehouse host."
 _BIGQUERY_AUTH_MESSAGE = "The service account credentials could not be used."
 _NOT_FOUND_MESSAGE = "The named project or dataset does not exist."
+# invalid_grant also fires for a key that is genuinely fine but was minted
+# seconds ago -- IAM/key propagation lags the key's own creation.
+_BIGQUERY_INVALID_GRANT_MESSAGE = (
+    "The warehouse rejected these credentials. If this service account key "
+    "was created in the last minute, it may not have propagated yet. Wait a "
+    "moment and try again."
+)
 # A local copy, not execute.adapters.base.BIGQUERY_UNKNOWN_REF_SUBSTRINGS: that
 # tuple also matches a query's own column/table references, so importing it
 # here would let a binder-motivated edit silently change this classification.
@@ -203,9 +210,7 @@ def classify_connection_error(source_type: str, exc: Exception) -> WarehouseProb
         ):
             return WarehouseAuthError(_BIGQUERY_AUTH_MESSAGE, detail=text)
         if "Unable to generate access token" in text or "invalid_grant" in text:
-            return WarehouseAuthError(
-                "The warehouse rejected these credentials.", detail=text
-            )
+            return WarehouseAuthError(_BIGQUERY_INVALID_GRANT_MESSAGE, detail=text)
         if "Access denied while running query" in text:
             return WarehousePermissionError(
                 "The credential does not have permission to run this query.",

@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from dbt_charts.core.compile.migrations import (
     ConditionalMove,
     Deletion,
+    MapKeyDeletion,
     MigrationError,
     MigrationRegistry,
     Move,
@@ -180,17 +181,63 @@ def validate_declarations(registry: MigrationRegistry) -> None:
                 f"ConditionalMove destination tail {_format_path(cond_move.new_tail)!r} "
                 f"is absent from {cond_move.target_schema}"
             )
+    for map_key_deletion in registry.map_key_deletions:
+        source_index = positions.get(map_key_deletion.source_schema)
+        if source_index is None:
+            raise MigrationError(
+                f"MapKeyDeletion at {_format_path(map_key_deletion.container_path)!r} "
+                "references a schema that is not retained"
+            )
+        target_index = positions.get(map_key_deletion.target_schema)
+        if target_index is None:
+            raise MigrationError(
+                f"MapKeyDeletion at {_format_path(map_key_deletion.container_path)!r} "
+                "references a schema that is not retained"
+            )
+        if target_index != source_index - 1:
+            raise MigrationError(
+                f"MapKeyDeletion at {_format_path(map_key_deletion.container_path)!r} "
+                "must target the immediately succeeding schema"
+            )
+        # The container itself must be a *declared* property in both grammars
+        # -- never removed, only its keys' meaning -- at every position in
+        # the source schema.
+        if not schema_has_tail(
+            catalog.schema_for(map_key_deletion.source_schema),
+            map_key_deletion.container_path,
+        ):
+            raise MigrationError(
+                f"MapKeyDeletion container {_format_path(map_key_deletion.container_path)!r} "
+                f"is absent from {map_key_deletion.source_schema}"
+            )
+        if not schema_has_tail(
+            catalog.schema_for(map_key_deletion.target_schema),
+            map_key_deletion.container_path,
+        ):
+            raise MigrationError(
+                f"MapKeyDeletion container {_format_path(map_key_deletion.container_path)!r} "
+                f"is absent from {map_key_deletion.target_schema}; use Deletion "
+                "instead if the container field itself was removed"
+            )
+        if not map_key_deletion.messages:
+            raise MigrationError(
+                f"MapKeyDeletion at {_format_path(map_key_deletion.container_path)!r} "
+                "declares no keys to strike; remove the declaration"
+            )
 
 
 def checked_registry(
     moves: Iterable[Move],
     deletions: Iterable[Deletion] = (),
     conditional_moves: Iterable[ConditionalMove] = (),
+    map_key_deletions: Iterable[MapKeyDeletion] = (),
     *,
     catalog: YamlSchemaCatalog,
 ) -> MigrationRegistry:
     """Build a registry and self-check it, the way CI does for the shipped one."""
-    registry = MigrationRegistry(moves, deletions, conditional_moves, catalog=catalog)
+    registry = MigrationRegistry(
+        moves, deletions, conditional_moves, map_key_deletions, catalog=catalog
+    )
     validate_declarations(registry)
     return registry
 

@@ -184,8 +184,31 @@ def _resolve_color_tokens(
     themes carry hex.  Board-level patches that introduce color tokens are
     resolved by ``_resolve_tokens_on_patch`` (O(patch fields)) before the
     deep-merge, so this full-tree walk is not repeated on every cascade call.
+
+    Also the resolver for a *chart-local* ``palette``/``single_series_palette``
+    override (``resolve/style/chart_context.py`` calls this directly on the
+    chart's own style patch): a literal-name + variant scalar there
+    (``category-6-tonal-blue.dark``) is dispatched through ``palette()``
+    (whole-list), not the generic single-color branch below -- see the
+    ``_PALETTE_FIELDS`` check in the model loop.
     """
+    from dbt_charts.core.compile.models.factories import build_patch_model
+    from dbt_charts.core.compile.models.primitives import (
+        CategoricalColorStyle,
+        might_be_palette_role,
+    )
     from dbt_charts.core.compile.models.style.theme import Style
+    from dbt_charts.core.compile.resolve.style.palette import (
+        UnknownPaletteError,
+        resolve_palette_alias,
+    )
+
+    # build_patch_model is itself @cache'd, so this is a dict lookup, not a
+    # fresh synthesis, on every call.
+    categorical_color_style_types = (
+        CategoricalColorStyle,
+        build_patch_model(CategoricalColorStyle),
+    )
 
     if isinstance(node, Style):
         # Extract palettes/roles context from the root Style for this walk.
@@ -211,6 +234,66 @@ def _resolve_color_tokens(
             if in_keyed_collection and isinstance(value, str):
                 if name not in _COLOR_FIELD_NAMES:
                     continue
+            # `CategoricalColorStyle.palette`/`.single_series_palette` name a
+            # whole list, not a single color -- the generic string branch
+            # below dispatches any dotted/bracket-shaped string to
+            # `_resolve_one_color_token` (`color_from_theme`, single-color),
+            # which is wrong here: a literal-name + variant scalar
+            # (`category-6-tonal-blue.dark`) matches the same shape a role
+            # token does, and resolves as an unbound theme role instead of a
+            # palette name -- ERR-INTERNAL. `resolve_palette_alias()` is the
+            # whole-list resolver these two fields need -- not bare
+            # `palette()`: it also reports whether *value* is a known
+            # anti-pattern alias (`RdYlGn`, and its shorthand forms
+            # `RdYlGn:5`/`RdYlGn_r` -- stripped the same way
+            # `_parse_palette_reference` does before the `_WARN_ALIASES`
+            # check, so a shorthand alias is caught exactly like the bare
+            # name is), in which case the literal string is left as-is:
+            # `chart_context.py`'s own detector re-derives
+            # `requested_alias_palette` from exactly this string, later, and
+            # needs it to still be one -- a resolved list here would read as
+            # "not an alias" and silently drop WARN-PALETTE-UNSUPPORTED.
+            # Scoped to this one model by isinstance, not by field name
+            # alone: `ScaleTargetConfig.palette` is a same-named,
+            # differently-shaped field where a Vega scheme name is legal --
+            # the skip below keeps it out of every resolver on this walk.
+            if (
+                isinstance(node, categorical_color_style_types)
+                and name in _PALETTE_FIELDS
+                and isinstance(value, str)
+            ):
+                try:
+                    stops, requested = resolve_palette_alias(value)
+                except UnknownPaletteError:
+                    if not might_be_palette_role(value):
+                        raise
+                    # A theme's own default (`palette: category`) is a role
+                    # reference, not a literal name -- unresolvable here
+                    # (the theme's own `palettes:` map is not what this
+                    # walk has). `expand_palette_refs`
+                    # (`config.py::get_theme_style`, right after this walk)
+                    # substitutes the role and expands the result; nothing
+                    # downstream sees a bare role name.
+                    continue
+                if requested is not None:
+                    continue
+                # `stops` (the resolved list) can never equal `value` (the
+                # string it was resolved from) -- always a change, unlike
+                # the generic `is not value` check below.
+                updates[name] = stops
+                continue
+            # Every other `palette` string is a *name* for a whole list --
+            # `ScaleTargetConfig.palette` on a gradient/scale slot, which
+            # `bake_scale_target_stops` resolves at channel time and which
+            # may legally be a Vega scheme name (`blues`) no palette
+            # resolver knows. Never a color token: `is_color_token` matches
+            # a `name.variant` scalar (`vivid-10.dark`, authored or written
+            # by the in-memory migration) by shape alone, and routing it to
+            # the single-color path below reads `vivid-10` as an unbound
+            # theme role -- ERR-INTERNAL at render. Skipped by field name,
+            # as `_walk` does, so the name reaches the bake untouched.
+            if name in _PALETTE_FIELDS and isinstance(value, str):
+                continue
             new = _resolve_color_tokens(
                 value, palettes, roles, in_keyed_collection, single_series_palette
             )
@@ -351,6 +434,19 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             updates: dict[str, Any] = {}
             for name, value in node:
                 if value is None:
+                    continue
+                # `palette`/`single_series_palette`'s *string* form names the
+                # whole list (a family name or, now, a role + trailing
+                # variant like `category.dark`) -- `expand_palette_refs`
+                # resolves that once `style.palettes` is final, later. Left
+                # unskipped, this generic walk sees a 2-segment dotted
+                # string, `is_color_token` matches it (indistinguishable in
+                # shape from a single-color `role.alias` token), and it
+                # dispatches to `color_from_theme` -- wrong for this field,
+                # and `ERR-INTERNAL` at render when the role has no `roles:`
+                # shortcut of its own name. A *list* value (per-item scalar
+                # tokens, e.g. `[category.blue, "#fff"]`) still walks below.
+                if name in _PALETTE_FIELDS and isinstance(value, str):
                     continue
                 new = _walk(value)
                 if new is not value:

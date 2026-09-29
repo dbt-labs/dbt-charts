@@ -52,6 +52,13 @@ def _default_legend():
     ).chart_defaults.legend
 
 
+def _default_title():
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+
+    return resolve_style(get_theme_style(get_default_theme_name())).chart_defaults.title
+
+
 def _default_resolved_table_style():
     from dbt_charts.core.compile.config import (
         get_default_theme_name,
@@ -161,7 +168,7 @@ def test_get_emitter_raises_for_kpi() -> None:
         id="k1",
         chart_type="kpi",
         value="total",
-        style=ResolvedKpiStyle(),
+        style=ResolvedKpiStyle(title=_default_title()),
         **{k: v for k, v in _B.items() if k not in ("background", "title_style")},
     )
     with pytest.raises(RenderError, match="ResolvedKpiChart"):

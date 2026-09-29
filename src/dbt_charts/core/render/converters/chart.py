@@ -43,7 +43,7 @@ from dbt_charts.core.render.converters.png import to_png
 from dbt_charts.core.render.errors import FormatError
 from dbt_charts.core.render.font_support import register_vl_convert_fonts
 from dbt_charts.core.render.svg_cache import active_svg_cache, svg_cache_key
-from dbt_charts.core.render.svg_utils import authored_kind_attr
+from dbt_charts.core.render.svg_utils import authored_kind_attr, escape_attr
 
 # Strip sentinel prefix from vl_convert-rendered chart href <a> elements.
 # vl_convert uses xlink:href and mangles relative URLs, so we embed a sentinel
@@ -67,10 +67,14 @@ def _fix_chart_click_hrefs(svg: str) -> str:
     ctx = get_link_context()
 
     def _replace(m: re.Match[str]) -> str:
-        url = m.group(1)
+        # vl_convert's own SVG serialization already XML-escaped this
+        # attribute value (e.g. "&" -> "&amp;" between query params) --
+        # unescape before resolve_href (which expects a raw URL) and before
+        # escape_attr re-escapes it, or a two-param link doubles to &amp;amp;.
+        url = html.unescape(m.group(1))
         if ctx is not None:
             url = resolve_href(url, ctx)
-        return f'<a href="{url}"'
+        return f'<a href="{escape_attr(url)}"'
 
     return _SENTINEL_HREF_RE.sub(_replace, svg)
 
@@ -175,14 +179,16 @@ def _namespace_svg_ids(svg: str, chart_id: str) -> str:
     """
     strip_digits = str.maketrans("", "", "0123456789")
     canon = _VLC_ID_DEF_RE.sub(
-        lambda m: f'id="{m.group(1).translate(strip_digits)}"', svg
+        lambda m: f'id="{escape_attr(m.group(1).translate(strip_digits))}"', svg
     )
     canon = _VLC_ID_REF_RE.sub(
         lambda m: f"{m.group(1)}{m.group(2).translate(strip_digits)}", canon
     )
     token = hashlib.sha256(canon.encode()).hexdigest()[:8]
     safe_id = f"{token}-{safe_svg_id(chart_id)}"
-    svg = _VLC_ID_DEF_RE.sub(lambda m: f'id="{m.group(1)}-{safe_id}"', svg)
+    svg = _VLC_ID_DEF_RE.sub(
+        lambda m: f'id="{escape_attr(m.group(1))}-{escape_attr(safe_id)}"', svg
+    )
     return _VLC_ID_REF_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}-{safe_id}", svg)
 
 
@@ -200,8 +206,10 @@ _SUBTITLE_KIND_RE = re.compile(r'(class="mark-text role-title-subtitle")')
 
 def _stamp_chart_title_kind(svg: str) -> str:
     """Tag the chart's own title/subtitle text runs with their leaf kind."""
-    svg = _TITLE_KIND_RE.sub(rf"\1{authored_kind_attr('title')}", svg)
-    return _SUBTITLE_KIND_RE.sub(rf"\1{authored_kind_attr('subtitle')}", svg)
+    title_attr = authored_kind_attr("title")
+    subtitle_attr = authored_kind_attr("subtitle")
+    svg = _TITLE_KIND_RE.sub(lambda m: f"{m.group(1)}{title_attr}", svg)
+    return _SUBTITLE_KIND_RE.sub(lambda m: f"{m.group(1)}{subtitle_attr}", svg)
 
 
 _AXIS_TITLE_GROUP = '<g class="mark-text role-axis-title" pointer-events="none">'
@@ -386,27 +394,6 @@ def _legend_label_texts(
     return None if gradient_legend else texts
 
 
-def _escape_attr_value(text: str) -> str:
-    """Escape ``text`` for a double-quoted XML attribute, byte-exact.
-
-    ``html.escape`` covers ``& < > "`` but leaves a literal newline/CR/tab
-    as-is. Under strict XML attribute-value normalization (an SVG parsed
-    with ``xml.etree.ElementTree``, Cloud's nh3 sanitizer, or the PNG/PDF
-    conversion path) every one of those three folds to a plain space; the
-    HTML tokenizer a browser uses when the SVG is inlined directly is more
-    lenient (it only folds CR, not LF/tab), but this module's output feeds
-    every one of those XML-strict consumers too, so all three still need
-    escaping. Vega's own ``aria-label`` already writes these characters as
-    numeric character references (not subject to any of that folding), so a
-    series value containing one would decode differently on the two sides
-    of the join without this. Order matters: escape ``&<>"`` first, then
-    replace whitespace, so the character references' own ``&`` isn't
-    re-escaped.
-    """
-    escaped = html.escape(text, quote=True)
-    return escaped.replace("\n", "&#10;").replace("\r", "&#13;").replace("\t", "&#9;")
-
-
 def _stamp_legend_series_key(
     svg: str,
     spec: dict[str, Any],  # type-state: explicit_any — foreign VL JSON spec
@@ -451,8 +438,9 @@ def _stamp_legend_series_key(
     pos = 0
     for match, text in zip(matches, texts, strict=True):
         out.append(svg[pos : match.start()])
-        escaped = _escape_attr_value(text.strip())
-        out.append(f'{match.group(0)[:-1]} data-dbt-series="{escaped}">')
+        out.append(
+            f'{match.group(0)[:-1]} data-dbt-series="{escape_attr(text.strip())}">'
+        )
         pos = match.end()
     out.append(svg[pos:])
     return "".join(out)

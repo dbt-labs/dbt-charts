@@ -946,3 +946,87 @@ class TestBlockScalarHashBodyLines:
         )
         deleted = set_board_values(original, {"description": None})
         assert deleted == "title: X\n  # a real comment\nother: 1\n"
+
+
+class TestScalarSequenceItemLeafRewrite:
+    """A leaf numeric segment (`palette.0`) addressing a block-sequence item
+    whose own value is a plain scalar -- `_sequence_item_span` already
+    finds the item's span; this rewrites just its value in place, the same
+    comment-preserving contract the rest of this module keeps. A flow-style
+    list still refuses (a different code path entirely -- `_is_sequence_block`
+    never recognizes `[...]` on the key's own line), and anything that
+    isn't a single-line plain scalar item (a nested mapping, a multi-line
+    item) falls back to the existing refusal."""
+
+    def test_block_style_item_rewrites_byte_for_byte_except_the_value(self) -> None:
+        original = 'palette:\n  - category_dark.blue\n  - "#abc"\n'
+        result = set_board_values(original, {"palette.0": "category.blue.dark"})
+        assert result == 'palette:\n  - category.blue.dark\n  - "#abc"\n'
+
+    def test_flow_style_list_still_refuses_with_the_pinned_message(self) -> None:
+        original = "palette: [category_dark.blue]\n"
+        with pytest.raises(ValueError, match="is not a mapping"):
+            set_board_values(original, {"palette.0": "category.blue.dark"})
+
+    def test_a_trailing_comment_survives_the_rewrite(self) -> None:
+        original = "palette:\n  - category_dark.blue  # the brand blue\n"
+        result = set_board_values(original, {"palette.0": "category.blue.dark"})
+        assert result == "palette:\n  - category.blue.dark  # the brand blue\n"
+
+    def test_a_double_quoted_item_keeps_its_quotes(self) -> None:
+        original = 'palette:\n  - "category_dark.blue"\n'
+        result = set_board_values(original, {"palette.0": "category.blue.dark"})
+        assert result == 'palette:\n  - "category.blue.dark"\n'
+
+    def test_a_single_quoted_item_keeps_its_quotes(self) -> None:
+        original = "palette:\n  - 'category_dark.blue'\n"
+        result = set_board_values(original, {"palette.0": "category.blue.dark"})
+        assert result == "palette:\n  - 'category.blue.dark'\n"
+
+    def test_the_second_item_rewrites_not_the_first(self) -> None:
+        original = "palette:\n  - vivid-10\n  - category_dark.blue\n"
+        result = set_board_values(original, {"palette.1": "category.blue.dark"})
+        assert result == "palette:\n  - vivid-10\n  - category.blue.dark\n"
+
+    def test_a_nested_mapping_item_still_refuses(self) -> None:
+        original = "palette:\n  - name: category_dark.blue\n"
+        with pytest.raises(
+            ValueError, match=r"'0' addresses a whole sequence item, not a scalar leaf"
+        ):
+            set_board_values(original, {"palette.0": "category.blue.dark"})
+
+    def test_deleting_a_sequence_item_leaf_still_refuses(self) -> None:
+        original = "palette:\n  - category_dark.blue\n"
+        with pytest.raises(
+            ValueError, match=r"'0' addresses a whole sequence item, not a scalar leaf"
+        ):
+            set_board_values(original, {"palette.0": None})
+
+    def test_a_hash_with_no_preceding_whitespace_is_part_of_the_value(self) -> None:
+        """`- abc#def` is a valid plain YAML scalar -- YAML only starts a
+        comment at whitespace-then-`#`. A sibling item on another line
+        rewrites; `abc#def` itself must not be split at the `#` and must
+        not be corrupted by an edit to its neighbor."""
+        original = "palette:\n  - abc#def\n  - category_dark.blue\n"
+        result = set_board_values(original, {"palette.1": "category.blue.dark"})
+        assert result == "palette:\n  - abc#def\n  - category.blue.dark\n"
+
+    def test_a_hash_bearing_item_itself_still_rewrites(self) -> None:
+        """The item containing the mid-value `#` is the one being
+        rewritten, not just a neighbor left alone: the regex must parse
+        `abc#def` as a whole bare value (not `abc` + a false "#def"
+        comment) before substituting it -- get that wrong and the rewrite
+        still "succeeds" syntactically, replacing only the pre-`#` half
+        and leaving `#def` stuck onto the new value; the self-check then
+        catches the mismatch and raises `_verify_written_values`'s "Setter
+        bug" `ValueError` rather than silently writing the wrong content."""
+        original = "palette:\n  - abc#def\n"
+        result = set_board_values(original, {"palette.0": "category.blue.dark"})
+        assert result == "palette:\n  - category.blue.dark\n"
+
+    def test_a_hash_preceded_by_whitespace_is_still_a_comment(self) -> None:
+        """The other half of the same rule: whitespace *does* start a
+        comment, even when the value itself contains no `#`."""
+        original = "palette:\n  - category_dark.blue #def\n"
+        result = set_board_values(original, {"palette.0": "category.blue.dark"})
+        assert result == "palette:\n  - category.blue.dark #def\n"

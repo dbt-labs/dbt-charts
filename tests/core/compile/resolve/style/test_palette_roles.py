@@ -449,6 +449,20 @@ def test_kpi_background_typo_is_rejected():
     assert result.errors[0].code == "ERR-PALETTE-UNKNOWN"
 
 
+def test_kpi_background_retired_spelling_fails_loud_with_the_replacement():
+    """`KpiChart.background` is `str | dict[str, Any]`: no path-based Move can
+    reach a retired spelling inside it, and the walk's declared-tail gate
+    rightly refuses an undeclared `scale.palette`. The brief's loud-signal
+    fallback: the board fails at compile, and the diagnostic names the
+    replacement spelling rather than a fuzzy near-miss (`vivid-10`, which
+    would compile clean and silently drop the darkening)."""
+    result = compile_board(_kpi_background("vivid-10-dark"))
+    assert not result.success
+    assert result.errors[0].code == "ERR-PALETTE-UNKNOWN"
+    assert result.errors[0].hint is not None
+    assert "'vivid-10.dark'" in result.errors[0].hint
+
+
 def test_kpi_background_literal_palette_compiles():
     result = compile_board(_kpi_background("dbt-seq-blue"))
     assert result.success, [e.message for e in result.errors]

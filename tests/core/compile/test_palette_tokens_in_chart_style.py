@@ -346,11 +346,12 @@ class TestConditionalFormattingTokenResolution:
 
 
 class TestBracketRoleTokensInChartStyle:
-    """Bracket role tokens (1-indexed, e.g. ``category_dark[3]``) resolve in
+    """Bracket role tokens (1-indexed, e.g. ``category[3].dark``) resolve in
     chart-level style through the ACTIVE theme's ``style.palettes`` role
     bindings — the theme-portable counterpart of the absolute tokens above.
-    A board converted from explicit ``editorial-10-*`` stops to role tokens
-    must repaint on a theme switch, including per-chart style blocks.
+    A board converted from explicit ``editorial-10.*`` stops to role tokens
+    must repaint on a theme switch, including per-chart style blocks. The
+    variant segment applies live (variant()), no companion file needed.
     """
 
     THEME_FAMILY = (
@@ -363,6 +364,7 @@ class TestBracketRoleTokensInChartStyle:
     def test_chart_palette_list_follows_theme(self, theme: str, family: str) -> None:
         from dbt_charts.core.compile.resolve.style.palette import (
             palette as resolve_palette,
+            variant,
         )
 
         board = resolve_chart_style_context(get_theme_style(theme))
@@ -370,7 +372,7 @@ class TestBracketRoleTokensInChartStyle:
             {
                 "bar": {
                     "color": {
-                        "categorical": {"palette": ["category_dark[3]", "category[1]"]}
+                        "categorical": {"palette": ["category[3].dark", "category[1]"]}
                     }
                 }
             }
@@ -379,7 +381,7 @@ class TestBracketRoleTokensInChartStyle:
             board, BarChart(id="t", type="bar", style=patch)
         )
         assert list(effective.palette) == [
-            resolve_palette(family + "-dark")[2],
+            variant(resolve_palette(family)[2], "dark"),
             resolve_palette(family)[0],
         ], f"chart-level bracket tokens must follow the {theme} theme's roles"
 
@@ -389,14 +391,15 @@ class TestBracketRoleTokensInChartStyle:
     ) -> None:
         from dbt_charts.core.compile.resolve.style.palette import (
             palette as resolve_palette,
+            variant,
         )
 
         board = resolve_chart_style_context(get_theme_style(theme))
-        patch = _patch({"bar": {"background": "category_ghost[2]"}})
+        patch = _patch({"bar": {"background": "category[2].pale"}})
         effective = build_chart_style_context(
             board, BarChart(id="t", type="bar", style=patch)
         )
-        assert effective.background == resolve_palette(family + "-ghost")[1]
+        assert effective.background == variant(resolve_palette(family)[1], "pale")
 
     def test_unknown_role_bracket_token_raises(self) -> None:
         from dbt_charts.core.compile.resolve.style.palette import UnknownColorError

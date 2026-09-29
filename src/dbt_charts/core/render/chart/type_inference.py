@@ -33,15 +33,44 @@ _ISO_UTC_SAFE_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$
 DetectedTimeUnit: TypeAlias = str | None
 
 
+def is_utc_safe_ordinal_date(value: str) -> bool:
+    """Whether Vega's ``toDate`` parses this ordinal band value as UTC.
+
+    ``YYYY-MM`` and ``YYYY-MM-DD`` are the only forms JS Date semantics read
+    as UTC midnight; everything else is either local-time (a naive datetime
+    string) or unparseable ("Q1 2025", a nominal category), and
+    ``_utc_time_label_expr`` would paint "Invalid Date" for it. Shared by
+    the ``labels.values`` validation below and by the render-time label
+    measurement (``emitters/_label_overlap.py``), which must agree with this
+    function on which bands an authored time format actually reformats.
+
+    The shape check alone is not enough: it admits any day 01-31 in any
+    month, so "2023-02-30" looks ISO and is not a date. Construct it to find
+    out, the same question ``toDate`` answers.
+    """
+    if not _ISO_UTC_SAFE_RE.match(value):
+        return False
+    try:
+        dt.date.fromisoformat(value if len(value) > 7 else f"{value}-01")
+    except ValueError:
+        return False
+    return True
+
+
 def _utc_time_label_expr(fmt: str) -> str:
     """Build a Vega ``labelExpr`` that formats a date-string axis tick under UTC.
 
     ``toDate(datum.value)`` parses ISO date strings (ordinal domain) or accepts
     Date instances unchanged; ``utcFormat`` emits the requested d3-time-format
     string in UTC so the spec renders identically under any runtime TZ.
+
+    Ungated: every tick speaks. Only correct where the tick set already IS the
+    visible set — see ``build_cartesian_x_encoding``, which routes a bucketed
+    cadence through ``default_label_expr_for``'s gated form instead.
     """
-    fmt_escaped = fmt.replace("\\", "\\\\").replace("'", "\\'")
-    return f"utcFormat(toDate(datum.value), '{fmt_escaped}')"
+    from dbt_charts.core.render.chart.time_unit_detect import vega_quoted_format
+
+    return f"utcFormat(toDate(datum.value), {vega_quoted_format(fmt)})"
 
 
 DATE_LIKE_PATTERNS = [
@@ -734,7 +763,7 @@ def build_cartesian_x_encoding(
             if x_field not in row or row[x_field] is None:
                 continue
             v = _ordinal_axis_iso_value(row[x_field])
-            if not (isinstance(v, str) and _ISO_UTC_SAFE_RE.match(v)):
+            if not (isinstance(v, str) and is_utc_safe_ordinal_date(v)):
                 from dbt_charts.core.diagnostics.chart_data import ChartDataError
                 from dbt_charts.core.diagnostics.codes_render import (
                     ERR_LABEL_VALUES_NOT_TEMPORAL,
@@ -754,17 +783,29 @@ def build_cartesian_x_encoding(
     label_angle = result.get("labelAngle")
     steep_tilt = isinstance(label_angle, (int, float)) and abs(label_angle) >= 90
 
-    # Ordinal time-format routing: d3-time-format strings on non-temporal axes must
-    # become utcFormat(toDate(datum.value), ...) labelExpr — raw `format` on an ordinal
-    # axis is interpreted by d3-format (number format), not d3-time-format, so time
-    # directives like %b or %Y silently produce garbage. Route early so subsequent
-    # ordinal enrichment (smart labelExpr) respects an already-authored expr.
-    if vl_type != "temporal":
-        fmt = result.get("format")
-        if isinstance(fmt, str) and is_time_format(fmt):
-            if "labelExpr" not in result:
-                result["labelExpr"] = _utc_time_label_expr(fmt)
-            result.pop("format")
+    # An authored d3-time-format is the label TEXT, not the label CADENCE.
+    # Held aside here and handed to `default_label_expr_for` below, which
+    # wraps it in the same opener gate it wraps its own vocabularies in —
+    # otherwise an authored format costs the axis its cadence, and every
+    # tick speaks. That only shows where the tick set is denser than the
+    # visible set (a bar keeps one tick per bucket for the positional cue),
+    # but the coupling is wrong everywhere.
+    #
+    # `format` is popped on BOTH branches. On an ordinal axis it would be
+    # read by d3-format (a number grammar) and paint garbage; on a temporal
+    # one VL honors `labelExpr` over `format` anyway, and leaving it behind
+    # would still feed Vega's ARIA description a per-tick spec applied to
+    # the scale's domain bounds.
+    authored_time_format: str | None = None
+    _fmt = result.get("format")
+    if isinstance(_fmt, str) and is_time_format(_fmt):
+        authored_time_format = _fmt
+    if vl_type != "temporal" and authored_time_format is not None:
+        # No bucketed cadence to gate against: keep the pre-existing
+        # ungated routing, which is correct when every tick is meant to speak.
+        if "labelExpr" not in result and time_unit not in BUCKETED_CALENDAR_UNITS:
+            result["labelExpr"] = _utc_time_label_expr(authored_time_format)
+        result.pop("format")
 
     # "nominal" only ever reaches here for heatmap's grid axis (the
     # mark_type == "heatmap" branch in resolve_cartesian_x_type) — it never
@@ -825,11 +866,7 @@ def build_cartesian_x_encoding(
         # Nominal data with a merely-authored time_unit ("Core"/"Growth") stays
         # unformatted. V1 normalized bucket strings to ISO dates first, so it
         # reached this via the temporal path; V2 reads the raw strings.
-        if (
-            x_type_from_data in ("temporal", "ordinal")
-            and "format" not in result
-            and "labelExpr" not in result
-        ):
+        if x_type_from_data in ("temporal", "ordinal") and "labelExpr" not in result:
             smart_expr = default_label_expr_for(
                 time_unit,
                 label_tu,
@@ -866,6 +903,7 @@ def build_cartesian_x_encoding(
                     )
                 ),
                 steep_tilt=steep_tilt,
+                authored_format=authored_time_format,
             )
             if smart_expr is not None:
                 result["labelExpr"] = smart_expr
@@ -934,6 +972,16 @@ def build_cartesian_x_encoding(
         # format is a native d3-time-format on a temporal encoding — it wins outright,
         # same as the ordinal branch's "format" not in result guard.
         #
+        # No authored_format plumbing on this branch, deliberately. A
+        # continuous temporal axis either carries `values` this branch just
+        # collapsed to the visible openers — in which case every tick is
+        # meant to speak and VL's own `axis.format` is exactly right — or it
+        # carries none, and Vega generates ticks at its own positions. Gating
+        # THOSE on "opens a label period" would blank every tick that didn't
+        # happen to land on one, which is most of them: an axis with no
+        # labels at all. The gate is only load-bearing where the tick set is
+        # denser than the visible set, which is the ordinal branch's
+        # `restores_ticks` above.
         if "labelExpr" not in result and "format" not in result:
             smart_expr_t = default_label_expr_for(
                 time_unit,

@@ -219,10 +219,10 @@ def test_bar_overlay_on_bar_base_gets_square_glyph() -> None:
     legend fell through to Vega-Lite's default filled-circle symbol.
     """
     from dbt_charts.core.compile.models.chart.authored._layer import (
-        BarChartBarLayer,
+        BarLayer,
     )
 
-    layer = BarChartBarLayer(type="bar", y="target")
+    layer = BarLayer(type="bar", y="target")
     vl = _render_bar_with_layers([layer])
 
     legend = _overlay_legend(vl, "target")

@@ -1,6 +1,6 @@
 # Categorical palette — category-6-tonal-blue
 #
-# Single-hue categorical palette anchored on vivid-10 slot 0 (blue, H≈248.8°
+# Single-hue categorical palette anchored on vivid-10 slot 1 (blue, H≈248.8°
 # in OKLCH). Strict-safe core of 4 stops (color-alone CVD-safe under Leonardo
 # ΔE ≥ 11) plus 2 extended stops that REQUIRE redundant form encoding
 # (dash/marker/pattern) past slot 4. See docs/guides/palettes.md#tonal-monochrome-category-6-tonal-.

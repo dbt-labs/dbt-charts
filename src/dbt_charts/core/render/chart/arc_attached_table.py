@@ -6,6 +6,8 @@ import html
 import re
 from typing import Literal
 
+from dbt_charts.core.render.svg_utils import escape_attr
+
 
 def _arc_disk_diameter(donut_svg: str) -> float:
     block = re.search(
@@ -44,15 +46,15 @@ def compose_attached_table_svg(
         escaped_heading = html.escape(heading)
         heading_svg = (
             f'<text x="0" y="{heading_font_size * 0.8:.2f}" '
-            f'font-family="{heading_font_family}" font-size="{int(heading_font_size)}" '
-            f'font-weight="{heading_font_weight}" fill="{heading_color}">'
+            f'font-family="{escape_attr(heading_font_family)}" font-size="{escape_attr(int(heading_font_size))}" '
+            f'font-weight="{escape_attr(heading_font_weight)}" fill="{escape_attr(heading_color)}">'
             f"{escaped_heading}</text>"
         )
         table_svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{table_width}" '
-            f'height="{table_height + heading_block_height}">'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{escape_attr(table_width)}" '
+            f'height="{escape_attr(table_height + heading_block_height)}">'
             f"{heading_svg}"
-            f'<g transform="translate(0, {heading_block_height})">{table_svg}</g>'
+            f'<g transform="translate(0, {escape_attr(heading_block_height)})">{table_svg}</g>'
             f"</svg>"
         )
         table_height += heading_block_height
@@ -69,10 +71,10 @@ def compose_attached_table_svg(
         table_x, table_y = (card_width - table_width) / 2, donut_height + gap
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{outer_width}" height="{outer_height}" '
-        f'viewBox="0 0 {outer_width} {outer_height}">'
-        f'<g transform="translate({donut_x}, {donut_y})">{donut_svg}</g>'
-        f'<g transform="translate({table_x}, {table_y})">{table_svg}</g>'
+        f'width="{escape_attr(outer_width)}" height="{escape_attr(outer_height)}" '
+        f'viewBox="0 0 {escape_attr(outer_width)} {escape_attr(outer_height)}">'
+        f'<g transform="translate({escape_attr(donut_x)}, {escape_attr(donut_y)})">{donut_svg}</g>'
+        f'<g transform="translate({escape_attr(table_x)}, {escape_attr(table_y)})">{table_svg}</g>'
         f"</svg>",
         outer_width,
         outer_height,

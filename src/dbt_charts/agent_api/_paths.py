@@ -5,19 +5,23 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # tach-ignore(agent_api->cli: runtime host-type guard in resolve_board_or_error / _relpath_for_fs_location, and direct construction in compile_editor_buffer; the local-filesystem check needs a non-cli signal on Project — deferred)
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
+    ERR_META_SCHEMA,
+    ERR_PROJECT_CONFIG_SCHEMA,
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES as BOARD_CANDIDATE_SUFFIXES,
     CHARTS_SUBDIR as CHARTS_SUBDIR,
+    META_FILENAMES,
+    PROJECT_CONFIG_NAME,
     BoardFile,
     InMemoryBoard,
     Project,
@@ -33,7 +37,181 @@ from dbt_charts.core.project_roots import (
 )
 
 if TYPE_CHECKING:
+    from pydantic import ValidationError as PydanticValidationError
+
     from dbt_charts.core.compile.compiler import CompileResult
+    from dbt_charts.core.diagnostics.registry import ErrorCode
+
+
+def is_patch_fragment(resolved: ProjectPath) -> bool:
+    """True if *resolved* validates as a BoardPatch fragment (meta.yml or a
+    private YAML partial) instead of a standalone board.
+
+    Shared by ``agent_api.validate`` and ``compile_editor_buffer``.
+    """
+    return resolved.is_meta or (resolved.is_private and resolved.is_yaml)
+
+
+def _pydantic_diagnostics(
+    exc: PydanticValidationError, code: ErrorCode, relpath: str
+) -> list[Diagnostic]:
+    """One ``pydantic.ValidationError`` -> one ``Diagnostic`` per sub-error,
+    dot-joining a multi-segment ``loc``. Shared by both fragment kinds below.
+    """
+    return [
+        DbtChartsError.from_code(
+            code,
+            message=(
+                f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}"
+                if e["loc"]
+                else e["msg"]
+            ),
+        ).to_diagnostic(file=relpath)
+        for e in exc.errors()
+    ]
+
+
+def _patch_diagnostics(patch_data: dict[str, Any], relpath: str) -> list[Diagnostic]:
+    """Validate a parsed meta.yml or private-partial dict as a BoardPatch."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
+
+    try:
+        BOARD_PATCH_ADAPTER.validate_python(patch_data)
+    except PydanticValidationError as exc:
+        return _pydantic_diagnostics(exc, ERR_META_SCHEMA, relpath)
+    return []
+
+
+def patch_file_diagnostics(resolved: ProjectPath) -> list[Diagnostic]:
+    """Validate *resolved* off disk as a BoardPatch fragment (meta.yml or a
+    private ``_``-prefixed partial). Returns ``[]`` on success.
+
+    Used by ``agent_api.validate``, validating the file as saved. See
+    ``patch_content_diagnostics`` for the unsaved-editor-buffer counterpart,
+    used by ``compile_editor_buffer``.
+    """
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.parse.meta import load_meta_file
+
+    relpath = resolved.relpath
+    try:
+        patch_data, _ = load_meta_file(resolved)
+    except CompilationError as exc:
+        return [
+            DbtChartsError.from_code(ERR_META_SCHEMA, message=str(exc)).to_diagnostic(
+                file=relpath
+            )
+        ]
+    return _patch_diagnostics(patch_data, relpath)
+
+
+def patch_content_diagnostics(content: str, relpath: str) -> list[Diagnostic]:
+    """Validate unsaved editor-buffer *content* as a BoardPatch fragment -
+    the live-text counterpart to ``patch_file_diagnostics``, for the file
+    currently open in the editor rather than what is on disk.
+    """
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.parse.meta import parse_meta_content
+
+    try:
+        patch_data, _ = parse_meta_content(content, relpath)
+    except CompilationError as exc:
+        return [
+            DbtChartsError.from_code(ERR_META_SCHEMA, message=str(exc)).to_diagnostic(
+                file=relpath
+            )
+        ]
+    return _patch_diagnostics(patch_data, relpath)
+
+
+def _project_config_diagnostics_for_data(data: Any, relpath: str) -> list[Diagnostic]:
+    """Validate already-parsed dbt_charts.yml content via the shared
+    non-global schema check. Returns ``[]`` on success.
+
+    ``data`` is `Any`: raw YAML output (a caller-supplied editor buffer or
+    disk file), not yet known to be a mapping: the same boundary shape
+    ``_as_mapping`` inside ``validate_project_config_data`` type-checks.
+    """
+    from pydantic import ValidationError as PydanticValidationError
+
+    from dbt_charts.core.compile.config import validate_project_config_data
+    from dbt_charts.core.compile.errors import CompilationError
+
+    try:
+        validate_project_config_data(data, filename=relpath)
+    except CompilationError as exc:
+        # Already carries its own registered code (e.g.
+        # ERR-SOURCE-CREDENTIAL-LITERAL, ERR-SOURCE-CONFIG-INVALID) when
+        # raised via `.from_code`: preserve it rather than masking it.
+        return [exc.to_diagnostic(file=relpath)]
+    except PydanticValidationError as exc:
+        # Must be caught before the broader (TypeError, ValueError,
+        # RecursionError) clause below: pydantic.ValidationError subclasses
+        # ValueError, so this arm is dead code (every schema fault collapses
+        # into one opaque str(exc) blob) if it sits after that one.
+        return _pydantic_diagnostics(exc, ERR_PROJECT_CONFIG_SCHEMA, relpath)
+    except (TypeError, ValueError, RecursionError) as exc:
+        # `sources.default` and other project-config type mismatches raise a
+        # plain TypeError; a `{{ env_var(...) }}` a source's `path`/`file`
+        # references but leaves unset raises ValueError out of the dbt Jinja
+        # renderer (render_dbt_jinja_in_dict's documented contract): both run
+        # before _validate_source_registry gets a chance to wrap them into a
+        # coded CompilationError. A YAML anchor cycle in the project config
+        # raises RecursionError out of Config.model_validate itself, before
+        # sources: is ever extracted. None of the three has a registered
+        # code of its own.
+        return [
+            DbtChartsError.from_code(
+                ERR_PROJECT_CONFIG_SCHEMA, message=str(exc)
+            ).to_diagnostic(file=relpath)
+        ]
+    return []
+
+
+def project_config_diagnostics(resolved: ProjectPath) -> list[Diagnostic]:
+    """Validate *resolved* (``dbt_charts.yml``) off disk through the existing
+    project-config loading path. Returns ``[]`` on success. Never compiled
+    as a board.
+
+    Used by ``agent_api.validate``. See ``project_config_content_diagnostics``
+    for the unsaved-editor-buffer counterpart.
+    """
+    import yaml
+
+    relpath = resolved.relpath
+    try:
+        data = resolved.read_yaml()
+    except (yaml.YAMLError, OSError) as exc:
+        # OSError: mirrors load_meta_file's disk-read peer (parse/meta.py) -
+        # an existing-but-unreadable file (permissions, vanished mid-read)
+        # is a diagnostic, not an unhandled traceback.
+        return [
+            DbtChartsError.from_code(
+                ERR_PROJECT_CONFIG_SCHEMA, message=f"Failed to parse {relpath}: {exc}"
+            ).to_diagnostic(file=relpath)
+        ]
+    return _project_config_diagnostics_for_data(data, relpath)
+
+
+def project_config_content_diagnostics(content: str, relpath: str) -> list[Diagnostic]:
+    """Validate unsaved editor-buffer *content* as dbt_charts.yml: the
+    live-text counterpart to ``project_config_diagnostics``.
+    """
+    import yaml
+
+    from dbt_charts.core.utils import UniqueKeyLoader
+
+    try:
+        data = yaml.load(content, Loader=UniqueKeyLoader)
+    except yaml.YAMLError as exc:
+        return [
+            DbtChartsError.from_code(
+                ERR_PROJECT_CONFIG_SCHEMA, message=f"Failed to parse {relpath}: {exc}"
+            ).to_diagnostic(file=relpath)
+        ]
+    return _project_config_diagnostics_for_data(data, relpath)
 
 
 def iter_expanded_board_files(project: Project, under: str) -> list[ProjectPath]:
@@ -57,6 +235,48 @@ def iter_expanded_board_files(project: Project, under: str) -> list[ProjectPath]
         and not pf.is_meta
         and not (pf.parent / INSPECT_TEMPLATE_MANIFEST).exists()
     )
+
+
+def partition_defaults_files(paths: list[Path]) -> tuple[list[Path], list[Path]]:
+    """Split argv-supplied paths into real boards and meta.yml/meta.yaml defaults files.
+
+    A shell glob (``charts/*.yml``) hands every YAML in the directory to a verb
+    like ``render`` — including the ``meta.yml`` ``dct init`` scaffolds to hold
+    directory-wide cascade defaults. That file is cascade input, never a
+    standalone board (the same ``META_FILENAMES`` check ``iter_expanded_board_files``
+    already applies during directory expansion), so a caller iterating argv
+    paths one at a time needs the same split before treating each as a board.
+    Order is preserved within each returned list.
+    """
+    boards = [p for p in paths if p.name not in META_FILENAMES]
+    defaults_files = [p for p in paths if p.name in META_FILENAMES]
+    return boards, defaults_files
+
+
+def defaults_file_skip_diagnostics(paths: list[Path]) -> list[Diagnostic]:
+    """Build a WARN-DEFAULTS-FILE-GIVEN-AS-BOARD Diagnostic per skipped path."""
+    from dbt_charts.core.diagnostics.codes_compile import (
+        WARN_DEFAULTS_FILE_GIVEN_AS_BOARD,
+    )
+
+    return [
+        Diagnostic.from_code(
+            WARN_DEFAULTS_FILE_GIVEN_AS_BOARD,
+            message=WARN_DEFAULTS_FILE_GIVEN_AS_BOARD.message_template.format(
+                path=str(p)
+            ),
+            fix=WARN_DEFAULTS_FILE_GIVEN_AS_BOARD.fix_template,
+            path=str(p),
+        )
+        for p in paths
+    ]
+
+
+def nothing_to_render_diagnostic() -> Diagnostic:
+    """Build the ERR-NOTHING-TO-RENDER Diagnostic for an all-defaults-files argv."""
+    from dbt_charts.core.diagnostics.codes_compile import ERR_NOTHING_TO_RENDER
+
+    return DbtChartsError.from_code(ERR_NOTHING_TO_RENDER).to_diagnostic()
 
 
 def resolve_board_relpath(relpath: PurePosixPath, project: Project) -> ProjectPath:
@@ -297,7 +517,11 @@ def compile_editor_buffer(content: str, file: Path) -> EditorCompileResult:
     # exists to keep out of `import dbt_charts.cli.main` — this module is
     # imported eagerly by cli/_project.py and cli/_workspace_guard.py, so a
     # top-level import here would defeat that (test_lazy_imports.py).
-    from dbt_charts.core.compile.compiler import compile as dct_compile, compile_file
+    from dbt_charts.core.compile.compiler import (
+        CompileResult,
+        compile as dct_compile,
+        compile_file,
+    )
 
     own_file = str(file)
     root = find_dct_root(file.parent)
@@ -305,16 +529,6 @@ def compile_editor_buffer(content: str, file: Path) -> EditorCompileResult:
         return EditorCompileResult(dct_compile(content, file=own_file), own_file)
 
     project = FilesystemProject(root)
-    try:
-        _ = project.sources
-        _ = project.cache
-    except Exception as exc:  # noqa: BLE001 — attributed below, not swallowed
-        return EditorCompileResult(
-            dct_compile(content, file=own_file),
-            own_file,
-            config_error=f"Project dbt_charts.yml could not be loaded: {exc}",
-        )
-
     try:
         board_path = project.path_for_fspath(file)
     except ValueError:
@@ -325,6 +539,29 @@ def compile_editor_buffer(content: str, file: Path) -> EditorCompileResult:
                 f"{file} is outside project root {root}; folder meta.yml "
                 "defaults were not applied"
             ),
+        )
+
+    # dbt_charts.yml and a `_`-prefixed private YAML partial are never
+    # boards: compiling either through compile_file() misapplies the board
+    # schema. Neither needs project.sources/cache loaded below,
+    # and both validate the live buffer text, not what is on disk, matching
+    # every other branch of this function. Same dispatch as
+    # agent_api.validate._validate_resolved.
+    if board_path.relpath == PROJECT_CONFIG_NAME:
+        errors = project_config_content_diagnostics(content, board_path.relpath)
+        return EditorCompileResult(CompileResult(errors=errors), board_path.relpath)
+    if is_patch_fragment(board_path):
+        errors = patch_content_diagnostics(content, board_path.relpath)
+        return EditorCompileResult(CompileResult(errors=errors), board_path.relpath)
+
+    try:
+        _ = project.sources
+        _ = project.cache
+    except Exception as exc:  # noqa: BLE001 — attributed below, not swallowed
+        return EditorCompileResult(
+            dct_compile(content, file=own_file),
+            own_file,
+            config_error=f"Project dbt_charts.yml could not be loaded: {exc}",
         )
 
     result = compile_file(InMemoryBoard(content, path=board_path))

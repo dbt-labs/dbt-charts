@@ -1,7 +1,6 @@
-"""Integration tests — M2 palette resolver wired through config + get_palette.
+"""Integration tests — M2 palette resolver wired through config.
 
 Checks:
-  - get_palette("vivid-10") returns the expected palette
   - config.dbt_grays / config.dbt_creams populated from defaults/palettes/scaffold/
   - old fivetran_grays names no longer resolve but surface a did-you-mean suggestion
   - color("dbt-grays.ink") produces the same value as config.dbt_grays

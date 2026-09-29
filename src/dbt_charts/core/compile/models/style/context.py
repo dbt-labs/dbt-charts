@@ -130,7 +130,7 @@ class ChartStyleContext:
     dashes: list[list[int]]
     # Theme role bindings carried alongside the cascade so chart-level style
     # patches (resolved after the Style tree is gone) can resolve
-    # role-indirected tokens like `category_dark[3]` / `chrome.ink` against
+    # role-indirected tokens like `category[3]` / `chrome.ink` against
     # the active theme. Always concrete: `_base.yaml` seeds both blocks for
     # every built-in theme; an empty dict is the canonical "no bindings"
     # value (role tokens then fail loudly with UnknownColorError).

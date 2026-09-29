@@ -3,7 +3,6 @@
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_config,
     get_theme_style,
     reset_config,
 )
@@ -47,12 +46,19 @@ class TestStyleTitleSection:
         # title.font.color was None; cascade fills from root
         assert resolved.title.font.color == "#FF0000"
 
-    def test_title_font_theme_color_survives_cascade(self):
-        """Theme-set title.font.color is not overridden by cascade."""
-        get_config()  # ensure settings initialized
-        resolved = resolve_style(get_theme_style())
-        # cascade must preserve whatever the theme set, not overwrite it
-        assert resolved.title.font.color == get_theme_style().title.font.color
+    def test_title_font_explicit_color_survives_cascade(self):
+        """An explicitly pinned title.font.color is not overridden by cascade.
+
+        No built-in theme pins title.font.color (it inherits font.color via
+        the InheritSlot — see test_title_font_cascades_from_root).
+        """
+        base = get_theme_style()
+        pinned_font = base.title.font.model_copy(update={"color": "#FF00FF"})
+        seed = base.model_copy(
+            update={"title": base.title.model_copy(update={"font": pinned_font})}
+        )
+        resolved = resolve_style(seed)
+        assert resolved.title.font.color == "#FF00FF"
 
 
 class TestStyleVariablesSection:

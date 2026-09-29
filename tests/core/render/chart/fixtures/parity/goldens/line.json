@@ -38,7 +38,7 @@
     },
     "title": {
       "anchor": "start",
-      "color": "#494A4C",
+      "color": "#222222",
       "font": "'Source Serif 4', 'Noto Emoji', Georgia, 'Times New Roman', serif",
       "fontSize": 18,
       "fontWeight": 500,
@@ -189,7 +189,7 @@
       "mark": {
         "aria": false,
         "interpolate": "linear",
-        "stroke": "#23467f",
+        "stroke": "#284980",
         "strokeCap": "round",
         "strokeJoin": "round",
         "strokeWidth": 4.0,
@@ -199,7 +199,7 @@
     },
     {
       "mark": {
-        "color": "#23467f",
+        "color": "#284980",
         "fillOpacity": 1,
         "filled": true,
         "opacity": 1,
@@ -214,7 +214,7 @@
       "mark": {
         "aria": false,
         "clip": true,
-        "fill": "#23467f",
+        "fill": "#284980",
         "filled": true,
         "opacity": 0,
         "size": 320.0,

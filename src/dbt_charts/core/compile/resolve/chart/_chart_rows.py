@@ -15,7 +15,7 @@ from typing import Any, Literal, NewType
 
 import pydantic_core
 
-from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
+from dbt_charts.core.compile.models.chart.authored import ChartSort, MultiplesConfig
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
@@ -27,6 +27,7 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_MULTIPLES_FIELD_NOT_FOUND,
     ERR_MULTIPLES_VALUE_COLLISION,
+    ERR_SORT_FIELD_NOT_FOUND,
 )
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_MULTIPLES_ROW_MISSING_PARTITION_FIELD,
@@ -261,6 +262,22 @@ def _canonically_distinct(previous: Any, value: Any) -> bool:
     if previous != previous and value != value:  # both NaN, by float's own quirk
         return False
     return previous != value
+
+
+def require_sort_field(sort: ChartSort | None, rows: ChartRows) -> None:
+    """Raise ``ERR-SORT-FIELD-NOT-FOUND`` when a row lacks the ``sort.by`` column.
+
+    Vega-Lite orders by natural order when the sort field is absent, so a
+    typo would render an unsorted chart that claims to be sorted. A SQL
+    ``NULL`` is a value, not a missing column.
+    """
+    if sort is None:
+        return
+    for row in rows:
+        if sort.by not in row:
+            raise ChartDataError.from_code(
+                ERR_SORT_FIELD_NOT_FOUND, field=sort.by, available=sorted(row.keys())
+            )
 
 
 def partition(multiples: MultiplesConfig | None, rows: ChartRows) -> ChartDataset:

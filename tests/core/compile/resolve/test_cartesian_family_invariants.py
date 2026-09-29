@@ -21,6 +21,7 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.authored import (
+    ChartSort,
     LayerAxisYStyle,
     LineLayer,
     MultiplesConfig,
@@ -32,6 +33,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     HeatmapChart,
     LineChart,
     ScatterChart,
+    SparkBarChart,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedAreaChart,
@@ -50,6 +52,7 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.diagnostics import WARN_LEGEND_POSITION_WIDTH_FALLBACK
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.warnings import (
     WarningContext,
     legend_position_width_fallback,
@@ -986,3 +989,30 @@ class TestTopLegendFitRule:
                 f"not visible at width={width} -- its layer/color series is "
                 f"now named nowhere"
             )
+
+
+class TestSortFieldMissingRaises:
+    """Invariant: a ``sort.by`` column absent from a row raises, never sorts naturally."""
+
+    @pytest.mark.parametrize("family", _FAMILIES)
+    def test_missing_sort_field_raises(self, family: str) -> None:
+        build = _BUILDERS.get(family) or (lambda **kw: _bar(type="histogram", **kw))
+        chart = build(sort=ChartSort(by="nonexistent_col", order="desc"))
+        with pytest.raises(ChartDataError, match="nonexistent_col") as exc:
+            resolve(chart, _SERIES_DATA, _board())
+        assert exc.value.code.code == "ERR-SORT-FIELD-NOT-FOUND"
+
+    def test_spark_bar_missing_sort_field_raises(self) -> None:
+        chart = SparkBarChart(
+            id="c",
+            type="spark_bar",
+            x="revenue",
+            y="month",
+            query=_sql(),
+            query_name="q",
+            sort=ChartSort(by="nonexistent_col", order="desc"),
+        )
+        with pytest.raises(
+            ChartDataError, match="ERR-SORT-FIELD-NOT-FOUND|nonexistent"
+        ):
+            resolve(chart, _SERIES_DATA, _board())

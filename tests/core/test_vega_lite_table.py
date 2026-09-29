@@ -14,6 +14,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
     resolve_style_and_context,
 )
+from dbt_charts.core.render.svg_utils import escape_attr
 
 _BOARD_STYLE = resolve_style(get_theme_style())
 _BOARD_CONTEXT = resolve_chart_style_context(get_theme_style())
@@ -82,7 +83,7 @@ class TestTableProportionalSizing:
             width=400,
             board_style=board,
         )
-        assert f'font-family="{body_family},' in svg_narrow
+        assert f'font-family="{escape_attr(body_family)},' in svg_narrow
         # width=700 → medium tier → title family (sans on default, serif on editorial)
         chart_medium = resolve(
             raw_chart, data, chart_style_context=_BOARD_CONTEXT, width=700.0
@@ -93,7 +94,7 @@ class TestTableProportionalSizing:
             width=700,
             board_style=board,
         )
-        assert title_family in svg_medium
+        assert escape_attr(title_family) in svg_medium
 
     def test_table_title_can_use_dbt_oldstyle_tabular_family(self, make_chart):
         """dbt oldstyle tabular font is used at medium/wide widths (serif tier)."""

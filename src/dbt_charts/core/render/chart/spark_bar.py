@@ -26,7 +26,7 @@ from dbt_charts.core.diagnostics.codes_render import (
 )
 from dbt_charts.core.render.chart.spark import _signed_fraction
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
-from dbt_charts.core.render.svg_utils import authored_kind_attr
+from dbt_charts.core.render.svg_utils import authored_kind_attr, escape_attr
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import apply_case
 
@@ -236,25 +236,25 @@ def _render_spark_bar_row(
         label_y = row_y + (bar_height / 2) + spark_rendering.text_baseline_offset
         svg_parts.append(
             f'<text x="0" y="{label_y:.1f}" '
-            f'font-size="{spark_config.font.size}" fill="{text_color}" '
-            f'font-family="{font.family}">'
+            f'font-size="{escape_attr(spark_config.font.size)}" fill="{escape_attr(text_color)}" '
+            f'font-family="{escape_attr(font.family)}">'
             f"{escaped_label}</text>",
         )
 
     # Render bar background
     bar_x = left_padding
     svg_parts.append(
-        f'<rect x="{bar_x}" y="{row_y:.1f}" '
-        f'width="{bar_area_width}" height="{bar_height}" '
-        f'fill="{bar_background}" rx="{spark_config.border.radius}"/>',
+        f'<rect x="{escape_attr(bar_x)}" y="{row_y:.1f}" '
+        f'width="{escape_attr(bar_area_width)}" height="{escape_attr(bar_height)}" '
+        f'fill="{escape_attr(bar_background)}" rx="{escape_attr(spark_config.border.radius)}"/>',
     )
 
     # Render bar fill
     if bar_width > 0:
         svg_parts.append(
             f'<rect x="{fill_x:.1f}" y="{row_y:.1f}" '
-            f'width="{bar_width:.1f}" height="{bar_height}" '
-            f'fill="{bar_color}" rx="{spark_config.border.radius}"/>',
+            f'width="{bar_width:.1f}" height="{escape_attr(bar_height)}" '
+            f'fill="{escape_attr(bar_color)}" rx="{escape_attr(spark_config.border.radius)}"/>',
         )
 
     # Render count
@@ -263,8 +263,8 @@ def _render_spark_bar_row(
         count_y = row_y + (bar_height / 2) + spark_rendering.text_baseline_offset
         svg_parts.append(
             f'<text x="{count_x:.1f}" y="{count_y:.1f}" '
-            f'font-size="{spark_config.font.size}" fill="{text_color}" text-anchor="end" '
-            f'font-family="{font.family}" '
+            f'font-size="{escape_attr(spark_config.font.size)}" fill="{escape_attr(text_color)}" text-anchor="end" '
+            f'font-family="{escape_attr(font.family)}" '
             f'style="font-variant-numeric: tabular-nums lining-nums;">'
             f"{display_count}</text>",
         )
@@ -459,9 +459,9 @@ def _render_spark_bar_svg_core(
         )
         escaped_title = html_module.escape(_display_title)
         svg_parts.append(
-            f'<text x="0" y="{spark_rendering.title_baseline_y}" '
-            f'font-size="{chart_title_size}" font-weight="{chart_title_weight}" fill="{text_color}" '
-            f'font-family="{chart_title_family}"{authored_kind_attr("title")}>'
+            f'<text x="0" y="{escape_attr(spark_rendering.title_baseline_y)}" '
+            f'font-size="{escape_attr(chart_title_size)}" font-weight="{escape_attr(chart_title_weight)}" fill="{escape_attr(text_color)}" '
+            f'font-family="{escape_attr(chart_title_family)}"{authored_kind_attr("title")}>'
             f"{escaped_title}</text>",
         )
         if subtitle_text:
@@ -471,9 +471,9 @@ def _render_spark_bar_svg_core(
             )
             subtitle_font_size = float(spark_config.subtitle.font.size)
             svg_parts.append(
-                f'<text x="0" y="{spark_rendering.title_baseline_y + chart_title_size}" '
-                f'font-size="{subtitle_font_size}" fill="{secondary_color}" '
-                f'font-family="{spark_config.font.family}"{authored_kind_attr("subtitle")}>'
+                f'<text x="0" y="{escape_attr(spark_rendering.title_baseline_y + chart_title_size)}" '
+                f'font-size="{escape_attr(subtitle_font_size)}" fill="{escape_attr(secondary_color)}" '
+                f'font-family="{escape_attr(spark_config.font.family)}"{authored_kind_attr("subtitle")}>'
                 f"{escaped_subtitle}</text>",
             )
         current_y = title_height
@@ -513,16 +513,16 @@ def _render_spark_bar_svg_core(
             current_y + (num_bars * row_height) + spark_rendering.more_rows_offset_y
         )
         svg_parts.append(
-            f'<text x="{chart_width / 2}" y="{more_y:.1f}" '
-            f'font-size="{spark_rendering.more_rows_font_size}" fill="{secondary_color}" text-anchor="middle" font-style="italic" '
-            f'font-family="{spark_config.font.family}" '
+            f'<text x="{escape_attr(chart_width / 2)}" y="{more_y:.1f}" '
+            f'font-size="{escape_attr(spark_rendering.more_rows_font_size)}" fill="{escape_attr(secondary_color)}" text-anchor="middle" font-style="italic" '
+            f'font-family="{escape_attr(spark_config.font.family)}" '
             f'style="font-variant-numeric: tabular-nums lining-nums;">'
             f"+ {more_count} more</text>",
         )
         chart_height = more_y + spark_rendering.more_rows_bottom_padding
 
     # Wrap in SVG
-    svg_result = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{chart_width}" height="{chart_height}" viewBox="0 0 {chart_width} {chart_height}">
+    svg_result = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{escape_attr(chart_width)}" height="{escape_attr(chart_height)}" viewBox="0 0 {escape_attr(chart_width)} {escape_attr(chart_height)}">
 {"".join(svg_parts)}
 </svg>"""
 

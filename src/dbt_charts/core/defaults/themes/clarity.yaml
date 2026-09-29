@@ -11,17 +11,13 @@ style:
   # the brighter stark accent/muted.
   muted: dbt-grays.muted
   accent: dbt-creams.accent
-  # Rebind the categorical roles to the editorial-10 family. `_base` binds
-  # category/category_dark/category_light/category_ghost to vivid-10;
-  # without this rebind, theme-portable refs like `category[2]` or
-  # `category_dark[2]` keep resolving to stark's palette after a theme
-  # switch. Absolute pins (`vivid-10-dark.2`) stay pinned by design.
+  # Rebind the categorical role to the editorial-10 family. `_base` binds
+  # category to vivid-10; without this rebind, theme-portable refs like
+  # `category[2]` or `category[2].dark` keep resolving to stark's palette
+  # after a theme switch. Absolute pins (`vivid-10.2.dark`) stay pinned by
+  # design.
   palettes:
     category: editorial-10
-    category_dark: editorial-10-dark
-    category_light: editorial-10-light
-    category_ghost: editorial-10-ghost
-    category_ink: editorial-10-ink
     # Editorial's steel-blue accent, extended to sequential color. Bound as a
     # role so the heatmap/geoshape gradients below and any `sequence[N]` token
     # read the same palette.
@@ -45,14 +41,10 @@ style:
     # typography is width-driven (see core/compile/resolve/style/typography.py) and reads
     # this family for medium/wide chart cards.
     #
-    # Color: one step lighter than `heading` (the stark default). The
-    # title-inline band puts the board title on the same horizontal row as
-    # the variable filters; softening the title from `heading` to
-    # `inactive` keeps the title authoritative without competing with the
-    # chart titles below it.
+    # No color pin here — the InheritSlot carries `font.color` (gray-90),
+    # so titles and headings read the same ink as prose.
     font:
       family: "'Source Serif 4', Georgia, 'Times New Roman', serif"
-      color: dbt-grays.inactive
     subtitle:
       font:
         color: dbt-grays.subtitle
@@ -61,9 +53,9 @@ style:
       categorical:
         # One fixed ink for every single-series chart on the board — same
         # data, same color, regardless of reading-order position. The named
-        # role (rather than a direct `editorial-10-dark.1` pin) keeps this
+        # role (rather than a direct `editorial-10.1.dark` pin) keeps this
         # pointing at slot 1's blue if the family is ever reordered.
-        single_series_palette: [category_dark.blue]
+        single_series_palette: [category.blue.dark]
     axis:
       labels:
         font:

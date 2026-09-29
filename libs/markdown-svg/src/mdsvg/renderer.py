@@ -181,8 +181,8 @@ class _XhtmlSerializer(HTMLParser):
         for name, value in attrs:
             # HTMLParser types value as str | None; nh3 always emits quoted values
             # so None is unreachable here, but the branch keeps mypy happy.
-            safe = name if value is None else _html.escape(value, quote=True)
-            parts.append(f' {name}="{safe}"')
+            raw_value = name if value is None else value
+            parts.append(f' {name}="{escape_xml(raw_value)}"')
         parts.append("/>" if tag in _XHTML_VOID_ELEMENTS else ">")
         self._out.append("".join(parts))
 
@@ -848,7 +848,7 @@ class SVGRenderer:
                 f'  <text x="{format_number(x)}" '
                 f'y="{format_number(y)}" '
                 f'{code_attrs} xml:space="preserve" '
-                f'fill="{default_fill}"{clip_attr}>{escaped}</text>'
+                f'fill="{escape_xml(default_fill)}"{clip_attr}>{escaped}</text>'
             )
 
         tspans = []
@@ -856,7 +856,9 @@ class SVGRenderer:
             if not seg_text:
                 continue
             escaped = escape_xml(_apply_case(seg_text, self.style.code_font_case))
-            tspans.append(f'<tspan fill="{color or default_fill}">{escaped}</tspan>')
+            tspans.append(
+                f'<tspan fill="{escape_xml(color or default_fill)}">{escaped}</tspan>'
+            )
         return (
             f'  <text x="{format_number(x)}" y="{format_number(y)}" '
             f'{code_attrs} xml:space="preserve"{clip_attr}>{"".join(tspans)}</text>'
@@ -1112,7 +1114,7 @@ class SVGRenderer:
         drift out of sync.
         """
         text_weight = (
-            f" font-weight: {self.style.font_weight};"
+            f" font-weight: {escape_xml(str(self.style.font_weight))};"
             if self.style.font_weight is not None
             else ""
         )
@@ -1120,45 +1122,56 @@ class SVGRenderer:
         code_family = self.style.code_font_family or self.style.mono_font_family
         code_extra = ""
         if self.style.code_font_weight:
-            code_extra += f" font-weight: {self.style.code_font_weight};"
+            code_extra += f" font-weight: {escape_xml(self.style.code_font_weight)};"
         if self.style.code_font_style:
-            code_extra += f" font-style: {self.style.code_font_style};"
+            code_extra += f" font-style: {escape_xml(self.style.code_font_style)};"
         if self.style.code_font_size:
             code_extra += f" font-size: {format_number(self.style.code_font_size)}px;"
         if self.style.code_font_decoration:
-            code_extra += f" text-decoration: {self.style.code_font_decoration};"
+            code_extra += (
+                f" text-decoration: {escape_xml(self.style.code_font_decoration)};"
+            )
 
         # heading font override (empty = inherits body font, mirrors blockquote below)
         heading_family = self.style.heading_font_family or self.style.font_family
 
         # blockquote font overrides
         bq_family = self.style.blockquote_font_family or self.style.font_family
-        bq_extra = f" font-family: {bq_family};"
+        bq_extra = f" font-family: {escape_xml(bq_family)};"
         if self.style.blockquote_font_weight:
-            bq_extra += f" font-weight: {self.style.blockquote_font_weight};"
+            bq_extra += (
+                f" font-weight: {escape_xml(self.style.blockquote_font_weight)};"
+            )
         if self.style.blockquote_font_style:
-            bq_extra += f" font-style: {self.style.blockquote_font_style};"
+            bq_extra += f" font-style: {escape_xml(self.style.blockquote_font_style)};"
         if self.style.blockquote_font_size:
             bq_extra += (
                 f" font-size: {format_number(self.style.blockquote_font_size)}px;"
             )
         if self.style.blockquote_font_decoration:
-            bq_extra += f" text-decoration: {self.style.blockquote_font_decoration};"
+            bq_extra += (
+                f" text-decoration: "
+                f"{escape_xml(self.style.blockquote_font_decoration)};"
+            )
 
         return {
             "text": (
-                f"font-family: {self.style.font_family}; "
-                f"fill: {self.style.text_color};{text_weight}"
+                f"font-family: {escape_xml(self.style.font_family)}; "
+                f"fill: {escape_xml(self.style.text_color)};" + text_weight
             ),
-            "mono": f"font-family: {self.style.mono_font_family};",
+            "mono": f"font-family: {escape_xml(self.style.mono_font_family)};",
             "heading": (
-                f"font-family: {heading_family}; "
-                f"fill: {self.style.get_heading_color()}; "
-                f"font-weight: {self.style.heading_font_weight};"
+                f"font-family: {escape_xml(heading_family)}; "
+                f"fill: {escape_xml(self.style.get_heading_color())}; "
+                f"font-weight: {escape_xml(str(self.style.heading_font_weight))};"
             ),
-            "code": f"font-family: {code_family}; fill: {self.style.code_color};{code_extra}",
-            "link": f"fill: {self.style.link_color};",
-            "blockquote": f"fill: {self.style.blockquote_color};{bq_extra}",
+            "code": (
+                f"font-family: {escape_xml(code_family)}; "
+                f"fill: {escape_xml(self.style.code_color)};" + code_extra
+            ),
+            "link": f"fill: {escape_xml(self.style.link_color)};",
+            "blockquote": f"fill: {escape_xml(self.style.blockquote_color)};"
+            + bq_extra,
         }
 
     def _compute_class_prefix(self) -> str:
@@ -1224,14 +1237,14 @@ class SVGRenderer:
         """
         s = self.style
         attrs = [
-            f'font-family="{s.code_font_family or s.mono_font_family}"',
+            f'font-family="{escape_xml(s.code_font_family or s.mono_font_family)}"',
             f'font-size="{format_number(font_size)}"',
-            f'font-weight="{s.code_font_weight or "400"}"',
+            f'font-weight="{escape_xml(s.code_font_weight or "400")}"',
         ]
         if s.code_font_style:
-            attrs.append(f'font-style="{s.code_font_style}"')
+            attrs.append(f'font-style="{escape_xml(s.code_font_style)}"')
         if s.code_font_decoration:
-            attrs.append(f'text-decoration="{s.code_font_decoration}"')
+            attrs.append(f'text-decoration="{escape_xml(s.code_font_decoration)}"')
         return " ".join(attrs)
 
     def _code_inline_style_parts(self, host_font_size: float) -> list[str]:
@@ -1449,9 +1462,9 @@ class SVGRenderer:
             f'<foreignObject x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
             f'width="{format_number(fo_width)}" height="{format_number(fo_height)}">'
             f'<div xmlns="http://www.w3.org/1999/xhtml" '
-            f'style="font-family: {self.style.font_family}; '
+            f'style="font-family: {escape_xml(self.style.font_family)}; '
             f"font-size: {format_number(self.style.base_font_size)}px; "
-            f'color: {self.style.text_color};">'
+            f'color: {escape_xml(self.style.text_color)};">'
             f"{sanitized}"
             f"</div>"
             f"</foreignObject>"
@@ -1504,14 +1517,14 @@ class SVGRenderer:
         """The fenced-code-block background rect, with optional border stroke."""
         border_color = self.style.code_block_border_color
         stroke_attrs = (
-            f' stroke="{border_color}" stroke-width="{format_number(self.style.code_block_border_width)}"'
+            f' stroke="{escape_xml(border_color)}" stroke-width="{format_number(self.style.code_block_border_width)}"'
             if border_color
             else ""
         )
         return (
             f'  <rect x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
             f'width="{format_number(block_width)}" height="{format_number(total_height)}" '
-            f'fill="{self.style.code_background}" '
+            f'fill="{escape_xml(self.style.code_background)}" '
             f'rx="{format_number(self.style.code_block_border_radius)}"{stroke_attrs}/>'
         )
 
@@ -1580,7 +1593,7 @@ class SVGRenderer:
             ).hexdigest()[:8]
             clip_id = f"code-clip-{clip_hash}"
             elements.append(
-                f'  <defs><clipPath id="{clip_id}">'
+                f'  <defs><clipPath id="{escape_xml(clip_id)}">'
                 f'<rect x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
                 f'width="{format_number(block_width)}" height="{format_number(total_height)}"/>'
                 f"</clipPath></defs>"
@@ -1591,7 +1604,7 @@ class SVGRenderer:
         )
 
         # Code lines (optionally clipped)
-        clip_attr = f' clip-path="url(#{clip_id})"' if clip_id else ""
+        clip_attr = f' clip-path="url(#{escape_xml(clip_id)})"' if clip_id else ""
         code_fill = self.style.code_color or self.style.text_color
         code_attrs = self._code_text_attrs(font_size)
         y_offset = ctx.y + padding_y + font_size
@@ -1740,7 +1753,7 @@ class SVGRenderer:
             elements.append(
                 f'  <rect x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
                 f'width="{format_number(ctx.width)}" height="{format_number(total_height)}" '
-                f'fill="{bg_color}"{rx_attr}/>'
+                f'fill="{escape_xml(bg_color)}"{rx_attr}/>'
             )
 
         # Left border rule
@@ -1748,7 +1761,7 @@ class SVGRenderer:
             f'  <rect x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
             f'width="{format_number(self.style.blockquote_border_width)}" '
             f'height="{format_number(total_height)}" '
-            f'fill="{self.style.blockquote_border_color}"/>'
+            f'fill="{escape_xml(self.style.blockquote_border_color)}"/>'
         )
 
         elements.extend(inner_elements)
@@ -1809,7 +1822,7 @@ class SVGRenderer:
             elements.append(
                 f'  <circle cx="{format_number(bullet_x)}" '
                 f'cy="{format_number(bullet_y)}" r="{format_number(bullet_radius)}" '
-                f'fill="{self.style.text_color}"/>'
+                f'fill="{escape_xml(self.style.text_color)}"/>'
             )
 
             item_ctx = ctx.with_indent(bullet_indent).with_offset(dy=current_y)
@@ -1863,7 +1876,7 @@ class SVGRenderer:
             elements.append(
                 f'  <text x="{format_number(number_x)}" '
                 f'y="{format_number(number_y)}" '
-                f'class="{self._scoped_class("text")}" '
+                f'class="{escape_xml(self._scoped_class("text"))}" '
                 f'font-size="{format_number(self.style.base_font_size)}" '
                 f'text-anchor="end">{number_text}</text>'
             )
@@ -1904,7 +1917,7 @@ class SVGRenderer:
             f'y="{format_number(y_pos)}" '
             f'width="{format_number(ctx.width)}" '
             f'height="{format_number(height)}" '
-            f'fill="{self.style.hr_color}"/>'
+            f'fill="{escape_xml(self.style.hr_color)}"/>'
         )
 
         return [element], margin + height + margin
@@ -1948,7 +1961,7 @@ class SVGRenderer:
         elements.append(
             f'  <rect x="{format_number(ctx.x)}" y="{format_number(current_y)}" '
             f'width="{format_number(ctx.width)}" height="{format_number(header_layout.row_height)}" '
-            f'fill="{self.style.table_header_background}"/>'
+            f'fill="{escape_xml(self.style.table_header_background)}"/>'
         )
 
         # Render header row
@@ -1985,7 +1998,7 @@ class SVGRenderer:
         elements.append(
             f'  <rect x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
             f'width="{format_number(ctx.width)}" height="{format_number(total_height)}" '
-            f'fill="none" stroke="{self.style.table_border_color}"/>'
+            f'fill="none" stroke="{escape_xml(self.style.table_border_color)}"/>'
         )
 
         # Column separators
@@ -1995,7 +2008,7 @@ class SVGRenderer:
             elements.append(
                 f'  <line x1="{format_number(col_x)}" y1="{format_number(ctx.y)}" '
                 f'x2="{format_number(col_x)}" y2="{format_number(current_y)}" '
-                f'stroke="{self.style.table_border_color}"/>'
+                f'stroke="{escape_xml(self.style.table_border_color)}"/>'
             )
 
         # Row separators
@@ -2010,7 +2023,7 @@ class SVGRenderer:
                 elements.append(
                     f'  <line x1="{format_number(ctx.x)}" y1="{format_number(row_y)}" '
                     f'x2="{format_number(ctx.x + ctx.width)}" y2="{format_number(row_y)}" '
-                    f'stroke="{self.style.table_border_color}"/>'
+                    f'stroke="{escape_xml(self.style.table_border_color)}"/>'
                 )
 
         return elements, total_height
@@ -2072,7 +2085,9 @@ class SVGRenderer:
                 style_parts.append("font-style: italic")
                 style_parts.append(f"fill: {self.style.code_color}")
 
-            style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
+            style_attr = (
+                f' style="{escape_xml("; ".join(style_parts))}"' if style_parts else ""
+            )
             if run.is_link and run.url:
                 parts.append(
                     f'<a href="{escape_svg_text(_safe_href(run.url))}"><tspan{style_attr}>{escaped}</tspan></a>'
@@ -2165,8 +2180,8 @@ class SVGRenderer:
                 inner = self._table_cell_lines_to_inner_svg(runs, font_size)
                 elements.append(
                     f'  <text x="{format_number(text_x)}" y="{format_number(text_y)}" '
-                    f'class="{css_class}" font-size="{format_number(font_size)}" '
-                    f'font-weight="{weight}" text-anchor="{anchor}">{inner}</text>'
+                    f'class="{escape_xml(css_class)}" font-size="{format_number(font_size)}" '
+                    f'font-weight="{escape_xml(str(weight))}" text-anchor="{escape_xml(anchor)}">{inner}</text>'
                 )
                 line_width = self._run_sequence_width(runs, font_size)
                 if anchor == "middle":
@@ -2264,7 +2279,7 @@ class SVGRenderer:
             f'  <image x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
             f'width="{format_number(img_width)}" height="{format_number(img_height)}" '
             f'href="{escape_svg_text(embed_url)}" '
-            f'preserveAspectRatio="{self.style.image_preserve_aspect_ratio}"/>'
+            f'preserveAspectRatio="{escape_xml(self.style.image_preserve_aspect_ratio)}"/>'
         )
 
         elements = [element]
@@ -2420,7 +2435,7 @@ class SVGRenderer:
                         f'  <rect x="{format_number(rect_x)}" y="{format_number(rect_y)}" '
                         f'width="{format_number(rw + 2 * chip_padding)}" '
                         f'height="{format_number(chip_height)}" '
-                        f'fill="{self.style.code_background}"{rx_attr}/>'
+                        f'fill="{escape_xml(self.style.code_background)}"{rx_attr}/>'
                     )
                 run_x += rw
 
@@ -2460,7 +2475,11 @@ class SVGRenderer:
                     style_parts.extend(self._link_text_decoration_style())
 
                 # Create tspan element
-                style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
+                style_attr = (
+                    f' style="{escape_xml("; ".join(style_parts))}"'
+                    if style_parts
+                    else ""
+                )
 
                 if run.is_link and run.url:
                     # Wrap link text in an anchor
@@ -2478,8 +2497,8 @@ class SVGRenderer:
             text_content = "".join(tspan_parts)
             text_element = (
                 f'  <text x="{format_number(text_x)}" y="{format_number(current_y)}" '
-                f'font-size="{format_number(font_size)}" class="{css_class}" '
-                f'text-anchor="{text_anchor}">'
+                f'font-size="{format_number(font_size)}" class="{escape_xml(css_class)}" '
+                f'text-anchor="{escape_xml(text_anchor)}">'
                 f"{text_content}</text>"
             )
             elements.append(text_element)

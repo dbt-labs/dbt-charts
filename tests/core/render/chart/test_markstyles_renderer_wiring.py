@@ -15,7 +15,11 @@ from typing import Any
 
 import pytest
 
-from dbt_charts.core.compile.config import get_theme_style, reset_config
+from dbt_charts.core.compile.config import (
+    get_chart_rendering,
+    get_theme_style,
+    reset_config,
+)
 from dbt_charts.core.compile.models.style.theme import PointMarkStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
@@ -477,16 +481,20 @@ class TestPointMarkMapper:
     @pytest.mark.parametrize("family", ["scatter", "point_map", "area"])
     def test_family_default_stroke_width_matches_line_stroke(self, family):
         # Families whose point ring is not density-baked supply their own
-        # default so hollow rings inherit the line family's stroke weight
-        # rather than falling back to VL's hardcoded 2 px. The default tracks
-        # ``marks.line.stroke.width`` for visual coherence.
+        # default so hollow rings read at the line family's stroke weight
+        # rather than falling back to VL's hardcoded 2 px. This is a
+        # separate theme literal pinned equal to
+        # chart_rendering.stroke.fallback_width for visual coherence -- not
+        # an inherited reference, so a project overriding fallback_width in
+        # dbt_charts.yml would desync the two.
         editorial = get_theme_style("clarity")
         theme_point = getattr(editorial.charts, family).marks.point
-        theme_line_stroke = editorial.charts.marks.line.stroke
-        assert theme_point.stroke_width == theme_line_stroke.width, (
+        fallback_width = get_chart_rendering().stroke.fallback_width
+        assert theme_point.stroke_width == fallback_width, (
             f"{family}.marks.point.stroke_width ({theme_point.stroke_width}) "
-            f"should match line.stroke.width ({theme_line_stroke.width}) so "
-            f"hollow rings read with the same weight as the line itself"
+            f"should match chart_rendering.stroke.fallback_width "
+            f"({fallback_width}) so hollow rings read with the same weight "
+            f"as the line itself"
         )
 
     def test_global_stroke_width_stays_unset_for_the_bake(self):

@@ -223,7 +223,7 @@ def test_resolved_kpi_chart_has_no_title_or_subtitle() -> None:
         id="kpi1",
         chart_type="kpi",
         value="total",
-        style=ResolvedKpiStyle(),
+        style=ResolvedKpiStyle(title=_make_style().chart_defaults.title),
         **{k: v for k, v in _B.items() if k not in ("background", "title_style")},
     )
     assert kpi.title is None

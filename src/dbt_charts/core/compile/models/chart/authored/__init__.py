@@ -68,8 +68,6 @@ from ._conditional_formatting import (
 )
 from ._layer import (
     AreaLayer,
-    BarChartBarLayer,
-    BarChartLayer,
     BarLayer,
     CartesianLayer,
     LayerAxisYStyle,
@@ -228,8 +226,6 @@ __all__ = [
     "MultiplesConfig",
     # layer
     "AreaLayer",
-    "BarChartBarLayer",
-    "BarChartLayer",
     "BarLayer",
     "LayerAxisYStyle",
     "CartesianLayer",

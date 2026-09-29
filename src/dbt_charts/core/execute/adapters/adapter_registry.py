@@ -83,6 +83,11 @@ _EMPTY_PROJECT_SOURCES: Final[ProjectSourcesConfig] = ProjectSourcesConfig(sourc
 # Approved local-dev surfaces that need non-exclusive DuckDB locks AND SQL
 # read_csv/read_json_auto (see m3-duckdb-concurrency-and-file-sources initiative).
 # Grep this symbol before adding allow_external_access_in_readonly=True elsewhere.
+# There is a second, narrower opt-in door: a DuckDB source that authors
+# attach/extensions/secrets gets external access on its own connection without
+# this flag (DuckDBAdapter._connect's source_needs_external_access). Those
+# fields cannot do anything without it. That door is driven by authored YAML,
+# not by a callsite grep, and is documented on DuckDBAdapter/DuckDBSourceConfig.
 LOCAL_AUTHORING_REGISTRY_KWARGS: dict[str, Any] = {
     "read_only": True,
     "allow_external_access_in_readonly": True,
@@ -127,10 +132,12 @@ def build_adapter_registry(
         duckdb_config: Optional DuckDB config dict passed to the default
             connection. When read_only=True (the default) and
             allow_external_access_in_readonly=False, enable_external_access is
-            hard-forced to False regardless of what this dict contains. To combine
-            read_only=True with external file access (read_csv, httpfs, etc.), set
-            both allow_external_access_in_readonly=True AND
-            duckdb_config={"enable_external_access": True}. The default path
+            hard-forced to False regardless of what this dict contains, UNLESS
+            the source itself authors attach/extensions/secrets (a second,
+            narrower opt-in; see LOCAL_AUTHORING_REGISTRY_KWARGS above). To
+            combine read_only=True with external file access (read_csv, httpfs,
+            etc.) on every connection, set both allow_external_access_in_readonly=True
+            AND duckdb_config={"enable_external_access": True}. The default path
             (read_only=False) also allows external access without the flag.
         resolver: Source resolver instance. Defaults to DefaultSourceResolver when
             None. Pass an AllowlistedSourceResolver for deployed-mode enforcement.
@@ -177,7 +184,8 @@ def build_adapter_registry(
     # FilesystemProject has one. Any other host (Cloud's git-blob store, an
     # in-memory test double) passes data_dir=None; DuckDBAdapter/SqliteAdapter
     # already tolerate that (no relative-path resolution needed until a source
-    # actually references one).
+    # actually references one, or authors attach/extensions/secrets on a
+    # read_only connection, which needs no data_dir either).
     data_dir = project.root if isinstance(project, FilesystemProject) else None
 
     # dbt_project.yml is valid at project.dbt_root (see resolve_dbt_project_dir

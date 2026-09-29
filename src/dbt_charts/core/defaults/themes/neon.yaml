@@ -16,10 +16,12 @@
 # category grid moving down — the rung below FAINT is the panel tier below, where a
 # gridline would vanish on any panel surface.
 # Backgrounds: canvas dbt-grays.void (#161616) + one panel tier dbt-grays.ink (#222222).
-# The light/dark companion roles name a CONTRAST DIRECTION, not a pigment, so both
-# invert on this canvas: category_dark (the higher-contrast companion) takes the LIGHT
-# twin so marks read bright on black, and category_light (the recessive one) takes the
-# DARK twin. Rebinding only one collapses the pair onto a single palette.
+# The engine's automatic label ink (label_ink()) is canvas-aware by
+# construction -- it reads light on this dark canvas with no theme-level
+# role rebind needed. A board or theme that explicitly wants the .light or
+# .dark *variant* of a mark color still picks it by name, same as any
+# other theme; "which variant reads well on a dark canvas" is the
+# dark-mode-theming follow-on's question, not this theme's to answer here.
 # All color from vivid-10 marks only. Confident marks, flat fills.
 extends: stark
 style:
@@ -30,8 +32,6 @@ style:
     color: *high
   palettes:
     sequence: dbt-seq-blue-dark
-    category_dark: vivid-10-light
-    category_light: vivid-10-dark
   # Lighter tone stops for the dark canvas — the default positive/negative
   # `.solid` greens/reds are tuned for light bg and read too dark here.
   tones:
@@ -41,7 +41,6 @@ style:
     color: &faint dbt-grays.heading
   title:
     font:
-      color: *high
       weight: 600
     subtitle:
       font:

@@ -59,8 +59,8 @@ class DbtContext:
     DbtAdapter for dbt-jinja (`ref()`/`source()`, resolved via the manifest),
     or DuckDBAdapter otherwise, which auto-discovers the dbt project's own
     local dev warehouse file under its `data/` directory (see
-    ``DuckDBAdapter.__init__``'s `dbt_project_path` parameter), falling back
-    to `:memory:` when discovery finds nothing there either. When any
+    ``DuckDBAdapter.__init__``'s `dbt_project_path` parameter), raising
+    ERR-DBT-PROJECT-NO-LOCAL-WAREHOUSE when discovery finds nothing. When any
     `sources:` are configured, or when this is absent entirely, unknown names
     always raise instead.
 
@@ -137,7 +137,7 @@ class DefaultSourceResolver:
          configured at all) — the query then falls through to whichever
          adapter claims a source-less query (DbtAdapter for dbt-jinja SQL,
          DuckDBAdapter otherwise, which auto-discovers the dbt project's own
-         local dev warehouse file under `data/`, else `:memory:`)
+         local dev warehouse file under `data/`, else raises)
       5. raise ERR-SOURCE-NOT-FOUND-EMPTY otherwise
 
     For None authored: return None (sourceless query types — values, http, schema).

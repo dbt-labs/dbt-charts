@@ -1,11 +1,29 @@
 # Categorical palette — vivid-10
 #
-# Chroma-pushed retune of category-10's hues, in green-third slot order.
-# Blue/cyan/green/gold/moss are pushed toward the sRGB gamut ceiling (chroma
-# ~0.13-0.16, hue held); brown/purple/orange/gray/charcoal are byte-identical
-# to the old category-10 stops. Purple is deliberately NOT bumped — a
-# more-chromatic purple slides toward blue under protanopia and worsens the
-# blue-purple pair.
+# Chroma-pushed retune of category-10's hues, in green-third slot order. The
+# five lead hues (blue, cyan, green, gold, orange) sit near the sRGB gamut
+# ceiling (OKLCH C 0.14-0.17); purple and moss are held lower (C ~0.10-0.11)
+# because both are tuned against color-vision deficiency, not for chroma:
+#   - Purple is rosy (H ~334°) so it keeps its red side apart from blue when
+#     protanopia removes red. Its lightness sits in the palette's middle band,
+#     beside moss and orange; its tight pairs are blue below (blue+purple 9.02
+#     under protanopia) and gray above (purple+gray 9.18 under deuteranopia).
+#     Lightening it closes on gray.
+#   - Moss is calm (C 0.109) because a more saturated moss collapses onto
+#     orange under deuteranopia, and one greener collapses onto green.
+#
+# Color-vision deficiency. Worst-case CIEDE2000 across deuteranopia,
+# protanopia, and tritanopia as the first N stops accumulate:
+#   N=2      23.27  blue+cyan      tritanopia
+#   N=3..5   11.97  cyan+green     tritanopia
+#   N=6       9.02  blue+purple    protanopia
+#   N=7..10   9.01  orange+moss    deuteranopia
+# In plain words: the palette clears the Leonardo gate (ΔE 11) through five
+# series, and keeps a floor of 9 for every series count beyond.
+# Four pairs sit between 9 and 11, where the palette is tight: orange+moss
+# 9.01 (deuteranopia), blue+purple 9.02 (protanopia), purple+gray 9.18
+# (deuteranopia), green+moss 9.99 (protanopia). Moving purple or moss moves
+# at least one of them. Pinned in tests/core/test_vivid_10_palette.py.
 #
 # Slot order — the three constraints it satisfies, in priority order:
 #   1. Brown and charcoal sit past slot 7. They are the only two stops under
@@ -13,40 +31,31 @@
 #      needs eight series before it draws one. Brown is also the least
 #      chromatic of the eight non-neutral hues (OKLCH C 0.071, under half of
 #      blue's 0.150 — only gray and charcoal sit lower, and they are meant
-#      to), a poor fit for slot 4 of a palette named for its chroma.
-#   2. Purple holds slot 6. Blue+purple is the weakest pair in the palette
-#      under protanopia (ΔE 5.33) and is the binding constraint on every
-#      ordering. Compacting the other hues forward to close brown's gap would
-#      promote purple to slot 5 and drop the five-series worst case from
-#      11.97 to 5.33; re-laying slots 3-7 instead holds 11.97 through N=5.
+#      to), a poor fit for the lead slots of a palette named for its chroma.
+#   2. Purple and moss hold slots 6 and 7. They are the only hues with a
+#      partner under ΔE 11 among blue, cyan, green, gold, and orange
+#      (blue+purple, orange+moss, green+moss), so whichever arrives first ends
+#      the run above 11. Placing both after the other five holds 11.97
+#      through N=5.
 #   3. Cyan holds slot 2.
 #
-# Worst-case CIEDE2000 across deuteranopia/protanopia/tritanopia as the first
-# N stops accumulate: 23.27, 11.97, 11.97, 11.97, 5.33, 4.35, ... The N=6 drop
-# is a ceiling rather than a regression — every ordering of these ten hexes
-# reaches it, because purple cannot sit later than 6 without pulling something
-# worse forward. Pinned in tests/core/test_vivid_10_palette.py.
+# The order controls how many leading series clear 11, not the floor: five,
+# with brown, charcoal, and gray held past slot 7.
 #
 # Categorical palettes have no LUT, no surface variants, no interpolation.
 # Stops are what you get — exactly as authored.
 #
-# Companions (positional pairing — slot N of the companion pairs with slot N
-# here; reviewers edit the variant set together when vivid-10 changes):
-#   - `vivid-10-dark.yml`  — darker twin, used to ink direct labels (e.g.
-#     endpoint labels on multi-series lines) so the label sits a notch
-#     darker than its line.
-#   - `vivid-10-light.yml` — moderate lighter twin, sitting under the ghost
-#     tier: lighter than base, no louder, same hue.
-#   - `vivid-10-ghost.yml` — extreme pale twin, used to ghost out-of-focus
-#     members in highlight-columns / dim-the-chorus emphasis.
+# Every tier (dark, light, pale, deep) is derived live from these stops by
+# variant() (compile/resolve/style/palette.py) -- no companion file to keep
+# in sync. Address a tier with a third token segment appended to a direct
+# palette.slot reference or a role-indirected bracket/dotted token.
 
 name: vivid-10
 description: |
   Default 10-color categorical palette for qualitative data encoding.
-  Blue-first, green third; the six most chromatic hues lead, then moss,
-  brown, and the two neutrals. Retune of the former category-10
-  hues, lifting the muted blue/cyan/green/gold/moss toward the M2 chart-fill
-  chroma band.
+  Blue-first, green third; the five most chromatic hues lead, then purple,
+  moss, brown, and the two neutrals. Retune of the former category-10 hues,
+  lifting blue/cyan/green/gold toward the M2 chart-fill chroma band.
 
 colors:
   - "#0073c2"    # 1 — blue (default single-series)
@@ -54,8 +63,8 @@ colors:
   - "#00ad75"    # 3 — green
   - "#e1a500"    # 4 — gold
   - "#da5a23"    # 5 — orange
-  - "#a46fb2"    # 6 — purple
-  - "#6a9228"    # 7 — moss
+  - "#a86c9d"    # 6 — purple
+  - "#6a8f47"    # 7 — moss
   - "#7a5531"    # 8 — brown
   - "#949daa"    # 9 — gray
   - "#505b6b"    # 10 — charcoal

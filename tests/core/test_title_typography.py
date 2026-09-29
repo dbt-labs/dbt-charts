@@ -29,6 +29,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
+from dbt_charts.core.render.svg_utils import escape_attr
 
 _EFF = resolve_chart_style_context(get_theme_style())
 _BOARD_STYLE = resolve_style(get_theme_style())
@@ -529,7 +530,7 @@ class TestTableTitleTypography:
             board_style=resolve_style(get_theme_style()),
         )
         assert f'font-size="{expected}"' in svg
-        assert get_theme_style().font.family.split(",")[0].strip() in svg
+        assert escape_attr(get_theme_style().font.family.split(",")[0].strip()) in svg
 
     def test_medium_table_title_uses_title_family(self):
         """Medium tier table title uses style.title.font.family (the title-slot family).
@@ -552,7 +553,7 @@ class TestTableTitleTypography:
         )
         assert f'font-size="{expected_size}"' in svg
         assert 'font-weight="500"' in svg
-        assert title_family in svg
+        assert escape_attr(title_family) in svg
 
     def test_wide_table_title_uses_title_family(self):
         """Wide tier table title uses style.title.font.family (the title-slot family).
@@ -575,7 +576,7 @@ class TestTableTitleTypography:
         )
         assert f'font-size="{expected_size}"' in svg
         assert 'font-weight="500"' in svg
-        assert title_family in svg
+        assert escape_attr(title_family) in svg
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +620,7 @@ class TestSparkBarTitleTypography:
         )
         assert f'font-size="{expected}"' in svg
         assert 'font-weight="500"' in svg  # config default, no tier override
-        assert get_theme_style().font.family.split(",")[0].strip() in svg
+        assert escape_attr(get_theme_style().font.family.split(",")[0].strip()) in svg
 
     def test_wide_spark_bar_title_uses_title_family(self):
         """Wide tier spark-bar title uses style.title.font.family."""
@@ -631,7 +632,7 @@ class TestSparkBarTitleTypography:
         svg = render_spark_bar_svg(
             _chart, self._data, width=w, board_style=_BOARD_STYLE
         )
-        assert title_family in svg
+        assert escape_attr(title_family) in svg
 
 
 # ---------------------------------------------------------------------------

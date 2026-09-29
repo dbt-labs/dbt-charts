@@ -15,7 +15,7 @@ from ._base import (
 )
 from ._layer import (
     CARTESIAN_LAYER_SUPPORTED_CHART_TYPES,
-    BarChartLayer,
+    CartesianLayer,
     reject_blank_y_start,
 )
 
@@ -42,7 +42,7 @@ class BarChart(_CartesianChartFields):
         Field(default=None, description="Appearance overrides for this chart alone."),
     ]
     layers: Annotated[
-        list[BarChartLayer] | None,
+        list[CartesianLayer] | None,
         Field(
             default=None,
             description=(

@@ -21,8 +21,7 @@ queries:
   signups_by_month_plan:
     sql: |
       -- Trims the dataset's partial opening and closing calendar months
-      -- (see examples/AGENTS.md) so no monthly column ends on a part-month
-      -- stub.
+      -- so no monthly column ends on a part-month stub.
       SELECT date_trunc('month', created_at)::DATE AS month, plan, COUNT(*) AS signups
       FROM dundersign.users
       WHERE NOT is_junk
@@ -34,7 +33,7 @@ queries:
   # Mirrored whole from the warehouse (never sampled), so this is the one
   # place on this board that carries real population totals for sessions
   # and documents. The sampled core tables below are charted as shares and
-  # distributions instead, which sampling preserves; see examples/AGENTS.md.
+  # distributions instead, which sampling preserves.
   usage_trend:
     sql: |
       SELECT month, new_users, active_users, sessions, documents_created, documents_completed
@@ -90,8 +89,8 @@ queries:
       LIMIT 10
 
   # color is a share of all sampled signature fields, not a raw count — the
-  # signatures table is reservoir-sampled (see examples/AGENTS.md), so only
-  # the relative pattern across pages/field types is meaningful.
+  # signatures table is reservoir-sampled, so only the relative pattern
+  # across pages/field types is meaningful.
   signature_heatmap:
     sql: |
       SELECT
@@ -104,7 +103,7 @@ queries:
       ORDER BY sort_key, field_type
 
   # Normalized to a share of recipients sent, not a raw count — recipients
-  # is reservoir-sampled (see examples/AGENTS.md).
+  # is reservoir-sampled.
   recipient_funnel:
     sql: |
       WITH counted AS (

@@ -82,7 +82,13 @@ dependencies = [
     # agent_api/init.py for the Traversable type of the template walk.
     "importlib_resources>=6.0",
     "jinja2>=3.1.6",
-    "httpx>=0.24.0",
+    # <1: httpx 1.0 drops httpx.LocalProtocolError, which
+    # cloud_client/errors.py references at module import time. A plain
+    # re-lock will not pick a pre-release (uv resolves stable releases by
+    # default) -- the real exposure is httpx 1.0 final, or an explicit
+    # --pre install, either of which breaks `dct` import entirely without
+    # this bound.
+    "httpx>=0.24.0,<1",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
     "vl-convert-python>=1.9.0",

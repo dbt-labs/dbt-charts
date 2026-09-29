@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -344,3 +345,31 @@ def test_dual_axis_base_warns_while_formatted_layer_does_not() -> None:
     }
     chart = _make_chart(type="bar", y="revenue_usd", layers=[layer])
     assert [w.field for w in detector.detect(_make_ctx(chart))] == ["revenue_usd"]
+
+
+def _resolved_ctx(y: str, fmt: str | None = None) -> WarningContext:
+    style = f'style:\n  axis_y:\n    labels:\n      format: "{fmt}"\n' if fmt else ""
+    resolved = _resolve_authored(f"type: bar\nx: month\ny: {y}\n{style}")
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    return WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: []},
+        vega_specs={resolved.id: {"mark": "bar"}},
+    )
+
+
+def test_percent_suffix_beats_currency_substring() -> None:
+    assert detector._classify("top_title_revenue_share") == "percent"
+    assert detector.detect(_resolved_ctx("top_title_revenue_share", ".1%")) == []
+    [w] = detector.detect(_resolved_ctx("top_title_revenue_share"))
+    assert "percent" in (w.fix or "").lower()
+
+
+def test_currency_suffix_with_percent_format_still_fires() -> None:
+    [w] = detector.detect(_resolved_ctx("monthly_revenue", ".1%"))
+    assert "currency" in (w.fix or "").lower()
+
+
+@pytest.mark.parametrize("suffix", sorted(detector._PERCENT_SUFFIXES))
+def test_percent_suffix_never_classifies_as_currency(suffix: str) -> None:
+    assert detector._classify(f"usd_revenue_dollars{suffix}") == "percent"

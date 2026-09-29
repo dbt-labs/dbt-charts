@@ -30,12 +30,42 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 )
 
 __all__ = [
+    "_apply_stroke_width_fallback",
     "_build_resolved_area_line",
     "_build_resolved_area_mark",
     "_build_resolved_line_mark",
     "_label_format_fallback",
     "_measure_tooltip_format",
 ]
+
+_LineOrAreaLineT = TypeVar("_LineOrAreaLineT", LineMarkStyle, AreaLineStyle)
+
+
+def _apply_stroke_width_fallback(
+    mark: _LineOrAreaLineT, fallback_width: float
+) -> _LineOrAreaLineT:
+    """Fill ``mark.stroke.width`` from ``fallback_width`` if still unset.
+
+    Called after cascade + adaptive baking, for any line-like mark
+    (line's own stroke, area's overlap-edge or stacked-perimeter stroke, a
+    line-type layer's stroke): if no tier pinned a width and adaptive
+    couldn't compute one either (no data, no x field, non-cartesian), this
+    is the engine's calibrated floor, not a theme choice -- see
+    ``chart_rendering.stroke.fallback_width`` / ``.stacked_fallback_width``
+    in ``default_config.yml``. A zero width (the "no stroke" sentinel) is
+    a real, already-baked value and is left untouched.
+
+    An authored ``stroke: null`` (``mark.stroke is None``) is left alone too
+    -- filling one in here would silently manufacture a default stroke out
+    of nothing (no cap/join/color) instead of letting the downstream
+    ``_build_resolved_*`` guard raise its "stroke is None after cascade"
+    error.
+    """
+    if mark.stroke is None or mark.stroke.width is not None:
+        return mark
+    return mark.model_copy(
+        update={"stroke": mark.stroke.model_copy(update={"width": fallback_width})}
+    )
 
 
 def _measure_tooltip_format(
@@ -113,9 +143,16 @@ def _label_format_fallback(
 
 def _build_resolved_line_mark(merged: LineMarkStyle) -> ResolvedLineMarkStyle:
     """Build a ResolvedLineMarkStyle from an already-merged LineMarkStyle."""
+    # merged.stroke.width can't be None here: _apply_stroke_width_fallback
+    # already ran and fills width whenever a stroke object exists. Only
+    # merged.stroke itself being None (an authored `stroke: null`) can
+    # still reach this guard -- the `or merged.stroke.width is None` half is
+    # unreachable at runtime but kept so the type checker narrows
+    # `merged.stroke.width` from `float | None` to `float` below.
     if merged.stroke is None or merged.stroke.width is None:
         raise ValueError(
-            "line.marks.line.stroke.width is None after cascade — check theme defaults"
+            "line.marks.line.stroke is None after cascade — an authored "
+            "`stroke: null` is not valid on a line mark"
         )
     if merged.halo_multiplier is None:
         raise ValueError(
@@ -159,9 +196,16 @@ def _build_resolved_area_line(merged: AreaLineStyle) -> ResolvedAreaLineStyle:
     _build_resolved_line_mark minus curve/connect (owned solely by
     ResolvedAreaMarkStyle.curve — see AreaLineStyle's docstring).
     """
+    # merged.stroke.width can't be None here: _apply_stroke_width_fallback
+    # already ran and fills width whenever a stroke object exists. Only
+    # merged.stroke itself being None (an authored `stroke: null`) can
+    # still reach this guard -- the `or merged.stroke.width is None` half is
+    # unreachable at runtime but kept so the type checker narrows
+    # `merged.stroke.width` from `float | None` to `float` below.
     if merged.stroke is None or merged.stroke.width is None:
         raise ValueError(
-            "area.marks.line.stroke.width is None after cascade — check theme defaults"
+            "area.marks.line.stroke is None after cascade — an authored "
+            "`stroke: null` is not valid on an area's top-edge line"
         )
     if merged.halo_multiplier is None:
         raise ValueError(

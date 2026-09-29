@@ -43,3 +43,32 @@ def test_collects_each_primary_scale_query_once() -> None:
         "goal_query": goal_rows,
     }
     executor.execute_query.assert_called_once_with("goal_query", {})
+
+
+def test_collects_a_right_axis_span_layer_query() -> None:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "layered",
+            "type": "line",
+            "x": "month",
+            "y": "actual",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "actual_query",
+            "layers": [
+                {
+                    "type": "bar",
+                    "y": "cost",
+                    "y_start": "budget",
+                    "query": "side_query",
+                    "axis_y": {"position": "right"},
+                },
+            ],
+        }
+    )
+    side_rows = [{"month": "2024-01", "cost": 5.0, "budget": 3.0}]
+    executor = MagicMock(spec=Executor)
+    executor.execute_query.return_value = side_rows
+
+    datasets = collect_shared_y_datasets(chart, [], executor, {})
+
+    assert datasets["side_query"] == side_rows

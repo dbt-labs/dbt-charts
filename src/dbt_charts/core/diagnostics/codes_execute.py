@@ -407,6 +407,103 @@ ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR = REGISTRY.register(
     )
 )
 
+ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ADAPTER-UNSUPPORTED-DUCKDB-FIELD",
+        domain="execute",
+        title="DuckDB source field is not supported by the in-process adapter",
+        message_template=(
+            "DuckDB source config sets {field!r}. The in-process DuckDB adapter "
+            "does not support this field; remove it from the source config."
+        ),
+        doc=(
+            "Fired when a DuckDB source authors `plugins`, `filesystems`, "
+            "`remote`, or `use_credential_provider` and it is executed by the "
+            "in-process DuckDBAdapter, including a `dbt_profile` source that "
+            "expanded to a duckdb target carrying one of these fields, since "
+            "dbt_profile does not change which adapter runs the query. These "
+            "fields need dbt-duckdb's own connection lifecycle (plugin hooks, "
+            "fsspec registration, remote transport) that the in-process adapter "
+            "does not implement; silently ignoring them would connect with "
+            "different semantics than authored. There is no supported way to "
+            "run this field through dbt charts today. Remove it from the "
+            "source config or `profiles.yml` target."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_ADAPTER_DUCKDB_CONFIG_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ADAPTER-DUCKDB-CONFIG-INVALID",
+        domain="execute",
+        title="DuckDB source config could not be turned into SQL",
+        message_template=(
+            "DuckDB source config's {field!r} is invalid: {reason}. "
+            "Fix this in the source config before it can connect."
+        ),
+        doc=(
+            "Fired before any SQL is sent, while turning a DuckDB source's "
+            "`extensions`/`settings`/`secrets`/`attach` config into the SQL "
+            "statements that apply it: a bad identifier (a key or name that "
+            "is not a bare `[A-Za-z_][A-Za-z0-9_]*` token, so it cannot be "
+            "safely spliced into SET/ATTACH/CREATE SECRET), a secret missing "
+            "its required `type`, or an `attach` entry that sets the same "
+            "option through both a direct field (`type`/`secret`/`read_only`) "
+            "and `options`. `{field}` names the config key that failed; fix "
+            "it in the source config."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_ADAPTER_DUCKDB_CONFIG_APPLY_FAILED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ADAPTER-DUCKDB-CONFIG-APPLY-FAILED",
+        domain="execute",
+        title="DuckDB source config could not be applied to the connection",
+        message_template=(
+            "DuckDB source config's {field!r} could not be applied: {reason}."
+        ),
+        doc=(
+            "Fired when the physical DuckDB connection opened successfully "
+            "but a post-connect step for the source's `extensions`, "
+            "`settings`, `secrets`, or `attach` config failed: a missing "
+            "extension, an unrecognized setting, a malformed secret, or an "
+            "attach target that cannot be opened. Unlike "
+            "ERR-WAREHOUSE-CONNECTION, the connection is live and SQL has "
+            "already been sent. `{field}` names which config section raised "
+            "it, and `{reason}` is DuckDB's own error text unchanged (not a "
+            'classified summary), so an actionable hint like "Did you mean: '
+            '"threads"" reaches the author.'
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DBT-PROJECT-NO-LOCAL-WAREHOUSE",
+        domain="execute",
+        title="dbt project has no local DuckDB warehouse to query",
+        message_template=(
+            "The query's source did not resolve to a configured source, and the "
+            "dbt project at {dbt_project_path!r} has no local DuckDB file under "
+            "data/ (looked for {candidates}). Configure the source in "
+            "dbt_charts.yml `sources:` or create the local warehouse file."
+        ),
+        doc=(
+            "Fired when a SQL query names a source in a dbt project with no "
+            "`sources:` configured, so it falls through to the project's local "
+            "DuckDB warehouse, but no such file exists under `data/`. Running "
+            "against an empty in-memory database would return a result that "
+            "looks right but is not, so dbt charts refuses. For warehouse-free "
+            "SQL, declare a `type: duckdb` source with `path: ':memory:'`."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_MUTATING_SQL = REGISTRY.register(
     ErrorCode(
         code="ERR-MUTATING-SQL",

@@ -39,7 +39,6 @@ from dbt_charts.core.compile.resolve.style.palette import (
     label_ink,
     list_palettes,
     palette,
-    palette_metadata,
     resolve_palette_alias,
     select_default_palette,
     variant,
@@ -238,246 +237,18 @@ class TestPaletteCategorical:
         with pytest.raises(SurfaceUnsupportedError):
             palette("vivid-10", surface="table")
 
-    def test_vivid_10_dark_pairs_positionally_with_vivid_10(self):
-        # The dark companion exists specifically so direct labels can use
-        # the dark twin of each bright slot. If someone retones one
-        # palette without the other, slot N stops corresponding and the
-        # pairing silently breaks. Length is the cheap structural guard.
-        assert len(palette("vivid-10")) == len(palette("vivid-10-dark")) == 10
 
-
-class TestVividTenDark:
-    """Direct-label inking companion to vivid-10. Slot N is positionally
-    paired with slot N in vivid-10, sitting measurably darker so endpoint
-    and segment labels ink against light canvases."""
-
-    LOCKED_STOPS = [
-        "#005998",
-        "#00a1c0",
-        "#008055",
-        "#a07400",
-        "#b03e00",
-        "#82568d",
-        "#4a6c00",
-        "#5f3a12",
-        "#6c7685",
-        "#404852",
-    ]
-
-    def test_stops_match_locked_set(self):
-        assert palette("vivid-10-dark") == self.LOCKED_STOPS
-
-    def test_resolves_through_categorical_pipeline(self):
-        meta = palette_metadata("vivid-10-dark")
-        assert meta["family"] == "categorical"
-
-
-class TestVividTenLight:
-    """Moderate light companion to vivid-10. Slot N is positionally paired
-    with slot N in vivid-10 and vivid-10-dark, sitting lighter and
-    more desaturated than the base, strictly under the ghost tier."""
-
-    LOCKED_STOPS = [
-        "#628eba",
-        "#8cd2e7",
-        "#8cccab",
-        "#e0bf83",
-        "#d0896f",
-        "#b698be",
-        "#9ab27e",
-        "#917459",
-        "#b3b8bf",
-        "#686e78",
-    ]
-
-    def test_resolves_with_ten_hex_stops(self):
-        stops = palette("vivid-10-light")
-        assert len(stops) == 10
-        for stop in stops:
-            assert isinstance(stop, str)
-            assert len(stop) == 7 and stop[0] == "#"
-            int(stop[1:], 16)  # raises ValueError on non-hex
-
-    def test_stops_match_locked_set(self):
-        assert palette("vivid-10-light") == self.LOCKED_STOPS
-
-    def test_positional_oklch_invariant_against_base_dark_and_ghost(self):
-        # Structural guarantee, no hex pins. For every slot:
-        #   1. dark.L < base.L - 0.05  (-dark is measurably darker: label ink)
-        #   2. light.L > base.L + 0.04 AND light.L > dark.L
-        #   3. light.L <= ghost.L - 0.03  (tier discipline: the moderate
-        #      light band sits strictly under the extreme ghost band; the
-        #      pre-retune palette had cyan/gold-light ABOVE their ghosts)
-        #   4. companions are no more saturated than the base
-        #   5. companions hold the base hue (slot identity is hue-carried)
-        # The old light/dark mirror contract is gone — same reasoning as
-        # editorial-10 (#4745): the mirror was a derivation convenience that
-        # forced bright slots over the ghost tier.
-        base = palette("vivid-10")
-        dark = palette("vivid-10-dark")
-        light = palette("vivid-10-light")
-        ghost = palette("vivid-10-ghost")
-        assert len(base) == len(dark) == len(light) == len(ghost) == 10
-
-        for slot, (b, d, lt, gh) in enumerate(
-            zip(base, dark, light, ghost, strict=True)
-        ):
-            b_l, b_c, b_h = _checker.hex_to_oklch(b)
-            d_l, d_c, d_h = _checker.hex_to_oklch(d)
-            lt_l, lt_c, lt_h = _checker.hex_to_oklch(lt)
-            gh_l, gh_c, gh_h = _checker.hex_to_oklch(gh)
-
-            assert d_l < b_l - 0.05, (
-                f"slot {slot}: dark companion {d!r} OKLCH L={d_l:.3f} should sit "
-                f"measurably under base {b!r} OKLCH L={b_l:.3f} — direct labels "
-                "don't ink otherwise"
-            )
-            assert lt_l > b_l + 0.04, (
-                f"slot {slot}: light companion {lt!r} OKLCH L={lt_l:.3f} should be "
-                f"measurably lighter than base {b!r} OKLCH L={b_l:.3f}"
-            )
-            assert lt_l > d_l, (
-                f"slot {slot}: light companion {lt!r} OKLCH L={lt_l:.3f} should be "
-                f"greater than dark companion {d!r} OKLCH L={d_l:.3f}"
-            )
-            assert lt_l <= gh_l - 0.03, (
-                f"slot {slot}: light companion {lt!r} OKLCH L={lt_l:.3f} crosses "
-                f"the ghost tier ({gh!r} OKLCH L={gh_l:.3f}) — light must stay a "
-                "distinct middle tier under ghost"
-            )
-            assert lt_c <= b_c + 0.005, (
-                f"slot {slot}: light companion {lt!r} OKLCH C={lt_c:.3f} should "
-                f"not exceed base {b!r} OKLCH C={b_c:.3f}"
-            )
-            assert d_c <= b_c + 0.02, (
-                f"slot {slot}: dark companion {d!r} OKLCH C={d_c:.3f} may bump "
-                f"chroma only slightly over base {b!r} OKLCH C={b_c:.3f}"
-            )
-            for tier_name, v_h in (("dark", d_h), ("light", lt_h), ("ghost", gh_h)):
-                hue_diff = abs(b_h - v_h)
-                hue_diff = min(hue_diff, 360 - hue_diff)
-                assert hue_diff < 8, (
-                    f"slot {slot}: {tier_name} companion drifted in hue from base "
-                    f"{b!r} (base H={b_h:.1f}°, {tier_name} H={v_h:.1f}°, "
-                    f"Δ={hue_diff:.1f}°) — pairing is hue-carried"
-                )
-
-    def test_resolves_through_categorical_pipeline(self):
-        # Same loader path as vivid-10-dark; no special-case wiring.
-        meta = palette_metadata("vivid-10-light")
-        assert meta["family"] == "categorical"
-
-
-class TestVividTenGhost:
-    """Extreme de-emphasis companion to vivid-10.
-
-    The pale band that ghosts non-focus series while preserving hue identity —
-    a distinct tier above the moderate light companion.
-    """
-
-    LOCKED_STOPS = [
-        "#b9d4f0",
-        "#b2d9e5",
-        "#b6dbc7",
-        "#e2cfad",
-        "#f2c6b6",
-        "#dccae1",
-        "#c8d7b8",
-        "#dccec2",
-        "#ced1d6",
-        "#babec4",
-    ]
-
-    def test_stops_match_locked_set(self):
-        assert palette("vivid-10-ghost") == self.LOCKED_STOPS
-
-    def test_ghost_is_far_lighter_than_base(self):
-        base = palette("vivid-10")
-        ghost = palette("vivid-10-ghost")
-        for slot, (b, gh) in enumerate(zip(base, ghost, strict=True)):
-            b_l, b_c, _ = _checker.hex_to_oklch(b)
-            gh_l, gh_c, _ = _checker.hex_to_oklch(gh)
-            assert gh_l > b_l + 0.09, (
-                f"slot {slot}: ghost companion {gh!r} OKLCH L={gh_l:.3f} should "
-                f"sit far above base {b!r} OKLCH L={b_l:.3f}"
-            )
-            # The ghost tier is a band, not a per-slot lift: every slot sits
-            # at L >= 0.79 so ghosted members read uniformly pale. Charcoal
-            # sat at L 0.74 pre-retune — visibly heavier than its band-mates
-            # (editorial-10-ghost fixed the same defect in #4745).
-            assert gh_l >= 0.79, (
-                f"slot {slot}: ghost companion {gh!r} OKLCH L={gh_l:.3f} sits "
-                "below the ghost band (L >= 0.79)"
-            )
-            assert gh_c <= b_c + 0.005, (
-                f"slot {slot}: ghost companion {gh!r} OKLCH C={gh_c:.3f} should "
-                f"not exceed base {b!r} OKLCH C={b_c:.3f}"
-            )
-
-    def test_resolves_through_categorical_pipeline(self):
-        meta = palette_metadata("vivid-10-ghost")
-        assert meta["family"] == "categorical"
-
-
-class TestVividTenInk:
-    """Ink-grade companion to vivid-10 — the symmetric opposite of the ghost
-    tier. Every slot drops into a tight dark band (OKLCH L 0.30-0.36); slot
-    identity is carried by hue and chroma, not lightness. Consumed by the
-    vivid-family themes via inlined `single_series_palette` hexes."""
-
-    LOCKED_STOPS = [
-        "#003761",
-        "#004554",
-        "#00442b",
-        "#503900",
-        "#621f00",
-        "#4d1c5a",
-        "#2a4000",
-        "#54310b",
-        "#2e3641",
-        "#252e3d",
-    ]
-
-    # Documented ink band (see vivid-10-ink.yml): a tight OKLCH L 0.30-0.36
-    # with charcoal-ink anchoring the floor. The small tolerance absorbs sRGB
-    # round-tripping at the band edges.
-    _BAND_LO = 0.295
-    _BAND_HI = 0.365
-
-    def test_stops_match_locked_set(self):
-        assert palette("vivid-10-ink") == self.LOCKED_STOPS
-
-    def test_length_matches_base(self):
-        assert len(palette("vivid-10")) == len(palette("vivid-10-ink")) == 10
-
-    def test_ink_sits_in_dark_band_and_darker_than_base(self):
-        base = palette("vivid-10")
-        ink = palette("vivid-10-ink")
-        for slot, (b, ik) in enumerate(zip(base, ink, strict=True)):
-            b_l, _, b_h = _checker.hex_to_oklch(b)
-            ik_l, _, ik_h = _checker.hex_to_oklch(ik)
-            assert self._BAND_LO <= ik_l <= self._BAND_HI, (
-                f"slot {slot}: ink companion {ik!r} OKLCH L={ik_l:.3f} is "
-                f"outside the ink band [{self._BAND_LO}, {self._BAND_HI}]"
-            )
-            assert ik_l < b_l, (
-                f"slot {slot}: ink companion {ik!r} OKLCH L={ik_l:.3f} must sit "
-                f"under base {b!r} OKLCH L={b_l:.3f}"
-            )
-            # Near-neutral slots (gray/charcoal) have unstable hue at low
-            # chroma; the chromatic slots hold the base hue within tolerance.
-            _, b_c, _ = _checker.hex_to_oklch(b)
-            if b_c > 0.04:
-                hue_diff = abs(b_h - ik_h)
-                hue_diff = min(hue_diff, 360 - hue_diff)
-                assert hue_diff < 8, (
-                    f"slot {slot}: ink companion drifted in hue from base "
-                    f"(base H={b_h:.1f}°, ink H={ik_h:.1f}°, Δ={hue_diff:.1f}°)"
-                )
-
-    def test_resolves_through_categorical_pipeline(self):
-        meta = palette_metadata("vivid-10-ink")
-        assert meta["family"] == "categorical"
+# The four companion files (vivid-10-dark/-light/-ghost/-ink.yml) that used
+# to be tested here individually (~230 lines, one class per tier) are gone.
+# Every tier now derives live from vivid-10's own stops via variant(); the
+# ordering/contrast/hue invariants those classes each re-asserted per-family
+# are pinned once, generically, for every shipped and user palette in
+# TestVariant below and test_categorical_variant_grammar.py. What vivid-10
+# still owns is proving its own stops feed variant() correctly.
+def test_vivid_10_tiers_equal_variant_of_the_base_stops():
+    base = palette("vivid-10")
+    for word in ("dark", "light", "pale", "deep"):
+        assert palette(f"vivid-10.{word}") == [variant(c, word) for c in base]
 
 
 class TestPaletteTonal:
@@ -686,7 +457,7 @@ class TestResolvePaletteAlias:
 
 
 # ============================================================================
-# list_palettes / palette_metadata
+# list_palettes
 # ============================================================================
 
 
@@ -711,12 +482,6 @@ class TestDiscovery:
         assert "warning" in tone_names
         assert "info" in tone_names
         assert len(tone_names) == 4
-
-    def test_palette_metadata_basic(self):
-        meta = palette_metadata("dbt-seq-blue")
-        assert meta["name"] == "dbt-seq-blue"
-        assert meta["family"] == "sequential"
-        assert "description" in meta
 
 
 # ============================================================================
@@ -1122,8 +887,8 @@ class TestVariant:
         the derived tier and the hand-tuned companion hexes it replaces
         stays under the fitted threshold, so a constant tweak that drifts
         the two families away from their prior hand-tuning is caught.
-        Measured at authoring time: vivid light/dark/deep/pale
-        3.2/1.9/1.2/0.6, editorial light/dark/deep/pale 0.5/2.1/1.1/1.6 --
+        Measured on the current base stops: vivid light/dark/deep/pale
+        3.3/2.2/1.5/0.9, editorial light/dark/deep/pale 0.5/2.1/1.1/1.6 --
         all comfortably under their thresholds (4.0 vivid, 2.5 editorial)."""
         base = palette(base_name)
         deltas = [

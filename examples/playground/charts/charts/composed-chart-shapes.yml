@@ -1,17 +1,8 @@
-# Composed chart shapes — the probe
-# =================================
-# Deliberately NOT in `playground-experimental/charts/matrix/`. The case matrix is
-# defaults-only by its own rubric; every chart here is an intentional multi-field
-# composition, which would contaminate that corpus. It lives beside
-# `chart-families.yml` instead: that board shows the shapes you can name with a
-# `type:`, this one shows the shapes you compose. The recipes here are the ones
-# `_CHART_SHAPE_RECIPES` hands an author who asks for one of these by name.
-#
-# The question each cell answers is not "can this be made to look acceptable" but
-# "does an author following the recipe get the right chart". A cell that draws the
-# wrong shape stays wrong — it is the evidence.
-#
-# One chart per shape, each authored the way we would tell an author to author it.
+# Composed chart shapes
+# =====================
+# Lives beside `chart-families.yml`: that board shows the shapes you can
+# name with a `type:`, this one shows the shapes you compose. One chart
+# per shape, each built using the standard recipe for that shape.
 
 title: Composed chart shapes
 notes: shapes an author asks for by name that dbt Charts has no `type:` for. Each cell is the
@@ -226,8 +217,8 @@ charts:
       color:
         categorical:
           palette:
-          - category_ink[2]
-          - category_ink[2]
+          - category[2].deep
+          - category[2].deep
       marks:
         bar:
           band_width: 0.04
@@ -417,8 +408,8 @@ charts:
       color:
         categorical:
           palette:
-          - category_ghost[1]
-          - category_ink[1]
+          - category[1].pale
+          - category[1].deep
       marks:
         bar:
           band_width: 0.35

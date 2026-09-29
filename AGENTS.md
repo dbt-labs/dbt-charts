@@ -43,6 +43,8 @@ just test-file tests/<path>/test_foo.py::test_name  # one test
 
 `test-file` takes a package-relative path; in the monorepo run both from the repo root.
 
+**Changing a golden under `tests/visual/goldens/` requires `just viz-review` before pushing** — pre-push and the `visual` CI job check each golden's sha256 against an APPROVED viz-review artifact on the branch. Run it from the worktree holding the changed goldens; from any other checkout it silently no-ops. Workflow: `docs/contributing/visual-tests.md`.
+
 Put test output in a temp file so further searches can be done without re-running. Repeatedly running the suite without code changes is inefficient.
 
 ## Type-state gate

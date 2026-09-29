@@ -40,6 +40,11 @@ ToolHandler = Callable[[dict[str, Any], DbtChartsAIContext], dict[str, Any]]
 MODEL_MAX_ROWS_PER_QUERY = 50
 
 
+def resolve_render_format(include_raw_data: bool) -> Literal["text", "text-data"]:
+    """Map the agent-facing ``include_raw_data`` flag to its ``render_board`` wire format."""
+    return "text-data" if include_raw_data else "text"
+
+
 def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
     """Build the BoardFile for this render call and delegate to ProjectSession.
 
@@ -70,7 +75,11 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
         variables=(
             _vars_to_dict(parsed.variables) if parsed.variables is not None else None
         ),
-        format=parsed.format or "text",
+        # A caller that already resolved include_raw_data->format itself
+        # (A lIe, Cloud chat's by-path arm) sends 'format' directly; this
+        # resolves it too, for a caller that only ever sends 'include_raw_data'.
+        format=parsed.format
+        or resolve_render_format(bool(args.get("include_raw_data", False))),
         as_link=parsed.as_link,
         server_port=ctx.server_port,
         max_rows_per_query=MODEL_MAX_ROWS_PER_QUERY,

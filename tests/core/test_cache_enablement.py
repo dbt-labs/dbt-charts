@@ -2,11 +2,14 @@
 
 Covers `resolve_cache_boot`: the flag > env > project-config precedence used
 by serve/render/MCP boots to decide whether/where to open the result cache.
-The CLI's --cache/DCT_CACHE_PATH resolution happens upstream (Typer envvar=)
-and arrives here as the already-resolved `cache_path` argument.
+The CLI's --cache/DCT_CACHE_PATH env backing is Typer's `envvar=` binding, but
+the path itself may still be relative — `resolve_cache_boot` is what makes
+`CacheBoot.path` absolute and symlink-resolved, for every branch.
 """
 
 from pathlib import Path
+
+import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import reset_config, resolve_cache_boot
@@ -42,6 +45,19 @@ class TestResolveCacheBootFlagsOverrideConfig:
         boot = resolve_cache_boot(project, cache_path=explicit)
         assert boot.enabled is True
         assert boot.path == explicit
+
+    def test_relative_cache_path_flag_resolves_against_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`dct serve --cache cache.duckdb` (the CLI help's own example) passes a
+        bare relative Path — this must not reach the watcher unresolved, or the
+        live-reload exclusion's string-prefix match against it never matches."""
+        reset_config()
+        project = _project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        boot = resolve_cache_boot(project, cache_path=Path("cache.duckdb"))
+        assert boot.enabled is True
+        assert boot.path == tmp_path / "cache.duckdb"
 
 
 class TestResolveCacheBootFromProjectConfig:

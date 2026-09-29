@@ -1,13 +1,12 @@
 """Slot-order regression tests for the vivid-10 categorical palette.
 
 vivid-10 is the categorical family for the `stark`, `vivid`, and `neon` themes.
-Its four companions (`-dark`/`-light`/`-ghost`/`-ink`) are locked stop-for-stop
-in `test_palette_resolver.py`, along with every positional pairing contract
-between them — this file does not repeat any of that.
+Its derived tiers (dark/light/pale/deep) are covered in
+`test_palette_resolver.py` — this file does not repeat any of that.
 
-What it adds is the base palette's own contracts, which had no home:
+What it pins is the base palette's own contracts:
 
-  1. Stop identity — the ten base stops, pinned like the companions already are.
+  1. Stop identity — the ten base stops.
   2. Slot *order* — the CVD worst-case curve as the first N stops accumulate.
      Stop identity cannot catch a reorder; the set is unchanged under any
      permutation. This curve is what fails.
@@ -39,17 +38,16 @@ sys.modules["palette_deltae_checker"] = _checker
 _spec.loader.exec_module(_checker)
 
 
-# Locked vivid-10 stops. Edit in lock-step with vivid-10.yml, the four companion
-# LOCKED_STOPS lists in test_palette_resolver.py, and the swatch strip in
-# docs/guides/palettes.md.
+# Locked vivid-10 stops. Edit in lock-step with vivid-10.yml and the swatch
+# strip in docs/guides/palettes.md.
 VIVID_10_STOPS = [
     "#0073c2",  # 1  blue
     "#00c8ee",  # 2  cyan
     "#00ad75",  # 3  green
     "#e1a500",  # 4  gold
     "#da5a23",  # 5  orange
-    "#a46fb2",  # 6  purple
-    "#6a9228",  # 7  moss
+    "#a86c9d",  # 6  purple
+    "#6a8f47",  # 7  moss
     "#7a5531",  # 8  brown
     "#949daa",  # 9  gray
     "#505b6b",  # 10 charcoal
@@ -57,6 +55,10 @@ VIVID_10_STOPS = [
 
 PRIMARY_CVD_MODES = ("deuteranopia", "protanopia", "tritanopia")
 LEONARDO_THRESHOLD = 11.0
+
+# Floor this palette's purple/moss retune exists to protect: worst-case
+# CVD ΔE must not drop below this for any series count past the gate.
+CVD_FLOOR_PAST_GATE = 9.0
 
 # Neon's canvas (dbt-grays.void) — same constant as test_dark_palette_forks.
 _NEON_VOID = "#161616"
@@ -67,22 +69,23 @@ _CLEARS_NEON_THROUGH_SLOT = 7
 # Worst-case CIEDE2000 across the three primary CVD modes as the first N stops
 # accumulate, N=2..10.
 #
-# The N=6 drop to 5.33 is a ceiling, not a regression: blue+purple is the
-# palette's weakest pair under protanopia, and purple cannot sit later than slot
-# 6 without pulling something worse forward, so every ordering of these ten
-# hexes reaches 5.33 by N=6. What the ordering does control is N<=5, where
-# compacting the hues forward to close brown's gap would promote purple to slot
-# 5 and drop 11.97 to 5.33.
+# Only four pairs sit under the Leonardo gate: orange+moss 9.01 and purple+gray
+# 9.18 (deuteranopia), blue+purple 9.02 and green+moss 9.99 (protanopia). The
+# N=10 floor of 9.01 is a property of the ten hexes and holds under any order.
+# What the order controls is how long the curve stays above 11: with brown,
+# charcoal, and gray held past slot 7, slots 1-7 are the seven hues, and purple
+# and moss each have a sub-11 partner among the other five, so placing them at
+# 6 and 7 holds 11.97 through N=5.
 VIVID_10_CVD_PREFIX_CURVE = [
     23.27,  # N=2   blue-cyan (tritanopia)
     11.97,  # N=3   cyan-green (tritanopia)
     11.97,  # N=4
     11.97,  # N=5
-    5.33,  # N=6   blue-purple (protanopia) — the ceiling
-    4.35,  # N=7   orange-moss (deuteranopia)
-    4.35,  # N=8
-    4.35,  # N=9
-    4.35,  # N=10
+    9.02,  # N=6   blue-purple (protanopia)
+    9.01,  # N=7   orange-moss (deuteranopia)
+    9.01,  # N=8
+    9.01,  # N=9
+    9.01,  # N=10
 ]
 
 
@@ -123,6 +126,35 @@ def test_vivid_10_cvd_prefix_curve_matches_locked_values():
         for prefix_size in range(2, 11)
     ]
     assert actual == VIVID_10_CVD_PREFIX_CURVE
+
+
+def test_vivid_10_cvd_floor_holds_past_leonardo_gate():
+    """Inequality gate for N=6..10: worst-case CVD ΔE never drops below the floor.
+
+    The prefix curve test above pins exact values and catches drift; this is
+    the semantic floor those values must satisfy — the region this palette's
+    purple/moss retune exists to protect, and the acceptance bar a reverse of
+    that retune would fail.
+    """
+    for prefix_size in range(6, 11):
+        worst_value, worst_pair, worst_mode = min(
+            (
+                (
+                    _delta_e_under_cvd(VIVID_10_STOPS[i], VIVID_10_STOPS[j], mode),
+                    (i, j),
+                    mode,
+                )
+                for i, j in itertools.combinations(range(prefix_size), 2)
+                for mode in PRIMARY_CVD_MODES
+            ),
+            key=lambda item: item[0],
+        )
+        assert worst_value >= CVD_FLOOR_PAST_GATE, (
+            f"vivid-10 N={prefix_size} worst-case CVD ΔE is {worst_value:.2f}, under "
+            f"the {CVD_FLOOR_PAST_GATE} floor. Binding pair: "
+            f"{VIVID_10_STOPS[worst_pair[0]]}+{VIVID_10_STOPS[worst_pair[1]]} under "
+            f"{worst_mode}."
+        )
 
 
 @pytest.mark.parametrize("vision", PRIMARY_CVD_MODES)

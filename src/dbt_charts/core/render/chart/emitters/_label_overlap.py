@@ -17,7 +17,9 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.font_measure import FontMeasurer, get_font_measurer
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
+    SINGLE_ROW_CADENCE_GRAINS,
     TIME_PART_UNITS,
+    cadence_label_text,
     day_week_context,
     detect_time_unit,
     is_label_opener,
@@ -27,9 +29,29 @@ from dbt_charts.core.render.chart.time_unit_detect import (
 from dbt_charts.core.render.chart.type_inference import (
     DetectedTimeUnit,
     infer_vega_type_from_data,
+    is_utc_safe_ordinal_date,
 )
 from dbt_charts.core.text.case import apply_case
-from dbt_charts.core.text.format_d3 import portable_strftime
+from dbt_charts.core.text.format_d3 import is_time_format, portable_strftime
+
+
+def authored_time_format(axis: ResolvedAxisStyle) -> str | None:
+    """``axis.labels.format`` when it is the text Vega will paint on a
+    temporal axis, else ``None``.
+
+    ``labels.format`` is a shared authoring surface for two grammars: a
+    d3-time-format spec (``'%b %Y'``, what ``style.time_format`` resolves to)
+    and a d3 *number* format. Only the first is a label vocabulary a date can
+    be rendered through, so only the first may reach a measurement —
+    ``is_time_format`` is the same gate ``build_cartesian_x_encoding`` uses to
+    route it, and it filters out a predefined *native* name (Python-painted,
+    never valid on an axis) for free. What the resulting format means for the
+    measurement: ``cadence_label_text``.
+    """
+    fmt = axis.labels.format
+    if fmt is None or not is_time_format(fmt):
+        return None
+    return fmt
 
 
 class AxisLabelLayout(NamedTuple):
@@ -79,12 +101,36 @@ class TiltChoice(NamedTuple):
 AxisDatum = str | int | float | Decimal | datetime.date | datetime.datetime | None
 
 
+# The grains `cadence_label_text` does not cover: `yearmonthdate`'s single-row
+# generic form (the two-row `_day_label` shape is measured separately, at the
+# call sites that actually get it) and the time-part units, whose vocabulary
+# has no cadence ladder to share it with.
+_GENERIC_FORMATTERS: dict[str, Callable[[datetime.datetime], str]] = {
+    "yearmonthdate": lambda value: portable_strftime(value, "%-d %b"),
+    "monthofyear": lambda value: value.strftime("%b"),
+    "dayofweek": lambda value: value.strftime("%a"),
+    "dayofmonth": lambda value: str(value.day),
+    "dayofyear": lambda value: str(value.timetuple().tm_yday),
+    "hourofday": lambda value: str(value.hour),
+}
+
+
 def _generic_temporal_labels(
     values: list[str],
     encoding_time_unit: str,
     format_time_unit: str,
+    authored_format: str | None = None,
 ) -> list[str]:
-    if not format_time_unit:
+    """The text each of ``values`` paints, one entry per band.
+
+    A time-part encoding collapses many source values into one band (every
+    January is the same ``monthofyear`` bucket), so the dedup below is what
+    makes the returned list one-per-band. It keys on the *vocabulary* label
+    rather than the returned text: under an ``authored_format`` every date
+    formats differently, and deduping on that would hand the caller one
+    "band" per source row.
+    """
+    if not format_time_unit and authored_format is None:
         return values
     parsed: list[datetime.datetime] = []
     for value in values:
@@ -98,23 +144,22 @@ def _generic_temporal_labels(
                 else values
             )
 
-    formatters: dict[str, Callable[[datetime.datetime], str]] = {
-        "year": lambda value: str(value.year),
-        "yearquarter": lambda value: f"Q{(value.month - 1) // 3 + 1}",
-        "yearmonth": lambda value: value.strftime("%b"),
-        "yearweek": lambda value: portable_strftime(value, "W%V"),
-        "yearmonthdate": lambda value: portable_strftime(value, "%-d %b"),
-        "monthofyear": lambda value: value.strftime("%b"),
-        "dayofweek": lambda value: value.strftime("%a"),
-        "dayofmonth": lambda value: str(value.day),
-        "dayofyear": lambda value: str(value.timetuple().tm_yday),
-        "hourofday": lambda value: str(value.hour),
-    }
-    formatter = formatters.get(format_time_unit)
-    labels = [formatter(value) for value in parsed] if formatter else values
+    vocabulary: list[str]
+    if format_time_unit in SINGLE_ROW_CADENCE_GRAINS:
+        vocabulary = [cadence_label_text(value, format_time_unit) for value in parsed]
+    elif (formatter := _GENERIC_FORMATTERS.get(format_time_unit)) is not None:
+        vocabulary = [formatter(value) for value in parsed]
+    else:
+        vocabulary = values
     if encoding_time_unit in TIME_PART_UNITS:
-        return list(dict.fromkeys(labels))
-    return labels
+        bands: dict[str, datetime.datetime] = {}
+        for label, moment in zip(vocabulary, parsed, strict=True):
+            bands.setdefault(label, moment)
+        vocabulary = list(bands)
+        parsed = list(bands.values())
+    if authored_format is not None:
+        return [portable_strftime(value, authored_format) for value in parsed]
+    return vocabulary
 
 
 def _generic_layout(
@@ -156,6 +201,36 @@ def _generic_layout(
         flat_height,
         collision_label_count=len(considered_widths),
     )
+
+
+def _ordinal_label_texts(values: list[str], authored_format: str | None) -> list[str]:
+    """What an ordinal axis's bands paint.
+
+    Date-shaped bucket strings ("2022-01") infer as ordinal, not temporal, so
+    they never reach ``_temporal_layout`` — but ``build_cartesian_x_encoding``
+    still routes an authored time format on a non-temporal axis into
+    ``utcFormat(toDate(datum.value), fmt)``, which repaints those bands. This
+    is the same "measure what Vega paints" rule as ``cadence_label_text``,
+    reached by the other door: such an axis paints "Jan 2022" over a datum
+    reading "2022-01".
+
+    Only ``is_utc_safe_ordinal_date`` values are reformatted, matching
+    exactly the bands that expression can parse. A nominal category or a
+    non-ISO bucket label ("Q1 2025") paints "Invalid Date" there — a defect
+    in the emission, not a width this function should invent a number for —
+    so it keeps its own text, and all-nominal values make this a no-op.
+    """
+    if authored_format is None:
+        return values
+    return [
+        portable_strftime(
+            datetime.date.fromisoformat(value if len(value) > 7 else f"{value}-01"),
+            authored_format,
+        )
+        if is_utc_safe_ordinal_date(value)
+        else value
+        for value in values
+    ]
 
 
 def _max_pair(widths: list[float]) -> float:
@@ -307,8 +382,10 @@ def _pinned_angle_block_height(
     ladder, so nothing measures their labels. A consumer sizing the space
     under the axis needs an author-pinned tilt's block just as much as a
     picked one. Measures the same strings the ladder would: the formatted
-    vocabulary on a bucketed temporal axis, the band values themselves
-    otherwise. One band per row is what makes those measurable.
+    vocabulary on a bucketed temporal axis, the authored format's own text
+    on a date-shaped ordinal band (``_ordinal_label_texts``), and the band
+    values themselves otherwise. One band per row is what makes those
+    measurable.
 
     ``resolved_time_unit`` is ``resolve_cartesian_x_type``'s own verdict for
     this axis, threaded in by the caller — see ``_bucketed_grain``.
@@ -327,7 +404,13 @@ def _pinned_angle_block_height(
     values = _axis_label_values(x_field, data, domain_values)
     if not values:
         return font.size
-    if raw_type == "temporal":
+    authored_format = authored_time_format(axis)
+    if raw_type != "temporal":
+        # The ordinal door: date-shaped bucket strings ("2022-01") infer
+        # ordinal, and `build_cartesian_x_encoding` repaints exactly those
+        # bands through the authored format — see `_ordinal_label_texts`.
+        values = _ordinal_label_texts(values, authored_format)
+    else:
         encoding_time_unit = _bucketed_grain(axis, values, resolved_time_unit)
         if encoding_time_unit is not None:
             format_time_unit = resolve_label_time_unit(
@@ -337,6 +420,7 @@ def _pinned_angle_block_height(
                 sorted(values),
                 encoding_time_unit,
                 format_time_unit if format_time_unit is not None else "",
+                authored_format,
             )
         # No bucketed grain (a sub-daily timestamp, spacing no cadence
         # explains, or resolve_cartesian_x_type's own scaffold-budget gate
@@ -344,11 +428,13 @@ def _pinned_angle_block_height(
         # ticks — a clock vocabulary from default_subday_label_expr_for
         # ("12:30am", ":30", "Midnight") whose text depends on tick count,
         # card width and any authored domain, none of which reach this
-        # module. Measuring the datum's own text instead is a deliberate
-        # over-reservation, usually by some way: the strip clears the labels
-        # at the cost of an empty band. An authored labels.format can still
-        # paint text unrelated to what was measured — the same gap the
-        # quantitative branch above names, reached another way.
+        # module. An authored labels.format DOES reach it, and wins outright
+        # (Vega applies it to whatever ticks it generates); with none, the
+        # datum's own text stands in — a deliberate over-reservation, usually
+        # by some way: the strip clears the labels at the cost of an empty
+        # band.
+        elif authored_format is not None:
+            values = _generic_temporal_labels(sorted(values), "", "", authored_format)
     if font.case in ("upper", "lower"):
         # Only these two CaseValues change what Vega actually paints wider —
         # inject_axis_label_case (vl_field_maps.py) can only express upper/
@@ -439,11 +525,18 @@ def _temporal_layout(
     format_time_unit = resolve_label_time_unit(
         encoding_time_unit, axis.labels.time_unit
     )
+    # An authored format overrides every vocabulary below — `cadence_label_text`.
+    authored_format = authored_time_format(axis)
     dates = [datetime.date.fromisoformat(value[:10]) for value in values]
+    # The two sub-month branches below both model the stacked day/week shape
+    # `_day_label` paints. An authored format replaces that shape with one row
+    # of its own text, so neither branch describes the axis any more; fall
+    # through to the single-row ladder instead.
     if (
         encoding_time_unit in {"yearweek", "yearmonthdate"}
         and axis.labels.time_unit in (None, "auto")
         and bucket_aligned_temporal
+        and authored_format is None
     ):
         candidates = (
             ("yearmonthdate", "yearweek")
@@ -499,10 +592,11 @@ def _temporal_layout(
                 tilt.block_height,
                 collision_label_count=None if tilt.fits else len(widths),
             )
-    elif encoding_time_unit in {
-        "yearweek",
-        "yearmonthdate",
-    } and axis.labels.time_unit in (None, "auto"):
+    elif (
+        encoding_time_unit in {"yearweek", "yearmonthdate"}
+        and axis.labels.time_unit in (None, "auto")
+        and authored_format is None
+    ):
         gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(
             " ", font.size
         )
@@ -566,6 +660,7 @@ def _temporal_layout(
             values,
             encoding_time_unit,
             format_time_unit,
+            authored_format,
         )
         widths = [measurer.measure(value, font.size) for value in labels]
         gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(
@@ -586,6 +681,7 @@ def _temporal_layout(
         axis.fiscal_year_start_month,
         allow_skip=overlap.skip,
         edge_labels_flushed=edge_labels_flushed,
+        authored_format=authored_format,
     )
     visible_indices = [
         i
@@ -601,7 +697,10 @@ def _temporal_layout(
     # At year cadence the label vocabulary promotes to the bare year (every
     # visible tick is a January, so "Jan" repeated at every tick carries no
     # information) — see resolve_temporal_label_visibility's docstring. Every
-    # other rung keeps the caller's own vocabulary unchanged.
+    # other rung keeps the caller's own vocabulary unchanged. The promotion is
+    # the smart labelExpr's, so an authored format (which suppresses that
+    # expression) keeps its own text at year cadence too — `cadence_label_text`
+    # short-circuits, and this stays the vocabulary the EMITTER is told about.
     promoted_format_time_unit = "year" if visibility == "year" else format_time_unit
     if fits:
         return AxisLabelLayout(
@@ -624,7 +723,7 @@ def _temporal_layout(
         directive = "parity"
         visible_dates = visible_dates[::2]
         narrowed_further = True
-    if promoted_format_time_unit == "yearmonthdate":
+    if promoted_format_time_unit == "yearmonthdate" and authored_format is None:
         # _day_label renders two rows ("%-d" over a possibly-blank month/year
         # row) — measure that shape, not a single-row string nothing draws.
         widths = [
@@ -643,14 +742,11 @@ def _temporal_layout(
             for position, date in enumerate(visible_dates)
         ]
     else:
-        label_texts: dict[str, Callable[[datetime.date], str]] = {
-            "year": lambda date: str(date.year),
-            "yearquarter": lambda date: f"Q{(date.month - 1) // 3 + 1}",
-            "yearmonth": lambda date: date.strftime("%b"),
-            "yearweek": lambda date: portable_strftime(date, "W%V"),
-        }
         widths = [
-            measurer.measure(label_texts[promoted_format_time_unit](date), font.size)
+            measurer.measure(
+                cadence_label_text(date, promoted_format_time_unit, authored_format),
+                font.size,
+            )
             for date in visible_dates
         ]
     if overlap.tilt:
@@ -680,6 +776,38 @@ def _temporal_layout(
         font.size,
         collision_label_count=None if fits else len(widths),
     )
+
+
+def _defer_thinning_when_uncertain(
+    layout: AxisLabelLayout, overlap: ResolvedAxisLabelOverlapConfig
+) -> AxisLabelLayout:
+    """Stop forbidding Vega to thin a TEMPORAL axis this module couldn't fit.
+
+    ``"allow"`` becomes VL ``labelOverlap: false`` — an instruction NOT to
+    remove overlapping labels, which is only earned by a prediction that
+    holds. ``collision_label_count`` is set exactly where one didn't: every
+    enabled strategy was tried and the labels still collide. Dropping the
+    directive to ``None`` (VL's own per-scale adaptive default) spends the
+    one fallback left — Vega measures the real painted text after layout,
+    which is precisely the check a width prediction can get wrong — so a
+    mispredicted width degrades to dropped labels rather than a pile-up. The
+    warning still fires either way; this only decides what the reader sees.
+
+    Omitting the key means "whatever Vega defaults to for this scale", which
+    is adaptive removal only on a continuous time scale — on the band scale a
+    bucketed bar or heatmap x resolves to, Vega already defaults to not
+    thinning, so this changes nothing there.
+
+    Temporal only — the discrete branch deliberately does not call this; see
+    the comment at its own fallthrough for why. Two temporal layouts keep the
+    assertion too: ``skip: false`` is the author forbidding dropped labels
+    outright, and ``"parity"`` is already a thinning directive of its own.
+    """
+    if layout.collision_label_count is None or layout.label_overlap != "allow":
+        return layout
+    if not overlap.skip:
+        return layout
+    return layout._replace(label_overlap=None)
 
 
 def resolve_axis_x_overlap(
@@ -750,23 +878,32 @@ def resolve_axis_x_overlap(
     if not values:
         return AxisLabelLayout("allow", 0.0, None, 0, "", flat_height)
     if raw_type == "temporal":
-        return _temporal_layout(
-            axis,
+        return _defer_thinning_when_uncertain(
+            _temporal_layout(
+                axis,
+                overlap,
+                sorted(values),
+                label_usable_ratio,
+                chart_width,
+                bucket_aligned_temporal,
+                edge_labels_flushed,
+            ),
             overlap,
-            sorted(values),
-            label_usable_ratio,
-            chart_width,
-            bucket_aligned_temporal,
-            edge_labels_flushed,
         )
 
     font = axis.labels.font
     measurer = get_font_measurer(font.family)
-    widths = [measurer.measure(value, font.size) for value in values]
+    labels = _ordinal_label_texts(values, authored_time_format(axis))
+    widths = [measurer.measure(value, font.size) for value in labels]
     gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(" ", font.size)
     widths = [width + gap for width in widths]
     usable_width = chart_width * label_usable_ratio
     flat_fits = _fits_flat(widths, usable_width)
+    # No _defer_thinning_when_uncertain here. A dropped date label is
+    # recoverable — a temporal axis is a ruler, and the reader reads the
+    # missing tick off its neighbors. A dropped CATEGORY is not: nothing on a
+    # discrete axis says what the unlabeled band was. So this branch keeps
+    # forbidding Vega to thin even when its own labels collide.
     if overlap.tilt and not flat_fits:
         tilt = _pick_tilt_for_widths(axis.labels, widths, usable_width)
         return AxisLabelLayout(

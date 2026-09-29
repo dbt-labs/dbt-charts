@@ -49,7 +49,7 @@ Fired when the board YAML contains a field name that the schema does not recogni
 
 Fired when the configured default theme name is not a recognized built-in theme. Check the available theme names and correct the configuration.
 
-### ERR-META-SCHEMA: meta.yml contains an unknown or invalid field
+### ERR-META-SCHEMA: Board fragment contains an unknown or invalid field
 
 - **Level:** error
 - **Domain:** compile
@@ -58,10 +58,38 @@ Fired when the configured default theme name is not a recognized built-in theme.
 **Message template:**
 
 ```
-meta.yml schema error: {message}. Check that all keys are valid board fields.
+Board fragment schema error: {message}. Check that all keys are valid board fields.
 ```
 
-Fired when a meta.yml file contains a field that is not recognized by the board schema, or a field with an invalid value. Check that all keys match the supported board fields and remove any extras.
+Fired when a meta.yml file or a private (`_`-prefixed) partial contains a field that is not recognized by the board schema, or a field with an invalid value. Check that all keys match the supported board fields and remove any extras. The offending file is named separately, in the diagnostic's `file` location.
+
+### ERR-NOTHING-TO-RENDER: None of the paths given is a board
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Nothing to render: none of the paths given is a board.
+```
+
+Fired when `dct render` has no board left to render after skipping the paths that are not boards. Each skipped path gets its own warning saying why. Pass at least one board file.
+
+### ERR-PROJECT-CONFIG-SCHEMA: dbt_charts.yml contains an unknown or invalid field
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Project config schema error: {message}. Check that all keys are valid project config fields.
+```
+
+Fired when dbt_charts.yml (the project config file) contains a top-level field that is not recognized (e.g. `style:`, which belongs in charts/meta.yml instead), or a field with an invalid value. Check the project config reference for the supported keys.
 
 ### ERR-UNKNOWN-THEME: Theme name is not a built-in theme
 
@@ -234,7 +262,7 @@ Chart {chart_id!r} (bar): y column {y_field!r} is not numeric. Bar charts always
 
 Fired when a bar chart's `y:` column contains non-numeric data. Bar charts always use y as the measure axis regardless of orientation; use a numeric column for y.
 
-### ERR-BAR-Y-START-KIND: Bar chart y and y_start are different kinds
+### ERR-BAR-Y-START-KIND: Bar y and y_start are different kinds
 
 - **Level:** error
 - **Domain:** compile
@@ -243,12 +271,12 @@ Fired when a bar chart's `y:` column contains non-numeric data. Bar charts alway
 **Message template:**
 
 ```
-Chart {chart_id!r} (bar): column {y_field!r} is {y_kind} but column {y_start_field!r} is {y_start_kind}. A bar's start and end, and every bar on the chart, sit on one value axis: make them all numeric, or all dates.
+Chart {chart_id!r}: column {y_field!r} is {y_kind} but column {y_start_field!r} is {y_start_kind}. A bar's start and end sit on one value axis: make them all numeric, or all dates.
 ```
 
 Fired when a bar's `y:` and `y_start:` columns (or a bar layer's, against the chart's own) are not the same kind. Both must be numeric, or both dates.
 
-### ERR-BAR-Y-START-NULL: Bar chart y_start column has an empty cell
+### ERR-BAR-Y-START-NULL: Bar y_start column has an empty cell
 
 - **Level:** error
 - **Domain:** compile
@@ -257,10 +285,10 @@ Fired when a bar's `y:` and `y_start:` columns (or a bar layer's, against the ch
 **Message template:**
 
 ```
-Chart {chart_id!r} (bar): y_start column {y_start_field!r} is empty in row {row}. Every row needs a start; write 0 for a bar that starts at zero.
+Chart {chart_id!r}: bar y_start column {y_start_field!r} is empty in row {row}. Every row needs a start; write 0 for a bar that starts at zero.
 ```
 
-Fired when a bar chart's `y_start:` column holds a NULL. A missing start is never read as zero: have the query write an explicit 0 for a bar that starts at zero.
+Fired when a bar's or bar layer's `y_start:` column holds a NULL. A missing start is never read as zero: have the query write an explicit 0 for a bar that starts at zero.
 
 ### ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED: An authored category_colors field has more values than the palette has swatches
 
@@ -374,7 +402,7 @@ Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked ba
 
 Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values while its endpoint-label rail is visible. The rail places its labels from the order the sorted axis draws (a vertical rail anchors each series at its own last drawn column, a horizontal one anchors every series on the top row), so it has to know that order before the chart renders. dbt Charts confirms it only for a numeric sort column, and labels placed from the wrong order name series in the wrong place, which is worse than a legend. Sort by a measure, or turn the rail off with `style.endpoint_labels.visible: false`.
 
-### ERR-FORMAT-INVALID: Format spec is not a predefined name, a style.formats alias, or a valid d3-format spec
+### ERR-FORMAT-INVALID: Format spec is not a predefined name, a style.formats alias, or a valid d3-format/d3-time-format spec
 
 - **Level:** error
 - **Domain:** compile
@@ -383,10 +411,10 @@ Fired when a stacked bar chart authors `sort:` by a column that carries no numer
 **Message template:**
 
 ```
-Unknown number format {spec!r} at {field_path}. It is not an engine-predefined format name, not a key in `style.formats`, and is not a valid d3-format spec ({reason} at position {position}).
+Unknown {kind_noun} format {spec!r} at {field_path}: {explanation}
 ```
 
-Fired when an authored `format:` string is not one of the engine's predefined format names (e.g. `currency`, `number`, `percent_number`), not a key defined in `style.formats`, and fails to parse as a d3-format spec. Check for typos against the predefined names or your `style.formats` keys, or use a valid d3-format spec (https://d3js.org/d3-format).
+Fired when an authored `format:` string is not one of the engine's predefined format names (e.g. `currency`, `number`, `percent_number`), not a key defined in `style.formats`, and fails to parse as a d3-format spec. Check for typos against the predefined names or your `style.formats` keys, or use a valid d3-format spec (https://d3js.org/d3-format). In a slot that accepts a raw strftime spec (`%b %Y`), the same code also fires for a directive the engine does not implement (`%K`); the message names the accepted directives.
 
 ### ERR-FORMAT-KIND-MISMATCH: Predefined format name is the wrong kind for this slot
 
@@ -1004,6 +1032,20 @@ Chart {chart_id!r} (scatter): y: [...] column {y_field!r} is not numeric. A sing
 
 Fired when a scatter chart's y: [a, b] list contains a non-numeric column. A single y: column may be categorical (a dot plot), but a list y: folds every measure onto one shared numeric axis, so each measure must be numeric.
 
+### ERR-SORT-FIELD-NOT-FOUND: sort.by column not found in the query result
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+sort.by column {field!r} not found in the query result. Available columns: {available}.
+```
+
+Fired when `sort.by` names a column that is not present on every row of the chart's query result. Without it the chart would render in natural order while claiming to be sorted. Check for a typo, or add the column to the query.
+
 ### ERR-SPAN-MIDDLE-ALIGNED-LABELS: labels.position: middle_aligned is not meaningful on a bar with y_start
 
 - **Level:** error
@@ -1245,6 +1287,20 @@ No emitter registered for resolved chart type {resolved_type!r}. This indicates 
 
 Fired when the render engine cannot find an emitter for the resolved chart type. This indicates an engine bug; the normalizer should have rejected this chart before it reached render.
 
+### ERR-EMPTY-YAML-DOCUMENT: YAML document is empty
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Empty YAML document: {path}.
+```
+
+Fired when a board file's content is empty, contains only comments, or parses to a null/blank YAML document. A genuinely empty board file needs at least a minimal board mapping, or should be removed. A `dct init` scaffold's `meta.yml`/`meta.yaml` given directly to a verb that expects a board is a different case: don't add a mapping or delete it. The defaults file is meant to stay empty or comment-only. Pass a real board file to the verb instead.
+
 ### ERR-FILE-NOT-FOUND: File not found
 
 - **Level:** error
@@ -1363,6 +1419,34 @@ Fired when a board defines charts but no layout block (rows/cols/grid/tabs). Wit
 ## queries
 
 
+### ERR-ADAPTER-DUCKDB-CONFIG-APPLY-FAILED: DuckDB source config could not be applied to the connection
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+DuckDB source config's {field!r} could not be applied: {reason}.
+```
+
+Fired when the physical DuckDB connection opened successfully but a post-connect step for the source's `extensions`, `settings`, `secrets`, or `attach` config failed: a missing extension, an unrecognized setting, a malformed secret, or an attach target that cannot be opened. Unlike ERR-WAREHOUSE-CONNECTION, the connection is live and SQL has already been sent. `{field}` names which config section raised it, and `{reason}` is DuckDB's own error text unchanged (not a classified summary), so an actionable hint like "Did you mean: "threads"" reaches the author.
+
+### ERR-ADAPTER-DUCKDB-CONFIG-INVALID: DuckDB source config could not be turned into SQL
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+DuckDB source config's {field!r} is invalid: {reason}. Fix this in the source config before it can connect.
+```
+
+Fired before any SQL is sent, while turning a DuckDB source's `extensions`/`settings`/`secrets`/`attach` config into the SQL statements that apply it: a bad identifier (a key or name that is not a bare `[A-Za-z_][A-Za-z0-9_]*` token, so it cannot be safely spliced into SET/ATTACH/CREATE SECRET), a secret missing its required `type`, or an `attach` entry that sets the same option through both a direct field (`type`/`secret`/`read_only`) and `options`. `{field}` names the config key that failed; fix it in the source config.
+
 ### ERR-ADAPTER-RELATIVE-PATH-NO-DATA-DIR: Relative source path needs a data directory to resolve against
 
 - **Level:** error
@@ -1376,6 +1460,20 @@ Relative {adapter} path {path!r} requires a data_dir to resolve against; none wa
 ```
 
 Fired when a file-backed source (DuckDB, SQLite) declares a relative `path:` but the adapter has no data directory to resolve it against. Resolving against the process working directory would make the source depend on where `dct` was invoked from, so dbt charts refuses. Use an absolute path or configure a data directory for the project.
+
+### ERR-ADAPTER-UNSUPPORTED-DUCKDB-FIELD: DuckDB source field is not supported by the in-process adapter
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+DuckDB source config sets {field!r}. The in-process DuckDB adapter does not support this field; remove it from the source config.
+```
+
+Fired when a DuckDB source authors `plugins`, `filesystems`, `remote`, or `use_credential_provider` and it is executed by the in-process DuckDBAdapter, including a `dbt_profile` source that expanded to a duckdb target carrying one of these fields, since dbt_profile does not change which adapter runs the query. These fields need dbt-duckdb's own connection lifecycle (plugin hooks, fsspec registration, remote transport) that the in-process adapter does not implement; silently ignoring them would connect with different semantics than authored. There is no supported way to run this field through dbt charts today. Remove it from the source config or `profiles.yml` target.
 
 ### ERR-BINDER-TYPE-MISMATCH: Warehouse rejected the query due to a type mismatch
 
@@ -1476,6 +1574,20 @@ Query {query_name!r} references column {column_name!r} of dbt model {model!r}, b
 ```
 
 Fired when a board query references a column of a dbt model whose output columns, derived statically from the model's SQL in `target/manifest.json`, do not include it. This catches a column renamed or dropped in the model *before* `dbt run` rebuilds the warehouse, when `--warehouse` validation still passes against the old table. If the model was just changed on purpose, update the board; if the manifest is stale, re-run `dbt parse`.
+
+### ERR-DBT-PROJECT-NO-LOCAL-WAREHOUSE: dbt project has no local DuckDB warehouse to query
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+The query's source did not resolve to a configured source, and the dbt project at {dbt_project_path!r} has no local DuckDB file under data/ (looked for {candidates}). Configure the source in dbt_charts.yml `sources:` or create the local warehouse file.
+```
+
+Fired when a SQL query names a source in a dbt project with no `sources:` configured, so it falls through to the project's local DuckDB warehouse, but no such file exists under `data/`. Running against an empty in-memory database would return a result that looks right but is not, so dbt charts refuses. For warehouse-free SQL, declare a `type: duckdb` source with `path: ':memory:'`.
 
 ### ERR-DBT-REF-UNKNOWN-NODE: ref() names a node that isn't in the dbt manifest
 

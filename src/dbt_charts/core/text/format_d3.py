@@ -63,6 +63,48 @@ def is_time_format(fmt: str) -> bool:
     return bool(_TIME_FORMAT_RE.search(fmt.replace("%%", "")))
 
 
+# Every strftime directive letter portable_strftime actually paints (native
+# strftime letters, plus the nine CRT-unsupported ones _DIRECTIVE_COMPUTERS
+# substitutes in Python first). Padding modifiers (-, _, 0) between % and the
+# letter are accepted but don't change which letters are valid. `E`/`O` are
+# POSIX locale modifiers, not directives in their own right, and `q` has no
+# computer below -- none of the three belong here.
+PYTHON_STRFTIME_DIRECTIVES: frozenset[str] = frozenset(
+    "aAbBcCdDefFgGhHIjklmMnpPrRsSTuUVwWxXyYzZ"
+)
+
+# Directive letters d3-time-format implements. Vega paints a time_format,
+# axis-label, or tooltip spec by sending it straight to d3-time-format, never
+# through portable_strftime, so a directive here compiles even where Python's
+# set above doesn't cover it (%L, %q, %Q).
+D3_TIME_FORMAT_DIRECTIVES: frozenset[str] = frozenset("aAbBcdefgGHIjLmMpqQsSuUVwWxXyYZ")
+
+# Matches a % directive sequence: optional padding modifier + letter.
+_DIRECTIVE_LETTER_RE = re.compile(r"%[-_0]?(.)")
+
+
+def find_unsupported_directive(
+    fmt: str, valid_directives: frozenset[str]
+) -> str | None:
+    """Return the first %-directive letter in fmt not in valid_directives,
+    or None when every directive is covered.
+
+    Python's strftime silently passes an unknown directive through
+    (``%Q`` -> the literal text ``Q``) rather than raising, so a spec with an
+    unimplemented directive must be rejected explicitly. ``%%`` is a
+    literal-percent escape and never counts as a directive. Callers pass the
+    directive set for the engine that will actually paint the spec: compile
+    time checks against the union of what Vega (d3-time-format) and Python
+    (portable_strftime) can paint; the render-time backstop in
+    table_support.py checks only Python's set, since that is what it paints.
+    """
+    for match in _DIRECTIVE_LETTER_RE.finditer(fmt.replace("%%", "")):
+        letter = match.group(1)
+        if letter not in valid_directives:
+            return letter
+    return None
+
+
 # Single-field numeric directives where the -/_/0 padding modifier is actually
 # defined. Composite (%T, %X, %D, %r, ...) and text (%Z, %n, ...) directives
 # render more than one padded value or none at all, so stripping padding from

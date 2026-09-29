@@ -168,6 +168,18 @@ class TestYStartRejectedOnNonBarLayer:
         with pytest.raises(ValidationError, match="y_start"):
             _patch(layers=[{"type": "scatter", "y": "value", "y_start": "low"}])
 
+    @pytest.mark.parametrize("family", ["line", "area", "scatter"])
+    def test_y_start_on_bar_layer_of_non_bar_chart_is_accepted(self, family):
+        _chart_adapter.validate_python(
+            {
+                "type": family,
+                "x": "date",
+                "y": "value",
+                "query": "q",
+                "layers": [{"type": "bar", "y": "close", "y_start": "open"}],
+            }
+        )
+
     def test_y_start_on_bar_layer_is_accepted(self):
         _patch(
             layers=[{"type": "bar", "y": "close", "y_start": "open"}]
@@ -202,19 +214,3 @@ class TestYStartBlankRejected:
     def test_y_start_blank_string_on_bar_layer_raises(self):
         with pytest.raises(ValidationError, match="names no column"):
             _patch(layers=[{"type": "bar", "y": "close", "y_start": "  "}])
-
-
-def test_a_bar_layer_start_is_refused_on_a_non_bar_chart():
-    from pydantic import TypeAdapter, ValidationError
-
-    from dbt_charts.core.compile.models.chart.authored import AuthoredChart
-
-    with pytest.raises(ValidationError, match="y_start"):
-        TypeAdapter(AuthoredChart).validate_python(
-            {
-                "type": "line",
-                "x": "d",
-                "y": "v",
-                "layers": [{"type": "bar", "y": "hi", "y_start": "lo"}],
-            }
-        )

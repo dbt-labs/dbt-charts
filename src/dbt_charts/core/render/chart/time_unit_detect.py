@@ -29,7 +29,7 @@ import json
 import math
 import re
 import statistics
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -245,6 +245,59 @@ def _fiscal_month_is_year_start(d: dt.date, fiscal_year_start_month: int) -> boo
     return (d.month - fiscal_year_start_month) % 12 == 0
 
 
+# The bucketed grains whose label is one row of text. `yearmonthdate` is the
+# exception: `_day_label` stacks the day number over a month/year context row,
+# so it has no single string to return and is measured as the two rows it is.
+SINGLE_ROW_CADENCE_GRAINS: frozenset[str] = BUCKETED_CALENDAR_UNITS - {"yearmonthdate"}
+
+
+def cadence_label_text(
+    d: dt.date,
+    format_tu: str,
+    authored_format: str | None = None,
+) -> str:
+    """The text one tick paints at ``format_tu``, in the vocabulary Vega uses.
+
+    ``axis.labels.format`` (from ``style.time_format``) replaces the per-grain
+    TEXT wherever it is authored, on both sides of the engine: here for the
+    measurement, and in ``default_label_expr_for``'s own ``authored_format``
+    for what Vega paints. One row of the author's spec per speaking tick —
+    so the stacked second rows the per-grain vocabulary implies (the
+    year-context row in ``_pair_clears``, the two-row day label) paint
+    nothing under it, which is what lets the measurement drop them.
+
+    It replaces only the text. Which ticks speak is a separate decision the
+    format never touches — see ``default_label_expr_for``'s gate.
+
+    It covers ``SINGLE_ROW_CADENCE_GRAINS`` only, and is NOT the only place
+    label text is decided: ``yearmonthdate``'s two-row shape
+    (``_cadence_token_width`` below, and ``_temporal_layout``'s widths loop),
+    the time-part vocabulary (``_GENERIC_FORMATTERS``), and the ordinal
+    bucket-string path (``_ordinal_label_texts``) — all in
+    ``emitters/_label_overlap.py`` — are separate, deliberately un-unified
+    paths that a label-text fix has to visit too.
+
+    Callers pass the *resolved* format: a predefined alias is already
+    expanded to a raw d3-time-format spec by ``resolve_format`` at compile
+    time, and a d3 *number* format (which ``portable_strftime`` cannot
+    render) is filtered out by the ``is_time_format`` gate at the entry
+    point (``authored_time_format``).
+    """
+    if authored_format is not None:
+        return portable_strftime(d, authored_format)
+    if format_tu == "year":
+        return str(d.year)
+    if format_tu == "yearquarter":
+        return f"Q{(d.month - 1) // 3 + 1}"
+    if format_tu == "yearmonth":
+        return d.strftime("%b")
+    if format_tu == "yearweek":
+        return portable_strftime(d, "W%V")
+    raise ValueError(
+        f"cadence_label_text: {format_tu!r} is not in SINGLE_ROW_CADENCE_GRAINS"
+    )
+
+
 def _cadence_token_width(
     d: dt.date,
     format_tu: str,
@@ -252,6 +305,7 @@ def _cadence_token_width(
     size: float,
     position: int,
     fiscal_year_start_month: int,
+    authored_format: str | None = None,
 ) -> float:
     """Rendered width of one label's own row (row 1) in its stable format vocabulary.
 
@@ -261,39 +315,41 @@ def _cadence_token_width(
     return via ``max()``. Row 1 can only ever collide with a neighbor's row
     1; the year row only with a neighbor's year row. See ``_pair_clears``,
     which checks the two rows as two independent clearances.
+
+    An authored format collapses every grain to one row of its own text,
+    ``yearmonthdate`` included (see ``cadence_label_text``).
     """
-    if format_tu == "year":
-        return measurer.measure(str(d.year), size)
-    if format_tu == "yearquarter":
-        return measurer.measure(f"Q{(d.month - 1) // 3 + 1}", size)
-    if format_tu == "yearmonth":
-        return measurer.measure(d.strftime("%b"), size)
-    if format_tu == "yearweek":
-        return measurer.measure(portable_strftime(d, "W%V"), size)
-    if format_tu == "yearmonthdate":
-        # _day_label renders two rows ("%-d" over a possibly-blank
-        # month/year row) — measure that shape, not a single-row string
-        # nothing draws. Deliberately still `max()`'d, unlike yearmonth/
-        # yearquarter above: those two have a simple two-way row-2 shape
-        # (blank, or the bare year, gated by one boolean —
-        # `_fiscal_month_is_year_start`), which `_pair_clears` now checks as
-        # its own independent clearance. The day path's row 2
-        # (`day_week_context`) is a three-way shape — blank, bare month, or
-        # month+year — gated by an `opens_month` condition `_pair_clears`
-        # has no equivalent for today. Folding it via `max()` over-reserves
-        # here the same way it did for month/quarter before that fix, but
-        # under-reserving it without also teaching `_pair_clears` the
-        # three-way shape would UNDER-detect a real day-axis collision.
-        # Splitting it out is a real fix, not a docstring note — filed as a
-        # follow-on, not done here to keep this diff to the reported bug.
-        return max(
-            measurer.measure(str(d.day), size),
-            measurer.measure(
-                day_week_context(d, format_tu, position, fiscal_year_start_month), size
-            ),
+    if format_tu not in BUCKETED_CALENDAR_UNITS:
+        # No row shape to measure. Checked BEFORE the authored-format branch,
+        # not inside it: whether a grain is measurable is a property of the
+        # grain, and gating the raise on an unrelated field would give the
+        # same input two opposite verdicts. Reachable — support_table_
+        # attachment's ladder call derives format_tu from an authorable
+        # labels.time_unit with no BUCKETED_CALENDAR_UNITS precondition, so a
+        # time-part unit ("monthofyear", "hourofday") arrives here, and
+        # falling through to the day shape would silently measure str(d.day).
+        raise ValueError(
+            f"_cadence_token_width: {format_tu!r} is not a bucketed calendar grain"
         )
-    raise ValueError(
-        f"_cadence_token_width: {format_tu!r} is not a bucketed calendar grain"
+    if authored_format is not None or format_tu in SINGLE_ROW_CADENCE_GRAINS:
+        return measurer.measure(cadence_label_text(d, format_tu, authored_format), size)
+    # _day_label renders two rows ("%-d" over a possibly-blank
+    # month/year row) — measure that shape, not a single-row string
+    # nothing draws. Deliberately still `max()`'d, unlike the single-row
+    # grains: those have a simple two-way row-2 shape (blank, or the bare
+    # year, gated by one boolean — `_fiscal_month_is_year_start`), which
+    # `_pair_clears` checks as its own independent clearance. The day
+    # path's row 2 (`day_week_context`) is a three-way shape — blank, bare
+    # month, or month+year — gated by an `opens_month` condition
+    # `_pair_clears` has no equivalent for today. Folding it via `max()`
+    # over-reserves here the same way it did for month/quarter before that
+    # fix, but under-reserving it without also teaching `_pair_clears` the
+    # three-way shape would UNDER-detect a real day-axis collision.
+    return max(
+        measurer.measure(str(d.day), size),
+        measurer.measure(
+            day_week_context(d, format_tu, position, fiscal_year_start_month), size
+        ),
     )
 
 
@@ -318,6 +374,7 @@ def _pair_clears(
     edge_labels_flushed: bool,
     is_anchor: bool,
     fiscal_year_start_month: int,
+    authored_format: str | None,
 ) -> bool:
     """True when labeled buckets *i* and *j* (i < j) do not overlap.
 
@@ -385,7 +442,11 @@ def _pair_clears(
         and j == len(dates) - 1
         and _is_calendar_tick(dates[j], encoding_tu, format_tu, fiscal_year_start_month)
     )
-    stacks_year_row = format_tu in {"yearmonth", "yearquarter"}
+    # No stacked year row under an authored format — see `cadence_label_text`.
+    stacks_year_row = authored_format is None and format_tu in {
+        "yearmonth",
+        "yearquarter",
+    }
     i_carries_year_row = stacks_year_row and (
         is_anchor or _fiscal_month_is_year_start(dates[i], fiscal_year_start_month)
     )
@@ -394,10 +455,10 @@ def _pair_clears(
     )
 
     wi = _cadence_token_width(
-        dates[i], format_tu, measurer, size, i, fiscal_year_start_month
+        dates[i], format_tu, measurer, size, i, fiscal_year_start_month, authored_format
     )
     wj = _cadence_token_width(
-        dates[j], format_tu, measurer, size, j, fiscal_year_start_month
+        dates[j], format_tu, measurer, size, j, fiscal_year_start_month, authored_format
     )
     left_extent = wi if left_flush else wi / 2
     right_extent = wj if right_flush else wj / 2
@@ -448,10 +509,13 @@ def temporal_visibility_fits(
     *,
     edge_labels_flushed: bool,
     fiscal_year_start_month: int,
+    authored_format: str | None = None,
 ) -> bool:
     """True when every consecutive pair of labeled buckets clears the gap.
 
     ``labeled`` is the opener set at this visibility grain.
+    ``authored_format`` is ``axis.labels.format`` when it is a d3-time-format
+    — the text Vega really paints (see ``cadence_label_text``).
     """
     if len(labeled) < 2:
         return True
@@ -469,6 +533,7 @@ def temporal_visibility_fits(
             edge_labels_flushed,
             k == 0,
             fiscal_year_start_month,
+            authored_format,
         ):
             return False
     return True
@@ -485,6 +550,7 @@ def resolve_temporal_label_visibility(
     allow_skip: bool = True,
     *,
     edge_labels_flushed: bool,
+    authored_format: str | None = None,
 ) -> tuple[str, bool]:
     """Coarsen the label cadence until it fits, without overshooting into sparseness.
 
@@ -512,6 +578,8 @@ def resolve_temporal_label_visibility(
     decision, not a re-graining of the axis (the ticks/values a bar or
     histogram axis draws are unaffected — see
     ``type_inference.build_cartesian_x_encoding``'s ``label_tick_cadence``).
+    An ``authored_format`` overrides that promotion like every other
+    vocabulary decision — see ``cadence_label_text``.
     """
     ceiling = get_chart_rendering().axis.sparse_ceiling_px
     unit = format_time_unit
@@ -533,6 +601,7 @@ def resolve_temporal_label_visibility(
             band,
             edge_labels_flushed=edge_labels_flushed,
             fiscal_year_start_month=fiscal_year_start_month,
+            authored_format=authored_format,
         ):
             spacing = (
                 band * (labeled[-1] - labeled[0]) / (len(labeled) - 1)
@@ -1603,6 +1672,46 @@ def _year_context_row(main_label: str, year_context: str, inline: bool) -> str:
     return f"[{main_label}, {year_context}]"
 
 
+def vega_quoted_format(fmt: str) -> str:
+    """A d3-time-format spec as a single-quoted Vega expression literal.
+
+    Escapes backslash and apostrophe, so a format that legitimately carries
+    one (``%b '%y`` — the shape this module's own ``day_week_context`` uses)
+    survives into the expression instead of closing the string early.
+    """
+    escaped = fmt.replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
+
+
+# (value_expr, format_fn, month_fn, date_fn, fiscal_year_start_month, anchor_expr,
+# steep_tilt) -> a Vega expression for one tick's text.
+_LabelProducer = Callable[[str, str, str, str, int, str, bool], str]
+
+
+def _authored_format_label(authored_format: str) -> _LabelProducer:
+    """A label producer painting the author's own format, one row.
+
+    Slots into ``default_label_expr_for``'s per-grain table, so the gate and
+    anchor wrap it exactly as they wrap the built-in vocabularies. Ignores
+    ``steep_tilt`` and the fiscal-year month because there is no second row
+    to flow inline or to stamp a year onto — the author's format says
+    everything this tick says.
+    """
+
+    def label(
+        v: str,
+        fmt: str,
+        _month: str,
+        _date: str,
+        _fiscal_year_start_month: int,
+        _anchor: str,
+        _inline: bool,
+    ) -> str:
+        return f"{fmt}({v}, {vega_quoted_format(authored_format)})"
+
+    return label
+
+
 def _year_label(
     v: str,
     fmt: str,
@@ -1778,6 +1887,7 @@ def default_label_expr_for(
     ticks_are_buckets: bool = True,
     anchor_grain: str | None = None,
     steep_tilt: bool = False,
+    authored_format: str | None = None,
 ) -> str | None:
     """Return a smart Vega labelExpr with independent format and visibility.
 
@@ -1835,6 +1945,17 @@ def default_label_expr_for(
     stacking it as a second row — at a full-vertical label angle, Vega's
     row-stacking axis rotates onto the horizontal and the context row spills
     into the neighboring tick.
+
+    ``authored_format`` (``axis.labels.format``, from ``style.time_format``)
+    replaces the per-grain TEXT with the author's own — one row, no stacked
+    year context — and changes nothing else. The gate still decides which
+    ticks speak. That split is the whole point: text and cadence are
+    separate decisions, and an author choosing the first must not silently
+    forfeit the second. Emitting the format as VL's own ``axis.format``
+    instead would apply it to every tick, which is only harmless where the
+    tick set already equals the visible set — not true on a mark type that
+    keeps one tick per bucket for the positional cue. The measurement side's
+    twin of this parameter is ``cadence_label_text``'s.
     """
     if not encoding_time_unit or not format_time_unit:
         return None
@@ -1849,7 +1970,11 @@ def default_label_expr_for(
     }
     if format_time_unit not in label_exprs:
         return None
-    label_fn = label_exprs[format_time_unit]
+    label_fn: _LabelProducer = (
+        _authored_format_label(authored_format)
+        if authored_format is not None
+        else label_exprs[format_time_unit]
+    )
     v = (
         "utcOffset('day', toDate(datum.value), 1)"
         if (

@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
+from watchfiles import Change
 
-from dbt_charts.core.serve.watcher import FileWatcher
+from dbt_charts.core.serve.watcher import FileWatcher, _build_watch_filter
 
 
 async def _two_changes_awatch(
@@ -132,6 +134,74 @@ def test_stop_closes_a_watch_that_never_opened() -> None:
         return await asyncio.wait_for(_drain(watcher), timeout=5)
 
     assert asyncio.run(scenario()) == 0
+
+
+def test_filter_ignores_nested_cache_file_and_its_wal_companion(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / ".dct" / "cache.duckdb"
+    watch_filter = _build_watch_filter(cache_path)
+
+    assert watch_filter(Change.modified, str(cache_path)) is False
+    assert watch_filter(Change.modified, str(cache_path) + ".wal") is False
+
+
+def test_filter_ignores_root_level_cache_file_not_its_directory(
+    tmp_path: Path,
+) -> None:
+    """A root-level cache path must exclude only the file, not its parent —
+    which, for cache: {path: cache.duckdb}, could be the project root itself."""
+    cache_path = tmp_path / "cache.duckdb"
+    watch_filter = _build_watch_filter(cache_path)
+
+    assert watch_filter(Change.modified, str(cache_path)) is False
+    assert watch_filter(Change.modified, str(cache_path) + ".wal") is False
+    assert watch_filter(Change.modified, str(tmp_path / "charts" / "x.yml")) is True
+
+
+def test_filter_ignores_dct_and_target_dirs_and_still_ignores_venv_and_git(
+    tmp_path: Path,
+) -> None:
+    """No cache_path here — these asserts must depend on ignore_dirs alone."""
+    watch_filter = _build_watch_filter(None)
+
+    assert (
+        watch_filter(Change.modified, str(tmp_path / "target" / "manifest.json"))
+        is False
+    )
+    assert watch_filter(Change.modified, str(tmp_path / ".dct" / "other")) is False
+    assert (
+        watch_filter(Change.modified, str(tmp_path / ".venv" / "lib" / "foo.py"))
+        is False
+    )
+    assert watch_filter(Change.modified, str(tmp_path / ".git" / "HEAD")) is False
+    assert watch_filter(Change.modified, str(tmp_path / "charts" / "x.yml")) is True
+
+
+def test_watch_passes_its_own_filter_to_awatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every exclusion above is inert unless awatch actually receives the
+    filter — every stub above accepts **kwargs, so a dropped watch_filter=
+    would pass them all silently. This pins the wiring, not just the filter."""
+    received: dict[str, object] = {}
+
+    async def _recording_awatch(
+        *_args: object, **kwargs: object
+    ) -> AsyncGenerator[set[object], None]:
+        received.update(kwargs)
+        for _ in ():
+            yield set()
+
+    monkeypatch.setattr("watchfiles.awatch", _recording_awatch)
+
+    async def scenario() -> None:
+        watcher = FileWatcher("charts")
+        await watcher.start()
+        await watcher.stop()
+        assert received["watch_filter"] is watcher._filter  # noqa: SLF001
+
+    asyncio.run(scenario())
 
 
 def test_a_failed_watch_is_reported_and_does_not_break_shutdown(

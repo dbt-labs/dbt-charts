@@ -219,7 +219,11 @@ def test_title_font_color_cascades_to_child_with_unrelated_style_patch():
 def test_child_own_theme_keeps_unauthored_field_from_own_theme_not_parent():
     """A nested board on its own theme: must not inherit a color the parent's
     theme merely defaulted (never authored) — only what the parent explicitly
-    wrote should cross a theme boundary."""
+    wrote should cross a theme boundary.
+
+    `border.color` has no InheritSlot fallback to `font.color`, so it is a clean
+    probe for an unauthored theme default leaking across a theme boundary.
+    """
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
     from dbt_charts.core.compile.normalize.dispatch import normalize_board
 
@@ -245,8 +249,34 @@ def test_child_own_theme_keeps_unauthored_field_from_own_theme_not_parent():
 
     neon_default = resolve_style(get_theme_style("neon"))
     clarity_default = resolve_style(get_theme_style())
-    assert neon_default.title.font.color != clarity_default.title.font.color
-    assert child_rs.title.font.color == neon_default.title.font.color
+    assert neon_default.border.color != clarity_default.border.color
+    assert child_rs.border.color == neon_default.border.color
+
+
+def test_ancestor_font_color_reaches_childs_title_ink_across_a_theme_switch():
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+    from dbt_charts.core.compile.normalize.dispatch import normalize_board
+
+    board = AuthoredBoard.model_validate(
+        {
+            "title": "parent",
+            "style": {"font": {"color": "#a1a1a1"}},
+            "rows": [
+                {
+                    "title": "child",
+                    "theme": "neon",
+                    "style": {"frame": {"card_padding": 20}},
+                }
+            ],
+        }
+    )
+    compiled = normalize_board(board)
+    child_board = compiled.layout.items[0].board
+    assert child_board is not None
+    child_rs = child_board.resolved_style
+
+    assert child_rs.font.color == "#a1a1a1"
+    assert child_rs.title.font.color == "#a1a1a1"
 
 
 def test_gap_margin_padding_do_not_cascade_to_styled_child():

@@ -9,6 +9,7 @@ Guards that:
 from __future__ import annotations
 
 import dataclasses
+import html
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -125,9 +126,11 @@ class TestRenderedSVGContainsNotoEmoji:
             text_style=resolved_without_emoji_family.text,
         )
 
-        body_rule = re.search(r"\.md-[0-9a-f]{8}-text \{ font-family: ([^;]+);", svg)
+        body_rule = re.search(
+            r"\.md-[0-9a-f]{8}-text \{ font-family: ((?:&#?\w+;|[^;])+);", svg
+        )
         assert body_rule is not None
-        assert _QUOTED in body_rule.group(1)
+        assert _QUOTED in html.unescape(body_rule.group(1))
 
     @pytest.mark.windows
     def test_rendered_svg_font_family_contains_noto_emoji(

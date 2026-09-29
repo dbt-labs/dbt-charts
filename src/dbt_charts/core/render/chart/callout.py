@@ -12,7 +12,11 @@ from dbt_charts.core.diagnostics.registry import build_doc_url
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.fonts import get_font_path, get_mono_font_path
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
-from dbt_charts.core.render.svg_utils import authored_kind_attr, border_dash_attrs
+from dbt_charts.core.render.svg_utils import (
+    authored_kind_attr,
+    border_dash_attrs,
+    escape_attr,
+)
 from mdsvg import Style as MdsvgStyle, parse as parse_md
 from mdsvg.fonts import wrap_text_precise
 from mdsvg.renderer import SVGRenderer as MdsvgRenderer
@@ -64,9 +68,9 @@ def _plain_block(
     for i, line in enumerate(lines):
         y = font_size + i * line_height
         parts.append(
-            f'<text x="0" y="{y}" font-size="{font_size}" '
-            f'font-family="{html.escape(font_family)}" '
-            f'fill="{fill}" text-anchor="start">{html.escape(line)}</text>'
+            f'<text x="0" y="{escape_attr(y)}" font-size="{escape_attr(font_size)}" '
+            f'font-family="{escape_attr(font_family)}" '
+            f'fill="{escape_attr(fill)}" text-anchor="start">{html.escape(line)}</text>'
         )
     return _ContentBlock(
         elements="\n  ".join(parts),
@@ -315,13 +319,13 @@ def render_callout_svg(
         code_font_size = title_rf.size * 0.75
         code_y = current_y + code_font_size
         code_text_svg = (
-            f'<text x="{pad_left}" y="{code_y}" '
-            f'font-size="{code_font_size}" font-weight="normal" '
+            f'<text x="{escape_attr(pad_left)}" y="{escape_attr(code_y)}" '
+            f'font-size="{escape_attr(code_font_size)}" font-weight="normal" '
             f'font-family="monospace" '
-            f'fill="{message_color}">{html.escape(code)}</text>'
+            f'fill="{escape_attr(message_color)}">{html.escape(code)}</text>'
         )
         code_svg = (
-            f'<a href="{html.escape(build_doc_url(code))}" target="_blank">'
+            f'<a href="{escape_attr(build_doc_url(code))}" target="_blank">'
             f"{code_text_svg}</a>"
         )
         current_y += code_badge_height + section_gap
@@ -341,20 +345,20 @@ def render_callout_svg(
         if title_block.height > max_title_height:
             title_clip_id = f"title-clip-{callout_hash}"
             title_clip_def = (
-                f'<defs><clipPath id="{title_clip_id}">'
-                f'<rect x="0" y="0" width="{content_width}" height="{title_block_height}"/>'
+                f'<defs><clipPath id="{escape_attr(title_clip_id)}">'
+                f'<rect x="0" y="0" width="{escape_attr(content_width)}" height="{escape_attr(title_block_height)}"/>'
                 f"</clipPath></defs>"
             )
             title_svg = (
                 f"{title_clip_def}"
-                f'<g transform="translate({pad_left}, {translate_y})" clip-path="url(#{title_clip_id})"'
+                f'<g transform="translate({escape_attr(pad_left)}, {escape_attr(translate_y)})" clip-path="url(#{escape_attr(title_clip_id)})"'
                 f"{authored_kind_attr('title')}>"
                 f"{title_elements}"
                 f"</g>"
             )
         else:
             title_svg = (
-                f'<g transform="translate({pad_left}, {translate_y})"{authored_kind_attr("title")}>'
+                f'<g transform="translate({escape_attr(pad_left)}, {escape_attr(translate_y)})"{authored_kind_attr("title")}>'
                 f"{title_elements}"
                 f"</g>"
             )
@@ -365,19 +369,19 @@ def render_callout_svg(
     if message_block.height > max_message_height:
         msg_clip_id = f"msg-clip-{callout_hash}"
         clip_def = (
-            f'<defs><clipPath id="{msg_clip_id}">'
-            f'<rect x="0" y="0" width="{content_width}" height="{message_block_height}"/>'
+            f'<defs><clipPath id="{escape_attr(msg_clip_id)}">'
+            f'<rect x="0" y="0" width="{escape_attr(content_width)}" height="{escape_attr(message_block_height)}"/>'
             f"</clipPath></defs>"
         )
         message_svg = (
             f"{clip_def}"
-            f'<g transform="translate({pad_left}, {translate_y})" clip-path="url(#{msg_clip_id})">'
+            f'<g transform="translate({escape_attr(pad_left)}, {escape_attr(translate_y)})" clip-path="url(#{escape_attr(msg_clip_id)})">'
             f"{message_elements}"
             f"</g>"
         )
     else:
         message_svg = (
-            f'<g transform="translate({pad_left}, {translate_y})">'
+            f'<g transform="translate({escape_attr(pad_left)}, {escape_attr(translate_y)})">'
             f"{message_elements}"
             f"</g>"
         )
@@ -388,10 +392,10 @@ def render_callout_svg(
     if hint_lines:
         hint_start_y = current_y + section_gap
         hint_svg = "".join(
-            f'<text x="{pad_left}" y="{hint_start_y + (i * message_line_height)}" '
-            f'font-size="{message_rf.size}" font-weight="normal" font-style="italic" '
-            f'font-family="{html.escape(message_rf.family)}" '
-            f'fill="{message_color}">{html.escape(line)}</text>'
+            f'<text x="{escape_attr(pad_left)}" y="{escape_attr(hint_start_y + (i * message_line_height))}" '
+            f'font-size="{escape_attr(message_rf.size)}" font-weight="normal" font-style="italic" '
+            f'font-family="{escape_attr(message_rf.family)}" '
+            f'fill="{escape_attr(message_color)}">{html.escape(line)}</text>'
             for i, line in enumerate(hint_lines)
         )
 
@@ -404,20 +408,20 @@ def render_callout_svg(
         )
         doc_start_y = after_hint_y + section_gap
         doc_text_svg = (
-            f'<text x="{pad_left}" y="{doc_start_y}" '
-            f'font-size="{doc_url_font_size}" font-weight="normal" '
-            f'font-family="{html.escape(message_rf.family)}" '
-            f'fill="{title_color}">{doc_link_label}</text>'
+            f'<text x="{escape_attr(pad_left)}" y="{escape_attr(doc_start_y)}" '
+            f'font-size="{escape_attr(doc_url_font_size)}" font-weight="normal" '
+            f'font-family="{escape_attr(message_rf.family)}" '
+            f'fill="{escape_attr(title_color)}">{doc_link_label}</text>'
         )
-        doc_svg = f'<a href="{html.escape(doc_url)}" target="_blank">{doc_text_svg}</a>'
+        doc_svg = f'<a href="{escape_attr(doc_url)}" target="_blank">{doc_text_svg}</a>'
 
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" class="dbt-chart-callout" '
-        f'width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
-        f'<rect x="0" y="0" width="{w}" height="{h}" '
-        f'fill="{background}" stroke="{border_color}" '
-        f'stroke-width="{inline.border.width}"{border_dash_attrs(inline.border)} '
-        f'rx="{inline.border.radius}"/>'
+        f'width="{escape_attr(w)}" height="{escape_attr(h)}" viewBox="0 0 {escape_attr(w)} {escape_attr(h)}">'
+        f'<rect x="0" y="0" width="{escape_attr(w)}" height="{escape_attr(h)}" '
+        f'fill="{escape_attr(background)}" stroke="{escape_attr(border_color)}" '
+        f'stroke-width="{escape_attr(inline.border.width)}"{border_dash_attrs(inline.border)} '
+        f'rx="{escape_attr(inline.border.radius)}"/>'
         f"{style_block}"
         f"{code_svg}{title_svg}{message_svg}{hint_svg}{doc_svg}"
         f"</svg>"

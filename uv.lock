@@ -925,7 +925,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.100.0" },
     { name = "fonttools", specifier = ">=4.0" },
     { name = "google-cloud-bigquery", marker = "extra == 'bigquery'", specifier = ">=3.33.0" },
-    { name = "httpx", specifier = ">=0.24.0" },
+    { name = "httpx", specifier = ">=0.24.0,<1" },
     { name = "importlib-resources", specifier = ">=6.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jsonschema", specifier = ">=4.0" },

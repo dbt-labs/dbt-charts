@@ -38,7 +38,7 @@
     },
     "title": {
       "anchor": "start",
-      "color": "#494A4C",
+      "color": "#222222",
       "font": "'Source Serif 4', 'Noto Emoji', Georgia, 'Times New Roman', serif",
       "fontSize": 18,
       "fontWeight": 500,
@@ -163,7 +163,7 @@
     }
   },
   "mark": {
-    "fill": "#23467f",
+    "fill": "#284980",
     "filled": true,
     "opacity": 1.0,
     "size": 60.0,

@@ -321,11 +321,11 @@ class TestRenderTitleUsesTextStack:
     """render_title SVG output should reference the resolved text stack."""
 
     def test_title_svg_uses_resolved_text_font_family(self):
-        from dbt_charts.core.render.svg_utils import render_title
+        from dbt_charts.core.render.svg_utils import escape_attr, render_title
 
         rs = resolve_style(get_theme_style())
         svg = render_title("Hello", width=400, resolved_style=rs)
-        assert rs.text.font.family.split(",")[0].strip() in svg
+        assert escape_attr(rs.text.font.family.split(",")[0].strip()) in svg
 
 
 class TestRenderTitleUsesTitleStack:

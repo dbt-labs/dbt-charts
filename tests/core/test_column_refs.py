@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from dbt_charts.core.column_refs import extract_base_column_refs
+from dbt_charts.core.column_refs import extract_base_column_refs, parse_sql_statements
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 
@@ -538,3 +538,72 @@ def test_extraction_requires_a_compiled_board():
     assert result.board is None
     with pytest.raises(ValueError, match="compiled board"):
         extract_base_column_refs(result)
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        "WITH final AS (SELECT sales_channel FROM raw)",
+        "WITH RECURSIVE final AS (SELECT 1 AS n)",
+        "WITH final (x) AS (SELECT sales_channel FROM raw)",
+        "WITH final AS MATERIALIZED (SELECT sales_channel FROM raw)",
+    ],
+)
+def test_parenthesized_body_with_its_own_with_is_indeterminate(inner):
+    """sqlglot overwrites the parenthesized body's WITH with the outer one, so
+    the tree resolves `final` to the wrong CTE; the seam must refuse it."""
+    sql = f"WITH final AS (SELECT customer_id FROM raw) ({inner} SELECT * FROM final)"
+    reason = parse_sql_statements(sql, None)
+    assert isinstance(reason, str)
+    assert "dropped a WITH" in reason
+
+
+@pytest.mark.parametrize(
+    ("sql", "dialect"),
+    [
+        ("SELECT CAST(x AS TIMESTAMP WITH TIME ZONE) AS x FROM raw", None),
+        ("SELECT v FROM UNNEST(ARRAY[1, 2]) WITH ORDINALITY AS t(v, i)", None),
+        ("SELECT v FROM UNNEST(ARRAY[1, 2]) WITH ORDINALITY t(v, i)", None),
+        ("SELECT v FROM UNNEST(ARRAY[1, 2]) WITH ORDINALITY AS t(v, i)", "trino"),
+        (
+            "SELECT a.x FROM raw AS a CROSS JOIN UNNEST(a.arr) WITH OFFSET AS pos",
+            "bigquery",
+        ),
+        ("SELECT x FROM raw WITH (NOLOCK)", "tsql"),
+        ("WITH 1 AS one SELECT one FROM raw", "clickhouse"),
+        (
+            "WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r) "
+            "SELECT n FROM r",
+            None,
+        ),
+        ("WITH a (x, y) AS (SELECT 1, 2) SELECT x, y FROM a", None),
+        (
+            "WITH a AS (WITH b AS (SELECT x FROM raw) SELECT x FROM b) "
+            "SELECT x FROM (WITH c AS (SELECT x FROM a) SELECT x FROM c) AS t",
+            None,
+        ),
+        (
+            "WITH a AS (WITH b AS (SELECT x FROM raw) SELECT x FROM b) "
+            "SELECT x FROM (WITH c AS (SELECT x FROM a) SELECT x FROM c) AS t",
+            "databricks",
+        ),
+        (
+            "WITH a AS (WITH b AS (SELECT x FROM raw) SELECT x FROM b) "
+            "SELECT x FROM (WITH c AS (SELECT x FROM a) SELECT x FROM c) AS t",
+            "spark",
+        ),
+        (
+            "WITH a AS (WITH b AS (SELECT x FROM raw) SELECT x FROM b) "
+            "SELECT x FROM (WITH c AS (SELECT x FROM a) SELECT x FROM c) AS t",
+            "tsql",
+        ),
+        ("SELECT v FROM UNNEST(ARRAY[1, 2]) WITH ORDINALITY AS t(v, i)", "snowflake"),
+        (
+            "WITH a AS (SELECT 1 AS x) SELECT x FROM a; WITH b AS (SELECT 2 AS y) "
+            "SELECT y FROM b",
+            None,
+        ),
+    ],
+)
+def test_with_keywords_that_lose_nothing_still_parse(sql, dialect):
+    assert not isinstance(parse_sql_statements(sql, dialect), str)

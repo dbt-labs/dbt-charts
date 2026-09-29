@@ -12,7 +12,11 @@ from typing import get_args
 
 import pytest
 
-from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+from dbt_charts.core.compile.config import (
+    get_chart_rendering,
+    get_default_theme_name,
+    get_theme_style,
+)
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import AreaChart
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
@@ -91,20 +95,18 @@ def test_single_series_area_line_mark_differs_from_overlap_recipe():
 def test_single_series_area_edge_stroke_width_capped_at_theme_fallback():
     """Regression for the width-cap gate: the density-adaptive formula's
     floor (``chart_rendering.stroke.min_width``, 1.5px) always exceeds the
-    stacked recipe's background-color separator width (1.0px in the default
-    theme), so an uncapped bake would knock visible pixels off the top of
-    the band on every single-series area. Assert against the resolved
-    theme's own stacked-stroke width, never a literal, per the
-    don't-pin-theme-values rule."""
-    board = _board()
-    stacked_recipe_stroke = board.area.marks.area.stacked.stroke
-    assert stacked_recipe_stroke is not None
-    assert stacked_recipe_stroke.width is not None
+    stacked recipe's background-color separator width
+    (``chart_rendering.stroke.stacked_fallback_width``, 1.0px), so an
+    uncapped bake would knock visible pixels off the top of the band on
+    every single-series area. Assert against the engine config constant --
+    the theme no longer carries a literal here (any tier, theme included,
+    may now leave it unset and let this constant apply)."""
+    stacked_fallback_width = get_chart_rendering().stroke.stacked_fallback_width
 
     single_series = _resolve_area({})
 
     assert single_series.style.line_mark.stroke is not None
-    assert single_series.style.line_mark.stroke.width == stacked_recipe_stroke.width
+    assert single_series.style.line_mark.stroke.width == stacked_fallback_width
 
 
 def test_single_series_area_resolved_stack_not_mutated():
@@ -206,15 +208,11 @@ def test_single_series_area_authored_line_stroke_is_overridden_by_stacked_recipe
 
 
 def test_single_series_area_authored_stacked_stroke_width_survives_above_adaptive_ceiling():
-    """Regression: ``_area_line_stroke_authored`` widened to ``is_stacked or
-    is_single_series`` so a single-series area's authored
+    """Regression: a single-series area's authored
     ``marks.area.stacked.stroke.width`` is honored rather than getting
     silently capped by the adaptive formula. Pin a width comfortably above
     any adaptive value this density could produce."""
-    board = _board()
-    stacked_recipe_stroke = board.area.marks.area.stacked.stroke
-    assert stacked_recipe_stroke is not None
-    pinned_width = stacked_recipe_stroke.width + 50.0
+    pinned_width = get_chart_rendering().stroke.stacked_fallback_width + 50.0
 
     authored = _resolve_area(
         {

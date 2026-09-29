@@ -974,6 +974,10 @@ def create_server(
     # call, so board and data-file edits are picked up with no rebuild.
     core_project = project
     server_config = get_project_server_config(core_project)
+    # Resolved once, up front: FileWatcher (below) needs boot.path to exclude
+    # the on-disk cache file from the live-reload watch, and _lifespan reuses
+    # this same value rather than resolving it a second time at startup.
+    boot = resolve_cache_boot(core_project, no_cache=no_cache, cache_path=cache_path)
 
     def _build_registry(project: FilesystemProject) -> AdapterRegistry:
         return build_adapter_registry(
@@ -988,17 +992,15 @@ def create_server(
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-        # Boot owns the result-cache lifecycle: resolve_cache_boot applies
-        # flag (no_cache/cache_path) > project dbt_charts.yml cache: block
-        # precedence; core/ cannot import agent_api (layering), so the cache
-        # is constructed directly here. The cache is process-lifetime: it
-        # survives the per-change registry rebuilds below (file_version keys
-        # invalidate stale entries). The registry is built eagerly here (not
-        # lazily on first request), so a malformed dbt_charts.yml surfaces at
-        # startup rather than on the first page load.
-        boot = resolve_cache_boot(
-            core_project, no_cache=no_cache, cache_path=cache_path
-        )
+        # Boot owns the result-cache lifecycle: resolve_cache_boot (resolved
+        # once, above) applies flag (no_cache/cache_path) > project
+        # dbt_charts.yml cache: block precedence; core/ cannot import
+        # agent_api (layering), so the cache is constructed directly here.
+        # The cache is process-lifetime: it survives the per-change registry
+        # rebuilds below (file_version keys invalidate stale entries). The
+        # registry is built eagerly here (not lazily on first request), so a
+        # malformed dbt_charts.yml surfaces at startup rather than on the
+        # first page load.
         cache = TrivialDuckDBCache(db_path=boot.path) if boot.enabled else None
         try:
             _app.state.result_cache = cache
@@ -1043,7 +1045,7 @@ def create_server(
     app.state.config_mtime = 0.0
     # Built here so shutdown.py can take it before the app runs. Watches the
     # root, not charts_dir, which lives under it and need not exist yet.
-    app.state.watcher = FileWatcher(str(core_project.root))
+    app.state.watcher = FileWatcher(str(core_project.root), cache_path=boot.path)
     # Serializes concurrent registry / alias-index rebuilds.
     _refresh_lock = asyncio.Lock()
 

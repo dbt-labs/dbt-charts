@@ -7,6 +7,22 @@ Auto-generated from `dbt_charts.core.diagnostics.REGISTRY`. Every `WARN-*` code 
 ## board
 
 
+### WARN-DEFAULTS-FILE-GIVEN-AS-BOARD: A defaults file was given to dct render
+
+- **Level:** warning
+- **Domain:** compile
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+{path} holds defaults for the boards beside it; skipped.
+```
+
+**Fix:** Nothing to fix when a glob picked it up. To see its effect, render a board in the same directory.
+
+Fired when a path given to `dct render` is a meta.yml or meta.yaml file. That file holds defaults the boards in its directory inherit, and has nothing of its own to draw. A glob like `charts/*.yml` picks it up alongside the boards, so it is skipped and the boards render.
+
 ### WARN-DOUBLE-HEADER: Board title is repeated by a heading at the top of the body
 
 - **Level:** warning

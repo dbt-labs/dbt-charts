@@ -11,10 +11,12 @@ from __future__ import annotations
 from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
-    Chart,
     LineChart,
     ScatterChart,
     _SharedChartFields,
+)
+from dbt_charts.core.compile.normalize.chart_focus import (
+    PRE_FOCUS_PLACED_CHARTS_META_KEY,
 )
 from dbt_charts.core.diagnostics import (
     WARN_ADJACENT_TEXT_ROWS,
@@ -186,7 +188,7 @@ def _detect_single_chart_redundant_title(
     """
     if not board.title:
         return
-    charts = _placed_charts(board)
+    charts = board.placed_charts()
     if len(charts) != 1 or _has_body_text(board) or _has_titled_section(board):
         return
     # Only the families carrying the title/subtitle display envelope can head
@@ -207,17 +209,6 @@ def _detect_single_chart_redundant_title(
             fix=WARN_SINGLE_CHART_REDUNDANT_TITLE.fix_template,
         )
     )
-
-
-def _placed_charts(board: Board) -> list[Chart]:
-    """Every chart actually placed in the board tree, in layout order."""
-    charts: list[Chart] = []
-    for item in board.layout.items:
-        if item.chart is not None:
-            charts.append(item.chart)
-        elif item.board is not None:
-            charts.extend(_placed_charts(item.board))
-    return charts
 
 
 def _has_body_text(board: Board) -> bool:
@@ -373,6 +364,9 @@ def _detect_orphan_charts(board: Board, warnings: list[Diagnostic]) -> None:
     case of "board has charts but layout is empty", which would produce a silently
     empty dashboard. Chart references resolve globally, so a parent-defined chart
     referenced from a nested board is not an orphan.
+
+    A focused board is judged against its layout as written, which
+    ``focus_on_chart`` records in ``board.meta``.
     """
     defined: set[str] = set()
 
@@ -384,7 +378,12 @@ def _detect_orphan_charts(board: Board, warnings: list[Diagnostic]) -> None:
                 walk(item.board)
 
     walk(board)
-    referenced = {chart.id for chart in _placed_charts(board) if chart.id}
+    pre_focus_placed = board.meta.get(PRE_FOCUS_PLACED_CHARTS_META_KEY)
+    referenced = (
+        set(pre_focus_placed)
+        if pre_focus_placed is not None
+        else {chart.id for chart in board.placed_charts() if chart.id}
+    )
 
     for chart_id in sorted(defined - referenced):
         warnings.append(

@@ -110,7 +110,7 @@ def compose_yaml(content: str) -> yaml.Node:
     except yaml.YAMLError as e:
         raise _parse_error(e, content) from e
     if node is None:
-        raise ParseError("Empty YAML document")
+        raise _empty_document_error()
     return node
 
 
@@ -134,7 +134,7 @@ def mapping_from_node(
         raise _parse_error(e, content) from e
 
     if parsed_data is None:
-        raise ParseError("Empty YAML document")
+        raise _empty_document_error()
     if not isinstance(parsed_data, dict):
         raise ParseError(f"YAML must be a mapping, got {type(parsed_data).__name__}")
 
@@ -158,6 +158,23 @@ def _parse_error(e: yaml.YAMLError, content: str) -> ParseError:
         context=context,
         suggestion=_get_yaml_parse_suggestion(str(e)),
     )
+
+
+def _empty_document_error() -> ParseError:
+    """The one ``ParseError`` raised for a comment-only/blank/null document.
+
+    Stamped with its own registered code, not left to default to ERR-INTERNAL
+    (``compile/errors.py``'s fallback for an unmigrated raise site) — this one
+    *is* migrated, it just can't name the file yet: ``compiler.py``'s
+    ``_parse_error_to_diagnostics`` rebuilds the message with the file name
+    once it knows one (``parse_yaml``/``load_yaml_mapping`` only ever see raw
+    content, never a board's identity).
+    """
+    from dbt_charts.core.diagnostics.codes_compile import ERR_EMPTY_YAML_DOCUMENT
+
+    err = ParseError("Empty YAML document")
+    err.code = ERR_EMPTY_YAML_DOCUMENT
+    return err
 
 
 def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoard:

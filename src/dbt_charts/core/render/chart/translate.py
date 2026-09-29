@@ -382,7 +382,7 @@ def _requalify_concat_scale_probes(
         for key, value in node.items():
             if key == "expr" and isinstance(value, str):
                 node[key] = _CONCAT_QUALIFIED_SCALE_PROBE.sub(
-                    rf"\1('{child_name}_\2'", value
+                    lambda m: f"{m.group(1)}('{child_name}_{m.group(2)}'", value
                 )
             else:
                 _requalify_concat_scale_probes(value, child_name)

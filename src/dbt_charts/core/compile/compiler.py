@@ -105,7 +105,9 @@ from dbt_charts.core.compile.validate.dispatch import validate_board
 from dbt_charts.core.compile.validate.formats import validate_board_format_specs
 from dbt_charts.core.compile.validate.palettes import validate_board_palette_specs
 from dbt_charts.core.diagnostics import Diagnostic
+from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_EMPTY_YAML_DOCUMENT,
     ERR_UNKNOWN_QUERY,
     WARN_HTML_POLICY_CAPPED,
 )
@@ -549,11 +551,22 @@ def _parse_error_to_diagnostics(
     """Convert a ParseError into Diagnostics.
 
     When the cause is a PydanticValidationError, use the union-aware collapse to
-    produce Diagnostics from the raw Pydantic error list. Other parse errors
-    (bad YAML syntax, empty doc) produce one Diagnostic.
+    produce Diagnostics from the raw Pydantic error list. An empty-document
+    error is rebuilt here with the file name filled in — parser.py raises it
+    from bare content, with no board identity to name. Every other parse error
+    (bad YAML syntax) produces one Diagnostic straight from ``e``.
     """
     if isinstance(e.__cause__, PydanticValidationError):
         return format_validation_errors_structured(e.__cause__, yaml_content)
+    if e.code is ERR_EMPTY_YAML_DOCUMENT:
+        named = DbtChartsError.from_code(
+            ERR_EMPTY_YAML_DOCUMENT,
+            # `file` is genuinely absent for a caller with no board identity
+            # (raw content, stdin) — not a caller bug to raise on.
+            path=file
+            or "the given YAML content",  # type-state: silent_fallback — see above
+        )
+        return [named.to_diagnostic(file=file)]
     return [e.to_diagnostic(file=file)]
 
 

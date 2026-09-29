@@ -25,7 +25,11 @@ from dbt_charts.core.compile import (
     is_file_source,
     parse_source_config,
 )
-from dbt_charts.core.compile.config import ProjectSourcesConfig, load_project_sources
+from dbt_charts.core.compile.config import (
+    ProjectSourcesConfig,
+    load_project_sources,
+    validate_project_config_data,
+)
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_CREDENTIAL_LITERAL
 from dbt_charts.core.execute.adapters import build_adapter_registry
@@ -1028,6 +1032,76 @@ rows:
             query_registry=result.query_registry,
         )
         assert executor.execute_query("metric") == [{"value": 7}]
+
+
+class TestValidateProjectConfigData:
+    """validate_project_config_data validates already-parsed dbt_charts.yml
+    content without touching process-global config state: the entry point
+    a caller that doesn't own the process (an editor buffer, a multi-tenant
+    worker) uses instead of load_config()/load_project_sources()."""
+
+    def test_valid_data_raises_nothing(self) -> None:
+        validate_project_config_data(
+            {
+                "sources": {"local": {"type": "duckdb", "path": "x.duckdb"}},
+                "execution": {"max_workers": 4},
+            },
+            filename="dbt_charts.yml",
+        )
+
+    def test_empty_data_raises_nothing(self) -> None:
+        validate_project_config_data({}, filename="dbt_charts.yml")
+
+    def test_none_data_raises_nothing(self) -> None:
+        """An empty dbt_charts.yml parses to None, not {}: excused the same
+        way _load_dbt_charts_yml excuses it, not silently swallowed alongside
+        other falsy non-mapping values."""
+        validate_project_config_data(None, filename="dbt_charts.yml")
+
+    def test_non_mapping_data_raises_type_error(self) -> None:
+        """A falsy non-mapping document (e.g. `false`, `0`) is a real schema
+        fault, not an empty file: must not be excused the same way None is."""
+        with pytest.raises(TypeError):
+            validate_project_config_data(False, filename="dbt_charts.yml")
+
+    def test_unknown_top_level_key_raises_pydantic_validation_error(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            validate_project_config_data(
+                {"not_a_real_key": 123}, filename="dbt_charts.yml"
+            )
+
+    def test_sources_default_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="sources.default is no longer supported"):
+            validate_project_config_data(
+                {"sources": {"default": "analytics", "analytics": {"type": "duckdb"}}},
+                filename="dbt_charts.yml",
+            )
+
+    def test_invalid_source_entry_raises_compilation_error(self) -> None:
+        with pytest.raises(CompilationError):
+            validate_project_config_data(
+                {"sources": {"bad": {"type": "not-a-type"}}},
+                filename="dbt_charts.yml",
+            )
+
+    def test_does_not_touch_process_global_config(self) -> None:
+        """Calling this with content that WOULD change the global (a real,
+        valid, distinguishing execution.max_workers) must not rebind
+        get_config()'s state: unlike load_config(), which is a process entry
+        point, not something a speculative validator (an unsaved buffer)
+        should be allowed to do."""
+        from dbt_charts.core.compile.config import get_config, reset_config
+
+        reset_config()
+        before_max_workers = get_config().execution.max_workers
+        distinguishing_value = before_max_workers + 41
+        validate_project_config_data(
+            {"execution": {"max_workers": distinguishing_value}},
+            filename="dbt_charts.yml",
+        )
+        assert get_config().execution.max_workers == before_max_workers
 
 
 class TestSourcesDefaultRemoved:

@@ -33,7 +33,6 @@ from dbt_charts.core.compile.models.chart.authored import (
 )
 from dbt_charts.core.compile.models.chart.authored._layer import (
     AreaLayer,
-    BarChartBarLayer,
     BarLayer,
     CartesianLayer,
     LineLayer,
@@ -588,6 +587,7 @@ def test_line_layer_marks_line_and_point_propagate() -> None:
 
 def test_styleless_line_layer_resolves_to_base_marks() -> None:
     """A line layer with no style gets resolved marks from the board base."""
+    from dbt_charts.core.compile.config import get_chart_rendering
     from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLineLayer
     from dbt_charts.core.compile.resolve import resolve
 
@@ -597,9 +597,13 @@ def test_styleless_line_layer_resolves_to_base_marks() -> None:
     resolved = resolve(chart, _BAR_DATA, board_style)
     r = resolved.layers[0]
     assert isinstance(r, ResolvedLineLayer)
-    # With no layer style, the resolved marks must equal the board-base line marks.
+    # With no layer style, the resolved marks must equal the board-base line
+    # marks. Width is the one field the board base itself leaves unset by
+    # design (no cascade tier pins one here) -- it resolves via
+    # chart_rendering.stroke.fallback_width instead of a theme literal.
     base_line = board_style.line.marks.line
-    assert r.line_mark.stroke.width == base_line.stroke.width
+    assert base_line.stroke is not None and base_line.stroke.width is None
+    assert r.line_mark.stroke.width == get_chart_rendering().stroke.fallback_width
     assert r.point_mark.size == board_style.line.marks.point.size
 
 
@@ -642,7 +646,7 @@ def test_bar_layer_marks_bar_propagates() -> None:
     from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedBarLayer
     from dbt_charts.core.compile.resolve import resolve
 
-    layer = BarChartBarLayer(
+    layer = BarLayer(
         type="bar",
         y="revenue",
         style={"marks": {"bar": {"padding": 0.3}}},
@@ -1300,7 +1304,7 @@ def test_step_band_on_base_does_not_shrink_bar_layer_width() -> None:
         query_name="q",
         variable_dependencies=set(),
         style={"marks": {"area": {"curve": "step"}}},
-        layers=[BarChartBarLayer(type="bar", y="target")],
+        layers=[BarLayer(type="bar", y="target")],
     )
     resolved = resolve(chart, _BAR_DATA, _default_board_style())
     vl = translate_to_vl(
@@ -1371,7 +1375,7 @@ def test_area_base_halo_not_recolored_by_shared_legend_scale() -> None:
         query=_sql(),
         query_name="q",
         variable_dependencies=set(),
-        layers=[BarChartBarLayer(type="bar", y="target")],
+        layers=[BarLayer(type="bar", y="target")],
     )
     resolved = resolve(chart, _BAR_DATA, _default_board_style())
     vl = translate_to_vl(

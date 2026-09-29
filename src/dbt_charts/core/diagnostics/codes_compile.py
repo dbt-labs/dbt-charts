@@ -249,17 +249,39 @@ ERR_META_SCHEMA = REGISTRY.register(
     ErrorCode(
         code="ERR-META-SCHEMA",
         domain="compile",
-        title="meta.yml contains an unknown or invalid field",
+        title="Board fragment contains an unknown or invalid field",
         message_template=(
-            "meta.yml schema error: {message}. "
+            "Board fragment schema error: {message}. "
             "Check that all keys are valid board fields."
         ),
         doc=(
-            "Fired when a meta.yml file contains a field that is not recognized "
-            "by the board schema, or a field with an invalid value. Check that all "
-            "keys match the supported board fields and remove any extras."
+            "Fired when a meta.yml file or a private (`_`-prefixed) partial "
+            "contains a field that is not recognized by the board schema, or a "
+            "field with an invalid value. Check that all keys match the "
+            "supported board fields and remove any extras. The offending file "
+            "is named separately, in the diagnostic's `file` location."
         ),
-        summary="Fired when a meta.yml file contains a field the board schema doesn't recognize.",
+        summary="Fired when a board fragment (meta.yml or a private partial) contains a field the board schema doesn't recognize.",
+        docs_topic="board",
+    )
+)
+
+ERR_PROJECT_CONFIG_SCHEMA = REGISTRY.register(
+    ErrorCode(
+        code="ERR-PROJECT-CONFIG-SCHEMA",
+        domain="compile",
+        title="dbt_charts.yml contains an unknown or invalid field",
+        message_template=(
+            "Project config schema error: {message}. "
+            "Check that all keys are valid project config fields."
+        ),
+        doc=(
+            "Fired when dbt_charts.yml (the project config file) contains a "
+            "top-level field that is not recognized (e.g. `style:`, which "
+            "belongs in charts/meta.yml instead), or a field with an invalid "
+            "value. Check the project config reference for the supported keys."
+        ),
+        summary="Fired when dbt_charts.yml contains a field the project config schema doesn't recognize.",
         docs_topic="board",
     )
 )
@@ -386,14 +408,14 @@ ERR_BAR_Y_START_NULL = REGISTRY.register(
     ErrorCode(
         code="ERR-BAR-Y-START-NULL",
         domain="compile",
-        title="Bar chart y_start column has an empty cell",
+        title="Bar y_start column has an empty cell",
         message_template=(
-            "Chart {chart_id!r} (bar): y_start column {y_start_field!r} is empty "
+            "Chart {chart_id!r}: bar y_start column {y_start_field!r} is empty "
             "in row {row}. Every row needs a start; write 0 for a bar that "
             "starts at zero."
         ),
         doc=(
-            "Fired when a bar chart's `y_start:` column holds a NULL. A missing "
+            "Fired when a bar's or bar layer's `y_start:` column holds a NULL. A missing "
             "start is never read as zero: have the query write an explicit 0 for "
             "a bar that starts at zero."
         ),
@@ -405,12 +427,11 @@ ERR_BAR_Y_START_KIND = REGISTRY.register(
     ErrorCode(
         code="ERR-BAR-Y-START-KIND",
         domain="compile",
-        title="Bar chart y and y_start are different kinds",
+        title="Bar y and y_start are different kinds",
         message_template=(
-            "Chart {chart_id!r} (bar): column {y_field!r} is {y_kind} but "
-            "column {y_start_field!r} is {y_start_kind}. A bar's start and end, "
-            "and every bar on the chart, sit on one value axis: make them all "
-            "numeric, or all dates."
+            "Chart {chart_id!r}: column {y_field!r} is {y_kind} but "
+            "column {y_start_field!r} is {y_start_kind}. A bar's start and end "
+            "sit on one value axis: make them all numeric, or all dates."
         ),
         doc=(
             "Fired when a bar's `y:` and `y_start:` columns (or a bar layer's, "
@@ -608,6 +629,26 @@ ERR_MULTIPLES_FIELD_NOT_FOUND = REGISTRY.register(
     )
 )
 
+ERR_SORT_FIELD_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SORT-FIELD-NOT-FOUND",
+        domain="compile",
+        title="sort.by column not found in the query result",
+        message_template=(
+            "sort.by column {field!r} not found in the query result. "
+            "Available columns: {available}."
+        ),
+        doc=(
+            "Fired when `sort.by` names a column that is not present on every "
+            "row of the chart's query result. Without it the chart would "
+            "render in natural order while claiming to be sorted. Check for a "
+            "typo, or add the column to the query."
+        ),
+        summary="Fired when sort.by names a column missing from the query result.",
+        docs_topic="charts",
+    )
+)
+
 ERR_MULTIPLES_VALUE_COLLISION = REGISTRY.register(
     ErrorCode(
         code="ERR-MULTIPLES-VALUE-COLLISION",
@@ -775,6 +816,42 @@ ERR_FILE_NOT_FOUND = REGISTRY.register(
     )
 )
 
+ERR_EMPTY_YAML_DOCUMENT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-EMPTY-YAML-DOCUMENT",
+        domain="compile",
+        title="YAML document is empty",
+        message_template="Empty YAML document: {path}.",
+        doc=(
+            "Fired when a board file's content is empty, contains only comments, "
+            "or parses to a null/blank YAML document. A genuinely empty board "
+            "file needs at least a minimal board mapping, or should be removed. "
+            "A `dct init` scaffold's `meta.yml`/`meta.yaml` given directly to a "
+            "verb that expects a board is a different case: don't add a mapping "
+            "or delete it. The defaults file is meant to stay empty or "
+            "comment-only. Pass a real board file to the verb instead."
+        ),
+        summary="Fired when a board file's content is empty or contains only comments.",
+        docs_topic="errors",
+    )
+)
+
+ERR_NOTHING_TO_RENDER = REGISTRY.register(
+    ErrorCode(
+        code="ERR-NOTHING-TO-RENDER",
+        domain="compile",
+        title="None of the paths given is a board",
+        message_template="Nothing to render: none of the paths given is a board.",
+        doc=(
+            "Fired when `dct render` has no board left to render after "
+            "skipping the paths that are not boards. Each skipped path gets "
+            "its own warning saying why. Pass at least one board file."
+        ),
+        summary="Fired when none of the paths given to dct render is a board.",
+        docs_topic="board",
+    )
+)
+
 ERR_TICKS_INTERVAL_MEASURE_AXIS = REGISTRY.register(
     ErrorCode(
         code="ERR-TICKS-INTERVAL-MEASURE-AXIS",
@@ -878,21 +955,21 @@ ERR_FORMAT_INVALID = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-INVALID",
         domain="compile",
-        title="Format spec is not a predefined name, a style.formats alias, or a valid d3-format spec",
+        title="Format spec is not a predefined name, a style.formats alias, or a valid d3-format/d3-time-format spec",
         message_template=(
-            "Unknown number format {spec!r} at {field_path}. It is not an "
-            "engine-predefined format name, not a key in `style.formats`, "
-            "and is not a valid d3-format spec "
-            "({reason} at position {position})."
+            "Unknown {kind_noun} format {spec!r} at {field_path}: {explanation}"
         ),
         doc=(
             "Fired when an authored `format:` string is not one of the engine's "
             "predefined format names (e.g. `currency`, `number`, `percent_number`), "
             "not a key defined in `style.formats`, and fails to parse as a d3-format "
             "spec. Check for typos against the predefined names or your `style.formats` "
-            "keys, or use a valid d3-format spec (https://d3js.org/d3-format)."
+            "keys, or use a valid d3-format spec (https://d3js.org/d3-format). "
+            "In a slot that accepts a raw strftime spec (`%b %Y`), the same code "
+            "also fires for a directive the engine does not implement (`%K`); "
+            "the message names the accepted directives."
         ),
-        summary="Fired when `format:` is not a predefined name, alias, or valid d3 spec.",
+        summary="Fired when `format:` is not a predefined name, alias, or valid spec.",
         docs_topic="charts",
         hint_generator=suggest_close_format,
     )
@@ -987,6 +1064,28 @@ ERR_FORMAT_PREDEFINED_SHADOW = REGISTRY.register(
 # Compile-time authoring warnings declared here in the leaf so the registry
 # is complete on import of core.diagnostics. Emitters import their
 # constants back rather than declaring codes in-module.
+
+WARN_DEFAULTS_FILE_GIVEN_AS_BOARD = REGISTRY.register(
+    WarningCode(
+        code="WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
+        domain="compile",
+        title="A defaults file was given to dct render",
+        message_template="{path} holds defaults for the boards beside it; skipped.",
+        fix_template=(
+            "Nothing to fix when a glob picked it up. To see its effect, "
+            "render a board in the same directory."
+        ),
+        doc=(
+            "Fired when a path given to `dct render` is a meta.yml or "
+            "meta.yaml file. That file holds defaults the boards in its "
+            "directory inherit, and has nothing of its own to draw. A glob "
+            "like `charts/*.yml` picks it up alongside the boards, so it is "
+            "skipped and the boards render."
+        ),
+        summary="Fired when a meta.yml defaults file is given to dct render.",
+        docs_topic="board",
+    )
+)
 
 WARN_UNREFERENCED_CHART = REGISTRY.register(
     WarningCode(

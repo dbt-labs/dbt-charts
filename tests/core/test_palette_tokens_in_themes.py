@@ -13,16 +13,12 @@ expanded to the categorical stops list at validation time.
 
 from __future__ import annotations
 
-from typing import get_args
-
 import pytest
 from pydantic import BaseModel
 
-from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
-from dbt_charts.core.compile.models.schema_names import ThemeName
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.theme import ChartsStyle
 from dbt_charts.core.compile.resolve.style.board import (
@@ -33,12 +29,9 @@ from dbt_charts.core.compile.resolve.style.palette import (
     UnknownColorError,
     color as resolve_palette_color,
     palette as resolve_palette,
+    variant as category_variant,
 )
 from dbt_charts.core.compile.resolve.style.tokens import _THEME_SELF_TOKENS
-
-# Slot count of the shipped categorical families (vivid-10 / editorial-10 and
-# their companions). Every role token below is 1-indexed over this range.
-_CATEGORICAL_SLOTS = 10
 
 # =============================================================================
 # Generalized token resolution through resolve_style
@@ -73,19 +66,29 @@ class TestScaffoldTokensThroughResolve:
 
 
 class TestCategoryRoleBracketTokens:
-    """Bracket role tokens (`category[2]`, 1-indexed) on board style leaves.
+    """Bracket role tokens (`category[2]`, 1-indexed, optionally
+    `.dark`/`.light`/`.pale`/`.deep`) on board style leaves.
 
     These are the theme-portable way to address a categorical slot: the
     token resolves through the active theme's `style.palettes` role
     bindings, so a board restyles itself on a theme switch. Absolute pins
-    (`vivid-10.1`, 1-indexed) intentionally do not.
+    (`vivid-10.1`, 1-indexed) intentionally do not. The four companion
+    roles (category_dark/_light/_ghost/_ink) that used to need their own
+    rebind per theme are gone -- every tier now derives live from whichever
+    family `category` is bound to (variant()), canvas-free; neon's former
+    role-swap (inverting category_dark/category_light so marks read bright
+    on black) is gone too, superseded by the engine's own canvas-aware
+    label_ink() -- see dark-mode-theming-at-the-theme-level's follow-on
+    task for "which variant should a *board* pick on a dark canvas",
+    which this grammar layer does not answer.
     """
 
-    # One representative bracket token per categorical role per shipped
-    # theme, pinned to the slot of the family that theme's roles must bind.
-    # A theme edit that drops or misroutes a rebinding (e.g. paper losing
-    # clarity's `palettes:` block via an extends change) fails here
-    # rather than silently repainting boards authored with role tokens.
+    # One representative bracket token per shipped theme, pinned to the
+    # slot of the family that theme's `category` role must bind, both bare
+    # and with each variant. A theme edit that drops or misroutes the
+    # rebinding (e.g. paper losing clarity's `palettes:` block via an
+    # extends change) fails here rather than silently repainting boards
+    # authored with role tokens.
     @pytest.mark.parametrize(
         ("theme", "family"),
         [
@@ -94,102 +97,21 @@ class TestCategoryRoleBracketTokens:
             ("paper", "editorial-10"),
         ],
     )
-    @pytest.mark.parametrize(
-        ("role", "suffix"),
-        [
-            ("category", ""),
-            ("category_dark", "-dark"),
-            ("category_light", "-light"),
-            ("category_ghost", "-ghost"),
-            ("category_ink", "-ink"),
-        ],
-    )
-    def test_every_categorical_role_follows_its_theme(
-        self, theme: str, family: str, role: str, suffix: str
+    @pytest.mark.parametrize("word", [None, "dark", "light", "pale", "deep"])
+    def test_category_role_bracket_token_follows_its_theme(
+        self, theme: str, family: str, word: str | None
     ):
+        token = "category[2]" + (f".{word}" if word else "")
         patch = StylePatch.model_validate(
-            {"charts": {"marks": {"bar": {"border": {"color": f"{role}[2]"}}}}}
+            {"charts": {"marks": {"bar": {"border": {"color": token}}}}}
         )
         ctx = resolve_chart_style_context(get_theme_style(theme), patch)
-        assert ctx.marks.bar.border.color == resolve_palette(family + suffix)[1], (
-            f"{role}[2] on the {theme} theme must resolve to "
-            f"{family + suffix} slot 2 (1-indexed)"
-        )
-
-    @pytest.mark.parametrize("theme", get_args(ThemeName))
-    def test_light_and_dark_roles_name_a_contrast_direction(self, theme: str):
-        """``category_light`` never sits further from the canvas than
-        ``category``; ``category_dark`` never sits nearer — on every theme.
-
-        The role names describe where the companion sits relative to the
-        canvas, not which pigment it is: on a dark canvas the two invert (neon
-        binds ``category_dark`` to the *light* twin so marks read bright on
-        black, and ``category_light`` to the dark twin). A board authoring
-        ``category_light[N]`` for a deliberately recessive mark must stay
-        recessive after a theme switch, which is exactly what this pins.
-
-        This cross-theme contract checks direction; the editorial family's
-        stronger strict per-slot separation is pinned in its focused tests.
-        """
-        canvas = resolve_style(get_theme_style(theme)).background
-
-        def stops(role: str) -> list[str]:
-            colors: list[str] = []
-            for slot in range(1, _CATEGORICAL_SLOTS + 1):
-                patch = StylePatch.model_validate(
-                    {
-                        "charts": {
-                            "marks": {"bar": {"border": {"color": f"{role}[{slot}]"}}}
-                        }
-                    }
-                )
-                ctx = resolve_chart_style_context(get_theme_style(theme), patch)
-                colors.append(ctx.marks.bar.border.color)
-            return colors
-
-        base, darker, lighter = (
-            stops("category"),
-            stops("category_dark"),
-            stops("category_light"),
-        )
-
-        # The bug this encodes: neon rebound only `category_dark`, leaving
-        # `category_light` inheriting that same palette from `_base`, so the
-        # pair collapsed and the recessive role gained contrast. Two roles
-        # resolving identically at every slot means one of them is unbound.
-        assert darker != lighter, (
-            f"category_dark and category_light resolve to the same palette on "
-            f"the {theme} theme — the pair is collapsed, so one role is doing "
-            "nothing. Bind both, in opposite directions."
-        )
-
-        moved_darker = moved_lighter = False
-        for slot, (b, d, light) in enumerate(
-            zip(base, darker, lighter, strict=True), start=1
-        ):
-            base_c = _wcag_contrast(b, canvas)
-            assert _wcag_contrast(d, canvas) >= base_c, (
-                f"category_dark[{slot}] sits nearer the {theme} canvas than "
-                "category — it is the higher-contrast companion"
-            )
-            assert _wcag_contrast(light, canvas) <= base_c, (
-                f"category_light[{slot}] sits further from the {theme} canvas "
-                "than category — it is the lower-contrast companion"
-            )
-            moved_darker = moved_darker or _wcag_contrast(d, canvas) > base_c
-            moved_lighter = moved_lighter or _wcag_contrast(light, canvas) < base_c
-
-        # The non-strict comparisons above are satisfied by a companion that
-        # never moves at all, and `darker != lighter` is satisfied by one that
-        # moves at a single slot. Require each direction to be real somewhere,
-        # so a role bound to a palette that does nothing cannot green this.
-        assert moved_darker, (
-            f"category_dark never sits further from the {theme} canvas than "
-            "category at any slot — the role is bound but inert"
-        )
-        assert moved_lighter, (
-            f"category_light never sits nearer the {theme} canvas than "
-            "category at any slot — the role is bound but inert"
+        expected = resolve_palette(family)[1]
+        if word is not None:
+            expected = category_variant(expected, word)
+        assert ctx.marks.bar.border.color == expected, (
+            f"{token} on the {theme} theme must resolve to {family} slot 2 "
+            f"(1-indexed), variant={word}"
         )
 
     def test_unknown_role_bracket_token_raises(self):
@@ -489,9 +411,12 @@ class TestSingleSeriesPaletteTracksCategoricalSlot:
         assert single_series == [resolve_palette(family)[0]]
 
     def test_clarity_single_series_palette_tracks_dark_family_slot_one(self) -> None:
-        """clarity's single ink is `category_dark.blue` — editorial-10-dark
-        slot 1, not editorial-10 itself (the fixed direct-label ink, not the
-        base categorical family)."""
+        """clarity's single ink is `category.blue.dark` — the dark variant
+        of editorial-10 slot 1 (blue), computed live via variant(), not
+        editorial-10 itself (the fixed direct-label ink, not the base
+        categorical family)."""
         compiled = get_theme_style("clarity")
         single_series = compiled.charts.color.categorical.single_series_palette
-        assert single_series == [resolve_palette("editorial-10-dark")[0]]
+        assert single_series == [
+            category_variant(resolve_palette("editorial-10")[0], "dark")
+        ]

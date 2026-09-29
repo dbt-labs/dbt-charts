@@ -10,15 +10,44 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from pathlib import Path  # noqa: TID251 — matches the resolved on-disk cache file path
+
+from watchfiles import DefaultFilter
 
 logger = logging.getLogger(__name__)
+
+
+class _WatchFilter(DefaultFilter):
+    """Excludes dbt charts' own generated/derived paths from the live-reload watch.
+
+    ``ignore_dirs`` extends the class attribute rather than passing a
+    constructor kwarg: ``DefaultFilter.__init__`` treats a constructor
+    ``ignore_dirs=`` as a full replacement of the default set (``.git``,
+    ``.venv``, ``node_modules``, ...), not a merge — passing one there would
+    silently drop those and reopen this same watch-storm bug class.
+    """
+
+    ignore_dirs = (*DefaultFilter.ignore_dirs, ".dct", "target")
+
+
+def _build_watch_filter(cache_path: Path | None) -> _WatchFilter:
+    """Build the watcher's filter, excluding the resolved on-disk cache file.
+
+    The exact file path, never its parent directory: ``ignore_paths``
+    matching is a raw ``str.startswith`` prefix, so a directory entry for a
+    root-level cache file could swallow the whole project. The same prefix
+    match also covers the DuckDB ``.wal`` companion file for free.
+    """
+    ignore_paths = (str(cache_path),) if cache_path is not None else ()
+    return _WatchFilter(ignore_paths=ignore_paths)
 
 
 class FileWatcher:
     """Watches a project root and fans each change out to the live-reload streams."""
 
-    def __init__(self, root: str) -> None:
+    def __init__(self, root: str, *, cache_path: Path | None = None) -> None:
         self._root = root
+        self._filter = _build_watch_filter(cache_path)
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         # Queued True per change, False once when the watch closes.
@@ -54,7 +83,9 @@ class FileWatcher:
         from watchfiles import awatch  # noqa: PLC0415
 
         try:
-            async for _ in awatch(self._root, stop_event=self._stop):
+            async for _ in awatch(
+                self._root, watch_filter=self._filter, stop_event=self._stop
+            ):
                 self._publish(True)
         except Exception:  # noqa: BLE001 — background-task boundary; see below
             # Nothing awaits this task until stop(), and stop() runs inside

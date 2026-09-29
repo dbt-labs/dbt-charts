@@ -148,6 +148,21 @@ class TestSingleSeriesBracketForm:
         with pytest.raises(UnknownColorError, match="single.series"):
             color_from_theme("single_series[1]", palettes={})
 
+    def test_variant_on_a_slot_is_plain_color_math_whatever_authored_it(self):
+        """A resolved single-series stop is a bare color, like an inline hex:
+        the categorical-only variant restriction guards palette *names*
+        whose ramps or aliases a variant would corrupt, never a resolved
+        color. Pinned on `stark`, whose list is authored from a scaffold
+        stop (`[dbt-grays.black]`), not a categorical one -- the family of
+        the palette the author drew it from must not matter."""
+        from dbt_charts.core.compile.resolve.style.palette import variant
+
+        stark = get_theme_style("stark").charts.color.categorical.single_series_palette
+        resolved = color_from_theme(
+            "single_series[1].dark", palettes={}, single_series_palette=stark
+        )
+        assert resolved == variant(stark[0], "dark")
+
 
 # ---------------------------------------------------------------------------
 # Categorical dotted-integer form palette.N — 1-indexed positional
@@ -196,12 +211,13 @@ class TestCategoricalDottedInteger:
 
 
 class TestCategoricalNamedHueRoles:
-    """Named hue aliases on the categorical defaults (and their -dark/-light/
-    -ghost/-ink companions) make tokens like ``category.green`` swap-invariant:
-    the same token resolves to each palette's own green slot, so swapping
-    stark (vivid-10) ↔ editorial (editorial-10) keeps green green without any
-    author change. Companions pair positionally, so each shares its base's map.
-    """
+    """Named hue aliases on the categorical defaults make tokens like
+    ``category.green`` swap-invariant: the same token resolves to each
+    palette's own green slot, so swapping stark (vivid-10) ↔ editorial
+    (editorial-10) keeps green green without any author change. The four
+    companion files (vivid-10-dark etc.) that used to share this vocabulary
+    positionally are gone; every tier now derives live from the base via
+    variant(), which needs no aliases of its own."""
 
     # 1-indexed slot per role, per palette family. Pinned as a slot mapping,
     # not hex literals, so it survives palette hex retunes.
@@ -229,21 +245,8 @@ class TestCategoricalNamedHueRoles:
         "gray": 9,
         "charcoal": 10,
     }
-    # A companion pairs positionally with its base, so it carries the base map.
-    VIVID_FAMILY = [
-        "vivid-10",
-        "vivid-10-dark",
-        "vivid-10-light",
-        "vivid-10-ghost",
-        "vivid-10-ink",
-    ]
-    EDITORIAL_FAMILY = [
-        "editorial-10",
-        "editorial-10-dark",
-        "editorial-10-light",
-        "editorial-10-ghost",
-        "editorial-10-ink",
-    ]
+    VIVID_FAMILY = ["vivid-10"]
+    EDITORIAL_FAMILY = ["editorial-10"]
 
     def test_named_role_resolves_to_mapped_slot(self) -> None:
         from dbt_charts.core.compile.resolve.style.palette import palette as raw_palette
@@ -263,9 +266,9 @@ class TestCategoricalNamedHueRoles:
                     ), f"{pal} {name}"
 
     def test_all_family_members_define_identical_vocabulary(self) -> None:
-        """Swap-invariance requires every family member — base and companions —
-        to define the same role names, so a token never resolves under one theme
-        or emphasis tier and 500s under another."""
+        """Swap-invariance requires vivid-10 and editorial-10 to define the
+        same role names, so a token never resolves under one theme and 500s
+        under the other."""
         from dbt_charts.core.compile.resolve.style.palette import _load_spine
 
         vocab = set(self.VIVID_ROLES)

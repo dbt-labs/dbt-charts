@@ -13,6 +13,7 @@ too narrow a surface to prove parity.
 
 from __future__ import annotations
 
+import html
 import re
 from typing import Any
 
@@ -135,7 +136,7 @@ class TestRendererTitleParityAcrossObjectTypes:
         ff = re.search(r'font-family="([^"]+)"', excerpt)
         if not (fs and ff):
             return None
-        return int(float(fs.group(1))), ff.group(1)
+        return int(float(fs.group(1))), html.unescape(ff.group(1))
 
     def test_chart_table_spark_match_at_medium_outer_width(self) -> None:
         """At the same outer card width, all three object renderers emit

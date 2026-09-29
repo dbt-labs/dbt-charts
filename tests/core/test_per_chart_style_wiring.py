@@ -720,7 +720,6 @@ class TestKpiStyleCascade:
         import dataclasses
 
         from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.compile.models.style.resolved.kpi import ResolvedKpiStyle
         from dbt_charts.core.render.chart.kpi import render_kpi_svg
 
         compiled = get_theme_style()
@@ -739,7 +738,9 @@ class TestKpiStyleCascade:
         resolved_chart = resolve(raw_chart, data, chart_style_context=patched_ctx)
         # Inject the nil-size style directly onto the resolved chart.
         patched_chart = resolved_chart.model_copy(
-            update={"style": ResolvedKpiStyle(kpi=kpi_override)}
+            update={
+                "style": resolved_chart.style.model_copy(update={"kpi": kpi_override})
+            }
         )
 
         with pytest.raises(

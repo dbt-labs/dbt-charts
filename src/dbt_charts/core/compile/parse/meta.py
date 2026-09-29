@@ -6,6 +6,7 @@ Purpose: Resolve meta.yml chain from board file to project root.
 Entry Points:
     find_meta_files(board_path, root_dir) -> list[ProjectPath]
     load_meta_file(meta_path) -> tuple[dict[str, Any], MetaLintConfig]
+    parse_meta_content(text, relpath) -> tuple[dict[str, Any], MetaLintConfig]
     resolve_meta_lint(board_path, root_dir) -> MetaLintConfig | None
 
 meta.yml is a partial AuthoredBoard — the same authoring surface as a board file,
@@ -25,6 +26,7 @@ import yaml
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
+from dbt_charts.core.utils import UniqueKeyLoader
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory, ProjectPath
@@ -42,8 +44,54 @@ class MetaLintConfig:
     ignore_queries: dict[str, list[str]]
 
 
-def load_meta_file(meta_path: ProjectPath) -> tuple[dict[str, Any], MetaLintConfig]:
-    """Load a meta.yml file.
+# A validated meta/patch mapping: a partial AuthoredBoard, boundary-typed
+# because its keys are checked downstream by AuthoredBoard once merged, not here.
+PatchDict = dict[str, Any]  # type-state: explicit_any — validated patch mapping
+ParsedPatch = tuple[PatchDict, MetaLintConfig]
+
+
+def _parse_meta_dict(
+    data: Any,  # type-state: explicit_any — raw YAML-decoded, not yet known to be a mapping
+    relpath: str,
+) -> ParsedPatch:
+    """Validate an already YAML-parsed value as meta/patch content: must be a
+    mapping; extract and validate the ``lint:`` block.
+
+    Shared by ``load_meta_file`` (reads *relpath* from the project store) and
+    ``parse_meta_content`` (parses already-in-hand text, e.g. an unsaved
+    editor buffer) so the two never validate this shape differently.
+    """
+    if not isinstance(data, dict):
+        raise CompilationError(
+            f"{relpath} must be a YAML mapping, got {type(data).__name__}"
+        )
+
+    # Extract lint before the AuthoredBoard merge — validation policy, not content.
+    lint_data = data.pop("lint", {}) or {}
+    if not isinstance(lint_data, dict):
+        raise CompilationError(
+            f"{relpath}: 'lint' must be a mapping, got {type(lint_data).__name__}"
+        )
+    lint = MetaLintConfig(
+        ignore=lint_data.get("ignore", []),
+        ignore_queries=lint_data.get("ignore_queries", {}),
+    )
+    try:
+        validate_suppression_codes(lint.ignore, source=f"{relpath}: lint.ignore")
+        for query_name, codes in lint.ignore_queries.items():
+            validate_suppression_codes(
+                codes,
+                source=f"{relpath}: lint.ignore_queries[{query_name!r}]",
+            )
+    except ValueError as e:
+        raise CompilationError(str(e)) from e
+
+    return data, lint
+
+
+def load_meta_file(meta_path: ProjectPath) -> ParsedPatch:
+    """Load a meta.yml file (or any other patch-shaped project file, e.g. a
+    private partial) off the project store.
 
     Returns the meta dict (a partial ``AuthoredBoard``) and the extracted lint
     config. The ``lint`` key is stripped out of the returned dict — it is a
@@ -60,39 +108,31 @@ def load_meta_file(meta_path: ProjectPath) -> tuple[dict[str, Any], MetaLintConf
         raise CompilationError(f"Meta file not found: {meta_path.relpath}")
 
     try:
-        data = meta_path.read_yaml() or {}
+        # An empty file parses to None: a documented empty patch, not a
+        # fault. Excuse only that: a real non-mapping document (a bare
+        # scalar/list) still reaches and fails `_parse_meta_dict`'s
+        # isinstance check below, rather than being silently swallowed here.
+        raw_data = meta_path.read_yaml()
+        data = {} if raw_data is None else raw_data
     except (yaml.YAMLError, OSError) as e:
         raise CompilationError(f"Failed to parse {meta_path.relpath}: {e}") from e
 
-    if not isinstance(data, dict):
-        raise CompilationError(
-            f"{meta_path.relpath} must be a YAML mapping, got {type(data).__name__}"
-        )
+    return _parse_meta_dict(data, meta_path.relpath)
 
-    # Extract lint before the AuthoredBoard merge — validation policy, not content.
-    lint_data = data.pop("lint", {}) or {}
-    if not isinstance(lint_data, dict):
-        raise CompilationError(
-            f"{meta_path.relpath}: 'lint' must be a mapping, "
-            f"got {type(lint_data).__name__}"
-        )
-    lint = MetaLintConfig(
-        ignore=lint_data.get("ignore", []),
-        ignore_queries=lint_data.get("ignore_queries", {}),
-    )
+
+def parse_meta_content(text: str, relpath: str) -> ParsedPatch:
+    """Same validation as ``load_meta_file``, but from raw YAML text rather
+    than a project file: for a caller validating unsaved editor-buffer
+    content instead of what is on disk.
+    """
     try:
-        validate_suppression_codes(
-            lint.ignore, source=f"{meta_path.relpath}: lint.ignore"
-        )
-        for query_name, codes in lint.ignore_queries.items():
-            validate_suppression_codes(
-                codes,
-                source=f"{meta_path.relpath}: lint.ignore_queries[{query_name!r}]",
-            )
-    except ValueError as e:
-        raise CompilationError(str(e)) from e
+        # See load_meta_file's identical, identically-reasoned fallback above.
+        raw_data = yaml.load(text, Loader=UniqueKeyLoader)
+        data = {} if raw_data is None else raw_data
+    except yaml.YAMLError as e:
+        raise CompilationError(f"Failed to parse {relpath}: {e}") from e
 
-    return data, lint
+    return _parse_meta_dict(data, relpath)
 
 
 def find_meta_files(

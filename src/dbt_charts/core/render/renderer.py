@@ -118,7 +118,7 @@ from dbt_charts.core.utils import Rows
 # Formats whose payload is a layout-tree walk instead of the drawn svg — every
 # format still draws the board once (below) so the measurement-warning family
 # and ERR-CHART-PAINTED-NO-MARKS are detected the same way regardless of format.
-_DATA_FORMATS = frozenset({"json", "text", "yaml", "data"})
+_DATA_FORMATS = frozenset({"json", "text", "text-data", "yaml", "data"})
 
 
 class DataFormatRenderer(Protocol):
@@ -139,19 +139,21 @@ class DataFormatRenderer(Protocol):
 
 
 def _data_format_renderer(format: str) -> DataFormatRenderer:
-    """Resolve a data-bearing format to its renderer.
+    """Resolve a data-bearing format (other than ``text``) to its renderer.
+
+    ``text`` is dispatched separately by its caller — ``render_board_text``
+    alone accepts ``include_data``, which would break this shared Protocol's
+    single signature for every other data-bearing format.
 
     Imported here rather than at module scope so the serializer modules stay
     off the import path of an SVG-only render.
     """
     from dbt_charts.core.render.data_format import render_board_data
     from dbt_charts.core.render.json_format import render_board_json
-    from dbt_charts.core.render.text_format import render_board_text
     from dbt_charts.core.render.yaml_format import render_board_yaml
 
     return {
         "json": render_board_json,
-        "text": render_board_text,
         "yaml": render_board_yaml,
         "data": render_board_data,
     }[format]
@@ -427,7 +429,7 @@ def render(
     Args:
         board: Compiled board to render
         executor: Executor for query execution
-        format: Output format (svg, html, png, pdf, terminal, json, text, yaml)
+        format: Output format (svg, html, png, pdf, terminal, json, text, text-data, yaml, data)
         variables: Variable values for queries
         ignore_codes: Caller-supplied set of warning codes to suppress (CLI seam).
         builtin_variables: Pre-computed built-in variables (e.g. dir-navigation
@@ -876,13 +878,30 @@ def render(
         # from the walk, since the draw's failure is the more fundamental one.
         _data_format_errors: list[Diagnostic] = []
         try:
-            output = _data_format_renderer(format)(
-                board,
-                executor,
-                merged_variables,
-                error_collector=_data_format_errors,
-                max_rows_per_query=max_rows_per_query,
-            )
+            # 'text' and 'text-data' both render through render_board_text,
+            # called directly rather than through the shared
+            # DataFormatRenderer Protocol dispatch (which json/yaml/data's
+            # renderers use) since only render_board_text accepts
+            # include_data — 'text-data' is exactly 'text' with that True.
+            if format in ("text", "text-data"):
+                from dbt_charts.core.render.text_format import render_board_text
+
+                output = render_board_text(
+                    board,
+                    executor,
+                    merged_variables,
+                    error_collector=_data_format_errors,
+                    max_rows_per_query=max_rows_per_query,
+                    include_data=(format == "text-data"),
+                )
+            else:
+                output = _data_format_renderer(format)(
+                    board,
+                    executor,
+                    merged_variables,
+                    error_collector=_data_format_errors,
+                    max_rows_per_query=max_rows_per_query,
+                )
         except DbtChartsError as e:
             output = None
             if board_error is None:
@@ -895,7 +914,7 @@ def render(
                 board_error = RenderError.from_code(
                     ERR_INTERNAL, message=str(e)
                 ).to_diagnostic()
-        if format == "text" and output is not None:
+        if format in ("text", "text-data") and output is not None:
             # Warnings live in render_warnings (computed above, outside this
             # format-specific walk) — appended here rather than threaded into
             # render_board_text so every _DATA_FORMATS renderer keeps the same

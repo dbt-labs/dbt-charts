@@ -53,6 +53,21 @@ from dbt_charts.core.compile.models.style.theme.marks import (
     TotalStyle,
 )
 
+# Built locally (not injected from authored/, unlike the axis patches above)
+# since TitleStyle is already a normal, non-forward-ref import here: building
+# it eagerly avoids deferring _ChartStyleBase's own field resolution to a
+# model_rebuild() that, unlike its subclasses, it never otherwise receives.
+# build_patch_model_ext is @cache'd, so authored/_base.py's later
+# build_patch_model(TitleStyle) call for the authored surface returns this
+# exact object rather than building a second one.
+if TYPE_CHECKING:
+
+    class TitleStylePatch(TitleStyle):
+        pass
+
+else:
+    TitleStylePatch = build_patch_model_ext(TitleStyle, is_recursive=True)
+
 
 class _ChartStyleBase(BaseModel):
     """Required geometry/frame fields — the cascade source for all chart families.
@@ -97,7 +112,17 @@ class _ChartStyleBase(BaseModel):
         default=None,
         description="Chart-local background color override; None inherits from theme.",
     )
-    title: Annotated[TitleStyle | None, SkipInheritSlots()] = Field(
+    # TitleStylePatch (all-Optional), not TitleStyle: authoring only
+    # font.family must not force every other TitleStyle required field
+    # (compact_weight, sizes, ...) alongside it. SkipInheritSlots (no
+    # cascade): per-family title overrides (charts.kpi.title, charts.bar.title,
+    # ...) stay sparse patches — giving every per-family class its own
+    # cascade fill here would make it inherit straight from Style.title,
+    # bypassing the board-level charts.title override entirely. ChartsStyle
+    # (the one board-wide slot) overrides this field with its own
+    # InheritSlot(from_path="Style.title") below, same split as
+    # padding/SkipInheritSlots above.
+    title: Annotated[TitleStylePatch | None, SkipInheritSlots()] = Field(
         default=None,
         description="Chart-level title style override; None inherits the theme title style.",
     )

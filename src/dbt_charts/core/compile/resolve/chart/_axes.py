@@ -10,7 +10,6 @@ from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import resolve_format
 from dbt_charts.core.compile.models.chart.authored import (
-    BarChartLayer,
     CartesianLayer,
     MultiplesConfig,
 )
@@ -404,7 +403,7 @@ def _suppress_legend_for_endpoint_labels(
 
 def _reject_dual_axis_layered_endpoint_labels(
     chart_id: str,
-    layers: Sequence[CartesianLayer | BarChartLayer],
+    layers: Sequence[CartesianLayer],
     layered_rail_fires: bool,
 ) -> None:
     """Refuse a layered endpoint-label rail across a dual-axis layer.

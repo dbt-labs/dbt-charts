@@ -396,6 +396,16 @@ class Board(BaseModel):
         description="Board-scoped chart style cascade context for runtime chart resolution.",
     )
 
+    def placed_charts(self) -> list[Chart]:
+        """Every chart the layout tree places, in layout order."""
+        charts: list[Chart] = []
+        for item in self.layout.items:
+            if item.chart is not None:
+                charts.append(item.chart)
+            elif item.board is not None:
+                charts.extend(item.board.placed_charts())
+        return charts
+
     @property
     def visible_variables(self) -> "dict[str, Variable]":
         """Return variables with visible=True (available for UI controls)."""

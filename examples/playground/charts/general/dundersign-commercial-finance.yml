@@ -11,8 +11,7 @@ style:
   frame:
     width: 1440
   # First-class title-inline band: board title left, variable controls right
-  # on one horizontal row. Replaces the nested-board workaround from the
-  # company-overview-tight exemplar.
+  # on one horizontal row.
   variables:
     position: title-inline
 
@@ -37,9 +36,9 @@ queries:
 
   # ── The anchor ──────────────────────────────────────────────────────────
   # Every window on this board derives from this one query, referenced as
-  # `{{ queries.book_period }}`. It is defined once on purpose: the bug this
-  # board shipped with was six windows quietly disagreeing about when "now"
-  # is, and six copies of the fix would let them drift apart again.
+  # `{{ queries.book_period }}`, so every chart agrees on what "today" and
+  # "the last complete month" mean; keep it single-sourced rather than
+  # copied per window.
   #
   # close_at on an OPEN opportunity is a projected close date, running months
   # past the last real close (fixture: open pipeline reaches 2026-11-23 while
@@ -350,9 +349,9 @@ charts:
       tone: positive
 
   # ── Hero: stacked column ───────────────────────────────────────────────
-  # Endpoint labels (segment names on the rightmost column) ink via the
-  # editorial-10-dark companion. Attached support_table dropped this round —
-  # it was rendering as an oversized strip that pushed the chart off-baseline.
+  # Endpoint labels (segment names on the rightmost column) ink live via
+  # label_ink(), against the chart's canvas. No support_table attached: it
+  # rendered as an oversized strip that pushed the chart off-baseline.
   hero_bookings:
     query: monthly_bookings_by_source
     type: bar
@@ -445,8 +444,7 @@ charts:
     type: table
     query: top_accounts
     # Explicit empty title suppresses the normalizer's auto-fill (which
-    # otherwise humanizes chart_id → "Accounts Table"). Hidden until the
-    # chart_title_spec theme-blind bug is fixed in the parallel session.
+    # otherwise humanizes chart_id → "Accounts Table").
     title: ""
     conditional_formatting:
       days_since_close:
@@ -527,8 +525,7 @@ charts:
 # Header band uses the first-class title-inline mode. Main band is one row
 # with three columns. Per-cell heights mostly removed — letting the engine
 # size naturally. Donut keeps an explicit height so its arc doesn't collapse
-# under wedge-label real-estate (logged as defaults-wrong: narrow donuts
-# need width-aware label sizing).
+# under wedge-label real-estate.
 
 rows:
 - cols:

@@ -88,8 +88,14 @@ class TestBarTemporalAxisProducesDiscreteBands:
         x_enc = vl_spec.get("encoding", {}).get("x", {})
         x_axis = x_enc.get("axis", {})
         if x_enc.get("type") in ("ordinal", "nominal"):
-            assert (
-                x_axis.get("labelExpr") == "utcFormat(toDate(datum.value), '%b %Y')"
+            # `in`, not `==`: a discrete axis keeps one tick per bucket, so
+            # the expression also carries the gate deciding which of them
+            # speak (test_authored_format_keeps_the_cadence_gate.py). What
+            # this test pins is unchanged — the format reaches the labels,
+            # and neither `format` nor `formatType: "time"` survives on a
+            # string-domain scale, where they would drop every label.
+            assert "utcFormat(toDate(datum.value), '%b %Y')" in str(
+                x_axis.get("labelExpr", "")
             ), f"discrete axis must route time format through labelExpr: {x_axis}"
             assert "format" not in x_axis
             assert x_axis.get("formatType") != "time"

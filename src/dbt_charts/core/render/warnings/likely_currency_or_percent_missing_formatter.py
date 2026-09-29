@@ -106,23 +106,19 @@ _PERCENT_BARE_NAMES: frozenset[str] = frozenset(
 
 
 def _classify(field_name: str) -> str | None:
-    """Return 'currency', 'percent', or None for the given field name."""
+    """Return 'currency', 'percent', or None for the given field name.
+
+    Suffixes beat substrings, and a percent suffix beats any currency signal:
+    ``revenue_share`` is a ratio of revenue, not revenue.
+    """
     name = field_name.lower()
-    for suffix in _CURRENCY_SUFFIXES:
-        if name.endswith(suffix):
-            return "currency"
-    for sub in _CURRENCY_SUBSTRINGS:
-        if sub in name:
-            return "currency"
-    if name in _CURRENCY_BARE_NAMES:
+    if any(name.endswith(s) for s in _PERCENT_SUFFIXES):
+        return "percent"
+    if any(name.endswith(s) for s in _CURRENCY_SUFFIXES):
         return "currency"
-    for suffix in _PERCENT_SUFFIXES:
-        if name.endswith(suffix):
-            return "percent"
-    for sub in _PERCENT_SUBSTRINGS:
-        if sub in name:
-            return "percent"
-    if name in _PERCENT_BARE_NAMES:
+    if name in _CURRENCY_BARE_NAMES or any(s in name for s in _CURRENCY_SUBSTRINGS):
+        return "currency"
+    if name in _PERCENT_BARE_NAMES or any(s in name for s in _PERCENT_SUBSTRINGS):
         return "percent"
     return None
 

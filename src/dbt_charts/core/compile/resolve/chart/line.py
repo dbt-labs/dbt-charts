@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -36,6 +37,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _authored_axis_y_ticks_count,
     _bake_y_zero,
     _bake_zero_flag,
+    _check_bar_layer_spans,
     _first_non_numeric_y,
     _reject_non_positive_log_scale_data,
     _resolve_cartesian_ticks,
@@ -55,6 +57,7 @@ from dbt_charts.core.compile.resolve.chart._layers import (
     _resolve_layer_list,
 )
 from dbt_charts.core.compile.resolve.chart._marks import (
+    _apply_stroke_width_fallback,
     _build_resolved_line_mark,
     _label_format_fallback,
     _measure_tooltip_format,
@@ -130,6 +133,7 @@ def _resolve_line(
             y_field=_line_bad_y,
             hint=_line_y_hint,
         )
+    _check_bar_layer_spans(normalized, data, datasets, None)
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
@@ -353,8 +357,6 @@ def _resolve_line(
         and is_d3_si_spec(ay.labels.format)
         and (not plan.ay_format_authored or plan.ay_format_is_alias)
     )
-    _primary_marks = primary.marks if primary is not None else None
-    _primary_line = _primary_marks.line if _primary_marks is not None else None
     resolved_line_labels, line_label_is_house = _label_format_fallback(
         line.marks.line.labels,
         ay.labels.format,
@@ -365,21 +367,15 @@ def _resolve_line(
         update={"labels": resolved_line_labels}
     )
     # Density-adaptive stroke: bake BEFORE building the resolved mark so the
-    # resolver paints the final width; render reads it verbatim.
-    # Peek the authored stroke before cascade to distinguish "unset" from "set
-    # to the fallback value".  A zero width is the "no stroke" sentinel — never
-    # overwrite it.  The faceted per-cell width uses facet_panel_width() so
-    # the baked stroke matches what each panel actually renders into.
-    _line_stroke_authored = (
-        _primary_line is not None
-        and _primary_line.stroke is not None
-        and _primary_line.stroke.width is not None
-    )
-    # The point-companion density trigger below reads px-per-point regardless
-    # of whether the line stroke itself was pinned — an authored stroke width
-    # and the point-density trigger are unrelated knobs; gating this on
-    # _line_stroke_authored too left points permanently off whenever an
-    # author pinned marks.line.stroke.width, at any density.
+    # resolver paints the final width; render reads it verbatim. Compute the
+    # adaptive value unconditionally -- bake_line_stroke() owns the "is this
+    # pinned" decision (a None-check on the merged width, answering "did any
+    # tier pin this" directly, including the zero-width "no stroke" sentinel)
+    # and no-ops on a pinned mark, so this resolver must not re-derive that
+    # check itself: doing so zeroed the value for an unpinned overlay layer
+    # sharing this same _adaptive_stroke, whenever the BASE mark happened to
+    # be pinned. The faceted per-cell width uses facet_panel_width() so the
+    # baked stroke matches what each panel actually renders into.
     _px_per_point = 0.0
     if normalized.x is not None:
         _px_per_point = resolve_px_per_point(
@@ -390,10 +386,11 @@ def _resolve_line(
             normalized.multiples,
             bool(ay.mirror),
         )
-    _adaptive_stroke = (
-        stroke_from_px_per_point(_px_per_point) if not _line_stroke_authored else 0.0
-    )
+    _adaptive_stroke = stroke_from_px_per_point(_px_per_point)
     line_mark_with_labels = bake_line_stroke(line_mark_with_labels, _adaptive_stroke)
+    line_mark_with_labels = _apply_stroke_width_fallback(
+        line_mark_with_labels, get_chart_rendering().stroke.fallback_width
+    )
     resolved_line_mark = _build_resolved_line_mark(line_mark_with_labels)
     resolved_point_labels, point_label_is_house = _label_format_fallback(
         line.marks.point.labels,

@@ -319,7 +319,7 @@ Named presets (prefer these over raw D3 strings):
 | `percent_number` | `2.3%` — input is whole-number percent (2.3) | **KPI only** (`style.value.format`) |
 | `percent_delta` | `+2.3%` — input is decimal fraction | |
 | `percent_number_delta` | `+2.3%` — input is whole-number (2.3) | **KPI only** |
-| `percentage_points_delta` | `+3.2 pts` — the difference of two percentages | for a point delta, not a ratio delta |
+| `percentage_points_delta` | `+3.2 pts`; input is whole points (3.2), not a fraction (0.032) | for a point delta, not a ratio delta |
 
 **`percent_number` and `percent_number_delta` only work on `type: kpi`.** Using them on line/bar/area/scatter causes a render error. For those chart types use `percent` or `percent_delta` (decimal-fraction input) or omit formatting and accept axis defaults.
 

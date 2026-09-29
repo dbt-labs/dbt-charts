@@ -204,6 +204,14 @@ chart_rendering:
     # lab — retune by re-running that calibration, not casually.
     min_width: 1.5
     max_width: 4.0
+    # Used when no cascade tier pins a width and the resolve layer cannot
+    # compute an adaptive one (no data, no x field, or non-cartesian) --
+    # line's own stroke and area's overlap-edge stroke.
+    fallback_width: 2.5
+    # Same role, for area's stacked/streamgraph perimeter stroke (a thinner
+    # separator weight, not a trend line) -- also the ceiling the computed
+    # adaptive value is capped at on that recipe.
+    stacked_fallback_width: 1.0
   point:
     # Line-chart point companion (compile/resolve/adaptive_stroke.py
     # bake_point_companions). diameter_ratio: point diameter as a multiple of

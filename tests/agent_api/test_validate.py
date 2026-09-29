@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from unittest.mock import patch
@@ -9,6 +10,11 @@ from unittest.mock import patch
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+
+_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+_needs_non_root = pytest.mark.skipif(
+    _AS_ROOT, reason="root bypasses file permission bits"
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -698,6 +704,250 @@ class TestValidateMetaYamlSingleFile:
         error_msgs = " ".join(e.message for e in result.errors)
         assert "style.bogus_key" in error_msgs
         assert " → " not in error_msgs
+
+
+class TestValidateProjectConfigSingleFile:
+    """validate() on dbt_charts.yml validates against the project config schema,
+    not the board schema."""
+
+    def test_valid_project_config_succeeds(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text(
+            "sources:\n"
+            "  local:\n"
+            "    type: duckdb\n"
+            "    path: repro.duckdb\n"
+            "execution:\n"
+            "  max_workers: 4\n"
+        )
+
+        result = validate(config, project=local_project(tmp_path))
+        assert result.success is True
+        assert result.errors == []
+
+    def test_duplicate_yaml_key_reports_diagnostic_not_traceback(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A duplicate top-level key is a YAML parse error: it must come back
+        as a clean diagnostic, not an unhandled yaml.YAMLError traceback."""
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text(
+            "execution:\n  max_workers: 1\nexecution:\n  max_workers: 2\n"
+        )
+
+        result = validate(config, project=local_project(tmp_path))
+        assert result.success is False
+        assert result.errors
+        assert all(e.code == "ERR-PROJECT-CONFIG-SCHEMA" for e in result.errors)
+
+    def test_unset_env_var_in_source_reports_diagnostic_not_traceback(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """The sanctioned in-git credential form (`{{ env_var(...) }}`) with
+        the var unset raises ValueError out of the dbt Jinja renderer, before
+        _validate_source_registry gets a chance to wrap it into a coded
+        CompilationError: it must still come back as a diagnostic."""
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text(
+            "sources:\n"
+            "  warehouse:\n"
+            "    type: duckdb\n"
+            "    path: \"{{ env_var('DCT_TEST_VALIDATE_UNSET_VAR') }}\"\n"
+        )
+
+        result = validate(config, project=local_project(tmp_path))
+        assert result.success is False
+        assert result.errors
+        assert all(e.code == "ERR-PROJECT-CONFIG-SCHEMA" for e in result.errors)
+
+    def test_yaml_anchor_cycle_reports_diagnostic_not_traceback(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A self-referential YAML anchor anywhere in dbt_charts.yml raises
+        RecursionError out of Config.model_validate's own recursive walk -
+        before `sources:` is ever extracted: and must still come back as a
+        diagnostic, not an unhandled traceback."""
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text(
+            "sources:\n  cyclic: &cyclic\n    type: duckdb\n    self: *cyclic\n"
+        )
+
+        result = validate(config, project=local_project(tmp_path))
+        assert result.success is False
+        assert result.errors
+        assert all(e.code == "ERR-PROJECT-CONFIG-SCHEMA" for e in result.errors)
+
+    def test_falsy_non_mapping_dbt_charts_yml_raises_not_silently_accepted(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """`false` is a real non-mapping document, not an empty file: must
+        not be excused to `{}` the way an empty file's `None` is."""
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text("false\n")
+
+        result = validate(config, project=local_project(tmp_path))
+        assert result.success is False
+        assert result.errors
+        assert all(e.code == "ERR-PROJECT-CONFIG-SCHEMA" for e in result.errors)
+
+    @_needs_non_root
+    def test_unreadable_dbt_charts_yml_reports_diagnostic_not_traceback(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """An existing-but-unreadable dbt_charts.yml (permissions) is a
+        diagnostic, mirroring load_meta_file's OSError handling: not an
+        unhandled traceback. `_validate_resolved`'s `exists()` guard only
+        covers the missing-file case."""
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text("execution:\n  max_workers: 4\n")
+        config.chmod(0o000)
+        try:
+            result = validate(config, project=local_project(tmp_path))
+        finally:
+            config.chmod(0o644)
+
+        assert result.success is False
+        assert result.errors
+        assert all(e.code == "ERR-PROJECT-CONFIG-SCHEMA" for e in result.errors)
+
+    def test_unknown_top_level_key_fails(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text("not_a_real_key: 123\n")
+
+        result = validate(config, project=local_project(tmp_path))
+        assert result.success is False
+        assert result.errors, "expected at least one error"
+        assert all(e.code == "ERR-PROJECT-CONFIG-SCHEMA" for e in result.errors), (
+            f"expected ERR-PROJECT-CONFIG-SCHEMA, got {[e.code for e in result.errors]}"
+        )
+        # Must NOT be a board-schema error like `ERR-EXTRA-FIELD`.
+        assert not any(e.code == "ERR-EXTRA-FIELD" for e in result.errors)
+
+    def test_multiple_unknown_keys_produce_one_diagnostic_each_not_one_blob(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Two bad top-level keys must produce two field-attributed
+        diagnostics via Config.model_validate's pydantic fan-out (through
+        _pydantic_diagnostics): not one opaque `str(ValidationError)` blob
+        with pydantic internals and an errors.pydantic.dev URL leaking into a
+        user-facing message. Pins the pydantic handler runs, not the broader
+        (TypeError, ValueError, RecursionError) catch above it: ValidationError subclasses
+        ValueError, so ordering matters."""
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text("not_a_real_key: 123\nanother_bogus: 456\n")
+
+        result = validate(config, project=local_project(tmp_path))
+        assert result.success is False
+        assert len(result.errors) == 2, (
+            f"expected 2 field-attributed diagnostics, got {len(result.errors)}: "
+            f"{[e.message for e in result.errors]}"
+        )
+        messages = " ".join(e.message for e in result.errors)
+        assert "not_a_real_key: Extra inputs are not permitted" in messages
+        assert "another_bogus: Extra inputs are not permitted" in messages
+        assert "errors.pydantic.dev" not in messages
+
+    def test_style_key_not_permitted_in_project_config(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Presentation config belongs in charts/meta.yml, not dbt_charts.yml."""
+        from dbt_charts.agent_api.validate import validate
+
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text("style:\n  frame:\n    max_width: 1200\n")
+
+        result = validate(config, project=local_project(tmp_path))
+        assert result.success is False
+        assert all(e.code == "ERR-PROJECT-CONFIG-SCHEMA" for e in result.errors)
+
+
+class TestValidatePrivatePartialSingleFile:
+    """validate() on a `_`-prefixed private partial validates as a fragment
+    with no layout requirement: never compiled as a standalone board."""
+
+    def test_queries_only_partial_succeeds(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        partial = charts / "_shared.yml"
+        partial.write_text(
+            "queries:\n"
+            "  revenue_by_month:\n"
+            "    columns: [month, revenue]\n"
+            "    values:\n"
+            "      - [Jan, 100]\n"
+            "      - [Feb, 140]\n"
+        )
+
+        result = validate(partial, project=local_project(tmp_path))
+        assert result.success is True
+        assert result.errors == []
+
+    def test_unknown_key_in_partial_fails_with_schema_error_not_layout_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        partial = charts / "_shared.yml"
+        partial.write_text("not_a_real_key: 123\n")
+
+        result = validate(partial, project=local_project(tmp_path))
+        assert result.success is False
+        assert not any("layout" in e.message.lower() for e in result.errors)
+        assert result.errors
+        assert all(e.code == "ERR-META-SCHEMA" for e in result.errors)
+
+    def test_private_markdown_is_not_forced_through_the_yaml_patch_schema(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """`is_private_name` is basename-only, suffix-agnostic: a private
+        markdown file (e.g. `charts/matrix/_generator.md`) must validate the
+        same way its public counterpart does, not get routed into the
+        YAML-only BoardPatch schema."""
+        from dbt_charts.agent_api.validate import validate
+
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        content = "# Notes\n\nSome prose.\n"
+        public = charts / "draft.md"
+        private = charts / "_draft.md"
+        public.write_text(content)
+        private.write_text(content)
+
+        project = local_project(tmp_path)
+        public_result = validate(public, project=project)
+        private_result = validate(private, project=project)
+
+        assert not any(e.code == "ERR-META-SCHEMA" for e in private_result.errors)
+        assert private_result.success == public_result.success
+        assert [e.code for e in private_result.errors] == [
+            e.code for e in public_result.errors
+        ]
 
 
 class TestValidateCredentialLiteralBecomesError:

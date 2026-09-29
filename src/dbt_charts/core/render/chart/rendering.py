@@ -10,7 +10,6 @@ UI chrome such as menus is handled outside core rendering.
 
 from __future__ import annotations
 
-import html
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.board.normalized import (
@@ -42,8 +41,10 @@ if TYPE_CHECKING:
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.render.conditions import evaluate_visible
 from dbt_charts.core.render.svg_utils import (
+    attr_name,
     authored_attrs,
     border_dash_attrs,
+    escape_attr,
     extract_svg_dimensions,
     extract_svg_inner_content,
     padded_authoring_content,
@@ -154,10 +155,10 @@ def render_layout_item(
                 + board_actual_height
             )
             section_border = (
-                f'<rect x="0" y="0" width="{width}" height="{actual_height}" '
-                f'fill="none" stroke="{resolved_style.border.color}" stroke-width="{details_config.border.width}"'
+                f'<rect x="0" y="0" width="{escape_attr(width)}" height="{escape_attr(actual_height)}" '
+                f'fill="none" stroke="{escape_attr(resolved_style.border.color)}" stroke-width="{escape_attr(details_config.border.width)}"'
                 f"{border_dash_attrs(details_config.border)} "
-                f'rx="{details_config.border.radius}"/>'
+                f'rx="{escape_attr(details_config.border.radius)}"/>'
             )
             rendered = (
                 f"{section_border}"
@@ -215,9 +216,8 @@ def render_layout_item(
             )
 
     if rendered and item.notes:
-        escaped_notes = html.escape(item.notes)
         return (
-            f'<g class="dbt-layout-item" data-layout-notes="{escaped_notes}">'
+            f'<g class="dbt-layout-item" data-layout-notes="{escape_attr(item.notes)}">'
             f"{rendered}</g>",
             actual_height,
         )
@@ -662,16 +662,16 @@ def _wrap_rendered_chart_svg(
     notes = identity.notes
 
     var_attrs = (
-        " ".join(f'data-var-{html.escape(v)}="true"' for v in sorted(var_deps))
+        " ".join(f'data-var-{attr_name(v)}="true"' for v in sorted(var_deps))
         if var_deps
         else ""
     )
 
     chart_title = (resolved_title or identity.id) or identity.id
-    escaped_title = html.escape(chart_title)
-    escaped_id = html.escape(identity.id)
-    escaped_notes = html.escape(notes) if notes else ""
-    escaped_accessible_label = html.escape(chart_title)
+    notes_text = (
+        notes
+        or ""  # type-state: silent_fallback — no notes authored; empty string is the sentinel the data-chart-notes truthy-gate below reads as "omit the attribute"
+    )
     authored_path = identity.source_path
 
     classes = ["dbt-chart", *extra_classes]
@@ -679,13 +679,13 @@ def _wrap_rendered_chart_svg(
         classes.append("dbt-chart-callout")
     class_attr = " ".join(classes)
     attrs_parts = [
-        f'class="{class_attr}"',
-        f'id="chart-{escaped_id}"',
-        f'data-chart-id="{escaped_id}"',
-        f'data-chart-title="{escaped_title}"',
-        f'data-chart-width="{outer_width}"',
-        f'data-chart-height="{actual_height}"',
-        f'aria-label="{escaped_accessible_label}"',
+        f'class="{escape_attr(class_attr)}"',
+        f'id="chart-{escape_attr(identity.id)}"',
+        f'data-chart-id="{escape_attr(identity.id)}"',
+        f'data-chart-title="{escape_attr(chart_title)}"',
+        f'data-chart-width="{escape_attr(outer_width)}"',
+        f'data-chart-height="{escape_attr(actual_height)}"',
+        f'aria-label="{escape_attr(chart_title)}"',
     ]
     # `defined_in_other_file` means the path names a ChartRef string, not a
     # definition — compile keeps the coordinates (a diagnostic anchors there),
@@ -694,8 +694,8 @@ def _wrap_rendered_chart_svg(
     # carries no handle for it.
     if authored_path and not identity.defined_in_other_file:
         attrs_parts.append(authored_attrs(authored_path, "chart").strip())
-    if escaped_notes:
-        attrs_parts.append(f'data-chart-notes="{escaped_notes}"')
+    if notes_text:
+        attrs_parts.append(f'data-chart-notes="{escape_attr(notes_text)}"')
     if var_attrs:
         attrs_parts.append(var_attrs)
     # A JS selection hook, not a visual property (stripped in normalize_svg

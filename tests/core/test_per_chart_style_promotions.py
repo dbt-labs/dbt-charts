@@ -739,11 +739,15 @@ class TestSparkBarNestedPatchCascade:
 @pytest.mark.parametrize(
     ("mark_key", "required_stroke_fields"),
     [
-        # LineMarkStyle: width, cap, join all required by renderer. Area's
+        # LineMarkStyle: cap, join required by renderer. width is NOT
+        # required at the theme tier -- the resolve layer (line.py/area.py)
+        # fills it in from chart_rendering.stroke.fallback_width whenever no
+        # cascade tier pins one and adaptive can't compute one either, so a
+        # theme leaving it unset is the intended default, not a gap. Area's
         # top-edge stroke is a genuine separate line mark sourced from this
         # SAME global tier (AreaMarkStyle has no stroke of its own — fill
         # only: opacity/curve) so there's no separate "area" case to check.
-        ("line", ["width", "cap", "join"]),
+        ("line", ["cap", "join"]),
         # GeoshapeMarkStyle: color, width required by renderer
         ("geoshape", ["color", "width"]),
     ],

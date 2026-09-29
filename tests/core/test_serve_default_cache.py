@@ -179,6 +179,51 @@ class TestCreateServerConfigDrivenCache:
             assert app.state.result_cache is None
 
 
+class TestCreateServerWatcherExcludesCacheFile:
+    """create_server must wire the resolved cache path into FileWatcher, or
+    the live-reload watcher self-triggers on the cache's own writes."""
+
+    def test_config_driven_relative_cache_path_is_excluded_from_the_watch(
+        self, tmp_path: Path
+    ) -> None:
+        """A cache directory name other than .dct/target: .dct is already
+        excluded by ignore_dirs regardless of cache_path, so that shape alone
+        would not pin the cache_path wiring this test exists to cover."""
+        from watchfiles import Change  # noqa: PLC0415
+
+        from dbt_charts.cli.filesystem_project import FilesystemProject  # noqa: PLC0415
+        from dbt_charts.core.serve.server import create_server
+
+        (tmp_path / "dbt_charts.yml").write_text(
+            "cache:\n  path: mycache/cache.duckdb\n"
+        )
+        app = create_server(FilesystemProject(tmp_path))
+
+        cache_path = tmp_path / "mycache" / "cache.duckdb"
+        watch_filter = app.state.watcher._filter  # noqa: SLF001
+        assert watch_filter(Change.modified, str(cache_path)) is False
+        assert watch_filter(Change.modified, str(tmp_path / "charts" / "x.yml")) is True
+
+    def test_explicit_relative_cache_path_flag_is_excluded_from_the_watch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CLI help's own example (--cache cache.duckdb) is a bare relative
+        path — it must resolve before reaching the watcher's exclusion."""
+        from watchfiles import Change  # noqa: PLC0415
+
+        from dbt_charts.cli.filesystem_project import FilesystemProject  # noqa: PLC0415
+        from dbt_charts.core.serve.server import create_server
+
+        monkeypatch.chdir(tmp_path)
+        app = create_server(
+            FilesystemProject(tmp_path), cache_path=Path("cache.duckdb")
+        )
+
+        watch_filter = app.state.watcher._filter  # noqa: SLF001
+        assert watch_filter(Change.modified, str(tmp_path / "cache.duckdb")) is False
+        assert watch_filter(Change.modified, str(tmp_path / "charts" / "x.yml")) is True
+
+
 class TestServerLifespanCacheIsolation:
     """Verify per-lifespan cache isolation: each create_server() call gets an
     independent cache; closing one server does not affect another.

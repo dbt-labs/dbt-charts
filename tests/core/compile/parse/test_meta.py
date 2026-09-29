@@ -21,6 +21,7 @@ from dbt_charts.core.compile.parse.meta import (
     MetaLintConfig,
     find_meta_files,
     load_meta_file,
+    parse_meta_content,
 )
 
 # ============================================================================
@@ -193,6 +194,16 @@ class TestLoadMetaFile:
         with pytest.raises(CompilationError, match="must be a YAML mapping"):
             load_meta_file(meta_file)
 
+    def test_falsy_non_mapping_raises_not_silently_accepted(
+        self, temp_project, local_project: Callable[..., FilesystemProject]
+    ):
+        """`false` is a real non-mapping document, not an empty file: must
+        not be excused to `{}` the way `None` (an empty file) is."""
+        (temp_project / "meta.yml").write_text("false\n")
+        meta_file = local_project(temp_project).path("meta.yml")
+        with pytest.raises(CompilationError, match="must be a YAML mapping"):
+            load_meta_file(meta_file)
+
     def test_lint_non_mapping_raises(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
@@ -209,6 +220,36 @@ class TestLoadMetaFile:
         data, lint = load_meta_file(meta_file)
         assert data == {}
         assert lint.ignore == []
+
+
+class TestParseMetaContent:
+    """parse_meta_content validates raw text the same way load_meta_file
+    validates a file on disk: for a caller (the LSP) with an unsaved
+    editor buffer rather than a saved ProjectPath."""
+
+    def test_valid_content(self):
+        data, lint = parse_meta_content("source: analytics\n", "meta.yml")
+        assert data == {"source": "analytics"}
+        assert lint.ignore == []
+
+    def test_invalid_yaml_raises(self):
+        with pytest.raises(CompilationError, match="Failed to parse"):
+            parse_meta_content("invalid: yaml: content: [", "meta.yml")
+
+    def test_non_mapping_raises(self):
+        with pytest.raises(CompilationError, match="must be a YAML mapping"):
+            parse_meta_content(yaml.dump(["a", "b"]), "meta.yml")
+
+    def test_empty_content(self):
+        data, lint = parse_meta_content("", "meta.yml")
+        assert data == {}
+        assert lint.ignore == []
+
+    def test_falsy_non_mapping_content_raises_not_silently_accepted(self):
+        """`false` is a real non-mapping document, not an empty file: must
+        not be excused to `{}` the way `None` (an empty file) is."""
+        with pytest.raises(CompilationError, match="must be a YAML mapping"):
+            parse_meta_content("false\n", "meta.yml")
 
 
 # ============================================================================

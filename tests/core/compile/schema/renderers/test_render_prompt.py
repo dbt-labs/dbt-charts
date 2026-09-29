@@ -458,7 +458,14 @@ class TestTypeCellEnumWithSiblingContainerArm:
             line for line in result.splitlines() if line.startswith("| `palettes`")
         )
         assert row.startswith("| `palettes` | dict[str, ")
-        assert row.count("category-6-tonal-blue") == 1, (
+        # "dbt-grays" -- unlike "category-6-tonal-blue", never a *prefix* of
+        # another entry (every categorical name now also derives four
+        # `<name>.<variant>` completions, so a categorical canary like
+        # "category-6-tonal-blue" legitimately appears 5 times: itself plus
+        # its own .dark/.light/.pale/.deep). A non-categorical name has no
+        # such derived siblings and still pins the "no duplicated list"
+        # regression this test exists for.
+        assert row.count("dbt-grays") == 1, (
             f"palette name list duplicated in row: {row}"
         )
 

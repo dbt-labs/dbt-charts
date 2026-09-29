@@ -77,20 +77,25 @@ def _chart_style_has_overrides(style: ChartStylePatch | None) -> bool:
     return any(v is not None for v in style.model_dump().values())
 
 
-def _has_family_legend_patch(
-    chart_style_context: ChartStyleContext, chart_type: str | None
-) -> bool:
-    """Return True if chart_type has a non-None legend patch in the theme family style.
+# Fields that cascade global -> theme family (picked by chart.type) -> chart-local.
+# Inherit can't express this: its source path is fixed, the family is runtime data.
+_FAMILY_THEN_LOCAL_FIELDS: tuple[str, ...] = ("legend", "title")
 
-    Used to bypass the fast path when a per-family legend override exists in the theme
-    but no chart-local style override is authored.
-    """
+
+def _family_field_patch(
+    chart_style_context: ChartStyleContext, chart_type: str | None, field: str
+) -> BaseModel | None:
+    """Return the theme family's patch for ``field`` on chart_type, or None."""
     if not chart_type:
-        return False
-    family = getattr(chart_style_context, chart_type, None)
+        return None
+    family = getattr(
+        chart_style_context, chart_type, None
+    )  # type-state: silent_fallback — chart_type is an authored family-name string; ChartStyleContext carries a fixed attribute set, so an unrecognized name legitimately has no matching field
     if family is None:
-        return False
-    return getattr(family, "legend", None) is not None
+        return None
+    return getattr(
+        family, field, None
+    )  # type-state: silent_fallback — family is a per-family style union; not every member (e.g. ResolvedCalloutStyle) carries every cascade field
 
 
 def _defer_base_none_children(base: BaseModel, patch: BaseModel) -> BaseModel:
@@ -265,9 +270,10 @@ def build_chart_style_context(
             single_series_palette=base_charts.single_series_palette,
         )
 
-    if not _chart_style_has_overrides(
-        chart_style_patch
-    ) and not _has_family_legend_patch(base_charts, chart_type):
+    if not _chart_style_has_overrides(chart_style_patch) and all(
+        _family_field_patch(base_charts, chart_type, f) is None
+        for f in _FAMILY_THEN_LOCAL_FIELDS
+    ):
         return base_charts
 
     # Primary family sub-patch: the single non-null family patch.
@@ -410,9 +416,6 @@ def build_chart_style_context(
         # after the chart just painted a different one. _palette.py/pie.py
         # read this field directly instead of hand-compositing themselves.
         overrides["ink_canvas"] = ink_canvas(_background, base_charts.ink_canvas)
-    _title = getattr(primary, "title", None)
-    if _title is not None:
-        overrides["title"] = merge_onto_base(base_charts.title, _title)
 
     # --- Chart-local axis overrides ---
     # Stored as typed axis-variant patch sentinels on resolved_chart_style
@@ -438,21 +441,21 @@ def build_chart_style_context(
     if _axis_band is not None:
         overrides["axis_overrides_band"] = _axis_band
 
-    # --- Legend ---
-    # Apply per-family theme patch first (e.g. editorial bar.legend.visible: true),
-    # then board-local patch on top. Merge order: global → family theme → board-local.
-    _effective_legend = base_charts.legend
-    family_style = getattr(base_charts, chart_type, None)
-    family_legend_patch = (
-        getattr(family_style, "legend", None) if family_style is not None else None
-    )
-    if family_legend_patch is not None:
-        _effective_legend = merge_onto_base(base_charts.legend, family_legend_patch)
-    _legend = getattr(primary, "legend", None) if primary is not None else None
-    if _legend is not None:
-        _effective_legend = merge_onto_base(_effective_legend, _legend)
-    if _effective_legend is not base_charts.legend:
-        overrides["legend"] = _effective_legend
+    for _field in _FAMILY_THEN_LOCAL_FIELDS:
+        _global = getattr(base_charts, _field)
+        _effective = _global
+        _family_patch = _family_field_patch(base_charts, chart_type, _field)
+        if _family_patch is not None:
+            _effective = merge_onto_base(_effective, _family_patch)
+        _local = None
+        if primary is not None:
+            _local = getattr(
+                primary, _field, None
+            )  # type-state: silent_fallback — primary is a per-family patch union; see the support_table precedent above
+        if _local is not None:
+            _effective = merge_onto_base(_effective, _local)
+        if _effective is not _global:
+            overrides[_field] = _effective
 
     # --- Pagination (table charts expose this via TableChartStyle.pagination) ---
     # Chart-local pagination layers on top of the board default. ``enabled``

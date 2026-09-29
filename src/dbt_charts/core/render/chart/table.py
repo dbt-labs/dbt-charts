@@ -122,7 +122,12 @@ from dbt_charts.core.render.chart.title_overflow import (
 from dbt_charts.core.render.controls import controls_are_interactive
 from dbt_charts.core.render.format_utils import MAGNITUDE_SUFFIXES, format_kpi_parts
 from dbt_charts.core.render.script_embedding import embed_svg_script
-from dbt_charts.core.render.svg_utils import authored_kind_attr, card_box, px
+from dbt_charts.core.render.svg_utils import (
+    authored_kind_attr,
+    card_box,
+    escape_attr,
+    px,
+)
 from dbt_charts.core.render.utils import (
     normalize_data_types,
     slug_to_text,
@@ -460,8 +465,8 @@ def _render_swatch_cell(value: Any, col: str, row_idx: int, chart_id: str) -> st
             chart_id=chart_id,
         )
     return (
-        f'<rect width="{_SWATCH_SIZE}" height="{_SWATCH_SIZE}" '
-        f'rx="{_SWATCH_CORNER_RADIUS}" fill="{color}"/>'
+        f'<rect width="{escape_attr(_SWATCH_SIZE)}" height="{escape_attr(_SWATCH_SIZE)}" '
+        f'rx="{escape_attr(_SWATCH_CORNER_RADIUS)}" fill="{escape_attr(color)}"/>'
     )
 
 
@@ -1013,9 +1018,9 @@ def _render_pivot_group_header(
         # Background for this group row.
         if _hdr_bg and _hdr_bg.lower() != "transparent":
             svg_parts.append(
-                f'<rect x="{padding_x}" y="{row_y}" '
-                f'width="{table_width - 2 * padding_x}" height="{group_row_height}" '
-                f'fill="{_hdr_bg}"/>',
+                f'<rect x="{escape_attr(padding_x)}" y="{escape_attr(row_y)}" '
+                f'width="{escape_attr(table_width - 2 * padding_x)}" height="{escape_attr(group_row_height)}" '
+                f'fill="{escape_attr(_hdr_bg)}"/>',
             )
 
         label_y = (
@@ -1038,17 +1043,17 @@ def _render_pivot_group_header(
             rule_y = row_y + group_row_height - _RULE_H
             if x_right > x_left + cell_pad:
                 svg_parts.append(
-                    f'<rect x="{x_left + cell_pad}" y="{rule_y}" '
-                    f'width="{x_right - x_left - 2 * cell_pad}" height="{_RULE_H}" '
-                    f'fill="{rule_color}" shape-rendering="crispEdges"/>',
+                    f'<rect x="{escape_attr(x_left + cell_pad)}" y="{escape_attr(rule_y)}" '
+                    f'width="{escape_attr(x_right - x_left - 2 * cell_pad)}" height="{escape_attr(_RULE_H)}" '
+                    f'fill="{escape_attr(rule_color)}" shape-rendering="crispEdges"/>',
                 )
 
             escaped = html_module.escape(str(group_label))
             svg_parts.append(
-                f'<text x="{center_x}" y="{label_y}" '
-                f'font-size="{font_size}" font-weight="{font_weight}" '
-                f'fill="{colors["label_color"]}" text-anchor="middle" '
-                f'font-family="{font_family}">'
+                f'<text x="{escape_attr(center_x)}" y="{escape_attr(label_y)}" '
+                f'font-size="{escape_attr(font_size)}" font-weight="{escape_attr(font_weight)}" '
+                f'fill="{escape_attr(colors["label_color"])}" text-anchor="middle" '
+                f'font-family="{escape_attr(font_family)}">'
                 f"{escaped}</text>",
             )
 
@@ -1105,9 +1110,9 @@ def _render_header_section(
     _hdr_bg = colors["header_background"]
     if _hdr_bg and _hdr_bg.lower() != "transparent":
         svg_parts.append(
-            f'<rect x="{bg_x1}" y="{current_y}" width="{bg_x2 - bg_x1}" '
-            f'height="{header_height}" '
-            f'fill="{_hdr_bg}"/>',
+            f'<rect x="{escape_attr(bg_x1)}" y="{escape_attr(current_y)}" width="{escape_attr(bg_x2 - bg_x1)}" '
+            f'height="{escape_attr(header_height)}" '
+            f'fill="{escape_attr(_hdr_bg)}"/>',
         )
     effective_rule_color = rule_color or colors["color"]
     if header_rule_width > 0:
@@ -1131,8 +1136,8 @@ def _render_header_section(
                 table_width=table_width,
             )
             svg_parts.append(
-                f'<rect x="{x1}" y="{rule_y}" width="{x2 - x1}" '
-                f'height="{header_rule_width}" fill="{effective_rule_color}" '
+                f'<rect x="{escape_attr(x1)}" y="{escape_attr(rule_y)}" width="{escape_attr(x2 - x1)}" '
+                f'height="{escape_attr(header_rule_width)}" fill="{escape_attr(effective_rule_color)}" '
                 f'shape-rendering="crispEdges"/>',
             )
         else:
@@ -1184,8 +1189,8 @@ def _render_header_section(
                 x2 = min(x2, cell_right_bound)
                 if x2 > x1:
                     svg_parts.append(
-                        f'<rect x="{x1}" y="{rule_y}" width="{x2 - x1}" '
-                        f'height="{header_rule_width}" fill="{effective_rule_color}" '
+                        f'<rect x="{escape_attr(x1)}" y="{escape_attr(rule_y)}" width="{escape_attr(x2 - x1)}" '
+                        f'height="{escape_attr(header_rule_width)}" fill="{escape_attr(effective_rule_color)}" '
                         f'shape-rendering="crispEdges"/>',
                     )
 
@@ -1220,10 +1225,10 @@ def _render_header_section(
             y = bottom_baseline
             escaped_name = html_module.escape(display_name)
             svg_parts.append(
-                f'<text x="{x}" y="{y}" '
-                f'font-size="{header_font_size}" font-weight="{header_font_weight}" fill="{text_fill}" '
-                f'text-anchor="{anchor}" '
-                f'font-family="{effective_font_family}">'
+                f'<text x="{escape_attr(x)}" y="{escape_attr(y)}" '
+                f'font-size="{escape_attr(header_font_size)}" font-weight="{escape_attr(header_font_weight)}" fill="{escape_attr(text_fill)}" '
+                f'text-anchor="{escape_attr(anchor)}" '
+                f'font-family="{escape_attr(effective_font_family)}">'
                 f"{escaped_name}</text>",
             )
             continue
@@ -1261,8 +1266,7 @@ def _render_header_section(
             anchor = "start"
 
         if header_link:
-            escaped_href = html_module.escape(header_link, quote=True)
-            svg_parts.append(f'<a href="{escaped_href}">')
+            svg_parts.append(f'<a href="{escape_attr(header_link)}">')
 
         if len(display_lines) > 1:
             lines = display_lines
@@ -1276,16 +1280,18 @@ def _render_header_section(
                 else ""
             )
             svg_parts.append(
-                f'<text x="{x}" '
-                f'font-size="{header_font_size}" font-weight="{header_font_weight}" fill="{text_fill}" '
-                f'text-anchor="{anchor}" '
-                f'font-family="{effective_font_family}">'
+                f'<text x="{escape_attr(x)}" '
+                f'font-size="{escape_attr(header_font_size)}" font-weight="{escape_attr(header_font_weight)}" fill="{escape_attr(text_fill)}" '
+                f'text-anchor="{escape_attr(anchor)}" '
+                f'font-family="{escape_attr(effective_font_family)}">'
                 f"{multi_title}",
             )
             for li, line in enumerate(lines):
                 ly = start_y + li * header_line_height
                 escaped_line = html_module.escape(line)
-                svg_parts.append(f'<tspan x="{x}" y="{ly}">{escaped_line}</tspan>')
+                svg_parts.append(
+                    f'<tspan x="{escape_attr(x)}" y="{escape_attr(ly)}">{escaped_line}</tspan>'
+                )
             svg_parts.append("</text>")
         else:
             y = bottom_baseline
@@ -1300,10 +1306,10 @@ def _render_header_section(
                 else ""
             )
             svg_parts.append(
-                f'<text x="{x}" y="{y}" '
-                f'font-size="{header_font_size}" font-weight="{header_font_weight}" fill="{text_fill}" '
-                f'text-anchor="{anchor}" '
-                f'font-family="{effective_font_family}">'
+                f'<text x="{escape_attr(x)}" y="{escape_attr(y)}" '
+                f'font-size="{escape_attr(header_font_size)}" font-weight="{escape_attr(header_font_weight)}" fill="{escape_attr(text_fill)}" '
+                f'text-anchor="{escape_attr(anchor)}" '
+                f'font-family="{escape_attr(effective_font_family)}">'
                 f"{title_attr}{escaped_name}</text>",
             )
 
@@ -2050,9 +2056,9 @@ def _render_data_rows(
                 table_width=table_width,
             )
             svg_parts.append(
-                f'<rect x="{stripe_x1}" y="{row_y}" '
-                f'width="{stripe_x2 - stripe_x1}" height="{fill_height}" '
-                f'fill="{stripe_fill}"/>',
+                f'<rect x="{escape_attr(stripe_x1)}" y="{escape_attr(row_y)}" '
+                f'width="{escape_attr(stripe_x2 - stripe_x1)}" height="{escape_attr(fill_height)}" '
+                f'fill="{escape_attr(stripe_fill)}"/>',
             )
 
         # Per-role background fill from row.roles.summary / row.roles.total.
@@ -2072,9 +2078,9 @@ def _render_data_rows(
                 table_width=table_width,
             )
             svg_parts.append(
-                f'<rect x="{bg_x1}" y="{row_y}" '
-                f'width="{bg_x2 - bg_x1}" height="{fill_height}" '
-                f'fill="{role_bg}"/>',
+                f'<rect x="{escape_attr(bg_x1)}" y="{escape_attr(row_y)}" '
+                f'width="{escape_attr(bg_x2 - bg_x1)}" height="{escape_attr(fill_height)}" '
+                f'fill="{escape_attr(role_bg)}"/>',
             )
 
         # Summary rule ABOVE the summary row. Decoupled from row_rule_width:
@@ -2098,23 +2104,23 @@ def _render_data_rows(
                 y_upper = row_y - line_h - gap - line_h
                 y_lower = row_y - line_h
                 svg_parts.append(
-                    f'<rect x="{rule_x1}" y="{y_upper}" '
-                    f'width="{rule_x2 - rule_x1}" height="{line_h}" '
-                    f'fill="{effective_rule_color}" '
+                    f'<rect x="{escape_attr(rule_x1)}" y="{escape_attr(y_upper)}" '
+                    f'width="{escape_attr(rule_x2 - rule_x1)}" height="{escape_attr(line_h)}" '
+                    f'fill="{escape_attr(effective_rule_color)}" '
                     f'shape-rendering="crispEdges"/>',
                 )
                 svg_parts.append(
-                    f'<rect x="{rule_x1}" y="{y_lower}" '
-                    f'width="{rule_x2 - rule_x1}" height="{line_h}" '
-                    f'fill="{effective_rule_color}" '
+                    f'<rect x="{escape_attr(rule_x1)}" y="{escape_attr(y_lower)}" '
+                    f'width="{escape_attr(rule_x2 - rule_x1)}" height="{escape_attr(line_h)}" '
+                    f'fill="{escape_attr(effective_rule_color)}" '
                     f'shape-rendering="crispEdges"/>',
                 )
             else:
                 y_single = row_y - line_h
                 svg_parts.append(
-                    f'<rect x="{rule_x1}" y="{y_single}" '
-                    f'width="{rule_x2 - rule_x1}" height="{line_h}" '
-                    f'fill="{effective_rule_color}" '
+                    f'<rect x="{escape_attr(rule_x1)}" y="{escape_attr(y_single)}" '
+                    f'width="{escape_attr(rule_x2 - rule_x1)}" height="{escape_attr(line_h)}" '
+                    f'fill="{escape_attr(effective_rule_color)}" '
                     f'shape-rendering="crispEdges"/>',
                 )
 
@@ -2145,8 +2151,8 @@ def _render_data_rows(
             # interaction does not ship inside a board.
             rule_pe_attr = ' class="dbt-pointer-inert"' if chart_root_link else ""
             row_rule_parts.append(
-                f'<rect x="{rule_x1}" y="{rule_y}" width="{rule_x2 - rule_x1}" '
-                f'height="{rule_reserve_px}" fill="{effective_rule_color}"'
+                f'<rect x="{escape_attr(rule_x1)}" y="{escape_attr(rule_y)}" width="{escape_attr(rule_x2 - rule_x1)}" '
+                f'height="{escape_attr(rule_reserve_px)}" fill="{escape_attr(effective_rule_color)}"'
                 f'{rule_pe_attr} shape-rendering="crispEdges"/>',
             )
 
@@ -2167,7 +2173,6 @@ def _render_data_rows(
             )
             if row_link:
                 row_has_band = True
-                escaped_row_href = html_module.escape(row_link, quote=True)
                 # Accessible name for the otherwise-empty row anchor: the first
                 # non-gutter cell value, else the destination URL so the anchor
                 # is never announced as a bare "link" by a screen reader.
@@ -2176,7 +2181,6 @@ def _render_data_rows(
                 )
                 if not row_label:
                     row_label = row_link
-                escaped_row_label = html_module.escape(row_label, quote=True)
                 # Band spans the full per-row height (not fill_height) so the
                 # hover highlight is continuous down a column — fill_height
                 # reserves the row-rule strip, which would leave a 1px dead gap
@@ -2184,12 +2188,12 @@ def _render_data_rows(
                 # on top after the loop but is pointer-transparent, so hover
                 # still reaches the band across the boundary.
                 svg_parts.append(
-                    f'<a href="{escaped_row_href}" aria-label="{escaped_row_label}">'
+                    f'<a href="{escape_attr(row_link)}" aria-label="{escape_attr(row_label)}">'
                     f'<rect class="dbt-table-row-link" fill="transparent" '
-                    f'style="--dbt-link: {colors["link"]}" '
-                    f'x="{row_link_x1}" '
-                    f'y="{row_y}" width="{row_link_x2 - row_link_x1}" '
-                    f'height="{per_row_height}"/></a>',
+                    f'style="--dbt-link: {escape_attr(colors["link"])}" '
+                    f'x="{escape_attr(row_link_x1)}" '
+                    f'y="{escape_attr(row_y)}" width="{escape_attr(row_link_x2 - row_link_x1)}" '
+                    f'height="{escape_attr(per_row_height)}"/></a>',
                 )
 
         # In a banded row, painted cell content that is NOT itself a link must
@@ -2221,10 +2225,10 @@ def _render_data_rows(
                         rn_x = cell_x + cell_pad
                         rn_anchor = "start"
                     svg_parts.append(
-                        f'<text x="{rn_x}" y="{y}" '
-                        f'font-size="{font_size}" fill="{colors["muted"]}" '
-                        f'text-anchor="{rn_anchor}" '
-                        f'font-family="{_SANS_NUMERIC_FONT_STACK}">'
+                        f'<text x="{escape_attr(rn_x)}" y="{escape_attr(y)}" '
+                        f'font-size="{escape_attr(font_size)}" fill="{escape_attr(colors["muted"])}" '
+                        f'text-anchor="{escape_attr(rn_anchor)}" '
+                        f'font-family="{escape_attr(_SANS_NUMERIC_FONT_STACK)}">'
                         f"{absolute_index}</text>",
                     )
                 continue
@@ -2243,7 +2247,7 @@ def _render_data_rows(
                 swatch_x = px(cell_x + 4)
                 swatch_y = row_y + (per_row_height - _SWATCH_SIZE) / 2
                 svg_parts.append(
-                    f'<g transform="translate({swatch_x}, {swatch_y})"'
+                    f'<g transform="translate({escape_attr(swatch_x)}, {escape_attr(swatch_y)})"'
                     f"{cell_pe_attr}>{swatch_content}</g>",
                 )
                 continue
@@ -2288,7 +2292,7 @@ def _render_data_rows(
                     # offset would leave the spark hugging the top.
                     spark_y = row_y + (per_row_height - spark_height) / 2
                     svg_parts.append(
-                        f'<g transform="translate({spark_x}, {spark_y})"'
+                        f'<g transform="translate({escape_attr(spark_x)}, {escape_attr(spark_y)})"'
                         f"{cell_pe_attr}>{spark_content}</g>",
                     )
                     continue
@@ -2363,8 +2367,8 @@ def _render_data_rows(
 
             if cell_background:
                 svg_parts.append(
-                    f'<rect x="{cell_x}" y="{row_y}" width="{cw}" height="{fill_height}" '
-                    f'fill="{cell_background}"{cell_pe_attr}/>',
+                    f'<rect x="{escape_attr(cell_x)}" y="{escape_attr(row_y)}" width="{escape_attr(cw)}" height="{escape_attr(fill_height)}" '
+                    f'fill="{escape_attr(cell_background)}"{cell_pe_attr}/>',
                 )
 
             cell_glyph, cell_glyph_color = resolve_cell_glyph_from_overrides(
@@ -2410,13 +2414,13 @@ def _render_data_rows(
 
             font_weight_attr = ""
             if cond_fw and cond_fw in VALID_FONT_WEIGHTS:
-                font_weight_attr = f' font-weight="{cond_fw}"'
+                font_weight_attr = f' font-weight="{escape_attr(cond_fw)}"'
             elif col_config and col_config.font and col_config.font.weight:
                 resolved_weight = resolve_table_style_value(
                     font_weight_as_css(col_config.font.weight), row
                 )
                 if resolved_weight in VALID_FONT_WEIGHTS:
-                    font_weight_attr = f' font-weight="{resolved_weight}"'
+                    font_weight_attr = f' font-weight="{escape_attr(resolved_weight)}"'
             # Summary/total rows: per-role font.weight from row.roles
             # takes precedence, then flat summary_font_weight, then
             # default medium (500). All values validated against
@@ -2441,17 +2445,19 @@ def _render_data_rows(
                         _rw = _candidate
                 if not _rw:
                     _rw = summary_font_weight or "500"
-                font_weight_attr = f' font-weight="{_rw}"'
+                font_weight_attr = f' font-weight="{escape_attr(_rw)}"'
             if not font_weight_attr and cell_link:
                 font_weight_attr = ' font-weight="500"'
 
             font_style_attr = ""
             if cond_style is not None:
-                font_style_attr = f' font-style="{cond_style}"'
+                font_style_attr = f' font-style="{escape_attr(cond_style)}"'
 
             font_decoration_attr = ""
             if cond_decoration is not None:
-                font_decoration_attr = f' text-decoration="{cond_decoration}"'
+                font_decoration_attr = (
+                    f' text-decoration="{escape_attr(cond_decoration)}"'
+                )
 
             use_tabular = _wants_tabular_font(value, col_config)
             if use_tabular:
@@ -2475,11 +2481,9 @@ def _render_data_rows(
             )
 
             if cell_link:
-                escaped_href = html_module.escape(cell_link, quote=True)
-                escaped_link_color = html_module.escape(fill_color, quote=True)
                 svg_parts.append(
-                    f'<a href="{escaped_href}"><g class="dbt-table-link" '
-                    f'style="color: {escaped_link_color}">',
+                    f'<a href="{escape_attr(cell_link)}"><g class="dbt-table-link" '
+                    f'style="color: {escape_attr(fill_color)}">',
                 )
             # Class on the cell <text>: the link-text class for wired cells;
             # else, in a banded row, the inert-cell class whose stylesheet rule
@@ -2595,9 +2599,9 @@ def _render_data_rows(
                 escaped_number = html_module.escape(number_str)
 
                 svg_parts.append(
-                    f'<text{cell_link_class_attr} y="{y}" font-size="{font_size}" '
-                    f'fill="{fill_color}" '
-                    f'font-family="{cell_font_family}"{numeric_style}{font_weight_attr}{font_style_attr}{font_decoration_attr}>',
+                    f'<text{cell_link_class_attr} y="{escape_attr(y)}" font-size="{escape_attr(font_size)}" '
+                    f'fill="{escape_attr(fill_color)}" '
+                    f'font-family="{escape_attr(cell_font_family)}"{numeric_style}{font_weight_attr}{font_style_attr}{font_decoration_attr}>',
                 )
 
                 # Prefix tspan: end-anchored at prefix_x (left of number).
@@ -2606,26 +2610,26 @@ def _render_data_rows(
                 if full_prefix:
                     escaped_prefix = html_module.escape(full_prefix)
                     glyph_fill_attr = (
-                        f' fill="{sanitize_color(cell_glyph_color, fill_color)}"'
+                        f' fill="{escape_attr(sanitize_color(cell_glyph_color, fill_color))}"'
                         if cell_glyph and cell_glyph_color
                         else ""
                     )
                     svg_parts.append(
-                        f'<tspan x="{prefix_x}" text-anchor="end"{glyph_fill_attr}>'
+                        f'<tspan x="{escape_attr(prefix_x)}" text-anchor="end"{glyph_fill_attr}>'
                         f"{escaped_prefix}</tspan>",
                     )
 
                 # Number tspan: end-anchored so its center sits at cell
                 # midpoint (number_x = midpoint + max_number_w / 2).
                 svg_parts.append(
-                    f'<tspan x="{number_x}" text-anchor="end">{escaped_number}</tspan>',
+                    f'<tspan x="{escape_attr(number_x)}" text-anchor="end">{escaped_number}</tspan>',
                 )
 
                 # Suffix tspan: left-aligned at fixed position
                 if suffix:
                     escaped_suffix = html_module.escape(suffix)
                     svg_parts.append(
-                        f'<tspan x="{suffix_x}" text-anchor="start">'
+                        f'<tspan x="{escape_attr(suffix_x)}" text-anchor="start">'
                         f"{escaped_suffix}</tspan>",
                     )
 
@@ -2702,7 +2706,7 @@ def _render_data_rows(
                 if cell_glyph:
                     escaped_glyph = html_module.escape(cell_glyph)
                     glyph_fill_attr = (
-                        f' fill="{sanitize_color(cell_glyph_color, fill_color)}"'
+                        f' fill="{escape_attr(sanitize_color(cell_glyph_color, fill_color))}"'
                         if cell_glyph_color
                         else ""
                     )
@@ -2715,24 +2719,24 @@ def _render_data_rows(
                     total_text_h = len(lines) * line_height
                     first_y = row_y + (per_row_height - total_text_h) / 2 + font_size
                     svg_parts.append(
-                        f'<text{cell_link_class_attr} x="{x}" '
-                        f'font-size="{font_size}" fill="{fill_color}" '
-                        f'text-anchor="{anchor}" '
-                        f'font-family="{cell_font_family}"{font_weight_attr}{font_style_attr}{font_decoration_attr}>'
+                        f'<text{cell_link_class_attr} x="{escape_attr(x)}" '
+                        f'font-size="{escape_attr(font_size)}" fill="{escape_attr(fill_color)}" '
+                        f'text-anchor="{escape_attr(anchor)}" '
+                        f'font-family="{escape_attr(cell_font_family)}"{font_weight_attr}{font_style_attr}{font_decoration_attr}>'
                     )
                     for li, line in enumerate(lines):
                         ly = first_y + li * line_height
                         prefix = glyph_prefix_inline if li == 0 else ""
                         svg_parts.append(
-                            f'<tspan x="{x}" y="{ly}">{prefix}{html_module.escape(line)}</tspan>'
+                            f'<tspan x="{escape_attr(x)}" y="{escape_attr(ly)}">{prefix}{html_module.escape(line)}</tspan>'
                         )
                     svg_parts.append("</text>")
                 else:
                     svg_parts.append(
-                        f'<text{cell_link_class_attr} x="{x}" y="{y}" '
-                        f'font-size="{font_size}" fill="{fill_color}" '
-                        f'text-anchor="{anchor}" '
-                        f'font-family="{cell_font_family}"{numeric_style}{font_weight_attr}{font_style_attr}{font_decoration_attr}>'
+                        f'<text{cell_link_class_attr} x="{escape_attr(x)}" y="{escape_attr(y)}" '
+                        f'font-size="{escape_attr(font_size)}" fill="{escape_attr(fill_color)}" '
+                        f'text-anchor="{escape_attr(anchor)}" '
+                        f'font-family="{escape_attr(cell_font_family)}"{numeric_style}{font_weight_attr}{font_style_attr}{font_decoration_attr}>'
                         f"{glyph_prefix_inline}{html_module.escape(lines[0])}</text>",
                     )
 
@@ -2878,12 +2882,6 @@ def _render_pagination_controls(
     rect_h = max(font_size * 1.8, 18.0)
     rect_y = y + 4
 
-    safe_var = html_module.escape(page_var_name, quote=True)
-    safe_font = html_module.escape(font_family, quote=True)
-    safe_active = html_module.escape(paginator.color_active, quote=True)
-    safe_inactive = html_module.escape(paginator.color_inactive, quote=True)
-    safe_disabled = html_module.escape(paginator.color_disabled, quote=True)
-
     # Right-anchored layout: walk slot widths so chevrons and ellipses
     # get narrower slots than digits, sitting closer to their boundary
     # neighbors. Total width is the sum of slot widths; the rightmost
@@ -2908,14 +2906,16 @@ def _render_pagination_controls(
         safe_label = html_module.escape(label_text, quote=True)
         label_svg = (
             f'<text class="dbt-paginator-label" x="{padding:.1f}" '
-            f'y="{text_y:.1f}" font-size="{font_size}" '
-            f'fill="{safe_inactive}" font-family="{safe_font}" '
-            f'font-weight="{paginator.weight_inactive}" '
+            f'y="{text_y:.1f}" font-size="{escape_attr(font_size)}" '
+            f'fill="{escape_attr(paginator.color_inactive)}" font-family="{escape_attr(font_family)}" '
+            f'font-weight="{escape_attr(paginator.weight_inactive)}" '
             f'style="font-variant-numeric: tabular-nums;">'
             f"{safe_label}</text>\n"
         )
 
-    parts: list[str] = [f'<g class="dbt-paginator" data-paginator="{safe_var}">']
+    parts: list[str] = [
+        f'<g class="dbt-paginator" data-paginator="{escape_attr(page_var_name)}">'
+    ]
 
     for i, (role, glyph, target) in enumerate(sequence):
         slot_w = slot_widths[i]
@@ -2928,25 +2928,25 @@ def _render_pagination_controls(
         is_ellipsis = role == "ellipsis"
 
         if is_active_page:
-            color = safe_active
+            color = paginator.color_active
             weight = paginator.weight_active
             clickable = False
         elif is_disabled_chevron:
-            color = safe_disabled
+            color = paginator.color_disabled
             weight = (
                 paginator.weight_chevron
             )  # silhouette stays heavy; tone signals disabled
             clickable = False
         elif role in ("prev", "next"):
-            color = safe_active
+            color = paginator.color_active
             weight = paginator.weight_chevron
             clickable = True
         elif is_ellipsis:
-            color = safe_inactive
+            color = paginator.color_inactive
             weight = paginator.weight_inactive
             clickable = False
         else:  # inactive page number
-            color = safe_inactive
+            color = paginator.color_inactive
             weight = paginator.weight_inactive
             clickable = True
 
@@ -2964,18 +2964,20 @@ def _render_pagination_controls(
             # binds data-dbt-page-var); a static export names only the target,
             # which its standalone runtime uses to toggle pre-drawn pages.
             page_var = (
-                f' data-dbt-page-var="{safe_var}"' if controls_are_interactive() else ""
+                f' data-dbt-page-var="{escape_attr(page_var_name)}"'
+                if controls_are_interactive()
+                else ""
             )
             parts.append(
                 f'<rect class="dbt-page-target" x="{rect_x:.1f}" y="{rect_y:.1f}" '
                 f'width="{rect_w:.1f}" height="{rect_h:.1f}" '
-                f'fill="transparent"{page_var} data-dbt-page-target="{target}"/>'
+                f'fill="transparent"{page_var} data-dbt-page-target="{escape_attr(target)}"/>'
             )
 
         text_style = "font-variant-numeric: tabular-nums;"
-        data_attrs = f' data-paginator-role="{role}"'
+        data_attrs = f' data-paginator-role="{escape_attr(role)}"'
         if is_active_page:
-            data_attrs += f' data-pagination-current="{safe_var}"'
+            data_attrs += f' data-pagination-current="{escape_attr(page_var_name)}"'
         # class="dbt-paginator-glyph" so the underlying <rect> catches hover/
         # click over the painted glyph. A pointer-events="none" *attribute*
         # cannot do this: the board stylesheet ships
@@ -2986,10 +2988,10 @@ def _render_pagination_controls(
         # rule emitted below).
         parts.append(
             f'<text x="{center_x:.1f}" y="{text_y:.1f}" '
-            f'font-size="{font_size}" fill="{color}" text-anchor="middle" '
-            f'font-family="{safe_font}" font-weight="{weight}" '
+            f'font-size="{escape_attr(font_size)}" fill="{escape_attr(color)}" text-anchor="middle" '
+            f'font-family="{escape_attr(font_family)}" font-weight="{escape_attr(weight)}" '
             f'class="dbt-paginator-glyph" '
-            f'style="{text_style}"{data_attrs}>{glyph}</text>'
+            f'style="{escape_attr(text_style)}"{data_attrs}>{glyph}</text>'
         )
 
     parts.append("</g>")
@@ -3012,15 +3014,14 @@ def _render_static_pagination_cap_note(
     file holds everything.
     """
     font_size = int(paginator.font.size) if paginator.font.size is not None else 11
-    safe_font = html_module.escape(font_family, quote=True)
-    safe_color = html_module.escape(paginator.color_inactive, quote=True)
     text = html_module.escape(
         f"Showing pages 1–{rendered_pages} of {total_pages} in this static export"
     )
     return (
         f'<text class="dbt-paginator-label" x="{padding:.1f}" y="{y + 18:.1f}" '
-        f'font-size="{font_size}" fill="{safe_color}" font-family="{safe_font}" '
-        f'font-weight="{paginator.weight_inactive}">{text}</text>'
+        f'font-size="{escape_attr(font_size)}" fill="{escape_attr(paginator.color_inactive)}" '
+        f'font-family="{escape_attr(font_family)}" '
+        f'font-weight="{escape_attr(paginator.weight_inactive)}">{text}</text>'
     )
 
 
@@ -3293,8 +3294,8 @@ def _render_table_svg_core(
     # color (link color), muted, and placeholder — do not add more reads
     # from it.
     #
-    # TitleStyle.font is FontStyle (all Optional) — InheritSlot fills from _base.yaml;
-    # all built-in themes set title.font.color, so None post-cascade is a cascade bug.
+    # TitleStyle.font is an InheritSlot filled from Style.font, so None
+    # post-cascade is a cascade bug.
     assert table_style.title.font.color is not None, (
         "title.font.color must be populated by cascade"
     )
@@ -4115,9 +4116,9 @@ def _render_table_svg_core(
     if colors["background"] and colors["background"].lower() != "transparent":
         bx, by, bw, bh = card_box(slot_width, table_height, inset)
         svg_parts.append(
-            f'<rect x="{_format_svg_numeric(bx)}" y="{_format_svg_numeric(by)}" '
-            f'width="{_format_svg_numeric(bw)}" height="{_format_svg_numeric(bh)}" '
-            f'fill="{colors["background"]}" rx="4"/>',
+            f'<rect x="{escape_attr(_format_svg_numeric(bx))}" y="{escape_attr(_format_svg_numeric(by))}" '
+            f'width="{escape_attr(_format_svg_numeric(bw))}" height="{escape_attr(_format_svg_numeric(bh))}" '
+            f'fill="{escape_attr(colors["background"])}" rx="4"/>',
         )
 
     current_y = padding
@@ -4144,14 +4145,14 @@ def _render_table_svg_core(
             else ""
         )
         svg_parts.append(
-            f'<text x="{padding}" y="{title_baseline}" '
-            f'font-size="{title_font_size}" font-weight="{title_font_weight}" fill="{colors["title_color"]}" '
-            f'font-family="{title_font_family_str}"{authored_kind_attr("title")}>{inner_title}',
+            f'<text x="{escape_attr(padding)}" y="{escape_attr(title_baseline)}" '
+            f'font-size="{escape_attr(title_font_size)}" font-weight="{escape_attr(title_font_weight)}" fill="{escape_attr(colors["title_color"])}" '
+            f'font-family="{escape_attr(title_font_family_str)}"{authored_kind_attr("title")}>{inner_title}',
         )
         for line_index, line in enumerate(title_lines):
             line_y = title_baseline + (line_index * title_line_height)
             svg_parts.append(
-                f'<tspan x="{padding}" y="{line_y}">{html_module.escape(line)}</tspan>',
+                f'<tspan x="{escape_attr(padding)}" y="{escape_attr(line_y)}">{html_module.escape(line)}</tspan>',
             )
         svg_parts.append("</text>")
         if subtitle_text:
@@ -4174,14 +4175,14 @@ def _render_table_svg_core(
                 else ""
             )
             svg_parts.append(
-                f'<text x="{padding}" '
-                f'font-size="{subtitle_font_size}" fill="{colors["subtitle_color"]}" '
-                f'font-family="{table_font_family}"{authored_kind_attr("subtitle")}>{subtitle_inner_title}',
+                f'<text x="{escape_attr(padding)}" '
+                f'font-size="{escape_attr(subtitle_font_size)}" fill="{escape_attr(colors["subtitle_color"])}" '
+                f'font-family="{escape_attr(table_font_family)}"{authored_kind_attr("subtitle")}>{subtitle_inner_title}',
             )
             for line_index, line in enumerate(subtitle_lines):
                 line_y = subtitle_y + (line_index * subtitle_line_height)
                 svg_parts.append(
-                    f'<tspan x="{padding}" y="{line_y}">{html_module.escape(line)}</tspan>',
+                    f'<tspan x="{escape_attr(padding)}" y="{escape_attr(line_y)}">{html_module.escape(line)}</tspan>',
                 )
             svg_parts.append("</text>")
         current_y += title_height
@@ -4307,7 +4308,6 @@ def _render_table_svg_core(
     if static_multi_page:
         assert chart_id is not None  # static_multi_page requires a truthy chart_id
         page_var_name = f"{chart_id}_page"
-        safe_chart_id = html_module.escape(chart_id, quote=True)
         rendered_pages = min(total_pages, _STATIC_MULTI_PAGE_MAX_PAGES)
         capped = static_export_capped
         if capped:
@@ -4396,8 +4396,8 @@ def _render_table_svg_core(
             )
             display = "" if page_n == initial_page else "none"
             svg_parts.append(
-                f'<g class="dbt-table-page" data-dbt-table-page="{safe_chart_id}" '
-                f'data-page="{page_n}" style="display:{display}">'
+                f'<g class="dbt-table-page" data-dbt-table-page="{escape_attr(chart_id)}" '
+                f'data-page="{escape_attr(page_n)}" style="display:{escape_attr(display)}">'
                 + "".join(page_parts)
                 + "</g>"
             )
@@ -4462,18 +4462,18 @@ def _render_table_svg_core(
             else:
                 more_count = len(data) - len(visible_data)
                 svg_parts.append(
-                    f'<text x="{table_width / 2}" y="{indicator_y}" '
-                    f'font-size="{table_config.more_rows.font.size}" fill="{colors["muted"]}" text-anchor="middle" font-style="italic" '
-                    f'font-family="{table_font_family}">'
+                    f'<text x="{escape_attr(table_width / 2)}" y="{escape_attr(indicator_y)}" '
+                    f'font-size="{escape_attr(table_config.more_rows.font.size)}" fill="{escape_attr(colors["muted"])}" text-anchor="middle" font-style="italic" '
+                    f'font-family="{escape_attr(table_font_family)}">'
                     f"+ {more_count} more rows</text>",
                 )
 
     # Empty state (only show if not placeholder - placeholder has data)
     if not data and not is_placeholder:
         svg_parts.append(
-            f'<text x="{table_width / 2}" y="{table_height / 2}" '
-            f'font-size="{table_config.empty_state.font.size}" fill="{colors["muted"]}" text-anchor="middle" '
-            f'font-family="{table_font_family}">'
+            f'<text x="{escape_attr(table_width / 2)}" y="{escape_attr(table_height / 2)}" '
+            f'font-size="{escape_attr(table_config.empty_state.font.size)}" fill="{escape_attr(colors["muted"])}" text-anchor="middle" '
+            f'font-family="{escape_attr(table_font_family)}">'
             f"No data</text>",
         )
 
@@ -4484,7 +4484,7 @@ def _render_table_svg_core(
     # two affordances read differently. Only emitted when the table has a
 
     # Wrap in SVG
-    svg_result = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{table_width_s}" height="{table_height_s}" viewBox="0 0 {table_width_s} {table_height_s}">
+    svg_result = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{escape_attr(table_width_s)}" height="{escape_attr(table_height_s)}" viewBox="0 0 {escape_attr(table_width_s)} {escape_attr(table_height_s)}">
 {"".join(svg_parts)}
 </svg>"""
 

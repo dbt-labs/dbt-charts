@@ -24,7 +24,9 @@ from dbt_charts.core.compile.models.query.normalized import ValuesQuery
 from dbt_charts.core.compile.resolve import resolve
 
 _BASELINE = json.loads(
-    (Path(__file__).parent / "fixtures" / "kpi_align_baseline.json").read_text()
+    (Path(__file__).parent / "fixtures" / "kpi_align_baseline.json").read_text(
+        encoding="utf-8"
+    )
 )
 
 _QUERY_REGISTRY = {

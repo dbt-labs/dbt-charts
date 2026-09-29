@@ -4,8 +4,10 @@
 # Ordered for cycling, with restrained chroma so multi-series charts accompany
 # rather than compete with the themes' darker single-series marks.
 #
-# Companions are positionally paired: dark inks direct labels, light and ghost
-# provide two de-emphasis tiers, and ink supplies compact single-series tones.
+# Every tier (dark, light, pale, deep) is derived live from these stops by
+# variant() (compile/resolve/style/palette.py) -- no companion file to keep
+# in sync. Address a tier with a third token segment appended to a direct
+# palette.slot reference or a role-indirected bracket/dotted token.
 
 name: editorial-10
 description: |

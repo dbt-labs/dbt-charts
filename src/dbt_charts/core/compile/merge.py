@@ -47,8 +47,11 @@ from pydantic.fields import FieldInfo
 
 from dbt_charts.core.compile.errors import CompilationError, MergeValidationError
 from dbt_charts.core.compile.models.markers import Merge, Strategy
-from dbt_charts.core.compile.models.style.authored import PaddingStylePatch
-from dbt_charts.core.compile.models.style.theme import PaddingStyle
+from dbt_charts.core.compile.models.style.authored import (
+    PaddingStylePatch,
+    TitleStylePatch,
+)
+from dbt_charts.core.compile.models.style.theme import PaddingStyle, TitleStyle
 from dbt_charts.core.diagnostics.codes_compile import ERR_EXTENDS_UNRESOLVED
 
 if TYPE_CHECKING:
@@ -968,3 +971,17 @@ def to_padding_style(padding: PaddingStyle | PaddingStylePatch) -> PaddingStyle:
             "The theme cascade must populate every side of PaddingStyle."
         )
     return PaddingStyle.model_validate(sides)
+
+
+def to_title_style(title: TitleStyle | TitleStylePatch) -> TitleStyle:
+    """Coerce a cascade-produced title value into a real ``TitleStyle``.
+
+    Same shape as ``to_padding_style`` above: ``ChartsStyle.title``'s
+    ``InheritSlot(from_path="Style.title")`` annotation leaves the field typed
+    as ``TitleStylePatch`` even after ``apply_inherit`` fills every leaf from
+    the board title, so callers re-validate through ``TitleStyle`` here — safe
+    for an already-correct ``TitleStyle`` input too, which round-trips
+    unchanged. Pydantic's own ``ValidationError`` names any leaf the cascade
+    left genuinely incomplete, rather than defaulting it.
+    """
+    return TitleStyle.model_validate(title.model_dump())

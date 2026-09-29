@@ -283,6 +283,17 @@ class ChartRenderingConfig(ConfigNode):
     class StrokeConfig(ConfigNode):
         min_width: float
         max_width: float
+        # Used when no cascade tier (theme, extends-theme, board, chart) pins
+        # a width AND the resolve layer cannot compute an adaptive one (no
+        # data, no x field, or non-cartesian) -- line's own stroke and area's
+        # overlap-edge stroke.
+        fallback_width: float
+        # Same role as fallback_width, but for area's stacked/streamgraph
+        # perimeter stroke -- a thinner separator weight, not a trend line.
+        # Also the ceiling area.py caps the computed adaptive value at on
+        # that recipe (a dense stacked/streamgraph edge must never thicken
+        # past this separator weight).
+        stacked_fallback_width: float
 
     class PointConfig(ConfigNode):
         diameter_ratio: float = Field(gt=0)
@@ -600,7 +611,15 @@ class Config(ConfigMappingBase):
     rendering: RenderingConfig
     server: ServerConfig
     terminal: ConfigNode
-    palettes: ConfigNode
+    # Nothing reads this: categorical palettes resolve through
+    # dbt_charts.core.compile.resolve.style.palette's own name index, never
+    # through the config tree (config.py's _load_palettes no longer scans
+    # the categorical directory into it). It must stay declared anyway --
+    # Config is extra="forbid" and validates the whole file, so dropping the
+    # field would fail load_config for a dbt_charts.yml that still sets it.
+    # None = no explicit palettes: section (the shipped default carries none
+    # either, now).
+    palettes: ConfigNode | None = None
     vega: VegaRuntimeConfig
     dbt_grays: ConfigNode
     dbt_creams: ConfigNode
@@ -645,13 +664,6 @@ class Config(ConfigMappingBase):
                 f"{PUBLISHED_TO_FORM}, got {value!r}"
             )
         return value
-
-    @model_validator(mode="after")
-    def _validate_palette_contract(self) -> Config:
-        category = self.palettes.get("vivid-10")
-        if not isinstance(category, list) or not category:
-            raise ValueError("palettes.vivid-10 must be present and non-empty")
-        return self
 
 
 def as_plain_mapping(value: ConfigMappingBase | Mapping[str, Any]) -> dict[str, Any]:

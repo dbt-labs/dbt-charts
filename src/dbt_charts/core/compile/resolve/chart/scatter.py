@@ -32,6 +32,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _authored_axis_y_ticks_count,
     _bake_y_zero,
     _CartesianTickResolution,
+    _check_bar_layer_spans,
     _first_non_numeric_y,
     _reject_non_positive_log_scale_data,
     _resolve_cartesian_ticks,
@@ -122,6 +123,7 @@ def _resolve_scatter(
         if isinstance(normalized.y, list)
         else _classify_to_channel_type(y_field_scatter, data, is_dimension=False)
     )
+    _check_bar_layer_spans(normalized, data, datasets, None)
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )

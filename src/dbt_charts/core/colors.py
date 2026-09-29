@@ -10,9 +10,17 @@ from __future__ import annotations
 
 import math
 import re
-from typing import overload
+from typing import Literal, get_args, overload
 
 from dbt_charts.core.diagnostics.base import DbtChartsError
+
+# The four literal categorical-variant tiers (compile/resolve/style/palette.py's
+# `variant()`) -- defined here, below both compile and render, so the shape
+# gate below, the schema-name generator, Cloud's design panel, and every
+# variant-related message string derive from one source instead of five
+# hand-kept lists that can drift out of step with each other.
+Variant = Literal["dark", "light", "pale", "deep"]
+VARIANT_WORDS: tuple[Variant, ...] = get_args(Variant)
 
 _CSS_HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
@@ -23,10 +31,20 @@ _CSS_HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 # values, decimal numerics like "0.5", and quoted font-family lists never
 # match.
 #
+# A trailing ".dark"/".light"/".pale"/".deep" variant segment is optional on
+# either form ("category.blue.dark", "category[2].dark", "vivid-10.3.pale")
+# -- the four literal variant words, not any arbitrary third segment: this
+# is a shape gate, kept as conservative as the two-segment forms it already
+# admits, so an unrelated dotted-twice string is still never misread as a
+# token candidate.
+#
 # Contract: any string anywhere in Style that matches this is treated as a
 # palette token. If a future non-color string field could match (none today),
 # it must be excluded from the cascade walk or the field reshaped.
-_COLOR_TOKEN_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+|\[\d+\])$")
+_COLOR_TOKEN_PATTERN = re.compile(
+    r"^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+|\[\d+\])"
+    rf"(\.({'|'.join(VARIANT_WORDS)}))?$"
+)
 
 
 class InvalidColorError(DbtChartsError):

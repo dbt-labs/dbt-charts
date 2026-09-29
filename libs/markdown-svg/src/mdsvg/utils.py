@@ -9,7 +9,11 @@ from typing import List
 
 def escape_xml(text: str) -> str:
     """
-    Escape text for safe inclusion in XML/SVG.
+    Escape text for safe inclusion in XML/SVG, byte-exact under strict XML
+    attribute-value normalization.
+
+    Order matters: escape ``&<>"`` first, then replace whitespace, so the
+    character references' own ``&`` isn't re-escaped.
 
     Args:
         text: Raw text string.
@@ -17,7 +21,8 @@ def escape_xml(text: str) -> str:
     Returns:
         XML-escaped string.
     """
-    return html.escape(text, quote=True)
+    escaped = html.escape(text, quote=True)
+    return escaped.replace("\n", "&#10;").replace("\r", "&#13;").replace("\t", "&#9;")
 
 
 def escape_svg_text(text: str) -> str:

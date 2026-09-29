@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, Literal, NamedTuple
 
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.models.chart.authored._layer import BarChartBarLayer
+from dbt_charts.core.compile.models.chart.authored._layer import BarLayer
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.style.theme import (
     AxisYStyle,
@@ -37,6 +37,9 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_BAR_Y_NOT_NUMERIC,
+    ERR_BAR_Y_START_KIND,
+    ERR_BAR_Y_START_NULL,
     ERR_LOG_SCALE_REQUIRES_POSITIVE_DATA,
     ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE,
 )
@@ -50,6 +53,8 @@ __all__ = [
     "_bake_normalize_domain",
     "_bake_y_zero",
     "_bake_zero_flag",
+    "_check_bar_layer_spans",
+    "_check_bar_span",
     "_first_non_numeric_y",
     "_numeric_y_values",
     "_reject_non_positive_log_scale_data",
@@ -250,6 +255,92 @@ def _zero_anchor_floats(
     return []
 
 
+def _span_column_kind(field: str, rows: ChartRows) -> str:
+    samples = first_non_null_samples(field, rows)
+    return classify_column_type(field, samples) if samples else "numeric"
+
+
+def _check_bar_span(
+    chart_id: str,
+    y_field: str,
+    y_start: str,
+    rows: ChartRows,
+    axis: tuple[str, str] | None,
+) -> Literal["numeric", "temporal"]:
+    """Validate one bar's span columns and return the kind they share.
+
+    ``axis`` is the chart's own value column and its kind, when checking a bar
+    layer that shares the chart's value axis.
+    """
+    for index, row in enumerate(rows, start=1):
+        if row.get(y_start) is None:
+            raise CompilationError.from_code(
+                ERR_BAR_Y_START_NULL,
+                chart_id=chart_id,
+                y_start_field=y_start,
+                row=index,
+            )
+    y_kind = _span_column_kind(y_field, rows)
+    start_kind = _span_column_kind(y_start, rows)
+    if y_kind == "categorical":
+        raise CompilationError.from_code(
+            ERR_BAR_Y_NOT_NUMERIC, chart_id=chart_id, y_field=y_field
+        )
+    for other, other_kind in ((y_start, start_kind), *([axis] if axis else [])):
+        if other_kind != y_kind:
+            raise CompilationError.from_code(
+                ERR_BAR_Y_START_KIND,
+                chart_id=chart_id,
+                y_field=y_field,
+                y_kind=y_kind,
+                y_start_field=other,
+                y_start_kind=other_kind,
+            )
+    return "temporal" if y_kind == "temporal" else "numeric"
+
+
+def _check_bar_layer_spans(
+    chart: CartesianChart,
+    data: ChartRows,
+    datasets: LayerDatasets,
+    axis_kind: Literal["numeric", "temporal"] | None,
+) -> None:
+    """Check every bar layer with y_start, and hold it to the chart's value axis.
+
+    ``axis_kind`` is the kind already established for the chart's y, or None
+    to classify it from ``data``. A categorical chart y, or a right-axis
+    layer's own scale, leaves the layer checked against itself only.
+    """
+    span_layers = [
+        layer
+        for layer in chart.layers
+        if isinstance(layer, BarLayer) and layer.y_start is not None
+    ]
+    if not span_layers:
+        return
+    # A chart with no single y column has no one column to name beside a layer.
+    axis: tuple[str, str] | None = None
+    if isinstance(chart.y, str):
+        kind = axis_kind if axis_kind is not None else _span_column_kind(chart.y, data)
+        if kind != "categorical":
+            axis = (chart.y, kind)
+    for layer in span_layers:
+        if layer.y is None or layer.y_start is None:
+            continue
+        if layer.query is None or layer.query == chart.query_name:
+            rows = data
+        elif datasets is ...:
+            continue
+        elif layer.query not in datasets:
+            raise ChartDataError(f"Missing rows for bar layer query {layer.query!r}")
+        else:
+            rows = datasets[layer.query]
+        on_right = layer.axis_y is not None and layer.axis_y.position == "right"
+        _check_bar_span(
+            chart.id, layer.y, layer.y_start, rows, None if on_right else axis
+        )
+
+
 def _shared_y_values(
     data: ChartRows,
     y_field: str,
@@ -283,7 +374,7 @@ def _shared_y_values(
             field
             for field in (
                 layer.y,
-                layer.y_start if isinstance(layer, BarChartBarLayer) else None,
+                layer.y_start if isinstance(layer, BarLayer) else None,
             )
             if field is not None and (query_name, field) not in seen
         )

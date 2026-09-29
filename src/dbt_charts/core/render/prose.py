@@ -14,11 +14,15 @@ calling the same function here.
 
 from __future__ import annotations
 
-import html
 from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.render.column_packer import MAX_COLUMN_COUNT
-from dbt_charts.core.render.svg_utils import format_svg_numeric, px, translate_group
+from dbt_charts.core.render.svg_utils import (
+    escape_attr,
+    format_svg_numeric,
+    px,
+    translate_group,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -161,8 +165,8 @@ def render_prose_svg(
             else f'<g transform="translate({px(offset)}, 0)">{result.content}</g>'
         )
         svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
-            f'viewBox="0 0 {w} {h}">{body}</svg>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{escape_attr(w)}" height="{escape_attr(h)}" '
+            f'viewBox="0 0 {escape_attr(w)} {escape_attr(h)}">{body}</svg>'
         )
         record_painted_faces(effective_family, renderer.used_faces)
         return svg, result.height
@@ -273,7 +277,7 @@ def render_prose_svg(
         columns_svg = f'<g transform="translate({px(offset)}, 0)">{columns_svg}</g>'
     w = format_svg_numeric(width)
     h = format_svg_numeric(actual_col_height)
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">{style_block}{columns_svg}</svg>'
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{escape_attr(w)}" height="{escape_attr(h)}">{style_block}{columns_svg}</svg>'
     record_painted_faces(effective_family, renderer.used_faces)
     return svg, actual_col_height
 
@@ -288,11 +292,11 @@ def _column_rule_line(x: float, height: float, rule: ColumnRuleStyle) -> str:
     h_s = format_svg_numeric(height)
     sw_s = format_svg_numeric(rule.width)
     extra = (
-        f' stroke-dasharray="{_COLUMN_RULE_DASHARRAY[rule.style]}"'
+        f' stroke-dasharray="{escape_attr(_COLUMN_RULE_DASHARRAY[rule.style])}"'
         if rule.style in _COLUMN_RULE_DASHARRAY
         else ""
     )
     return (
-        f'<line x1="{x_snapped}" y1="0" x2="{x_snapped}" y2="{h_s}"'
-        f' stroke="{html.escape(rule.color)}" stroke-width="{sw_s}"{extra}/>'
+        f'<line x1="{escape_attr(x_snapped)}" y1="0" x2="{escape_attr(x_snapped)}" y2="{escape_attr(h_s)}"'
+        f' stroke="{escape_attr(rule.color)}" stroke-width="{escape_attr(sw_s)}"{extra}/>'
     )

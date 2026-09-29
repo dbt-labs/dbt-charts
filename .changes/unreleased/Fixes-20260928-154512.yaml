@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart whose `sort.by` names a column missing from the query result now fails with `ERR-SORT-FIELD-NOT-FOUND` instead of silently rendering in natural order.
+time: 2026-09-28T15:45:12.000000-07:00

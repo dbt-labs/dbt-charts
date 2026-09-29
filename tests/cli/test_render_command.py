@@ -354,6 +354,28 @@ class TestDftRenderFormatValueClass:
             f"--format {fmt}: expected output path on stdout, got {result.stdout!r}"
         )
 
+    def test_render_text_data_format_appends_data_section(self, tmp_path: Path) -> None:
+        """`--format text-data` is a real format value, not a separate flag —
+        an invalid combination with another format can't exist."""
+        shutil.copytree(_FIXTURE_DIR / "no-warehouse-board", tmp_path / "project")
+        (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
+
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "charts/board.yml",
+                "--format",
+                "text-data",
+                "--project-dir",
+                str(tmp_path / "project"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert "## Data" in result.stdout
+        assert "Active Users" in result.stdout
+
     def test_render_output_creates_missing_parent_directories(
         self, tmp_path: Path
     ) -> None:
@@ -837,7 +859,7 @@ class TestDftRenderFormatChoice:
         result = runner.invoke(app, ["render", "--help"])
         assert result.exit_code == 0
         combined = result.output + result.stderr
-        assert "[svg|html|png|pdf|terminal|json|text|yaml|data]" in combined
+        assert "[svg|html|png|pdf|terminal|json|text|text-data|yaml|data]" in combined
 
 
 class TestDftRenderPrintsOutputPathToStdout:
@@ -1362,3 +1384,174 @@ class TestRenderCommandInlinesFonts:
             project_dir=tmp_path,
         )
         assert "data:font/woff2;base64," in out.read_text(encoding="utf-8")
+
+
+class TestRenderSkipsDefaultsFiles:
+    """A shell glob (`charts/*.yml`) hands `dct render` the `meta.yml`
+    `dct init` scaffolds alongside real boards. That file is cascade input,
+    never a standalone board, and must not blow up the batch."""
+
+    # Comment-only, exactly like the `dct init` scaffold — this is what makes
+    # `load_yaml_mapping` see an empty document.
+    _META_YML = "# Directory defaults for every board under charts/\n"
+
+    def _project_with_board_and_meta(self, tmp_path: Path) -> Path:
+        shutil.copytree(_FIXTURE_DIR / "no-warehouse-board", tmp_path / "project")
+        (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
+        (tmp_path / "project" / "charts" / "meta.yml").write_text(self._META_YML)
+        return tmp_path / "project"
+
+    def test_glob_with_meta_yml_renders_the_real_board_and_skips_meta(
+        self, tmp_path: Path
+    ) -> None:
+        project = self._project_with_board_and_meta(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "--format",
+                "terminal",
+                "--project-dir",
+                str(project),
+                str(project / "charts" / "board.yml"),
+                str(project / "charts" / "meta.yml"),
+            ],
+        )
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        assert "ERR-INTERNAL" not in result.stderr
+        assert "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD" in result.stderr
+        assert "meta.yml" in result.stderr
+
+    def test_skip_notice_goes_to_stderr_not_stdout(self, tmp_path: Path) -> None:
+        """--print0 | xargs -0 reads stdout as the produced-output-path list;
+        the skip notice must never land there."""
+        project = self._project_with_board_and_meta(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "--format",
+                "terminal",
+                "--project-dir",
+                str(project),
+                str(project / "charts" / "board.yml"),
+                str(project / "charts" / "meta.yml"),
+            ],
+        )
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        assert "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD" not in result.stdout
+        assert "meta.yml" not in result.stdout
+
+    def test_diagnostics_json_emits_the_skip_notice_as_jsonl(
+        self, tmp_path: Path
+    ) -> None:
+        """A bare print() here would break a --diagnostics-json consumer's
+        line-delimited-JSON parse (e.g. the VS Code preview)."""
+        project = self._project_with_board_and_meta(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "--format",
+                "terminal",
+                "--diagnostics-json",
+                "--project-dir",
+                str(project),
+                str(project / "charts" / "board.yml"),
+                str(project / "charts" / "meta.yml"),
+            ],
+        )
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        lines = [line for line in result.stderr.splitlines() if line.strip()]
+        payloads = [json.loads(line) for line in lines]
+        skip_payloads = [
+            p for p in payloads if p["code"] == "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD"
+        ]
+        assert len(skip_payloads) == 1, payloads
+        assert "meta.yml" in skip_payloads[0]["message"]
+
+    def test_no_warnings_suppresses_the_skip_notice(self, tmp_path: Path) -> None:
+        project = self._project_with_board_and_meta(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "--format",
+                "terminal",
+                "--no-warnings",
+                "--project-dir",
+                str(project),
+                str(project / "charts" / "board.yml"),
+                str(project / "charts" / "meta.yml"),
+            ],
+        )
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        assert "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD" not in result.stderr
+
+    def test_ignore_warning_suppresses_the_skip_notice(self, tmp_path: Path) -> None:
+        """--ignore-warning targets this code the same way it targets any
+        other WARN-* code (the generated reference calls it suppressible)."""
+        project = self._project_with_board_and_meta(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "--format",
+                "terminal",
+                "--ignore-warning",
+                "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
+                "--project-dir",
+                str(project),
+                str(project / "charts" / "board.yml"),
+                str(project / "charts" / "meta.yml"),
+            ],
+        )
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        assert "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD" not in result.stderr
+
+    def test_only_meta_yml_given_is_an_error_not_a_silent_success(
+        self, tmp_path: Path
+    ) -> None:
+        project = self._project_with_board_and_meta(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "--format",
+                "terminal",
+                "--project-dir",
+                str(project),
+                str(project / "charts" / "meta.yml"),
+            ],
+        )
+        assert result.exit_code == 1, (result.stdout, result.stderr)
+        assert "ERR-INTERNAL" not in result.stderr
+        # The reason, not just the absence of the wrong code: deleting the
+        # whole partition block would still exit 1 here (ERR-EMPTY-YAML-DOCUMENT
+        # from compiling meta.yml as a board), so pin the actual code.
+        assert "ERR-NOTHING-TO-RENDER" in result.stderr
+
+    def test_only_meta_yml_with_diagnostics_json_emits_valid_error_jsonl(
+        self, tmp_path: Path
+    ) -> None:
+        """The VS Code preview's --diagnostics-json JSONL parse is exactly
+        what regresses if this branch collapses to print_diagnostics()."""
+        project = self._project_with_board_and_meta(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "--format",
+                "terminal",
+                "--diagnostics-json",
+                "--project-dir",
+                str(project),
+                str(project / "charts" / "meta.yml"),
+            ],
+        )
+        assert result.exit_code == 1, (result.stdout, result.stderr)
+        lines = [line for line in result.stderr.splitlines() if line.strip()]
+        payloads = [json.loads(line) for line in lines]
+        error_payloads = [p for p in payloads if p["code"] == "ERR-NOTHING-TO-RENDER"]
+        assert len(error_payloads) == 1, payloads
+        assert error_payloads[0]["level"] == "error"

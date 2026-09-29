@@ -18,11 +18,13 @@ from dbt_charts.core.dbt_model_columns import (
 )
 
 
-def _project_with_manifest(tmp_path: Path, nodes: dict) -> FilesystemProject:
+def _project_with_manifest(
+    tmp_path: Path, nodes: dict, adapter_type: str = "postgres"
+) -> FilesystemProject:
     (tmp_path / "dbt_charts.yml").write_text("name: p\n")
     (tmp_path / "target").mkdir()
     (tmp_path / "target" / "manifest.json").write_text(
-        json.dumps({"metadata": {"adapter_type": "postgres"}, "nodes": nodes})
+        json.dumps({"metadata": {"adapter_type": adapter_type}, "nodes": nodes})
     )
     return FilesystemProject(tmp_path)
 
@@ -78,6 +80,297 @@ class TestResolveModelOutputColumns:
     def test_select_star_is_unresolved_never_guessed(self, tmp_path):
         project = _project_with_manifest(
             tmp_path, {"model.p.orders": _model("orders", "SELECT * FROM raw")}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_trailing_select_star_from_final_cte_resolves(self, tmp_path):
+        """The dbt style guide's `select * from final` idiom: the CTE's own
+        projection is known, so the trailing star must resolve through it
+        instead of declaring the model unresolved (dbt-labs/dbt-charts#40)."""
+        sql = (
+            "WITH final AS (\n"
+            "    SELECT customer_id, sales_channel FROM raw\n"
+            ")\n"
+            "SELECT * FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].columns == {"customer_id", "sales_channel"}
+        assert resolved["orders"].unresolved is None
+
+    def test_trailing_select_star_resolves_through_chained_ctes(self, tmp_path):
+        sql = (
+            "WITH base AS (\n"
+            "    SELECT customer_id, sales_channel FROM raw\n"
+            "),\n"
+            "final AS (\n"
+            "    SELECT * FROM base\n"
+            ")\n"
+            "SELECT * FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].columns == {"customer_id", "sales_channel"}
+        assert resolved["orders"].unresolved is None
+
+    def test_select_star_from_non_cte_table_stays_unresolved(self, tmp_path):
+        """Only a same-statement CTE is resolved — a bare table (or another
+        dbt model reached via ref()) is not something this static read can
+        know the columns of."""
+        sql = "WITH final AS (SELECT id FROM raw) SELECT * FROM raw"
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_select_star_alongside_other_projections_stays_unresolved(self, tmp_path):
+        sql = (
+            "WITH final AS (SELECT id, amount FROM raw)\n"
+            "SELECT *, amount * 2 AS doubled FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_qualified_star_from_matching_alias_resolves(self, tmp_path):
+        sql = "WITH final AS (SELECT id, amount FROM raw) SELECT f.* FROM final f"
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].columns == {"id", "amount"}
+        assert resolved["orders"].unresolved is None
+
+    def test_qualified_star_with_mismatched_qualifier_stays_unresolved(self, tmp_path):
+        sql = "WITH final AS (SELECT id, amount FROM raw) SELECT wrong.* FROM final f"
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_star_with_explicit_cte_column_list_stays_unresolved(self, tmp_path):
+        """`WITH final (x, y) AS (...)` renames the CTE's own output — this
+        static read does not replay that mapping."""
+        sql = (
+            "WITH final (customer_key, channel) AS "
+            "(SELECT customer_id, sales_channel FROM raw)\n"
+            "SELECT * FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_star_from_table_alias_with_column_list_stays_unresolved(self, tmp_path):
+        """`FROM final AS f(x, y)` renames the FROM source's output the same
+        way — also not replayed."""
+        sql = (
+            "WITH final AS (SELECT customer_id, sales_channel FROM raw)\n"
+            "SELECT * FROM final AS f(customer_key, channel)"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_star_from_schema_qualified_name_stays_unresolved(self, tmp_path):
+        """A dotted name is a real table, never a same-statement CTE
+        reference — a CTE alias is always bare."""
+        sql = "WITH final AS (SELECT id FROM raw)\nSELECT * FROM analytics.final"
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_star_from_pivoted_cte_stays_unresolved(self, tmp_path):
+        sql = (
+            "WITH final AS (SELECT id, month, amount FROM raw)\n"
+            "SELECT * FROM final PIVOT (SUM(amount) FOR month IN ('jan', 'feb')) AS p"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_star_with_lateral_view_stays_unresolved(self, tmp_path):
+        sql = (
+            "WITH final AS (SELECT id, tags FROM raw)\n"
+            "SELECT * FROM final LATERAL VIEW explode(tags) t2 AS tag"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}, adapter_type="spark"
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    @pytest.mark.parametrize(
+        "star_clause",
+        ["* EXCEPT (amount)", "* REPLACE (amount * 2 AS amount)"],
+    )
+    def test_star_with_bigquery_modifier_stays_unresolved(self, tmp_path, star_clause):
+        sql = (
+            "WITH final AS (SELECT id, amount FROM raw)\n"
+            f"SELECT {star_clause} FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path,
+            {"model.p.orders": _model("orders", sql)},
+            adapter_type="bigquery",
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    @pytest.mark.parametrize(
+        "star_clause",
+        ["* RENAME (amount AS total)", "* EXCLUDE (amount)"],
+    )
+    def test_star_with_snowflake_modifier_stays_unresolved(self, tmp_path, star_clause):
+        sql = (
+            "WITH final AS (SELECT id, amount FROM raw)\n"
+            f"SELECT {star_clause} FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path,
+            {"model.p.orders": _model("orders", sql)},
+            adapter_type="snowflake",
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_star_through_cte_named_after_its_own_ref_does_not_recurse_forever(
+        self, tmp_path
+    ):
+        """A staging model whose CTE happens to share the ref()'d model's
+        name (a common dbt import-CTE pattern) skeletonizes to a CTE that
+        reads a source of its own name — this must never recurse until
+        RecursionError, whether it's caught by the via-dbt ambiguity check or
+        the cycle guard beneath it (both fire here since the ref()'d name and
+        the CTE's own alias coincide)."""
+        sql = "WITH stg AS (SELECT * FROM {{ ref('stg') }}) SELECT * FROM stg"
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_literal_self_referencing_cte_stays_unresolved(self, tmp_path):
+        """A CTE reading from a bare name identical to its own alias, with no
+        dbt ref()/source() call anywhere — the via-dbt ambiguity check can't
+        fire here, so this pins the ``seen``-based cycle guard on its own."""
+        sql = "WITH stg AS (SELECT * FROM stg) SELECT * FROM stg"
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_star_from_name_ambiguous_with_a_dbt_ref_stays_unresolved(self, tmp_path):
+        """A staging CTE's alias coincidentally matches the bare name a
+        ref()/source() substitution produces elsewhere in the same
+        statement. Substitution erases which occurrence is which, so
+        resolving `final`'s star through the same-named CTE would silently
+        claim the wrong model's columns (the CTE's `{id}` instead of the
+        ref()'d model's real, unknown output) rather than staying unresolved.
+        """
+        sql = (
+            "WITH stg_orders AS (SELECT id FROM {{ ref('stg_orders') }}),\n"
+            "final AS (SELECT * FROM {{ ref('stg_orders') }} WHERE id > 0)\n"
+            "SELECT * FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_nested_with_inside_cte_stays_unresolved(self, tmp_path):
+        """A CTE with its own inner WITH clause could locally shadow an
+        outer CTE's name — not something this static read attempts to
+        replay, so it stays unresolved rather than risk resolving through
+        the wrong scope."""
+        sql = (
+            "WITH final AS (\n"
+            "    WITH inner_cte AS (SELECT id, amount FROM raw)\n"
+            "    SELECT * FROM inner_cte\n"
+            ")\n"
+            "SELECT * FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_nested_with_shadowing_an_outer_cte_name_stays_unresolved(self, tmp_path):
+        """The real hazard the nested-WITH guard exists for: `final`'s own
+        body locally reuses the name `x`, which the top-level `WITH` clause
+        also defines. Without the guard, resolving `final`'s trailing star
+        would fall through to the *outer* `x` (columns `{id}`) instead of the
+        locally-shadowing inner one (`{amount}`) — a wrong but "complete"
+        claim, not a warning. This must stay unresolved instead."""
+        sql = (
+            "WITH x AS (SELECT id FROM raw),\n"
+            "final AS (\n"
+            "    WITH x AS (SELECT amount FROM raw)\n"
+            "    SELECT * FROM x\n"
+            ")\n"
+            "SELECT * FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_nested_with_on_a_set_operation_cte_body_stays_unresolved(self, tmp_path):
+        """sqlglot attaches a CTE's nested WITH to the set-operation node when
+        its body is a UNION, not to either arm's own SELECT — the guard must
+        catch it there too, not just on a plain-SELECT CTE body."""
+        sql = (
+            "WITH x AS (SELECT id FROM raw),\n"
+            "final AS (\n"
+            "    WITH x AS (SELECT amount FROM raw)\n"
+            "    SELECT * FROM x\n"
+            "    UNION ALL\n"
+            "    SELECT * FROM x\n"
+            ")\n"
+            "SELECT * FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        resolved = resolve_model_output_columns(load_manifest(project))
+        assert resolved["orders"].unresolved is not None
+
+    def test_star_with_match_recognize_stays_unresolved(self, tmp_path):
+        """MATCH_RECOGNIZE's MEASURES clause introduces columns that exist
+        nowhere in the FROM source's own projection list."""
+        sql = (
+            "WITH final AS (SELECT id, amount FROM raw)\n"
+            "SELECT * FROM final MATCH_RECOGNIZE (\n"
+            "    PARTITION BY id ORDER BY amount\n"
+            "    MEASURES COUNT(*) AS mn\n"
+            "    PATTERN (a b)\n"
+            "    DEFINE a AS amount > 0\n"
+            ")"
+        )
+        project = _project_with_manifest(
+            tmp_path,
+            {"model.p.orders": _model("orders", sql)},
+            adapter_type="snowflake",
         )
         resolved = resolve_model_output_columns(load_manifest(project))
         assert resolved["orders"].unresolved is not None
@@ -180,6 +473,25 @@ class TestCheckModelColumns:
         assert "customer_id" in msg.message
         assert "orders" in msg.message
         assert "user_id" in (msg.hint or "")
+
+    def test_typo_caught_through_trailing_select_star_final_cte(self, tmp_path):
+        """The exact dbt-labs/dbt-charts#40 repro: a model shaped by the dbt
+        style guide (`select * from final`) must still catch a board's typo'd
+        column reference instead of only warning that columns are unresolved."""
+        sql = (
+            "WITH final AS (\n"
+            "    SELECT customer_id, sales_channel FROM raw\n"
+            ")\n"
+            "SELECT * FROM final"
+        )
+        project = _project_with_manifest(
+            tmp_path, {"model.p.orders": _model("orders", sql)}
+        )
+        result = _compile("SELECT sales_chanel FROM {{ ref('orders') }}")
+        check_model_columns(result, project)
+        codes = [e.code for e in result.errors]
+        assert "ERR-DBT-MODEL-COLUMN-MISSING" in codes
+        assert result.warnings == []
 
     def test_matching_column_passes_clean(self, tmp_path):
         project = _project_with_manifest(

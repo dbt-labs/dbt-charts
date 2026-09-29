@@ -1,5 +1,10 @@
 """SVG utility functions for rendering.
 
+Attribute escaping (``escape_attr``/``attr_name``) is guarded by
+``tests/test_svg_attribute_escaping.py``: every attribute-value or
+attribute-name interpolation in ``core/render`` must route through one of
+these two, on pain of a failing test.
+
 Stage: RENDER
 Purpose: Provide SVG-specific utilities for dbt charts rendering.
 
@@ -21,9 +26,63 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from dbt_charts.core.diagnostics.codes_render import ERR_INPUT_INVALID
+from dbt_charts.core.render.errors import RenderError
+
 # ---------------------------------------------------------------------------
 # Pixel snapping
 # ---------------------------------------------------------------------------
+
+
+# Jinja/Python identifiers permit Unicode letters (a variable named
+# "région" is legal), so attr_name rejects only characters that actually
+# break XML markup -- whitespace, quotes, "=", "<", ">", "/", and control
+# characters -- rather than requiring pure ASCII alphanumerics.
+_UNSAFE_ATTR_NAME_CHARS_RE = re.compile(r'[\s"\'=<>/\x00-\x1f\x7f]')
+
+
+def escape_attr(
+    value: object,  # type-state: object_annotation — callers pass str/int/float/None; narrowing to str | int | float fails pyright at 30 existing call sites
+) -> str:
+    """Escape ``value`` for a double-quoted XML attribute, byte-exact.
+
+    Order matters: escape ``&<>"`` first, then replace whitespace, so the
+    character references' own ``&`` isn't re-escaped.
+    """
+    escaped = html.escape(str(value), quote=True)
+    return escaped.replace("\n", "&#10;").replace("\r", "&#13;").replace("\t", "&#9;")
+
+
+_CSS_STRING_SAFE_RE = re.compile(r"[A-Za-z0-9 _-]")
+
+
+def escape_css_string(value: str) -> str:
+    """Render ``value`` as a double-quoted CSS ``<string>`` token, byte-exact.
+
+    Every character outside a plain alphanumeric/space/hyphen/underscore set
+    is replaced with a CSS hex escape (``\\HH `` — a backslash, the code
+    point in hex, and a trailing space terminator), so the result can never
+    end the string, close the enclosing rule, or open a new element. Includes
+    the surrounding quotes.
+    """
+    escaped = "".join(
+        ch if _CSS_STRING_SAFE_RE.fullmatch(ch) else f"\\{ord(ch):x} " for ch in value
+    )
+    return f'"{escaped}"'
+
+
+def attr_name(name: str) -> str:
+    """Return ``name`` unchanged if it is a legal bare SVG attribute name.
+
+    Raises otherwise — an invalid name (spaces, quotes, `=`, `<`, `>`, `/`)
+    can split into two attributes or close the enclosing one, so there is no
+    safe rewrite to fall back to; the caller's data is wrong, not the markup.
+    """
+    if not name or _UNSAFE_ATTR_NAME_CHARS_RE.search(name):
+        raise RenderError.from_code(
+            ERR_INPUT_INVALID, message=f"not a valid SVG attribute name: {name!r}"
+        )
+    return name
 
 
 def format_svg_numeric(value: float) -> str:
@@ -67,7 +126,7 @@ def translate_group(x: int, y: int, content: str, extra_attrs: str = "") -> str:
     """
     if x == 0 and y == 0 and not extra_attrs:
         return content
-    return f'<g transform="translate({x}, {y})"{extra_attrs}>{content}</g>'
+    return f'<g transform="translate({x:d}, {y:d})"{extra_attrs}>{content}</g>'
 
 
 def authored_attrs(path: str, kind: str) -> str:
@@ -76,8 +135,8 @@ def authored_attrs(path: str, kind: str) -> str:
     stays in sync on its shape. Leaves take ``authored_kind_attr`` instead — the
     two together are where this vocabulary is built, and nowhere else."""
     return (
-        f' data-authored-path="{html.escape(path, quote=True)}"'
-        f' data-authored-kind="{html.escape(kind, quote=True)}"'
+        f' data-authored-path="{escape_attr(path)}"'
+        f' data-authored-kind="{escape_attr(kind)}"'
     )
 
 
@@ -90,7 +149,7 @@ def authored_kind_attr(kind: str) -> str:
     on the leaf would just be the same identity twice. Kind alone says which
     authored key the leaf is — see ``authored_attrs`` for the block-level pair.
     """
-    return f' data-authored-kind="{html.escape(kind, quote=True)}"'
+    return f' data-authored-kind="{escape_attr(kind)}"'
 
 
 def selection_boxes(
@@ -193,9 +252,9 @@ def border_dash_attrs(border: "BorderStyle") -> str:
     """
     if border.dash_array is None:
         return ""
-    attrs = f' stroke-dasharray="{",".join(f"{v:g}" for v in border.dash_array)}"'
+    attrs = f' stroke-dasharray="{escape_attr(",".join(f"{v:g}" for v in border.dash_array))}"'
     if border.line_cap is not None:
-        attrs += f' stroke-linecap="{border.line_cap}"'
+        attrs += f' stroke-linecap="{escape_attr(border.line_cap)}"'
     if border.dash_offset is not None:
         attrs += f' stroke-dashoffset="{border.dash_offset:g}"'
     return attrs

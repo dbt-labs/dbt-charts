@@ -798,7 +798,7 @@ and valid only in KPI value/support and table-cell `format` slots —
 | `percent_delta` | `+.1%` | `0.018` → `+1.8%` (ratio in, signed percent out) |
 | `percent_number` | native | `148.23` → `148.2%` (no multiplication; one decimal). Native — not valid in `number_format` |
 | `percent_number_delta` | native | `1.8` → `+1.8%`. Native — not valid in `number_format` |
-| `percentage_points_delta` | native | `1.8` → `+1.8 pts`. Native — not valid in `number_format` |
+| `percentage_points_delta` | native | `1.8` → `+1.8 pts`. **Input is whole points, not a fraction**; a fraction delta (`0.018`) renders `+0.0 pts`, so multiply by 100 in the query. Native — not valid in `number_format` |
 | `delta` | `+,d` | `+1,234` |
 | `year` | `d` | `2026` |
 
@@ -1229,7 +1229,7 @@ Colors are palette tokens, not hex — the theme resolves a token, so a board re
 
 | Want | Write |
 |---|---|
-| A series slot | `category[1]`, `category_dark[2]`, `category_light[3]`, `category_ghost[1]` |
+| A series slot | `category[1]`, `category.blue`, `category[2].dark` (any categorical palette derives dark/light/pale/deep live, no companion file) |
 | The theme's plain single-series fill (the color a lone-series bar/line gets with no `color:` channel) | `single_series[1]` |
 | Good / bad / attention | `positive.solid`, `negative.solid`, `warning.solid`, `info.solid` — also `.bg`, `.subtle`, `.border`, `.text` |
 | Chrome — text, grid, borders | `dbt-grays.ink`, `dbt-grays.muted`, `dbt-grays.border`, `dbt-grays.separator`, `dbt-grays.canvas` |

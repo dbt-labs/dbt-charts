@@ -19,6 +19,7 @@ from dbt_charts.core.compile.models.primitives import (
     FontStyle,
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
+    TitleStylePatch,
     _PaintedChartStyleBase,
 )
 from dbt_charts.core.compile.models.style.theme.area import (
@@ -166,6 +167,19 @@ class ChartsStyle(_PaintedChartStyleBase):
     # the board → family fill at apply_inherit time.
     padding: Annotated[PaddingStyle, SkipInheritSlots()] = Field(
         description="Per-chart-type padding override; 4 sides in pixels."
+    )
+
+    # Override _ChartStyleBase.title (SkipInheritSlots there — per-family
+    # title overrides stay sparse patches, see its docstring) to give this
+    # one board-wide slot the actual cascade fill: apply_inherit fills every
+    # unset leaf here from the board title, and copies whole unset
+    # sub-objects (font, width_offsets, position, subtitle) wholesale via
+    # each one's own container-level link.
+    title: Annotated[TitleStylePatch | None, InheritSlot(from_path="Style.title")] = (
+        Field(
+            default=None,
+            description="Chart-level title style override; None inherits the theme title style.",
+        )
     )
 
     # Override to declare: charts.background ← background (board canvas).

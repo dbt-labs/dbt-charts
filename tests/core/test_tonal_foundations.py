@@ -63,6 +63,7 @@ class TestTonalFoundationDefaults:
 
     def test_editorial_cream_theme_neutrals_match_dbt_creams_scale(self):
         from dbt_charts.core.compile.config import get_theme_style
+        from dbt_charts.core.compile.resolve.style.board import resolve_style
 
         config = get_config()
         creams = config.dbt_creams
@@ -71,11 +72,11 @@ class TestTonalFoundationDefaults:
         assert theme.font.color == creams["ink"]
         assert theme.variables.font.color == creams["muted"]
         assert theme.border.color == creams["border"]
-        # Board title softens one step lighter than `heading` in cream — the
-        # `inactive` step keeps the board title authoritative without competing
-        # with the chart titles below it in the title-inline band. Same pattern
-        # the `default` theme applies with dbt-grays.inactive.
-        assert theme.title.font.color == creams["inactive"]
+        # Title color inherits from font.color (InheritSlot) — titles, headings,
+        # and prose share one ink. Resolve the cascade to see the inherited
+        # value; the raw theme's slot is unset (None) until resolved.
+        resolved = resolve_style(theme)
+        assert resolved.title.font.color == resolved.font.color
 
 
 class TestHtmlPageCanvas:

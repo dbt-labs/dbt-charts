@@ -198,7 +198,7 @@ class TestDatabaseSourceConfigContracts:
             duckdb_config={"enable_external_access": True},
             extensions=["httpfs", {"name": "json"}],
             settings={"memory_limit": "4GB"},
-            secrets=[{"type": "s3", "key_id": "key"}],
+            secrets=[{"type": "s3", "key_id": "key", "provider": "credential_chain"}],
             external_root="data",
             use_credential_provider="aws",
             attach=[{"path": "other.duckdb", "read_only": True}],
@@ -212,6 +212,58 @@ class TestDatabaseSourceConfigContracts:
             is_ducklake=True,
         )
         assert config.duckdb_config == {"enable_external_access": True}
+
+    def test_duckdb_extensions_accept_old_dict_shape_with_no_repo(self) -> None:
+        """extensions: [{name: json}] (no repo) must keep parsing."""
+        config = DuckDBSourceConfig(type="duckdb", extensions=[{"name": "json"}])
+        assert config.extensions is not None
+        entry = config.extensions[0]
+        assert not isinstance(entry, str)
+        assert entry.name == "json"
+
+    def test_duckdb_extension_config_rejects_unknown_key(self) -> None:
+        with pytest.raises(ValidationError):
+            DuckDBSourceConfig(
+                type="duckdb", extensions=[{"name": "json", "respo": "typo"}]
+            )
+
+    def test_duckdb_secrets_accept_old_flat_shape(self) -> None:
+        """secrets: [{type: s3, key_id: k, secret: s}] (flat, no options:
+        nesting) must keep parsing, matching upstream dbt-duckdb's own
+        secret shape."""
+        config = DuckDBSourceConfig(
+            type="duckdb",
+            secrets=[{"type": "s3", "key_id": "k", "secret": "s"}],
+        )
+        assert config.secrets is not None
+        assert config.secrets[0].type == "s3"
+
+    def test_duckdb_secrets_accept_provider_field(self) -> None:
+        config = DuckDBSourceConfig(
+            type="duckdb",
+            secrets=[{"type": "s3", "provider": "credential_chain"}],
+        )
+        assert config.secrets is not None
+
+    def test_duckdb_secret_config_rejects_missing_type(self) -> None:
+        with pytest.raises(ValidationError):
+            DuckDBSourceConfig(type="duckdb", secrets=[{"name": "my_secret"}])
+
+    def test_duckdb_secret_config_rejects_null_provider_field(self) -> None:
+        """A null provider field value must be rejected, not silently
+        rendered as the literal string 'None' (scalar), dropped (top-level),
+        or embedded in a list/map. None is not a valid CREATE SECRET value."""
+        with pytest.raises(ValidationError):
+            DuckDBSourceConfig(type="duckdb", secrets=[{"type": "s3", "key_id": None}])
+
+    def test_duckdb_secret_config_rejects_nested_provider_field(self) -> None:
+        """A provider field value must be a scalar, a list of scalars, or a
+        flat mapping of scalars; a nested mapping is not a shape DuckDB's
+        CREATE SECRET SQL can render."""
+        with pytest.raises(ValidationError):
+            DuckDBSourceConfig(
+                type="duckdb", secrets=[{"type": "s3", "opts": {"a": {"b": 1}}}]
+            )
 
     def test_duckdb_rejects_database_key(self) -> None:
         """DuckDB rejects the legacy 'database' key at parse time.

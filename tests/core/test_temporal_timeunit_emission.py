@@ -178,11 +178,18 @@ class TestSparseGapPreservation:
 
         x_enc = spec.get("encoding", {}).get("x", {})
         x_axis = x_enc.get("axis", {})
-        assert x_axis.get("labelExpr") == "utcFormat(toDate(datum.value), '%b %Y')", (
+        label_expr = str(x_axis.get("labelExpr", ""))
+        assert "utcFormat(toDate(datum.value), '%b %Y')" in label_expr, (
             f"Time format must route through labelExpr on ordinal: {x_axis}"
         )
         assert "format" not in x_axis
         assert x_axis.get("formatType") != "time"
+        # `in`, not `==`: the expression also carries the label-period gate
+        # that decides WHICH of this axis's per-bucket ticks speak. The three
+        # assertions above are this test's actual subject — no `formatType:
+        # "time"`, no raw `format`, the author's spec reaching the labels —
+        # and all three still hold. See
+        # test_authored_format_keeps_the_cadence_gate.py for the gate itself.
 
     def test_quarter_labels_auto_detect_yearquarter_ordinal(self) -> None:
         # "2024-Q1" strings are normalized to ISO quarter-start dates and

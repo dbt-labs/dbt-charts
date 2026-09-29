@@ -20,10 +20,6 @@ style:
     positive: positive
     warning: warning
     category: vivid-10
-    category_dark: vivid-10-dark
-    category_light: vivid-10-light
-    category_ghost: vivid-10-ghost
-    category_ink: vivid-10-ink
     sequence: dbt-seq-blue
     diverge: dbt-div-blue-red
 
@@ -481,11 +477,12 @@ style:
         max_size: 20.0
       line:
         stroke:
-          # Fallback width; fires only when the resolve layer cannot determine
-          # the rendered chart width (no data, no x field, or non-cartesian).
-          # For normal line/area charts the resolve layer bakes an adaptive
-          # width derived from px-per-point density — this value is not used.
-          width: 2.5
+          # No width here: the resolve layer bakes a density-adaptive width
+          # for normal line/area charts, or falls back to
+          # chart_rendering.stroke.fallback_width (default_config.yml) when
+          # it can't (no data, no x field, non-cartesian). Leaving width
+          # unset at every theme tier lets that fallback apply; a theme that
+          # wants a fixed, non-adaptive width can set it here instead.
           cap: "round"
           join: "round"
         # A disconnected band-step (curve: step + connect: false) draws one flat
@@ -529,7 +526,10 @@ style:
           # vertices.
           stroke:
             color: theme.background
-            width: 1.0
+            # No width here: falls back to
+            # chart_rendering.stroke.stacked_fallback_width
+            # (default_config.yml) when nothing pins one, same reasoning as
+            # marks.line.stroke above.
             cap: "round"
             join: "round"
           halo_multiplier: 0.0
@@ -637,10 +637,13 @@ style:
           visible: true
       marks:
         point:
-          # Tracks marks.line.stroke.width — hollow rings should read with the
-          # same weight as a line. Family-tier, not global: the global slot
-          # must stay unset so bake_point_companions can detect an authored
-          # ring on the families that do track a line.
+          # Matches chart_rendering.stroke.fallback_width — hollow rings
+          # should read with the same weight as a line's fallback stroke
+          # (a separate literal, not a live reference: overriding
+          # fallback_width in dbt_charts.yml will not move this). Family-tier,
+          # not global: the global slot must stay unset so
+          # bake_point_companions can detect an authored ring on the
+          # families that do track a line.
           stroke_width: 2.5
 
     histogram:
@@ -808,10 +811,13 @@ style:
           # 60 sq px, diameter = sqrt(size) ≈ 7.75px (≈3.9px radius), a clean
           # unobtrusive dot.
           size: 60
-          # Tracks marks.line.stroke.width — hollow rings should read with the
-          # same weight as a line. Family-tier, not global: the global slot
-          # must stay unset so bake_point_companions can detect an authored
-          # ring on the families that do track a line.
+          # Matches chart_rendering.stroke.fallback_width — hollow rings
+          # should read with the same weight as a line's fallback stroke
+          # (a separate literal, not a live reference: overriding
+          # fallback_width in dbt_charts.yml will not move this). Family-tier,
+          # not global: the global slot must stay unset so
+          # bake_point_companions can detect an authored ring on the
+          # families that do track a line.
           stroke_width: 2.5
 
     pie:
@@ -860,10 +866,13 @@ style:
           # matches scatter's own 60 sq px (diameter = sqrt(size) ≈ 7.75px,
           # ≈3.9px radius) so a bare point_map isn't invisible by default.
           size: 60
-          # Tracks marks.line.stroke.width — hollow rings should read with the
-          # same weight as a line. Family-tier, not global: the global slot
-          # must stay unset so bake_point_companions can detect an authored
-          # ring on the families that do track a line.
+          # Matches chart_rendering.stroke.fallback_width — hollow rings
+          # should read with the same weight as a line's fallback stroke
+          # (a separate literal, not a live reference: overriding
+          # fallback_width in dbt_charts.yml will not move this). Family-tier,
+          # not global: the global slot must stay unset so
+          # bake_point_companions can detect an authored ring on the
+          # families that do track a line.
           stroke_width: 2.5
           # No opacity override: point maps inherit the global point mark's
           # opacity: 1, the same as scatter. A translucent default would make

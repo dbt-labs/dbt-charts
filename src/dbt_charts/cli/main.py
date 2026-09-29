@@ -17,8 +17,17 @@ from typer.core import TyperGroup
 
 from dbt_charts._render_tz import pin_vl_convert_tz_utc
 from dbt_charts.agent_api import RenderFormat, set_surface
+from dbt_charts.agent_api._paths import (
+    defaults_file_skip_diagnostics,
+    nothing_to_render_diagnostic,
+    partition_defaults_files,
+)
 from dbt_charts.cli._console import is_plain_output
-from dbt_charts.cli._error_format import print_warning
+from dbt_charts.cli._error_format import (
+    emit_diagnostics_jsonl,
+    print_diagnostics,
+    print_warning,
+)
 from dbt_charts.cli._extras import require_extras
 from dbt_charts.cli._parsing import cwd_first_all, parse_kv_pairs
 from dbt_charts.cli._project import has_charts_marker, project_dir_was_typed
@@ -778,7 +787,11 @@ def render(
     format: Annotated[
         RenderFormat | None,
         typer.Option(
-            help="Output format: svg, html, png, pdf, terminal, json, text, yaml, or data"
+            help=(
+                "Output format: svg, html, png, pdf, terminal, json, text, "
+                "text-data (text plus every query's rows, grouped by query, "
+                "row-capped), yaml, or data"
+            )
         ),
     ] = None,
     project_dir: ProjectDirOption = None,
@@ -942,6 +955,26 @@ def render(
             '"-" (stdin) can only be used as the sole board argument',
             param_hint="BOARDS",
         )
+
+    boards, defaults_files = partition_defaults_files(boards)
+    if defaults_files:
+        skip_diagnostics = defaults_file_skip_diagnostics(defaults_files)
+        if ignore_codes:
+            skip_diagnostics = [
+                d for d in skip_diagnostics if d.code not in ignore_codes
+            ]
+        if skip_diagnostics:
+            if diagnostics_json:
+                emit_diagnostics_jsonl(skip_diagnostics)
+            elif not no_warnings:
+                print_diagnostics(skip_diagnostics)
+    if not boards:
+        error_diagnostic = nothing_to_render_diagnostic()
+        if diagnostics_json:
+            emit_diagnostics_jsonl([error_diagnostic])
+        else:
+            print_diagnostics([error_diagnostic])
+        raise typer.Exit(1)
 
     # Infer format from output extension when not explicitly given
     effective_format: RenderFormat = (

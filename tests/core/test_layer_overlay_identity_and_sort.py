@@ -43,7 +43,7 @@ import vl_convert as vlc
 
 from dbt_charts.core.compile.models.chart.authored import ChartSort
 from dbt_charts.core.compile.models.chart.authored._layer import (
-    BarChartBarLayer,
+    BarLayer,
     LineLayer,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -514,7 +514,7 @@ def test_layered_color_bar_with_authored_sort_renders_in_sort_order() -> None:
     categorical x domain has to be pinned for the authored ``chart.sort`` to
     survive. Such a layer contributes nothing to ``layer_x_columns``, so an
     empty one is no evidence the domain is safe."""
-    layer = BarChartBarLayer(type="bar", y="overlay", color="kind")
+    layer = BarLayer(type="bar", y="overlay", color="kind")
     chart = _bar_normalized(
         x="label",
         y="value",

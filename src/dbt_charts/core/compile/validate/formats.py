@@ -45,7 +45,12 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
     ERR_FORMAT_PREDEFINED_SHADOW,
 )
-from dbt_charts.core.text.format_d3 import is_time_format
+from dbt_charts.core.text.format_d3 import (
+    D3_TIME_FORMAT_DIRECTIVES,
+    PYTHON_STRFTIME_DIRECTIVES,
+    find_unsupported_directive,
+    is_time_format,
+)
 from dbt_charts.core.text.predefined_formats import (
     ALL_PREDEFINED_NAMES,
     PREDEFINED_NATIVE_NAMES,
@@ -102,6 +107,12 @@ _KIND_RULES: dict[str, tuple[frozenset[str], str]] = {
         "works here too.",
     ),
 }
+
+# The full set of directive letters this compile-time check accepts: Vega
+# paints a time-format-capable slot via d3-time-format, and the Python
+# painters (table cells, KPI values) go through portable_strftime — a
+# directive is legal here if either engine implements it.
+_ACCEPTED_TIME_DIRECTIVES = PYTHON_STRFTIME_DIRECTIVES | D3_TIME_FORMAT_DIRECTIVES
 
 # Field names whose child format slots are rendered by Vega (not Python).
 # PREDEFINED_NATIVE members bypass d3 and have no Vega equivalent; they are
@@ -237,7 +248,24 @@ def _validate_spec(
     if spec in formats:
         return
     if time_format and is_time_format(spec):
-        return
+        # A directive neither d3-time-format nor portable_strftime implements
+        # must fail here, at compile -- not reach render, where it's either
+        # an uncoded ValueError (ERR-INTERNAL, Python-painted slots) or a
+        # literal, unrendered letter (Vega-painted slots).
+        bad_directive = find_unsupported_directive(spec, _ACCEPTED_TIME_DIRECTIVES)
+        if bad_directive is None:
+            return
+        raise CompilationError.from_code(
+            ERR_FORMAT_INVALID,
+            spec=spec,
+            field_path=field_path,
+            kind_noun="date/time",
+            explanation=(
+                f"%{bad_directive} is not a strftime directive the engine "
+                "implements. Accepted directives: "
+                f"{', '.join('%' + d for d in sorted(_ACCEPTED_TIME_DIRECTIVES))}."
+            ),
+        )
     try:
         _d3_parse(spec)
     except D3FormatError as e:
@@ -252,12 +280,27 @@ def _validate_spec(
             if not allow_predefined
             else sorted({*formats, *(rule[0] if rule else ALL_PREDEFINED_NAMES)})
         )
+        if kind == "time":
+            # No `%` directive was found, so this isn't a d3-format parse
+            # failure at all -- pointing the author at number-spec parsing
+            # would mislead them; the slot's own kind already settles what
+            # it should have written instead.
+            explanation = (
+                "it is not an engine-predefined format name and not a key "
+                f"in `style.formats`. {_KIND_RULES['time'][1]}"
+            )
+        else:
+            explanation = (
+                "it is not an engine-predefined format name, not a key in "
+                f"`style.formats`, and is not a valid d3-format spec ({e.reason} "
+                f"at position {e.position})."
+            )
         raise CompilationError.from_code(
             ERR_FORMAT_INVALID,
             spec=spec,
             field_path=field_path,
-            reason=e.reason,
-            position=e.position,
+            kind_noun="date/time" if kind == "time" else "number",
+            explanation=explanation,
             available=available,
         ) from e
 

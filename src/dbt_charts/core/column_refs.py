@@ -30,6 +30,7 @@ import sqlglot.errors
 import sqlglot.expressions as exp
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, traverse_scope
+from sqlglot.tokens import TokenType
 
 from dbt_charts.core.compile.models.query.normalized import is_sql_query
 from dbt_charts.core.compile.normalize.queries import dialect_for_source
@@ -173,7 +174,47 @@ def parse_sql_statements(
     statements = [
         s for s in parsed if s is not None and not isinstance(s, exp.Semicolon)
     ]
+    # sqlglot unwraps `WITH a AS (...) (WITH a AS (...) SELECT ...)` by
+    # overwriting the inner WITH with the outer one: the tree then binds names
+    # to the wrong CTE. A CTE-opening WITH with no WITH node is that loss.
+    with_nodes = sum(len(list(s.find_all(exp.With))) for s in statements)
+    if _cte_with_keywords(skeleton, dialect) > with_nodes:
+        return "SQL cannot be analyzed: the parser dropped a WITH clause"
     return statements, via_dbt
+
+
+def _cte_with_keywords(sql: str, dialect: str | None) -> int:
+    """WITH tokens opening `[RECURSIVE] name [(cols)] AS [NOT] [MATERIALIZED] (`.
+
+    Counts a lower bound: other WITHs (`WITH ORDINALITY AS t`, ClickHouse
+    `WITH 1 AS x`) never match, so only a lost CTE list exceeds the tree.
+    """
+    tokens = sqlglot.tokenize(sql, read=dialect)
+    texts = [t.text.upper() for t in tokens]
+    count = 0
+    for i, token in enumerate(tokens):
+        if token.token_type != TokenType.WITH:
+            continue
+        j = i + 1 + (texts[i + 1 : i + 2] == ["RECURSIVE"])
+        j += 1
+        if j < len(tokens) and tokens[j].token_type == TokenType.L_PAREN:
+            depth = 0
+            while j < len(tokens):
+                if tokens[j].token_type == TokenType.L_PAREN:
+                    depth += 1
+                elif tokens[j].token_type == TokenType.R_PAREN:
+                    depth -= 1
+                j += 1
+                if depth == 0:
+                    break
+        if j >= len(tokens) or tokens[j].token_type != TokenType.ALIAS:
+            continue
+        j += 1
+        while j < len(tokens) and texts[j] in ("NOT", "MATERIALIZED"):
+            j += 1
+        if j < len(tokens) and tokens[j].token_type == TokenType.L_PAREN:
+            count += 1
+    return count
 
 
 def _refs_for_sql(sql: str, dialect: str | None) -> QueryColumnRefs:

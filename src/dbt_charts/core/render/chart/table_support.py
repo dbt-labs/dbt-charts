@@ -34,6 +34,8 @@ from dbt_charts.core.render.utils import resolve_tone_color, slug_to_text
 from dbt_charts.core.text.case import CaseValue, apply_case
 from dbt_charts.core.text.format_d3 import (
     NULL_DISPLAY,
+    PYTHON_STRFTIME_DIRECTIVES,
+    find_unsupported_directive,
     is_time_format,
     portable_strftime,
 )
@@ -82,16 +84,6 @@ _ISO_TEMPORAL_RE = re.compile(
     r"(Z|[+-]\d{2}:?\d{2})?)?$"  # optional TZ suffix
 )
 
-# Valid strftime/d3-time-format directive letters. Padding modifiers (-, _, 0)
-# between % and the letter are allowed (e.g. %-d, %_d, %0H).
-# %% is a literal-percent escape and is validated separately.
-_VALID_STRFTIME_DIRECTIVES: frozenset[str] = frozenset(
-    "aAbBcCdDeEfFgGhHIjklmMnOpPqrRsSTuUVwWxXyYzZ"
-)
-
-# Matches a % directive sequence: optional padding modifier + letter.
-_STRFTIME_DIRECTIVE_RE = re.compile(r"%[-_0]?(.)")
-
 
 def is_temporal_value(value: Any) -> bool:
     """Return True for Python date/datetime objects and ISO temporal strings.
@@ -130,19 +122,20 @@ def is_temporal_value(value: Any) -> bool:
 def _validate_strftime_spec(format_spec: str) -> None:
     """Raise ValueError for format specs containing unknown % directives.
 
-    Python's strftime silently passes unknown directives through (e.g. %Q → Q).
-    We reject them explicitly so authors get a clear error rather than garbled output.
-
-    ``%%`` (literal percent escape) is accepted and stripped before validation.
+    Checks against ``PYTHON_STRFTIME_DIRECTIVES``, not the wider set compile
+    accepts: this function paints through ``portable_strftime``, so a
+    directive Vega paints but Python cannot (``%L``, ``%q``, ``%Q``) must
+    still fail here. Compile-time validation
+    (``core/compile/validate/formats.py``) already rejects a directive
+    neither engine implements for every authored board -- this is the
+    render-time backstop for a spec reaching this function some other way
+    (e.g. directly through the render API, bypassing compile).
     """
-    stripped = format_spec.replace("%%", "")
-    for m in _STRFTIME_DIRECTIVE_RE.finditer(stripped):
-        letter = m.group(1)
-        if letter not in _VALID_STRFTIME_DIRECTIVES:
-            raise ValueError(
-                f"Invalid temporal format spec {format_spec!r}: "
-                f"unknown directive %{letter!r}"
-            )
+    bad = find_unsupported_directive(format_spec, PYTHON_STRFTIME_DIRECTIVES)
+    if bad is not None:
+        raise ValueError(
+            f"Invalid temporal format spec {format_spec!r}: unknown directive %{bad!r}"
+        )
 
 
 def _raise_if_time_format_on_numeric(resolved: str) -> None:

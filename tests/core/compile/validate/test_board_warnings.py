@@ -429,6 +429,109 @@ rows: [titled]
     assert "untitled" in orphans[0].message
 
 
+_QUERIES_AND_THREE_CHARTS = """
+queries:
+  q:
+    type: values
+    rows:
+      - {x: 1, y: 2}
+charts:
+  titled:
+    query: q
+    type: bar
+    x: x
+    y: y
+    title: Revenue by Month
+  untitled:
+    query: q
+    type: bar
+    x: x
+    y: y
+  orphan:
+    query: q
+    type: bar
+    x: x
+    y: y
+"""
+
+
+def test_chart_focus_with_every_chart_in_layout_does_not_warn() -> None:
+    yaml = f"""
+title: Revenue
+{_QUERIES_AND_CHARTS}
+chart_focus: titled
+rows: [titled, untitled]
+"""
+    result = compile(yaml)
+
+    assert result.success, result.errors
+    codes = [w.code for w in result.warnings]
+    assert "WARN-UNREFERENCED-CHART" not in codes
+
+
+def test_chart_focus_still_warns_for_a_chart_no_layout_places() -> None:
+    yaml = f"""
+title: Revenue
+{_QUERIES_AND_THREE_CHARTS}
+chart_focus: titled
+rows: [titled, untitled]
+"""
+    result = compile(yaml)
+
+    assert result.success, result.errors
+    orphans = [w for w in result.warnings if w.code == "WARN-UNREFERENCED-CHART"]
+    assert len(orphans) == 1
+    assert "orphan" in orphans[0].message
+
+
+def test_unfocused_board_orphan_warning_is_unchanged() -> None:
+    yaml = f"""
+title: Revenue
+{_QUERIES_AND_THREE_CHARTS}
+rows: [titled, untitled]
+"""
+    result = compile(yaml)
+
+    assert result.success, result.errors
+    orphans = [w for w in result.warnings if w.code == "WARN-UNREFERENCED-CHART"]
+    assert len(orphans) == 1
+    assert "orphan" in orphans[0].message
+
+
+def test_chart_focus_key_and_chart_flag_agree_on_orphan_warnings() -> None:
+    """`chart_focus:` in YAML and `--chart` (post-compile focus_on_chart) must not drift.
+
+    `--chart` compiles the unfocused board (so warnings see the full layout) and
+    narrows only afterward; `chart_focus:` must produce the identical warning set.
+    """
+    yaml = f"""
+title: Revenue
+{_QUERIES_AND_THREE_CHARTS}
+rows: [titled, untitled]
+"""
+    flag_result = compile(yaml)
+    assert flag_result.success, flag_result.errors
+    assert flag_result.board is not None
+    flag_orphans = {
+        w.message for w in flag_result.warnings if w.code == "WARN-UNREFERENCED-CHART"
+    }
+
+    key_yaml = f"""
+title: Revenue
+chart_focus: titled
+{_QUERIES_AND_THREE_CHARTS}
+rows: [titled, untitled]
+"""
+    key_result = compile(key_yaml)
+    assert key_result.success, key_result.errors
+    key_orphans = {
+        w.message for w in key_result.warnings if w.code == "WARN-UNREFERENCED-CHART"
+    }
+
+    assert flag_orphans == key_orphans
+    assert len(flag_orphans) == 1
+
+
 def test_double_header_range_lands_on_the_heading_line_not_the_whole_text_block() -> (
     None
 ):

@@ -48,6 +48,7 @@ from dbt_charts.core.render.svg_utils import (
     authored_attrs,
     authored_kind_attr,
     border_dash_attrs,
+    escape_attr,
     extract_svg_inner_content,
     format_svg_numeric,
     padded_authoring_content,
@@ -102,7 +103,7 @@ def _footer_attribution_svg(
     brand_measure = get_weighted_font_measurer(font_family, brand_weight).measure
 
     def run(end_x: float, content: str, *, brand: bool = False) -> str:
-        weight = f' font-weight="{brand_weight}"' if brand else ""
+        weight = f' font-weight="{escape_attr(brand_weight)}"' if brand else ""
         # Snapped (svg_utils.px) for two reasons: a run on a fractional
         # pixel is split across two columns by the rasterizer, and the Rust
         # port interpolates the 600-weight advances ~0.004px away from this
@@ -111,7 +112,7 @@ def _footer_attribution_svg(
         return (
             f'<text x="{format_svg_numeric(px(end_x))}" y="{format_svg_numeric(y)}" '
             f'text-anchor="end" font-size="{format_svg_numeric(size)}" '
-            f'fill="{footer.font.color}" font-family="{font_family}"{weight}>'
+            f'fill="{escape_attr(footer.font.color)}" font-family="{escape_attr(font_family)}"{weight}>'
             f"{html.escape(content)}</text>"
         )
 
@@ -133,7 +134,7 @@ def _footer_attribution_svg(
     brand_run = run(right, brand_word, brand=True)
     if footer.link:
         brand_run = (
-            f'<a class="dbt-footer-link" href="{html.escape(footer.link, quote=True)}" '
+            f'<a class="dbt-footer-link" href="{escape_attr(footer.link)}" '
             f'target="_blank" rel="noopener noreferrer">{brand_run}</a>'
         )
     parts.insert(0, brand_run)
@@ -367,17 +368,25 @@ def _paint_title_svg_fill(title_svg: str, color: str) -> str:
     etc. — are untouched. Other declarations in the same ``style="..."``
     attribute (e.g. ``font-weight: 500``) are preserved.
     """
-    color_escaped = html.escape(str(color))
+    color_str = str(color)
 
     # Pass 1 — inject inline style on every <text> that doesn't already carry
     # one. Inserting before any attribute means subsequent attributes survive.
+    # A callable replacement, never a replacement string: re.sub's string form
+    # processes backslash escapes in it, so an authored color containing e.g.
+    # `\042` would decode into a literal `"` and break out of the attribute.
     no_style_re = re.compile(r"<text(?![^>]*\bstyle=)")
-    title_svg = no_style_re.sub(f'<text style="fill: {color_escaped}"', title_svg)
+    title_svg = no_style_re.sub(
+        lambda _m: f'<text style="fill: {escape_attr(color_str)}"', title_svg
+    )
 
     # Pass 2 — rewrite any existing fill: declaration inside a style attribute.
     attr_with_fill_re = re.compile(r'(style=")([^"]*\bfill\s*:\s*)[^;"]*([^"]*)(")')
     title_svg = attr_with_fill_re.sub(
-        rf"\g<1>\g<2>{color_escaped}\g<3>\g<4>", title_svg
+        lambda m: (
+            f"{m.group(1)}{m.group(2)}{escape_attr(color_str)}{m.group(3)}{m.group(4)}"
+        ),
+        title_svg,
     )
 
     return title_svg
@@ -1222,7 +1231,7 @@ def render_board_svg(
     # Background rect
     bg_rect = ""
     if background:
-        bg_rect = f'<rect x="0" y="0" width="{total_width}" height="{total_height}" fill="{html.escape(background)}"/>'
+        bg_rect = f'<rect x="0" y="0" width="{escape_attr(total_width)}" height="{escape_attr(total_height)}" fill="{escape_attr(background)}"/>'
 
     # Margin guide lines (print-media style alignment guides)
     margin_lines = ""
@@ -1232,10 +1241,10 @@ def render_board_svg(
         left = page_padding
         right = total_width - page_padding
         lines = [
-            f'<line x1="{format_svg_numeric(left)}" y1="0" x2="{format_svg_numeric(left)}" y2="{total_height}" stroke="{margin_color}" stroke-width="1"/>',
-            f'<line x1="{format_svg_numeric(left + inset)}" y1="0" x2="{format_svg_numeric(left + inset)}" y2="{total_height}" stroke="{margin_color}" stroke-width="1"/>',
-            f'<line x1="{format_svg_numeric(right)}" y1="0" x2="{format_svg_numeric(right)}" y2="{total_height}" stroke="{margin_color}" stroke-width="1"/>',
-            f'<line x1="{format_svg_numeric(right - inset)}" y1="0" x2="{format_svg_numeric(right - inset)}" y2="{total_height}" stroke="{margin_color}" stroke-width="1"/>',
+            f'<line x1="{format_svg_numeric(left)}" y1="0" x2="{format_svg_numeric(left)}" y2="{escape_attr(total_height)}" stroke="{escape_attr(margin_color)}" stroke-width="1"/>',
+            f'<line x1="{format_svg_numeric(left + inset)}" y1="0" x2="{format_svg_numeric(left + inset)}" y2="{escape_attr(total_height)}" stroke="{escape_attr(margin_color)}" stroke-width="1"/>',
+            f'<line x1="{format_svg_numeric(right)}" y1="0" x2="{format_svg_numeric(right)}" y2="{escape_attr(total_height)}" stroke="{escape_attr(margin_color)}" stroke-width="1"/>',
+            f'<line x1="{format_svg_numeric(right - inset)}" y1="0" x2="{format_svg_numeric(right - inset)}" y2="{escape_attr(total_height)}" stroke="{escape_attr(margin_color)}" stroke-width="1"/>',
         ]
         margin_lines = "\n".join(lines)
 
@@ -1308,8 +1317,8 @@ def render_board_svg(
                     - get_chart_rendering().frame.footer_timestamp_gap_px
                 )
         timestamp_element = (
-            f'<text data-role="render-timestamp" x="{format_svg_numeric(timestamp_x)}" y="{format_svg_numeric(timestamp_y)}" text-anchor="{timestamp_anchor}" '
-            f'font-size="{format_svg_numeric(timestamp_font_size)}" fill="{timestamp_style.font.color}" font-family="{board.style.font.family}" '
+            f'<text data-role="render-timestamp" x="{format_svg_numeric(timestamp_x)}" y="{format_svg_numeric(timestamp_y)}" text-anchor="{escape_attr(timestamp_anchor)}" '
+            f'font-size="{format_svg_numeric(timestamp_font_size)}" fill="{escape_attr(timestamp_style.font.color)}" font-family="{escape_attr(board.style.font.family)}" '
             f'style="font-variant-numeric: tabular-nums lining-nums;">'
             f"{html.escape(display_timestamp)}</text>"
         )
@@ -1330,7 +1339,7 @@ def render_board_svg(
             footer_parts.append(
                 f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
                 f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '
-                f'stroke="{footer_style.rule.color}" stroke-width="{format_svg_numeric(footer_style.rule.stroke_width)}"/>'
+                f'stroke="{escape_attr(footer_style.rule.color)}" stroke-width="{format_svg_numeric(footer_style.rule.stroke_width)}"/>'
             )
         footer_parts.append(attribution_svg)
         footer_element = "\n".join(footer_parts)
@@ -1340,7 +1349,7 @@ def render_board_svg(
     # is a pure transport attribute to_html() reads back, never seen by a
     # user, and already-persisted Cloud renders carry this exact name --
     # renaming it would 500 on every one of them for no benefit.
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_width} {total_height}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{render_timestamp_iso}" data-dbt-page-title="{html.escape(page_title, quote=True)}"{hover_attributes} data-dbt-page-background="{html.escape(str(board_background), quote=True)}" aria-label="{html.escape(page_title, quote=True)}">
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {escape_attr(total_width)} {escape_attr(total_height)}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{escape_attr(render_timestamp_iso)}" data-dbt-page-title="{escape_attr(page_title)}"{hover_attributes} data-dbt-page-background="{escape_attr(str(board_background))}" aria-label="{escape_attr(page_title)}">
 
 <defs>
 {grid_defs}
@@ -1545,22 +1554,22 @@ def render_nested_board(
     border_radius = resolved_style.border.radius
 
     if authored_bg:
-        bg = html.escape(str(authored_bg))
-        bg_rect = f'<rect x="0" y="0" width="{board_width}" height="{board_height}" fill="{bg}" rx="{border_radius}"/>'
+        bg = str(authored_bg)
+        bg_rect = f'<rect x="0" y="0" width="{escape_attr(board_width)}" height="{escape_attr(board_height)}" fill="{escape_attr(bg)}" rx="{escape_attr(border_radius)}"/>'
 
     border_width = resolved_style.border.width
     border_color = resolved_style.border.color
     if border_width > 0 and border_color:
         stroke_width = border_width
-        stroke_color = html.escape(border_color)
+        stroke_color = border_color
         stroke_inset = stroke_width / 2.0
         border_rect = (
-            f'<rect x="{stroke_inset}" y="{stroke_inset}" '
-            f'width="{max(board_width - stroke_width, 0)}" '
-            f'height="{max(board_height - stroke_width, 0)}" '
-            f'fill="none" stroke="{stroke_color}" stroke-width="{stroke_width}"'
+            f'<rect x="{escape_attr(stroke_inset)}" y="{escape_attr(stroke_inset)}" '
+            f'width="{escape_attr(max(board_width - stroke_width, 0))}" '
+            f'height="{escape_attr(max(board_height - stroke_width, 0))}" '
+            f'fill="none" stroke="{escape_attr(stroke_color)}" stroke-width="{escape_attr(stroke_width)}"'
             f"{border_dash_attrs(resolved_style.border)} "
-            f'rx="{max(border_radius - stroke_inset, 0)}"/>'
+            f'rx="{escape_attr(max(border_radius - stroke_inset, 0))}"/>'
         )
 
     board_group = translate_group(
@@ -1569,7 +1578,7 @@ def render_nested_board(
         f"{bg_rect}\n{border_rect}\n{''.join(inner_items)}",
     )
 
-    svg = f"""<svg width="{total_svg_width}" height="{total_svg_height}" viewBox="0 0 {total_svg_width} {total_svg_height}">
+    svg = f"""<svg width="{escape_attr(total_svg_width)}" height="{escape_attr(total_svg_height)}" viewBox="0 0 {escape_attr(total_svg_width)} {escape_attr(total_svg_height)}">
 {board_group}
 </svg>"""
     return svg, total_svg_height

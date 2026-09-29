@@ -1,7 +1,8 @@
 # Categorical palette — category-6-tonal-purple
 #
-# Single-hue categorical palette anchored on vivid-10 slot 5 (purple, H≈319.1°
-# in OKLCH). Same architecture as category-6-tonal-blue.
+# Single-hue categorical palette on a violet-leaning purple (H≈319.1° in
+# OKLCH), bluer than vivid-10's rosier slot-6 purple (H≈334°). Same
+# architecture as category-6-tonal-blue.
 
 name: category-6-tonal-purple
 description: |

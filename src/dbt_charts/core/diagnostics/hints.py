@@ -9,6 +9,7 @@ consumes the sequence directly.
 from __future__ import annotations
 
 import difflib
+import re
 from collections.abc import Sequence
 
 # Names this release retired, each pointing at the successor that means what it
@@ -32,6 +33,108 @@ RETIRED_FORMAT_SUCCESSORS: dict[str, str] = {
     "compact": "number",
     "number_default": "number",
 }
+
+# The categorical-variant companion spellings one release retired (a shipped
+# `<family>-<suffix>.yml` file, or a `style.palettes.category_<suffix>` role)
+# -> the literal `Variant` word (core/colors.py) that replaced them: `dark`
+# and `light` keep their name, `ghost` becomes `pale`, `ink` becomes `deep`.
+# Shared by palette.py's live "was retired" hint and
+# migrations/versions/v0_9_0.py's migration value-map, so the two can't
+# drift out of step with each other -- each import this rather than keep
+# its own copy.
+RETIRED_VARIANT_SUFFIX_SUCCESSORS: dict[str, str] = {
+    "dark": "dark",
+    "light": "light",
+    "ghost": "pale",
+    "ink": "deep",
+}
+
+# The two families that shipped literal `<family>-<suffix>.yml` companion
+# files, and the one role prefix (`category_dark`, ... in `style.palettes`)
+# that named them by role -- both retired in the same release. Also shared
+# by palette.py and v0_9_0.py; see `RETIRED_VARIANT_SUFFIX_SUCCESSORS`.
+RETIRED_VARIANT_FAMILIES: tuple[str, ...] = ("vivid-10", "editorial-10")
+RETIRED_VARIANT_ROLE_PREFIX = "category"
+
+_RETIRED_SUFFIXES = "|".join(RETIRED_VARIANT_SUFFIX_SUCCESSORS)
+# One pattern per retired *whole-token* shape, each capturing (suffix, tail)
+# with `tail` being the segment that carries across unchanged. The alias and
+# slot tails are a single segment on purpose: a retired role followed by two
+# dotted segments (`category_dark.blue.dark`) was never a spelling the old
+# grammar accepted, and respelling it would name a token that cannot resolve.
+_RETIRED_TOKEN_SHAPES: tuple[tuple[re.Pattern[str], str], ...] = (
+    # `category_dark[2]` -> `category[2].dark`
+    (
+        re.compile(rf"^{RETIRED_VARIANT_ROLE_PREFIX}_({_RETIRED_SUFFIXES})\[(\d+)\]$"),
+        RETIRED_VARIANT_ROLE_PREFIX + "[{tail}].{variant}",
+    ),
+    # `category_dark.blue` -> `category.blue.dark`
+    (
+        re.compile(
+            rf"^{RETIRED_VARIANT_ROLE_PREFIX}_({_RETIRED_SUFFIXES})"
+            r"\.([A-Za-z][A-Za-z0-9_-]*)$"
+        ),
+        RETIRED_VARIANT_ROLE_PREFIX + ".{tail}.{variant}",
+    ),
+    # `category_dark` -> `category.dark` (a whole-list role reference)
+    (
+        re.compile(rf"^{RETIRED_VARIANT_ROLE_PREFIX}_({_RETIRED_SUFFIXES})()$"),
+        RETIRED_VARIANT_ROLE_PREFIX + ".{variant}",
+    ),
+)
+_RETIRED_FAMILY_NAMES = "|".join(re.escape(f) for f in RETIRED_VARIANT_FAMILIES)
+_RETIRED_FAMILY_SHAPES: tuple[tuple[re.Pattern[str], str], ...] = (
+    # `vivid-10-dark.3` -> `vivid-10.3.dark`
+    (
+        re.compile(rf"^({_RETIRED_FAMILY_NAMES})-({_RETIRED_SUFFIXES})\.(\d+)$"),
+        "{family}.{tail}.{variant}",
+    ),
+    # `vivid-10-dark:4` / `vivid-10-dark:4_r` -> `vivid-10:4.dark` -- the
+    # whole-list `:N`/`_r` shorthand rides along, after the family and
+    # before the variant, the order `palette()` parses.
+    (
+        re.compile(
+            rf"^({_RETIRED_FAMILY_NAMES})-({_RETIRED_SUFFIXES})(:\d+(?:_r)?|_r)$"
+        ),
+        "{family}{tail}.{variant}",
+    ),
+    # `vivid-10-dark` -> `vivid-10.dark` (a whole-list palette name)
+    (
+        re.compile(rf"^({_RETIRED_FAMILY_NAMES})-({_RETIRED_SUFFIXES})()$"),
+        "{family}.{variant}",
+    ),
+)
+
+
+def respell_retired_variant_token(token: str) -> str | None:
+    """The third-segment spelling that replaced retired *token*, or ``None``.
+
+    The single transformation both consumers of the retired companion
+    spellings share: ``versions/v0_9_0.py`` builds its migration value-map
+    from it, and ``palette.py``'s live "was retired" hint names its result --
+    so the replacement the migration writes and the one the error message
+    suggests can never differ. ``None`` means *token* is not one of the
+    closed set of retired shapes (a current spelling, a continuous palette's
+    own live ``-dark`` fork, or a mixed old/new spelling the old grammar never
+    accepted) and gets no successor.
+    """
+    for pattern, template in _RETIRED_TOKEN_SHAPES:
+        match = pattern.match(token)
+        if match:
+            suffix, tail = match.groups()
+            return template.format(
+                tail=tail, variant=RETIRED_VARIANT_SUFFIX_SUCCESSORS[suffix]
+            )
+    for pattern, template in _RETIRED_FAMILY_SHAPES:
+        match = pattern.match(token)
+        if match:
+            family, suffix, tail = match.groups()
+            return template.format(
+                family=family,
+                tail=tail,
+                variant=RETIRED_VARIANT_SUFFIX_SUCCESSORS[suffix],
+            )
+    return None
 
 
 def _suggest_close_match(value: str, available: Sequence[str]) -> str | None:
@@ -107,7 +210,19 @@ def suggest_close_palette(
     # ERR-PALETTE-UNKNOWN's remaining field is `field_path`, a str.
     **_kwargs: str,
 ) -> str | None:
-    """Return a 'Did you mean X?' hint for an unknown palette or palette role."""
+    """Return a hint for an unknown palette or palette role.
+
+    A retired companion spelling gets its recorded successor rather than a
+    fuzzy match -- the same refusal ``suggest_close_format`` makes, for the
+    same reason: the nearest shipped name to ``vivid-10-dark`` is
+    ``vivid-10``, which compiles clean and silently drops the darkening the
+    author wrote it for. This is the compile-time diagnostic's only route to
+    that successor for a slot no migration reaches (a KPI ``background``
+    scale palette), so silence here would be the failure mode.
+    """
+    successor = respell_retired_variant_token(name)
+    if successor is not None:
+        return f"{name!r} was retired; use {successor!r} instead."
     return _suggest_close_match(name, available)
 
 

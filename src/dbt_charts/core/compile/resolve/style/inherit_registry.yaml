@@ -269,6 +269,8 @@ Style.charts.table.title_row.font:
 - Style.charts.table.font
 - Style.charts.font
 - Style.font
+Style.charts.title:
+- Style.title
 Style.charts.tooltip.font:
 - Style.charts.font
 - Style.font
@@ -287,8 +289,6 @@ Style.placeholder.overlay.font:
 Style.text.font:
 - Style.font
 Style.title.font:
-- Style.font
-Style.title.subtitle.font:
 - Style.font
 Style.variables.font:
 - Style.font

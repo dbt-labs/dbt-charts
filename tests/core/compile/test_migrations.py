@@ -13,6 +13,7 @@ from dbt_charts.core.compile.errors import ParseError
 from dbt_charts.core.compile.migrations import (
     ConditionalMove,
     Deletion,
+    MapKeyDeletion,
     MigrationConflictError,
     MigrationError,
     MigrationRegistry,
@@ -2615,6 +2616,49 @@ def test_deletion_would_fire_respects_chart_type_scope() -> None:
     assert _deletion_would_fire(
         with_bar, [bar_deletion], v1_schema, [v1_schema], live, [live]
     )
+
+
+def test_apply_map_key_deletions_uses_each_groups_own_source_schema() -> None:
+    """`_apply_map_key_deletions` must not apply `deletions[0].source_schema`
+    to every deletion it is given.
+
+    Unlike `_apply_deletions` (whose only caller, the per-boundary migration
+    loop, always hands over one boundary's deletions at a time),
+    `_apply_map_key_deletions_eagerly` -- the in-memory fast path -- hands
+    over the whole registry's `map_key_deletions`, unfiltered, since it runs
+    ahead of `_recognize` and does not yet know which single boundary the
+    board is on. Two schemas here each declare a *different* mapping field
+    as a deletion's container; if the wrong schema drove the whole walk (the
+    bug: always `deletions[0].source_schema`), the other deletion's
+    container would never be recognized as declared, and its key would
+    survive untouched.
+    """
+    from dbt_charts.core.compile.migrations.migrations import _apply_map_key_deletions
+
+    schema_a = cast(
+        JsonObject,
+        {"type": "object", "properties": {"container_a": {"type": "object"}}},
+    )
+    schema_b = cast(
+        JsonObject,
+        {"type": "object", "properties": {"container_b": {"type": "object"}}},
+    )
+    catalog = synthetic_catalog({V1: schema_a, V2: schema_b})
+    deletion_a = MapKeyDeletion(V1, V2, ("container_a",), {"retired_a": "a struck"})
+    deletion_b = MapKeyDeletion(V2, V3, ("container_b",), {"retired_b": "b struck"})
+
+    document: JsonObject = cast(
+        JsonObject,
+        {"container_a": {"retired_a": "x"}, "container_b": {"retired_b": "y"}},
+    )
+    messages, struck = _apply_map_key_deletions(
+        document, [deletion_a, deletion_b], catalog
+    )
+
+    assert "retired_a" not in cast(JsonObject, document["container_a"])
+    assert "retired_b" not in cast(JsonObject, document["container_b"])
+    assert len(struck) == 2
+    assert sorted(messages) == ["a struck", "b struck"]
 
 
 def test_yaml_text_rewrite_replays_only_the_paths_the_walk_struck() -> None:

@@ -238,6 +238,40 @@ def test_invalid_inherit_slot_from_path_raises():
         build_inherit_graph(Bad)
 
 
+def test_nested_inherit_slot_inside_outer_slot_gets_container_link():
+    """A field that itself carries an InheritSlot, reached while already
+    inside an outer slot's expansion, must get its own container-level copy
+    link at the outer slot's derived path — not just leaf links — so
+    apply_inherit can fill it wholesale when the whole nested object is left
+    unset. Mirrors ``TitleStyle.font`` (its own
+    ``InheritSlot(from_path="Style.font")``) nested inside
+    ``ChartsStyle.title``'s ``InheritSlot(from_path="Style.title")``.
+    """
+
+    class InnerFixture(BaseModel):
+        model_config = ConfigDict(extra="forbid", frozen=True)
+        color: str
+
+    class OuterFixture(BaseModel):
+        model_config = ConfigDict(extra="forbid", frozen=True)
+        # Own absolute InheritSlot, same shape as TitleStyle.font's.
+        inner: Annotated[InnerFixture, InheritSlot(from_path="NestedRoot.other")]
+
+    class NestedRoot(BaseModel):
+        model_config = ConfigDict(extra="forbid", frozen=True)
+        other: InnerFixture
+        ref: OuterFixture
+        slot: Annotated[OuterFixture, InheritSlot(from_path="NestedRoot.ref")]
+
+    graph = build_inherit_graph(NestedRoot)
+    # Container-level link at the outer slot's own derived path: fills
+    # slot.inner wholesale from ref.inner when unset, rather than jumping
+    # straight to the absolute "other" source.
+    assert graph.get("NestedRoot.slot.inner") == "NestedRoot.ref.inner"
+    # Leaves still expand through the outer slot too.
+    assert graph.get("NestedRoot.slot.inner.color") == "NestedRoot.ref.inner.color"
+
+
 def test_skip_inherit_slots_suppresses_inner_slot():
     """SkipInheritSlots prevents InheritSlot markers inside a subtree from activating.
 
@@ -425,9 +459,14 @@ def test_style_graph_excludes_root_font():
     assert not any(k.startswith("Style.font.") for k in graph)
 
 
-def test_style_graph_excludes_chart_local_title_font():
-    """Style.charts.title.* has no InheritSlot markers — must not appear in graph."""
+def test_charts_title_inherits_from_board_title():
+    """Style.charts.title.* carries InheritSlot(from_path="Style.title") --
+    every leaf falls back to the board title when unset, whole unset
+    sub-objects (container-level links) included."""
     from dbt_charts.core.compile.models.style.theme import Style
 
     graph = build_inherit_graph(Style)
-    assert not any(k.startswith("Style.charts.title.") for k in graph)
+    assert graph.get("Style.charts.title") == "Style.title"
+    assert graph.get("Style.charts.title.font") == "Style.title.font"
+    assert graph.get("Style.charts.title.font.family") == "Style.title.font.family"
+    assert graph.get("Style.charts.title.sizes") == "Style.title.sizes"

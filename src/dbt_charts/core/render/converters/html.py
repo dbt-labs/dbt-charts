@@ -9,6 +9,48 @@ from typing import Any
 
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.render.svg_utils import attr_name, escape_css_string
+
+# Not a color validator: rejects only characters that can break out of the CSS
+# declaration or <style> block, so var()/oklch()/color-mix() still pass.
+_CSS_BREAKING_CHARS_RE = re.compile(r'[<>;{}"\'\\*\x00-\x1f\x7f]')
+
+# CSS generic font-family keywords must stay bare, unquoted keywords -- quoting
+# one (e.g. "sans-serif") makes the browser search for a font literally named
+# that instead of falling back to the platform's generic sans-serif font.
+_CSS_GENERIC_FONT_FAMILIES = {
+    "serif",
+    "sans-serif",
+    "monospace",
+    "cursive",
+    "fantasy",
+    "system-ui",
+    "ui-serif",
+    "ui-sans-serif",
+    "ui-monospace",
+    "ui-rounded",
+    "math",
+    "emoji",
+    "fangsong",
+}
+
+
+def _css_font_family_stack(stack: str) -> str:
+    """Render an authored font-family stack as safe CSS.
+
+    Each comma-separated entry becomes a quoted, escaped CSS string, except a
+    generic family keyword, which stays bare -- see the module-level comment.
+    """
+    families = []
+    for raw in stack.split(","):
+        name = raw.strip().strip("'\"")
+        if not name:
+            continue
+        if name.lower() in _CSS_GENERIC_FONT_FAMILIES:
+            families.append(name.lower())
+        else:
+            families.append(escape_css_string(name))
+    return ", ".join(families)
 
 
 def to_html(
@@ -60,7 +102,9 @@ def to_html(
         )
     metadata: dict[str, str] = {}
     for name in ("page-title", "font-family", "page-background"):
-        match = re.search(rf'\bdata-dbt-{name}="([^"]*)"', opening_tag.group(1))
+        match = re.search(
+            rf'\bdata-dbt-{attr_name(name)}="([^"]*)"', opening_tag.group(1)
+        )
         if match is None:
             raise RenderError.from_code(
                 ERR_INPUT_INVALID,
@@ -69,8 +113,13 @@ def to_html(
         metadata[name] = html_module.unescape(match.group(1))
 
     page_title = metadata["page-title"]
-    font_family = metadata["font-family"]
+    font_family = _css_font_family_stack(metadata["font-family"])
     board_background = metadata["page-background"]
+    if _CSS_BREAKING_CHARS_RE.search(board_background):
+        raise RenderError.from_code(
+            ERR_INPUT_INVALID,
+            message=f"style.background is not valid CSS: {board_background!r}",
+        )
     escaped_title = html_module.escape(page_title)
     bg_style = f"background-color: {board_background};"
 

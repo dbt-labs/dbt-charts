@@ -902,6 +902,7 @@ class TestPairClearsEdgeFlush:
             edge_labels_flushed=True,
             is_anchor=True,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
         # A non-flushed axis (e.g. authored labels.flush: false) keeps the
         # half-width assumption and clears the same gap.
@@ -917,6 +918,7 @@ class TestPairClearsEdgeFlush:
             edge_labels_flushed=False,
             is_anchor=True,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
 
     def test_trailing_opener_off_calendar_boundary_keeps_half_width(self) -> None:
@@ -954,6 +956,7 @@ class TestPairClearsEdgeFlush:
             edge_labels_flushed=True,
             is_anchor=False,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
 
     def test_off_cadence_anchor_keeps_half_width(self) -> None:
@@ -1006,6 +1009,7 @@ class TestPairClearsEdgeFlush:
             edge_labels_flushed=True,
             is_anchor=True,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
         # Same pair of labels, same clearance, but now genuinely at dates[0] —
         # Vega flushes it, so it reserves its full width and does not clear.
@@ -1021,6 +1025,7 @@ class TestPairClearsEdgeFlush:
             edge_labels_flushed=True,
             is_anchor=True,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
 
 
@@ -1081,6 +1086,7 @@ class TestPairClearsCarriesYearRow:
             edge_labels_flushed=True,
             is_anchor=True,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
 
     def test_both_edges_carrying_year_row_check_it_as_its_own_clearance(self) -> None:
@@ -1118,6 +1124,7 @@ class TestPairClearsCarriesYearRow:
             edge_labels_flushed=True,
             is_anchor=True,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
         # A band wide enough for both rows clears cleanly.
         assert _pair_clears(
@@ -1132,6 +1139,7 @@ class TestPairClearsCarriesYearRow:
             edge_labels_flushed=True,
             is_anchor=True,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
 
     def test_interior_fiscal_year_start_tick_carries_year_row_even_unflushed(
@@ -1182,6 +1190,7 @@ class TestPairClearsCarriesYearRow:
             edge_labels_flushed=True,
             is_anchor=True,
             fiscal_year_start_month=1,
+            authored_format=None,
         )
 
 

@@ -551,3 +551,109 @@ def test_a_gantt_with_an_open_ended_task_renders():
         },
     )
     assert _descriptions(spec)
+
+
+def _layered_spec(
+    chart_type: str, data: list[dict[str, Any]], layers: list[dict[str, Any]], **fields
+) -> dict[str, Any]:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": chart_type,
+            "x": "category",
+            "y": "mid",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "layers": layers,
+            **fields,
+        }
+    )
+    return generate_vega_lite_spec(
+        chart,
+        data,
+        width=400,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+
+
+@pytest.mark.parametrize("chart_type", ["line", "area", "scatter"])
+class TestBarLayerSpanOnNonBarChart:
+    def test_bar_layer_binds_y_start_to_y2(self, chart_type):
+        spec = _layered_spec(
+            chart_type, _RANGES, [{"type": "bar", "y": "high", "y_start": "low"}]
+        )
+        (enc,) = _bar_encodings(spec)
+        assert enc["y"]["field"] == "high"
+        assert enc["y2"] == {"field": "low"}
+
+    def test_null_layer_start_is_refused(self, chart_type):
+        rows = [{**_RANGES[0], "low": None}, *_RANGES[1:]]
+        with pytest.raises(CompilationError) as err:
+            _layered_spec(
+                chart_type, rows, [{"type": "bar", "y": "high", "y_start": "low"}]
+            )
+        assert err.value.code is not None
+        assert err.value.code.code == "ERR-BAR-Y-START-NULL"
+
+    def test_date_layer_on_a_numeric_axis_is_refused(self, chart_type):
+        rows = [
+            {**r, "category": r["task"], "mid": 10 + i} for i, r in enumerate(_PLAN)
+        ]
+        with pytest.raises(CompilationError) as err:
+            _layered_spec(
+                chart_type,
+                rows,
+                [{"type": "bar", "y": "finish_date", "y_start": "start_date"}],
+            )
+        assert err.value.code is not None
+        assert err.value.code.code == "ERR-BAR-Y-START-KIND"
+
+
+def test_right_axis_layer_is_not_held_to_the_base_axis_kind():
+    rows = [
+        {
+            "category": r["task"],
+            "mid": r["finish_date"].isoformat(),
+            "low": i,
+            "high": i + 2,
+        }
+        for i, r in enumerate(_PLAN)
+    ]
+    spec = _layered_spec(
+        "scatter",
+        rows,
+        [
+            {
+                "type": "bar",
+                "y": "high",
+                "y_start": "low",
+                "axis_y": {"position": "right"},
+            }
+        ],
+    )
+    (enc,) = _bar_encodings(spec)
+    assert enc["y2"] == {"field": "low"}
+
+
+@pytest.mark.parametrize(
+    ("chart_type", "code"),
+    [("line", "ERR-LINE-Y-NOT-NUMERIC"), ("area", "ERR-AREA-ENCODING-SWAPPED")],
+)
+def test_family_y_diagnostic_wins_over_a_bad_span_layer(chart_type, code):
+    rows = [{**r, "mid": r["category"], "low": None} for r in _RANGES]
+    with pytest.raises(CompilationError) as err:
+        _layered_spec(
+            chart_type, rows, [{"type": "bar", "y": "high", "y_start": "low"}]
+        )
+    assert err.value.code is not None
+    assert err.value.code.code == code
+
+
+def test_dot_plot_takes_a_span_layer():
+    rows = [{**r, "mid": r["category"], "category": r["mid"]} for r in _RANGES]
+    spec = _layered_spec(
+        "scatter", rows, [{"type": "bar", "y": "high", "y_start": "low"}]
+    )
+    (enc,) = _bar_encodings(spec)
+    assert enc["y2"] == {"field": "low"}

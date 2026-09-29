@@ -43,6 +43,7 @@ from dbt_charts.core.render.chart.arc_attached_table import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_chart, render_resolved_chart
 from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.render.svg_utils import escape_attr
 
 _SVG_NS = "{http://www.w3.org/2000/svg}"
 _PIE_GAP = get_chart_rendering().pie.attached_table_gap_px
@@ -489,7 +490,7 @@ def test_hybrid_heading_uses_table_body_style_not_chart_title(make_chart):
     )
     heading_tag = m.group(0)
 
-    assert f'font-family="{table_style.font.family}"' in heading_tag, (
+    assert f'font-family="{escape_attr(table_style.font.family)}"' in heading_tag, (
         "Heading must use the table's own body font family (never the chart "
         f"title font). Got: {heading_tag!r}"
     )

@@ -14,5 +14,5 @@ from __future__ import annotations
 from typing import Literal
 
 RenderFormat = Literal[
-    "svg", "html", "png", "pdf", "terminal", "json", "text", "yaml", "data"
+    "svg", "html", "png", "pdf", "terminal", "json", "text", "text-data", "yaml", "data"
 ]

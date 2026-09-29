@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from dbt_charts.agent_api._paths import (
+    partition_defaults_files,
     resolve_board_path,
     resolve_board_relpath,
     resolve_dbt_project_dir,
@@ -786,3 +787,25 @@ def test_resolve_dbt_project_dir_importable_from_agent_api(tmp_path: Path) -> No
     """`cli/_project.py` must import this from `agent_api._paths`, never from
     `core.project_roots` directly (module-boundary rule)."""
     assert resolve_dbt_project_dir(tmp_path, None) == tmp_path
+
+
+def test_partition_defaults_files_splits_meta_yml_from_real_boards() -> None:
+    """A shell glob (`charts/*.yml`) hands `dct render` every YAML in the
+    directory, including the meta.yml `dct init` scaffolds to hold cascade
+    defaults. That file isn't a board."""
+    boards, defaults_files = partition_defaults_files(
+        [
+            Path("charts/rev.yml"),
+            Path("charts/meta.yml"),
+            Path("charts/sub/meta.yaml"),
+            Path("charts/other.yaml"),
+        ]
+    )
+    assert boards == [Path("charts/rev.yml"), Path("charts/other.yaml")]
+    assert defaults_files == [Path("charts/meta.yml"), Path("charts/sub/meta.yaml")]
+
+
+def test_partition_defaults_files_all_boards_returns_empty_defaults() -> None:
+    boards, defaults_files = partition_defaults_files([Path("charts/rev.yml")])
+    assert boards == [Path("charts/rev.yml")]
+    assert defaults_files == []

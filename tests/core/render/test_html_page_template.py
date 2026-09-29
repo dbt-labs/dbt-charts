@@ -88,8 +88,17 @@ class TestHtmlPageTemplateStructure:
         html = to_html(svg)
 
         assert "<title>Test Board</title>" in html
-        assert f"font-family: {board.resolved_style.font.family};" in html
         assert f"background-color: {board.resolved_style.background};" in html
+
+    def test_html_wrapper_emits_font_family_declaration(self) -> None:
+        from dbt_charts.core.render.converters.html import to_html
+
+        svg = (
+            '<svg data-dbt-page-title="T" '
+            "data-dbt-font-family=\"'Inter', sans-serif\" "
+            'data-dbt-page-background="#fff"></svg>'
+        )
+        assert 'font-family: "Inter", sans-serif;' in to_html(svg)
 
     def test_html_wrapper_does_not_parse_the_svg_body_as_xml(self) -> None:
         from dbt_charts.core.render.converters.html import to_html
@@ -252,6 +261,13 @@ class TestHtmlPageTemplateStructure:
         wrapper_start = html.index('<div class="dbt-charts-wrapper">')
         between = html[body_start + len("<body>") : wrapper_start].strip()
         assert between == "", f"Unexpected content before wrapper: {between!r}"
+
+
+class TestCssFontFamilyStack:
+    def test_quotes_named_families_but_not_generic_keywords(self) -> None:
+        from dbt_charts.core.render.converters.html import _css_font_family_stack
+
+        assert _css_font_family_stack("'Inter', sans-serif") == '"Inter", sans-serif'
 
 
 class TestChromeSlot:

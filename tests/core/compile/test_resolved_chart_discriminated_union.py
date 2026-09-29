@@ -89,6 +89,7 @@ def _default_charts():
 
 
 _DEFAULT_CHARTS = _default_charts()
+_KPI_STYLE = ResolvedKpiStyle(title=_DEFAULT_CHARTS.title)
 
 # Required base fields (no defaults on non-None resolved model fields).
 _B: dict = {
@@ -188,7 +189,7 @@ def test_pie_rejects_partial_attachment(pie_style: ResolvedPieStyle) -> None:
 
 def test_kpi_constructs() -> None:
     c = ResolvedKpiChart(
-        id="k", chart_type="kpi", value="revenue", style=ResolvedKpiStyle(), **_KPI_B
+        id="k", chart_type="kpi", value="revenue", style=_KPI_STYLE, **_KPI_B
     )
     assert c.value == "revenue"
 
@@ -450,7 +451,13 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             ResolvedPieChart,
         ),
         (
-            {"id": "k", "chart_type": "kpi", "value": "rev", "style": {}, **_KPI_BD},
+            {
+                "id": "k",
+                "chart_type": "kpi",
+                "value": "rev",
+                "style": {"title": _DEFAULT_CHARTS.title},
+                **_KPI_BD,
+            },
             ResolvedKpiChart,
         ),
         (
@@ -522,7 +529,7 @@ def test_bar_is_frozen(bar_style: ResolvedBarStyle) -> None:
 
 def test_kpi_is_frozen() -> None:
     c = ResolvedKpiChart(
-        id="k", chart_type="kpi", value="rev", style=ResolvedKpiStyle(), **_KPI_B
+        id="k", chart_type="kpi", value="rev", style=_KPI_STYLE, **_KPI_B
     )
     with pytest.raises(ValidationError):
         c.value = "mutated"  # type: ignore[misc]
@@ -582,7 +589,7 @@ def test_kpi_rejects_x() -> None:
             id="k",
             chart_type="kpi",
             value="rev",
-            style=ResolvedKpiStyle(),
+            style=_KPI_STYLE,
             x="col",
             **_B,
         )

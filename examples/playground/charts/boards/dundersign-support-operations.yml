@@ -36,7 +36,6 @@ queries:
   # ── KPI rail ────────────────────────────────────────────────────────────
   # "Today" anchors to max(created_at) — the fixture stops on 2026-05-10
   # so a wall-clock NOW() would push 100% of tickets into the "90d+" band.
-  # Same anchoring convention as the CF demo.
   kpi_data:
     sql: |
       WITH bounds AS (
@@ -74,8 +73,8 @@ queries:
 
   # ── Hero: queue counts by priority × age band ───────────────────────────
   # Both categorical dimensions carry a "N · " ordering prefix so the VL
-  # nominal-scale domains read urgent → low and fresh → aging without dct
-  # having to expose chart-level color/x sort on the stacked-bar path.
+  # nominal-scale domains read urgent → low and fresh → aging on the
+  # stacked-bar path.
   queue_age_by_priority:
     sql: |
       WITH bounds AS (
@@ -87,8 +86,7 @@ queries:
           -- Numeric prefix on each band so the legend (which Vega-Lite
           -- sorts alphabetically on the color field) reads fresh→aging
           -- left-to-right. Without the prefix, "180+ days" sorts before
-          -- "31–90 days" and the sequential palette inverts. Hack until
-          -- dct exposes a color.sort surface.
+          -- "31–90 days" and the sequential palette inverts.
           CASE
             WHEN (today - created_at::DATE) <=   7 THEN '1 · ≤7 days'
             WHEN (today - created_at::DATE) <=  30 THEN '2 · 8–30 days'
@@ -115,11 +113,10 @@ queries:
       SELECT
         -- Numeric-prefix priority so the stacked-column color stack reads
         -- urgent → low in urgency order. VL stacks color values
-        -- alphabetically by default, and dct doesn't expose a color-sort
-        -- surface on stacked bars; encoding the order into the string is
-        -- the only knob that survives. The same prefix shows in the
-        -- endpoint labels and the legend (legend.label.expr isn't exposed
-        -- either). Same hack-shape lives on age_band in this query.
+        -- alphabetically by default; encoding the order into the string
+        -- is what keeps the stack stable. The same prefix shows in the
+        -- endpoint labels and the legend, and the same technique is used
+        -- for age_band above.
         CASE priority
           WHEN 'urgent' THEN '1 · Urgent'
           WHEN 'high'   THEN '2 · High'
@@ -231,8 +228,8 @@ queries:
 
 charts:
   # ── KPIs ────────────────────────────────────────────────────────────────
-  # Tones are hand-pinned per data sign (KPI ToneLiteral is a static enum;
-  # see tone-auto entry in the design-gaps doc). On the default Dundersign
+  # Tones are hand-pinned per data sign (KPI ToneLiteral is a static enum —
+  # there's no automatic sign-based tone). On the default Dundersign
   # fixture the queue is 246-deep with 204 (83%) aging > 90 days — every
   # KPI except "solved last 30 days" reads negative.
   kpi_open:
@@ -326,41 +323,37 @@ charts:
       axis_y:
         # Tick ladder is derived, not pinned, so it tracks the data.
         labels:
-          # Safe on a vertical-orientation chart — the measure axis stays
-          # on the left, right-aligned digit labels are the editorial
-          # convention. Do NOT copy this onto a horizontal-orientation
-          # bar; gap B7 documents how the same knob mis-applies to the
-          # bottom visual axis after the orientation swap.
+          # Right-aligned digit labels are the editorial convention for a
+          # vertical-orientation chart, where the measure axis stays on
+          # the left. On a horizontal-orientation bar the orientation
+          # swap moves the measure axis to the bottom, where this same
+          # align: right mis-applies.
           align: right
       axis_x:
         labels:
           # Strip the "N · " ordering prefix from the age_band labels (the
           # prefix exists in the SQL so VL's nominal scale domain orders
-          # fresh→aging without dct exposing color/x sort on stacked bars).
+          # fresh→aging on stacked bars).
           expr: "datum.value ? slice(datum.value, 4) : ''"
-      # Direct labels on the right edge of each column (editorial-10-dark
-      # companion inks them). The shipped `default` theme keeps the legend
+      # Direct labels on the right edge of each column (label_ink() inks
+      # them live, against the chart's canvas). The shipped `default` theme keeps the legend
       # off — at this hero width direct labeling reads cleaner than a side
       # legend. The "N · " priority labels carry their ordering prefix
-      # into the endpoint labels; until dct exposes a labelExpr on the
-      # endpoint-label pane, the prefix is visible.
+      # into the endpoint labels too, so the prefix is visible there.
       endpoint_labels:
         visible: true
 
   # ── Small-multiples row: four mini categorical breakdowns ──────────────
   # Same shape repeated four times — short horizontal bars at compact width.
   # Each chart hides its axis title (the chart title carries the dimension
-  # name) and forces sans family because at ~330 px width the cascade picks
-  # serif under the board-level inflation bug.
+  # name) and forces sans family — the cascade wrongly selects serif at
+  # this ~330 px width otherwise.
   # dbt charts convention: x is the category, y is the measure, regardless
   # of rendered orientation. style.orientation: horizontal then routes the
   # measure onto VL's x channel at emit time (axis_y= measure always).
-  # Note: previously set `axis_y.label.align: right` on each chart below to
-  # invoke the editorial right-orient digit-column convention. For
-  # horizontal-orientation bars that knob mis-applies — the orientation
-  # swap puts the measure on the bottom visual axis, but the `text-anchor`
-  # from `align: right` survives unrotated, and labels visibly left-shift
-  # from each tick instead of centering. Dropped here; logged as gap B7.
+  # `axis_y.label.align: right` isn't set here since it mis-applies on
+  # horizontal-orientation bars — the measure axis lands on the bottom
+  # here, not the left.
   bar_priority:
     query: intake_by_priority
     type: bar
@@ -459,9 +452,9 @@ charts:
           glyph: "·"
           glyph_color: "#7a8a7a"
       # Conditional-formatting rules apply additively in YAML order — each
-      # matching rule overwrites the prior's outputs (table_support.py
-      # _apply_rule_outputs). Order from least-specific to most-specific
-      # so the tighter threshold wins on rows where both match.
+      # matching rule overwrites the prior's outputs. Order from
+      # least-specific to most-specific so the tighter threshold wins on
+      # rows where both match.
       age_days:
         when:
         - lte: 7
@@ -516,12 +509,9 @@ charts:
           width: 75
 
 # ── Layout ────────────────────────────────────────────────────────────────
-# Deliberately different shape from dundersign-commercial-finance.yml. CF
-# puts KPIs in a left vertical rail with the hero spanning the middle and
-# a paired sidekick chart on the right. This board stacks three full-width
-# bands — KPI banner, four-up categorical band, and a hero/queue split —
-# so the visual rhythm reads "summary → distribution → detail" rather
-# than CF's left-to-right gradient.
+# This board stacks three full-width bands — KPI banner, four-up
+# categorical band, and a hero/queue split — so the visual rhythm reads
+# "summary → distribution → detail".
 
 rows:
 - cols:

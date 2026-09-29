@@ -135,7 +135,12 @@ _ITALIC_CLASS_RULE = re.compile(
 )
 _CLASS_ATTR = re.compile(r'class="([^"]*)"')
 _STYLE_BLOCK = re.compile(r"<style[^>]*>(.*?)</style>", re.DOTALL)
-_DECLARES_FAMILY = re.compile(r"font-family\s*[:=]\s*(\"[^\"]*\"|'[^']*'|[^;}]+)")
+# Skips a `&#x27;`-style character reference as one unit — its own trailing
+# `;` would otherwise look like the declaration's terminator.
+_ENTITY_OR_CHAR = r"(?:&#?\w+;|[^;}])"
+_DECLARES_FAMILY = re.compile(
+    rf"font-family\s*[:=]\s*(\"[^\"]*\"|'[^']*'|{_ENTITY_OR_CHAR}+)"
+)
 
 
 def _declared_family(scope: str) -> frozenset[str]:

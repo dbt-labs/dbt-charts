@@ -145,12 +145,19 @@ class RenderBoardArgs(BaseModel):
             'Example: [{"name": "region", "value": "US"}, {"name": "year", "value": 2024}]'
         ),
     )
-    format: Literal["json", "text", "yaml", "svg", "terminal", "data"] | None = Field(
+    format: (
+        Literal["json", "text", "text-data", "yaml", "svg", "terminal", "data"] | None
+    ) = Field(
         None,
         description=(
             "Output format. 'text' (default) returns a compact markdown "
             "summary of charts and data (most token-efficient) — use this "
-            "to check a render without paying for the rows. 'json' returns "
+            "to check a render without paying for the rows. 'text-data' is "
+            "the same summary with every query's actual rows appended "
+            "(grouped by query, row-capped) — a way to batch-run the "
+            "board's queries and read back the results; ask for it only "
+            "when you need exact values, since it runs every query on the "
+            "board, not just the one you may care about. 'json' returns "
             "the full resolved chart semantics and executed data as "
             "structured JSON, nested by layout; ask for it explicitly when "
             "you need every row. 'data' returns a flatter, narrower view: "
@@ -166,7 +173,12 @@ class RenderBoardArgs(BaseModel):
             "'svg' returns the rendered dashboard as inline SVG (under "
             "result['data']) for hosts that embed the rendered output "
             "directly. 'terminal' returns the charts as ANSI text (under "
-            "result['data']) for display in a terminal."
+            "result['data']) for display in a terminal. Agent-facing tool "
+            "surfaces (A lIe, Cloud chat, Cloud MCP, dct's own MCP server) "
+            "hide this property entirely and always render 'text' or "
+            "'text-data' server-side — this field only matters for "
+            "non-agent callers (the CLI's --format, Cloud's own SVG render "
+            "call)."
         ),
     )
     as_link: bool = Field(

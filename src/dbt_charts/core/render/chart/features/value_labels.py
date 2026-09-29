@@ -54,6 +54,7 @@ from dbt_charts.core.render.chart.step_band import STEP_BAND_EDGE_FIELD, is_band
 from dbt_charts.core.render.chart.x_domain import rendered_x_domain
 from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 from dbt_charts.core.render.utils import DomainValue, ordered_distinct_values
+from dbt_charts.core.text.format_d3 import format_d3
 from dbt_charts.core.utils import Rows, is_vega_numeric_value
 
 # ---------------------------------------------------------------------------
@@ -285,6 +286,35 @@ def labels_draw_text(labels: MarkLabelsStyle, rows: Rows) -> bool:
         if labels.field in row and row[labels.field] is not None
     ]
     return not all(is_vega_numeric_value(v) for v in values)
+
+
+def painted_label_text(
+    value: int | float, format_spec: str | None, is_house: bool
+) -> str:
+    """The string a value label paints for one row's value.
+
+    Python-side mirror of `_house_register_text_encoding`: the narrative
+    register under the house register, the bare d3 spec otherwise, through
+    the same d3 engine. With no format the text is Python's ``str`` of the
+    value, which can differ from Vega's default number printing.
+    """
+    if format_spec is None:
+        return format_d3(value, "")
+    return format_d3(value, format_spec, notation="narrative" if is_house else None)
+
+
+def painted_span_label_text(
+    end: int | float, start: int | float, format_spec: str | None, is_house: bool
+) -> str:
+    """Python-side mirror of `_span_label_text_expr`'s painted text.
+
+    A bar with ``y_start`` paints the signed change (``+$28``) rather than
+    the plain end value, except when the span starts at zero.
+    """
+    if start == 0:
+        return painted_label_text(end, format_spec, is_house)
+    sign = "+" if end >= start else "\u2212"
+    return sign + painted_label_text(abs(end - start), format_spec, is_house)
 
 
 def _house_register_text_encoding(

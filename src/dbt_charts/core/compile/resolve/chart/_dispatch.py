@@ -5,7 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from types import EllipsisType
 
-from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
+    BarChart,
+    Chart,
+    HeatmapChart,
+    LineChart,
+    ScatterChart,
+    SparkBarChart,
+)
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
 )
@@ -15,6 +23,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartRows,
     LayerDatasets,
     partition,
+    require_sort_field,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     _EMPTY_CHART_TEXT_VARIABLES,
@@ -100,6 +109,11 @@ def resolve(
             else float(chart_style_context.preferred_width)
         )
     )
+    if isinstance(
+        normalized,
+        (AreaChart, BarChart, HeatmapChart, LineChart, ScatterChart, SparkBarChart),
+    ):
+        require_sort_field(normalized.sort, data)
     match normalized.type:
         case "bar":
             return _resolve_bar(

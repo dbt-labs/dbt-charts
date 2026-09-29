@@ -72,6 +72,7 @@ from dbt_charts.core.render.svg_utils import (
     authored_kind_attr,
     border_dash_attrs,
     card_box,
+    escape_attr,
 )
 from dbt_charts.core.render.utils import resolve_tone_color
 from dbt_charts.core.text.format_d3 import is_time_format
@@ -506,11 +507,11 @@ def _emit_card_chrome(
     rect = (
         f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" '
         f'rx="{kpi_config.border.radius:g}" '
-        f'fill="{palette.card_fill or "none"}"'
+        f'fill="{escape_attr(palette.card_fill or "none")}"'  # type-state: silent_fallback — no card_fill authored means paint nothing; "none" is the real SVG fill value, not a fabricated color
     )
     if palette.border_color:
         rect += (
-            f' stroke="{palette.border_color}" stroke-width="1"'
+            f' stroke="{escape_attr(palette.border_color)}" stroke-width="1"'
             f"{border_dash_attrs(kpi_config.border)}"
         )
     return rect + "/>"
@@ -548,22 +549,22 @@ def _emit_value_tspans(
     glyph_char = kpi_config.glyph.character or ""
     if glyph_char:
         tspans.append(
-            f'<tspan y="{glyph_baseline}" font-size="{glyph_font}" '
-            f'fill="{palette.glyph_fill}">{html.escape(glyph_char)} </tspan>'
+            f'<tspan y="{escape_attr(glyph_baseline)}" font-size="{escape_attr(glyph_font)}" '
+            f'fill="{escape_attr(palette.glyph_fill)}">{html.escape(glyph_char)} </tspan>'
         )
     if value_is_numeric and prefix:
         tspans.append(
-            f'<tspan y="{prefix_baseline}" font-size="{affix_font}" '
-            f'fill="{palette.value_fill}">{html.escape(prefix)}</tspan>'
+            f'<tspan y="{escape_attr(prefix_baseline)}" font-size="{escape_attr(affix_font)}" '
+            f'fill="{escape_attr(palette.value_fill)}">{html.escape(prefix)}</tspan>'
         )
     tspans.append(
-        f'<tspan y="{value_baseline}" font-size="{value_font}" '
-        f'fill="{palette.value_fill}">{html.escape(number_str)}</tspan>'
+        f'<tspan y="{escape_attr(value_baseline)}" font-size="{escape_attr(value_font)}" '
+        f'fill="{escape_attr(palette.value_fill)}">{html.escape(number_str)}</tspan>'
     )
     if value_is_numeric and suffix:
         tspans.append(
-            f'<tspan y="{value_baseline}" font-size="{affix_font}" '
-            f'fill="{palette.value_fill}" dx="2">{html.escape(suffix)}</tspan>'
+            f'<tspan y="{escape_attr(value_baseline)}" font-size="{escape_attr(affix_font)}" '
+            f'fill="{escape_attr(palette.value_fill)}" dx="2">{html.escape(suffix)}</tspan>'
         )
     return tspans
 
@@ -606,7 +607,7 @@ def _wrap_label_lines(
     pad: SpacingValues,
     label_font_size: float,
     label_font_family: str,
-    title_style: TitleStyle | None,
+    title_style: TitleStyle,
 ) -> tuple[tuple[str, ...], bool]:
     """Run the title-overflow wrap and report ``(lines, truncated)``.
 
@@ -1049,10 +1050,13 @@ def render_kpi_svg(
     """Render a KPI from the typed ``ResolvedKpiChart`` model.
 
     Mapping from V1: ``chart.resolved_style.kpi.X`` -> ``chart.style.kpi.X``;
-    ``chart.resolved_style.background/title`` (whole-chart-type merged
-    fields with no equivalent) -> the per-family override on
-    ``chart.style.kpi`` if authored, else the board-level default — the same
-    fallback build_chart_style_context() applies upstream in V1.
+    ``chart.resolved_style.background`` (whole-chart-type merged field with no
+    equivalent) -> the per-family override on ``chart.style.kpi`` if
+    authored, else the board-level default — the same fallback
+    build_chart_style_context() applies upstream in V1. ``chart.style.title``
+    is already the equivalent merge for title style, done once at resolve
+    (mirrors ``_SharedResolvedChartFields.title_style`` for every other
+    family) — render reads it unconditionally, no per-family fallback here.
     """
     kpi_config = chart.style.kpi
     if kpi_config is None:
@@ -1066,14 +1070,11 @@ def render_kpi_svg(
     # fallback) — _resolve_kpi_colors's None-vs-board-background comparison
     # and _explicit_color_override(None) both collapse to "no override" in
     # that case, exactly matching V1's materialized-background behavior.
-    title_style = (
-        kpi_config.title if kpi_config.title is not None else board_charts.title
-    )
     return _render_kpi_svg_core(
         chart=chart,
         chart_background=kpi_config.background,
         kpi_config=kpi_config,
-        title_style=title_style,
+        title_style=chart.style.title,
         formats=board_charts.formats,
         board_style=board_style,
         width=width,
@@ -1166,11 +1167,11 @@ def _emit_kpi_stacked(
     # the same weight. The cascade resolves it from ``kpi.value.font.weight``.
     kpi_link = _resolve_kpi_link(chart.link)
     if kpi_link:
-        parts.append(f'<a href="{html.escape(kpi_link, quote=True)}">')
+        parts.append(f'<a href="{escape_attr(kpi_link)}">')
     parts.append(
-        f'<text x="{value_x}" y="{layout.value_baseline}" '
-        f'text-anchor="{_TEXT_ANCHOR}" font-family="{value_font_family}" '
-        f'font-weight="{layout.value_weight}">'
+        f'<text x="{escape_attr(value_x)}" y="{escape_attr(layout.value_baseline)}" '
+        f'text-anchor="{escape_attr(_TEXT_ANCHOR)}" font-family="{escape_attr(value_font_family)}" '
+        f'font-weight="{escape_attr(layout.value_weight)}">'
         f"{''.join(value_tspans)}</text>"
     )
     if kpi_link:
@@ -1198,11 +1199,11 @@ def _emit_kpi_stacked(
             for line in layout.label_lines
         ]
         parts.append(
-            f'<text x="{line_xs[0]}" y="{layout.label_baseline_first}"'
+            f'<text x="{escape_attr(line_xs[0])}" y="{escape_attr(layout.label_baseline_first)}"'
             f"{authored_kind_attr('label')} "
-            f'text-anchor="{_TEXT_ANCHOR}" font-family="{layout.label_font_family}" '
-            f'font-size="{layout.label_font_size}" fill="{palette.label_fill}" '
-            f'font-weight="{layout.label_weight}">'
+            f'text-anchor="{escape_attr(_TEXT_ANCHOR)}" font-family="{escape_attr(layout.label_font_family)}" '
+            f'font-size="{escape_attr(layout.label_font_size)}" fill="{escape_attr(palette.label_fill)}" '
+            f'font-weight="{escape_attr(layout.label_weight)}">'
             f"{inner_title}"
         )
         for line_index, (line, line_x) in enumerate(
@@ -1210,7 +1211,7 @@ def _emit_kpi_stacked(
         ):
             line_y = layout.label_baseline_first + line_index * layout.label_line_height
             parts.append(
-                f'<tspan x="{line_x}" y="{line_y}">{html.escape(line)}</tspan>'
+                f'<tspan x="{escape_attr(line_x)}" y="{escape_attr(line_y)}">{html.escape(line)}</tspan>'
             )
         parts.append("</text>")
 
@@ -1219,24 +1220,26 @@ def _emit_kpi_stacked(
         s_tspans: list[str] = []
         if support_row.glyph:
             s_tspans.append(
-                f'<tspan fill="{support_row.glyph_fill}">'
+                f'<tspan fill="{escape_attr(support_row.glyph_fill)}">'
                 f"{html.escape(support_row.glyph)} </tspan>"
             )
         if support_row.value_str:
             s_tspans.append(
-                f'<tspan fill="{support_row.value_fill}">'
+                f'<tspan fill="{escape_attr(support_row.value_fill)}">'
                 f"{html.escape(support_row.value_str)}</tspan>"
             )
         if support_row.explainer:
             spacer = " " if support_row.value_str or support_row.glyph else ""
             s_tspans.append(
-                f'<tspan fill="{palette.muted}">'
+                f'<tspan fill="{escape_attr(palette.muted)}">'
                 f"{html.escape(spacer + support_row.explainer)}</tspan>"
             )
         # Support always uses the body sans, never the value family — keeps
         # editorial KPIs (serif value) reading right (sans support).
         weight_attr = (
-            f' font-weight="{layout.support_weight}"' if layout.support_weight else ""
+            f' font-weight="{escape_attr(layout.support_weight)}"'
+            if layout.support_weight
+            else ""
         )
         support_x = _resolve_run_x(
             layout.content_x,
@@ -1247,17 +1250,17 @@ def _emit_kpi_stacked(
             card_align,
         )
         parts.append(
-            f'<text x="{support_x}" y="{layout.support_baseline}" '
-            f'text-anchor="{_TEXT_ANCHOR}" font-family="{body_font_family}" '
-            f'font-size="{layout.support_font_size}"{weight_attr}>'
+            f'<text x="{escape_attr(support_x)}" y="{escape_attr(layout.support_baseline)}" '
+            f'text-anchor="{escape_attr(_TEXT_ANCHOR)}" font-family="{escape_attr(body_font_family)}" '
+            f'font-size="{escape_attr(layout.support_font_size)}"{weight_attr}>'
             f"{''.join(s_tspans)}</text>"
         )
 
     inner = "\n".join(parts)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{layout.width}" height="{layout.height}" '
-        f'viewBox="0 0 {layout.width} {layout.height}">'
+        f'width="{escape_attr(layout.width)}" height="{escape_attr(layout.height)}" '
+        f'viewBox="0 0 {escape_attr(layout.width)} {escape_attr(layout.height)}">'
         f"{inner}</svg>"
     )
 
@@ -1381,7 +1384,7 @@ def _emit_kpi_inline(
 
     kpi_link = _resolve_kpi_link(chart.link)
     if kpi_link:
-        parts.append(f'<a href="{html.escape(kpi_link, quote=True)}">')
+        parts.append(f'<a href="{escape_attr(kpi_link)}">')
 
     tspans = _emit_value_tspans(
         kpi_config,
@@ -1400,44 +1403,44 @@ def _emit_kpi_inline(
 
     if label_text:
         tspans.append(
-            f'<tspan y="{value_baseline}"'
+            f'<tspan y="{escape_attr(value_baseline)}"'
             f"{authored_kind_attr('label')} "
-            f'font-family="{label_font_family}" '
-            f'font-size="{label_font_size}" '
-            f'font-weight="{label_weight}" '
-            f'fill="{palette.label_fill}" dx="{_INLINE_GAP}">'
+            f'font-family="{escape_attr(label_font_family)}" '
+            f'font-size="{escape_attr(label_font_size)}" '
+            f'font-weight="{escape_attr(label_weight)}" '
+            f'fill="{escape_attr(palette.label_fill)}" dx="{escape_attr(_INLINE_GAP)}">'
             f"{html.escape(label_text)}</tspan>"
         )
 
     if support_row is not None:
         support_weight_attr = (
-            f' font-weight="{support_weight}"' if support_weight else ""
+            f' font-weight="{escape_attr(support_weight)}"' if support_weight else ""
         )
         first_dx = _INLINE_GAP
         if support_row.glyph:
             tspans.append(
-                f'<tspan y="{value_baseline}" font-family="{body_font_family}" '
-                f'font-size="{support_font_size}"{support_weight_attr} '
-                f'fill="{support_row.glyph_fill}" dx="{first_dx}">'
+                f'<tspan y="{escape_attr(value_baseline)}" font-family="{escape_attr(body_font_family)}" '
+                f'font-size="{escape_attr(support_font_size)}"{support_weight_attr} '
+                f'fill="{escape_attr(support_row.glyph_fill)}" dx="{escape_attr(first_dx)}">'
                 f"{html.escape(support_row.glyph)} </tspan>"
             )
             first_dx = 0
         if support_row.value_str:
-            dx_attr = f' dx="{first_dx}"' if first_dx else ""
+            dx_attr = f' dx="{escape_attr(first_dx)}"' if first_dx else ""
             tspans.append(
-                f'<tspan y="{value_baseline}" font-family="{body_font_family}" '
-                f'font-size="{support_font_size}"{support_weight_attr} '
-                f'fill="{support_row.value_fill}"{dx_attr}>'
+                f'<tspan y="{escape_attr(value_baseline)}" font-family="{escape_attr(body_font_family)}" '
+                f'font-size="{escape_attr(support_font_size)}"{support_weight_attr} '
+                f'fill="{escape_attr(support_row.value_fill)}"{dx_attr}>'
                 f"{html.escape(support_row.value_str)}</tspan>"
             )
             first_dx = 0
         if support_row.explainer:
             spacer = " " if support_row.value_str or support_row.glyph else ""
-            dx_attr = f' dx="{first_dx}"' if first_dx else ""
+            dx_attr = f' dx="{escape_attr(first_dx)}"' if first_dx else ""
             tspans.append(
-                f'<tspan y="{value_baseline}" font-family="{body_font_family}" '
-                f'font-size="{support_font_size}"{support_weight_attr} '
-                f'fill="{palette.muted}"{dx_attr}>'
+                f'<tspan y="{escape_attr(value_baseline)}" font-family="{escape_attr(body_font_family)}" '
+                f'font-size="{escape_attr(support_font_size)}"{support_weight_attr} '
+                f'fill="{escape_attr(palette.muted)}"{dx_attr}>'
                 f"{html.escape(spacer + support_row.explainer)}</tspan>"
             )
 
@@ -1450,8 +1453,8 @@ def _emit_kpi_inline(
         ),
     )
     parts.append(
-        f'<text x="{row_x}" y="{value_baseline}" text-anchor="{_TEXT_ANCHOR}" '
-        f'font-family="{value_font_family}" font-weight="{value_weight}">'
+        f'<text x="{escape_attr(row_x)}" y="{escape_attr(value_baseline)}" text-anchor="{escape_attr(_TEXT_ANCHOR)}" '
+        f'font-family="{escape_attr(value_font_family)}" font-weight="{escape_attr(value_weight)}">'
         f"{''.join(tspans)}</text>"
     )
 
@@ -1461,8 +1464,8 @@ def _emit_kpi_inline(
     inner = "\n".join(parts)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{requested_w}" height="{requested_h}" '
-        f'viewBox="0 0 {requested_w} {requested_h}">'
+        f'width="{escape_attr(requested_w)}" height="{escape_attr(requested_h)}" '
+        f'viewBox="0 0 {escape_attr(requested_w)} {escape_attr(requested_h)}">'
         f"{inner}</svg>"
     )
 
@@ -1763,7 +1766,7 @@ def _emit_kpi_compact(
 
     kpi_link = _resolve_kpi_link(chart.link)
     if kpi_link:
-        parts.append(f'<a href="{html.escape(kpi_link, quote=True)}">')
+        parts.append(f'<a href="{escape_attr(kpi_link)}">')
 
     value_tspans = _emit_value_tspans(
         kpi_config,
@@ -1780,8 +1783,8 @@ def _emit_kpi_compact(
         glyph_font,
     )
     parts.append(
-        f'<text x="{block_x}" y="{value_baseline}" text-anchor="{_TEXT_ANCHOR}" '
-        f'font-family="{value_font_family}" font-weight="{value_weight}">'
+        f'<text x="{escape_attr(block_x)}" y="{escape_attr(value_baseline)}" text-anchor="{escape_attr(_TEXT_ANCHOR)}" '
+        f'font-family="{escape_attr(value_font_family)}" font-weight="{escape_attr(value_weight)}">'
         f"{''.join(value_tspans)}</text>"
     )
 
@@ -1794,15 +1797,15 @@ def _emit_kpi_compact(
         baseline: float,
     ) -> str:
         body = "".join(
-            f'<tspan font-family="{family}" font-size="{size}"'
-            + (f' font-weight="{weight}"' if weight else "")
+            f'<tspan font-family="{escape_attr(family)}" font-size="{escape_attr(size)}"'
+            + (f' font-weight="{escape_attr(weight)}"' if weight else "")
             + (authored_kind_attr(kind) if kind else "")
-            + f' fill="{fill}">{html.escape(text)}</tspan>'
+            + f' fill="{escape_attr(fill)}">{html.escape(text)}</tspan>'
             for family, size, weight, kind, fill, text in payload
         )
         return (
-            f'<text x="{right_column_x}" y="{baseline}" '
-            f'text-anchor="{_TEXT_ANCHOR}">{body}</text>'
+            f'<text x="{escape_attr(right_column_x)}" y="{escape_attr(baseline)}" '
+            f'text-anchor="{escape_attr(_TEXT_ANCHOR)}">{body}</text>'
         )
 
     if top_payload:
@@ -1816,7 +1819,7 @@ def _emit_kpi_compact(
     inner = "\n".join(parts)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{requested_w}" height="{requested_h}" '
-        f'viewBox="0 0 {requested_w} {requested_h}">'
+        f'width="{escape_attr(requested_w)}" height="{escape_attr(requested_h)}" '
+        f'viewBox="0 0 {escape_attr(requested_w)} {escape_attr(requested_h)}">'
         f"{inner}</svg>"
     )

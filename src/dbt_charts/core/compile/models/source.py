@@ -317,7 +317,15 @@ class DuckDBAttachmentConfig(BaseModel):
     ] = None
     read_only: Annotated[
         bool,
-        Field(description="Whether the attached database is read-only."),
+        Field(
+            description=(
+                "Whether the attached database is read-only. Honored as "
+                "written when the adapter itself is read-write; when the "
+                "adapter is read_only (the default), the in-process DuckDB "
+                "adapter forces every attachment read-only regardless of "
+                "this flag."
+            ),
+        ),
     ] = False
     options: Annotated[
         dict[str, SourceOptionScalar] | None,
@@ -327,6 +335,91 @@ class DuckDBAttachmentConfig(BaseModel):
         bool | None,
         Field(description="Whether the attachment is a DuckLake database."),
     ] = None
+
+
+class DuckDBExtensionConfig(BaseModel):
+    """One DuckDB extension installed from a custom repository.
+
+    Only for the {name, repo} form; a bare extension name (installed and
+    loaded from DuckDB's default repository) is authored as a plain string,
+    not this model. `repo` is optional: {name: json} with no repo installs
+    from DuckDB's default repository, same as the plain-string form.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(description="Extension name to install and load.")]
+    repo: Annotated[
+        str | None,
+        Field(
+            description="Repository to install the extension from. Omit to use DuckDB's default repository."
+        ),
+    ] = None
+
+
+_DUCKDB_SECRET_VALUE_TYPES = (str, int, float, bool)
+
+
+def _is_duckdb_secret_scalar(
+    value: Any,  # type-state: explicit_any — raw pre-validation YAML value; that is the whole point of the check
+) -> bool:
+    return isinstance(value, _DUCKDB_SECRET_VALUE_TYPES)
+
+
+def _is_duckdb_secret_value(
+    value: Any,  # type-state: explicit_any — raw pre-validation YAML value; that is the whole point of the check
+) -> bool:
+    """Whether `value` is a shape DuckDB's CREATE SECRET SQL can render:
+    a scalar, a list of scalars (DuckDB array), or a flat string-keyed
+    mapping of scalars (DuckDB map)."""
+    if _is_duckdb_secret_scalar(value):
+        return True
+    if isinstance(value, list):
+        return all(_is_duckdb_secret_scalar(v) for v in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(k, str) and _is_duckdb_secret_scalar(v) for k, v in value.items()
+        )
+    return False
+
+
+class DuckDBSecretConfig(BaseModel):
+    """One DuckDB CREATE SECRET declaration.
+
+    `type` is required: a secret with no type cannot become valid CREATE
+    SECRET SQL, so leaving it optional would make an invalid config
+    representable. Provider-specific fields (key_id, secret, region, ...)
+    are authored flat, matching dbt-duckdb's own secret shape, not nested
+    under an `options` key.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Annotated[str, Field(description="DuckDB secret type, e.g. s3, gcs, azure.")]
+    name: Annotated[str | None, Field(description="Optional secret name.")] = None
+    persistent: Annotated[
+        bool,
+        Field(
+            description="Whether the secret persists to disk (~/.duckdb/stored_secrets)."
+        ),
+    ] = False
+    scope: Annotated[
+        str | list[str] | None,
+        Field(description="Optional URL scope(s) this secret applies to."),
+    ] = None
+
+    @model_validator(mode="after")
+    def _validate_provider_field_shapes(self) -> DuckDBSecretConfig:
+        extra = self.model_extra
+        if extra is None:
+            return self
+        for key, value in extra.items():
+            if not _is_duckdb_secret_value(value):
+                raise ValueError(
+                    f"DuckDB secret field {key!r} must be a scalar, a list of "
+                    f"scalars, or a flat mapping of scalars; got {type(value).__name__}"
+                )
+        return self
 
 
 class DuckDBRemoteConfig(BaseModel):
@@ -1093,6 +1186,17 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
     build_adapter_registry together with duckdb_config={"enable_external_access":
     True} to explicitly opt back in.
 
+    Authoring `attach`, `extensions`, or `secrets` is itself an explicit
+    opt-in that needs external access (ATTACH/INSTALL/CREATE SECRET all
+    require it): the in-process adapter does not force enable_external_access
+    off for that connection, without needing allow_external_access_in_readonly.
+    read_only itself is never relaxed: when the adapter is read_only, every
+    `attach` entry gets READ_ONLY forced onto its ATTACH statement regardless
+    of `attach[].read_only`. `settings` applies as a plain SET and
+    has no external-access requirement.  `plugins`, `filesystems`, `remote`,
+    and `use_credential_provider` are not supported; remove them from the
+    source config.
+
     Example:
         sources:
           analytics:
@@ -1123,7 +1227,7 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
         ),
     ] = None
     extensions: Annotated[
-        list[str | dict[str, str]] | None,
+        list[str | DuckDBExtensionConfig] | None,
         Field(description="DuckDB extensions to install and load."),
     ] = None
     settings: Annotated[
@@ -1131,7 +1235,7 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
         Field(description="DuckDB settings and pragma values."),
     ] = None
     secrets: Annotated[
-        list[dict[str, SourceOptionScalar]] | None,
+        list[DuckDBSecretConfig] | None,
         Field(description="DuckDB secret definitions for external services."),
     ] = None
     external_root: Annotated[
@@ -1142,9 +1246,7 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
     ] = "."
     use_credential_provider: Annotated[
         str | None,
-        Field(
-            description="Credential-provider chain used for external services.",
-        ),
+        Field(description="Not supported; remove this field from the source config."),
     ] = None
     attach: Annotated[
         list[DuckDBAttachmentConfig] | None,
@@ -1152,15 +1254,15 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
     ] = None
     filesystems: Annotated[
         list[dict[str, SourceOptionScalar]] | None,
-        Field(description="fsspec filesystem configurations attached to DuckDB."),
+        Field(description="Not supported; remove this field from the source config."),
     ] = None
     remote: Annotated[
         DuckDBRemoteConfig | None,
-        Field(description="Remote DuckDB connection configuration."),
+        Field(description="Not supported; remove this field from the source config."),
     ] = None
     plugins: Annotated[
         list[DuckDBPluginConfig] | None,
-        Field(description="dbt-duckdb plugin configurations."),
+        Field(description="Not supported; remove this field from the source config."),
     ] = None
     disable_transactions: Annotated[
         bool,

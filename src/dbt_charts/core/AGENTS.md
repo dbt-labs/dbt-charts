@@ -289,7 +289,7 @@ Geo: `projection` (legitimate dbt charts geo surface — NOT a VL escape hatch),
 
 KPI: `glyph`, `support` (its `tone` sub-field colors the support row; the headline value has no tone field — it stays neutral), `variant` (`stacked` default / `inline` / `compact` — selects the card layout), `background` (channel field — `{column, scale}` shape; gradient-paints the card background by value position in the scale)
 
-Cartesian overlays: `layers` on any bar/line/area/scatter chart (each typed overlay layer accepts: `type`, `query`, `x`, `y`, `label`, `color`, `axis_y`)
+Cartesian overlays: `layers` on any bar/line/area/scatter chart (each typed overlay layer accepts: `type`, `query`, `x`, `y`, `label`, `color`, `axis_y`, `style`; a bar layer also takes `y_start`)
 
 Data attachments: `support_table`
 

@@ -59,6 +59,13 @@ text_truncations is SPARSE: only charts where any user-visible text was cut
 with an ellipsis (or silently clipped) appear. The warning pass re-renders
 all charts (including non-VL families) with the sink open, so table, KPI,
 callout, and spark_bar truncations are captured alongside VL axis titles.
+
+contrast_warnings is a flat list, not chart-keyed like the other captures
+above: a low-contrast pair comes from a board-level text block, which has
+no chart id at all — each ContrastRecord carries its own optional
+chart/path instead of relying on a dict key. Populated the same way as
+text_truncations — see render/contrast_warning.py's
+collect_contrast_warnings().
 """
 
 from __future__ import annotations
@@ -94,6 +101,7 @@ from dbt_charts.core.render.chart.table_page_squeeze import TablePageSqueeze
 from dbt_charts.core.render.chart.table_static_pagination import StaticPaginationCap
 from dbt_charts.core.render.chart.text_truncation import TextTruncation
 from dbt_charts.core.render.chart.x_domain_paint_order import XDomainPaintOrder
+from dbt_charts.core.render.contrast_warning import ContrastRecord
 from dbt_charts.core.utils import Rows
 
 
@@ -171,6 +179,9 @@ class WarningContext(BaseModel):
     # by a cache-ref composition — only the composed query is charted, not its
     # upstreams). Sparse — only present when such orphan truncations exist.
     unattributed_truncations: dict[str, TruncationInfo] = {}
+    # Every low-contrast ink/background pair the render pass captured. Flat,
+    # not chart-keyed — see the module docstring above.
+    contrast_warnings: list[ContrastRecord] = []
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,5 @@
+kind: Fixes
+body: A diverging gradient's `hinge` is now honored on bar, heatmap, geo, scatter, line, area, and pie charts — it was previously parsed and validated but ignored, so the neutral color always landed at the domain midpoint instead of the authored pivot. Diverging palettes may now have an even number of stops, a `hinge` outside the data range extends the rendered domain instead of clamping it, and the gradient legend now labels the hinge itself alongside its endpoints.
+time: 2026-09-25T15:04:57.000000+00:00
+custom:
+  DbtChartsIssue: 48

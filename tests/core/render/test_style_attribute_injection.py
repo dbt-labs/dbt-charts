@@ -13,6 +13,7 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
+from dbt_charts.core.render.render_result import RenderResult
 
 _PAYLOAD = 'x" onmouseover="alert(1)'
 
@@ -58,10 +59,10 @@ rows: [t, k, c, sb]
 """
 
 
-def _render_svg(yaml: str, local_project: Callable[..., Project]) -> str:
+def _render_result(yaml: str, local_project: Callable[..., Project]) -> RenderResult:
     result = compile(yaml)
     assert result.board is not None
-    rendered = render(
+    return render(
         result.board,
         Executor(
             result.board,
@@ -69,21 +70,39 @@ def _render_svg(yaml: str, local_project: Callable[..., Project]) -> str:
         ),
         format="svg",
     )
+
+
+def _render_svg(yaml: str, local_project: Callable[..., Project]) -> str:
+    rendered = _render_result(yaml, local_project)
     assert isinstance(rendered.output, str)
     return rendered.output
 
 
-@pytest.mark.parametrize("font_key", ["family", "color"])
-def test_font_style_cannot_inject_event_handler(
-    font_key: str, local_project: Callable[..., Project]
+def test_font_family_style_cannot_inject_event_handler(
+    local_project: Callable[..., Project],
 ) -> None:
-    svg = _render_svg(_board(font_key), local_project)
+    svg = _render_svg(_board("family"), local_project)
     handlers = [
         el.tag
         for el in ET.fromstring(svg).iter()
         if any(attr.startswith("on") for attr in el.attrib)
     ]
     assert handlers == []
+
+
+def test_invalid_font_color_becomes_a_clean_board_diagnostic(
+    local_project: Callable[..., Project],
+) -> None:
+    """style.font.color feeds the title fill (a style="..." sink). A value
+    that cannot parse as a CSS color — here, an attempted event-handler
+    injection payload — must not reach the attribute at all: css_color
+    raises, and the board render surfaces a structured
+    ERR-CSS-COLOR-INVALID-AT-RENDER diagnostic instead of a live style value
+    or an uncaught traceback."""
+    rendered = _render_result(_board("color"), local_project)
+    assert rendered.output is None
+    assert rendered.board_error is not None
+    assert rendered.board_error.code == "ERR-CSS-COLOR-INVALID-AT-RENDER"
 
 
 _STYLE_BLOCK_PAYLOAD = "x</style><img src=x onerror=alert(1)>"
@@ -193,7 +212,9 @@ def test_title_color_backslash_sequence_cannot_reach_re_sub_replacement(
     """style.title.font.color is painted onto the title SVG via re.sub; a
     replacement STRING (not a callable) processes its own backslash escapes,
     so an escaped `\\042` could still decode to a literal `"` and break out
-    of the `style="fill: ..."` attribute even after escape_attr."""
+    of the `style="fill: ..."` attribute even after escape_attr. Not a valid
+    CSS color either way, so css_color raises before re.sub ever runs — a
+    clean board diagnostic, not a live style value or a traceback."""
     yaml = f"""\
 title: Report
 style:
@@ -206,9 +227,10 @@ charts:
   t: {{query: q, type: table}}
 rows: [t]
 """
-    svg = _render_svg(yaml, local_project)
-    root = ET.fromstring(svg)
-    assert not any(attr.startswith("on") for el in root.iter() for attr in el.attrib)
+    rendered = _render_result(yaml, local_project)
+    assert rendered.output is None
+    assert rendered.board_error is not None
+    assert rendered.board_error.code == "ERR-CSS-COLOR-INVALID-AT-RENDER"
 
 
 def test_unicode_variable_name_renders_fine(

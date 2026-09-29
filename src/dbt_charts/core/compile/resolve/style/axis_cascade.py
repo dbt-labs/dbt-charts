@@ -16,7 +16,7 @@ from typing import Any, Literal, TypeVar, overload
 from pydantic import BaseModel
 
 from d3_format import format as _d3_format
-from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format import resolve_format, tick_min_step_for_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import (
@@ -43,8 +43,10 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisMirrorStyle,
     AxisXStyle,
     AxisYStyle,
+    BaseScaleStyle,
     DimensionLabelStyle,
     DimensionTicksStyle,
+    XScaleStyle,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.resolve.style.scale import (
@@ -237,6 +239,16 @@ def _resolve_overlap_config(
     return ResolvedAxisLabelOverlapConfig(tilt=overlap.tilt, skip=overlap.skip)
 
 
+def _scale_names_ticks_or_is_log(scale: BaseScaleStyle | XScaleStyle | None) -> bool:
+    """An authored ``scale.values`` ladder or a log scale owns its own ticks."""
+    if scale is None:
+        return False
+    continuous = scale.continuous
+    return scale.values is not None or (
+        continuous is not None and continuous.type == "log"
+    )
+
+
 def build_resolved_axis(
     axis: AxisXStyle | AxisYStyle,
     *,
@@ -254,6 +266,7 @@ def build_resolved_axis(
     zero_anchored: bool = False,
     chart_id: str,
     y_gridline_caps_bottom: bool | None = None,
+    floor_tick_step: bool = False,
 ) -> ResolvedAxisStyle:
     """Build ResolvedAxisStyle from a channel-typed AxisXStyle or AxisYStyle.
 
@@ -304,6 +317,12 @@ def build_resolved_axis(
     type error, not a silent wrong answer. A caller passing
     ``format_authored=False`` may pass ``False`` here too — the value is
     inert whenever the format was never authored at all.
+
+    ``floor_tick_step`` opts the measure axis (``AxisYStyle``) into deriving
+    ``ticks.step`` from its fixed-decimal format when no ladder was baked
+    (``tick_values`` empty): Vega-Lite picks the ticks and the step reaches it
+    as ``tickMinStep``. Off unless the cartesian plan says the axis's format is
+    the one that paints.
 
     ``format_authored_raw`` is baked straight onto
     ``ResolvedAxisStyle.format_authored_raw`` — see that field's docstring.
@@ -633,6 +652,22 @@ def build_resolved_axis(
             chart_id=chart_id,
         )
 
+    # Where we bake no ladder (tick_values empty) Vega-Lite picks the ticks
+    # itself; the measure axis's fixed-decimal format floors its step via a
+    # resolved tickMinStep. Never set alongside a baked ladder. axis_y never
+    # carries an authored step (ERR_TICKS_INTERVAL_MEASURE_AXIS).
+    tick_step: int | float | None = axis.ticks.step
+    if (
+        tick_step is None
+        and isinstance(axis, AxisYStyle)
+        and floor_tick_step
+        and is_quantitative
+        and not tick_values
+        and label.format is not None
+        and not _scale_names_ticks_or_is_log(axis.scale)
+    ):
+        tick_step = tick_min_step_for_format(label.format)
+
     ticks_visible = axis.ticks.visible
     # "auto" is only ever declared on DimensionTicksStyle (axis_x's own tick
     # slot) -- the isinstance guard is what lets mypy see that arm at all;
@@ -666,7 +701,7 @@ def build_resolved_axis(
             length=axis.ticks.length,
             offset=axis.ticks.offset,
             count=axis.ticks.count,
-            step=axis.ticks.step,
+            step=tick_step,
             time_unit=(
                 axis.ticks.time_unit
                 if isinstance(axis.ticks, DimensionTicksStyle)

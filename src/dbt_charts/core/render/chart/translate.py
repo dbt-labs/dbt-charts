@@ -725,9 +725,6 @@ def assemble_final_vl(
         set_chart_title(vl, spec.title, spec.subtitle, case=spec.title_style.font.case)
 
     # config.title.fontSize/fontWeight come from theme YAML as floats; coerce to int.
-    # vl["config"]["title"] may be aliased to the board-wide effective_vega_config
-    # (shared across every chart in a board render) when no per-chart config
-    # overrides it, so build a new dict here rather than mutating it in place.
     if "config" in vl and "title" in vl["config"]:
         _tc = dict(vl["config"]["title"])
         for _key in ("fontSize", "fontWeight"):

@@ -503,17 +503,3 @@ def family_patch_for(style: ChartStylePatch | Any, chart_type: str) -> Any:
     if key is not None:
         return getattr(style, key, None)
     return _get_primary_patch(style)
-
-
-def read_authored_format(chart: Chart) -> str | FormatConfig | None:
-    """Extract authored format from style.number_format, style.axis_y.labels.format, or chart.format."""
-    patch = family_patch_for(chart.style, chart.type)
-    if patch is not None:
-        nf = getattr(patch, "number_format", None)
-        if nf:
-            return nf
-        axis_y = getattr(patch, "axis_y", None)
-        labels = getattr(axis_y, "labels", None) if axis_y is not None else None
-        if labels is not None and getattr(labels, "format", None):
-            return labels.format
-    return getattr(chart, "format", None)

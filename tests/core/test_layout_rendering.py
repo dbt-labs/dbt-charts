@@ -56,6 +56,7 @@ class TestRowsLayoutRendering:
             20.0,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
 
         assert result == ("", 0.0)
@@ -108,6 +109,7 @@ rows:
             20.0,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
         assert svg  # non-empty SVG fragment
         assert total_height > 0
@@ -137,6 +139,7 @@ class TestColsLayoutRendering:
             20.0,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
 
         assert result == ("", 0.0)
@@ -195,6 +198,7 @@ cols:
             20.0,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
         assert svg  # non-empty SVG fragment
         assert _max_height > 0
@@ -257,6 +261,7 @@ grid:
             20.0,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
         assert svg  # non-empty SVG fragment
         assert "translate(" in svg
@@ -328,6 +333,7 @@ tabs:
             "top",
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
         assert "<svg" in svg
         assert "Sales Bar" in svg or "Tab 1" in svg
@@ -419,6 +425,7 @@ cols:
             nested_item.height,
             0.0,
             render_cache={},
+            painted_canvas=None,
         )
         assert actual_height > 0
         assert "<svg" in svg
@@ -449,6 +456,7 @@ rows:
             nested_item.height,
             0.0,
             render_cache={},
+            painted_canvas=None,
         )
         assert self._get_svg_height(svg) == pytest.approx(actual_height, abs=1.0), (
             "SVG height must match the returned actual_height"
@@ -488,6 +496,7 @@ rows:
             honeydew_item.height,
             0.0,
             render_cache={},
+            painted_canvas=None,
         )
         assert "<svg" in svg
         assert actual_height > 0
@@ -555,6 +564,7 @@ rows:
             chart_item.height,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
 
         card_padding = float(get_theme_style().frame.card_padding)
@@ -619,6 +629,7 @@ rows:
             board_item.height,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
 
         card_padding = float(get_theme_style().frame.card_padding)

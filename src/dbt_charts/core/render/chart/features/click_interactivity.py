@@ -20,7 +20,7 @@ from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 
 # _HREF_SENTINEL is duplicated as a literal in render/converters/chart.py
-# (_SENTINEL_HREF_RE), which strips it back off the vl_convert output — change both.
+# (_SENTINEL_PREFIX), which strips it back off the vl_convert output — change both.
 _HREF_PLACEHOLDER = re.compile(r"\{\{\s*(x|y|color|theta)\s*\}\}")
 _HREF_SENTINEL = "http://dct.invalid"
 

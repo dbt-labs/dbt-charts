@@ -423,7 +423,10 @@ def test_svg_postprocess_leaves_external_hrefs_untouched():
     """Non-sentinel xlink:href values (external navigation) are left as-is."""
     from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
 
-    svg_input = '<a xlink:href="https://example.com/detail?month=January"><path/></a>'
+    svg_input = (
+        '<a xlink:href="https://example.com/detail?name=O\'Brien&amp;month=January">'
+        "<path/></a>"
+    )
     result = _fix_chart_click_hrefs(svg_input)
 
     # External URL must remain unchanged

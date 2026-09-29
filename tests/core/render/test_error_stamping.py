@@ -66,6 +66,12 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("chart/type_inference.py", "<module>"),
         # chart/emitters/_channels.py
         ("chart/emitters/_channels.py", "channel_to_encoding"),
+        # Same validation, same debt as table_support.interpolate_scale_color's
+        # allowlist entry above — a diverging palette's minimum stop-count
+        # requirement is checked here too (VL domain breakpoints instead of a
+        # direct color lookup), not yet migrated to a compile-time check.
+        ("chart/emitters/_channels.py", "_diverging_domain"),
+        ("chart/emitters/_channels.py", "_diverging_breakpoints_truncated"),
         # chart/emitters/_label_overlap.py
         ("chart/emitters/_label_overlap.py", "_pick_tilt_for_widths"),
         # chart/emitters/bar.py

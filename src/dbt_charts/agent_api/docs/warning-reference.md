@@ -71,6 +71,22 @@ Board requested html_policy={requested!r} but the {ceiling_source} ceiling is {c
 
 Fires when a board's authored `html_policy` is above the effective deployment ceiling (set by DCT_HTML_POLICY_CEILING env var or `markdown.html_policy_ceiling` in dbt_charts.yml). The board compiles successfully but the policy is downgraded at normalize time; this warning makes the downgrade visible so the author knows their html_policy setting is not being honored. Emitted by `compile/compiler.py`.
 
+### WARN-LOW-TEXT-CONTRAST: Text ink has too little contrast against its background
+
+- **Level:** warning
+- **Domain:** render
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+{element} is painted {ink} on {background} -- {ratio:.1f}:1 contrast, below the {floor:.1f}:1 floor for {size} text.
+```
+
+**Fix:** Set {key} to a color with more contrast against {background}.
+
+Fires when a text block's heading or body ink clears less than the configured WCAG 2.1 contrast ratio (`chart_rendering.text_contrast.min_ratio`, or `large_text_min_ratio` for WCAG's own large-text exception) against the opaque background it paints on. The common case is a row's own default ink left unchanged after authoring a `style.background` on that row; the fix names the key that governs that element's ink today (`style.title.font.color` for a heading, `style.font.color` for body text). The engine never repaints -- the color pair is still painted exactly as written.
+
 ### WARN-SINGLE-CHART-REDUNDANT-TITLE: Single-chart dashboard has both a board title and a chart title
 
 - **Level:** warning

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from dbt_charts.core.compile.models.markers import (
     Color,
     Inherit,
+    Url,
 )
 from dbt_charts.core.compile.models.primitives import (
     CornerStyle,
@@ -79,7 +80,7 @@ class FooterStyle(BaseModel):
     # brand phrase renders unlinked (still set heavier — that is brand styling,
     # not a link affordance). When set, the *first* occurrence of the brand
     # phrase links here; a second occurrence is left plain.
-    link: str | None = Field(
+    link: Annotated[str | None, Url()] = Field(
         default=None,
         description="URL the footer brand phrase 'dbt charts' links to; null renders plain text.",
     )

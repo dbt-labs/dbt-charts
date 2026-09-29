@@ -267,6 +267,7 @@ def test_render_layout_item_threads_per_family_padding_to_vega_render():
             available_height=200.0,
             resolved_style=board_resolved,
             render_cache={},
+            painted_canvas=None,
         )
 
     padding_arg = spy.call_args.kwargs["padding"]
@@ -334,6 +335,7 @@ def test_svg_family_render_threads_chart_local_padding():
             available_height=200.0,
             resolved_style=board_resolved,
             render_cache={},
+            painted_canvas=None,
         )
 
     padding_arg = spy.call_args.kwargs["padding"]

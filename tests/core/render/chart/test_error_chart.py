@@ -379,6 +379,7 @@ rows:
         available_height=item.height,
         resolved_style=resolve_style(get_theme_style()),
         render_cache={},
+        painted_canvas=None,
     )
 
     assert f'data-chart-width="{item.width}"' in svg
@@ -427,6 +428,7 @@ rows:
         available_height=item.height,
         resolved_style=resolve_style(get_theme_style()),
         render_cache={},
+        painted_canvas=None,
     )
 
     assert '<g transform="translate(16.0, 16.0)">' not in svg

@@ -120,6 +120,15 @@ class TestInitDoesNotWriteAgentMarkdown:
         assert not (dbt_dir / "AGENTS.md").exists()
         assert not (dbt_dir / "CLAUDE.md").exists()
 
+    def test_ends_with_pointer_to_skills_intro(self, dbt_dir: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["init", "--project-dir", str(dbt_dir)], catch_exceptions=False
+        )
+        assert result.exit_code == 0, result.output
+        lines = [line for line in result.output.splitlines() if line.strip()]
+        assert "dct skills intro" in lines[-1]
+
 
 class TestInitWizardFlags:
     @pytest.fixture(autouse=True)

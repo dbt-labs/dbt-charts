@@ -133,7 +133,9 @@ def test_e_render_text_svg_uses_text_font_family_param() -> None:
     )
     style = resolve_style(seed)
 
-    svg, _height = _render_text_svg("# Hello", {}, 400.0, style, text_style=style.text)
+    svg, _height = _render_text_svg(
+        "# Hello", {}, 400.0, style, text_style=style.text, painted_canvas=None
+    )
     assert "SentinelFontE" in svg
 
 

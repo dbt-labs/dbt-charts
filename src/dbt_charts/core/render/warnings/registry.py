@@ -56,6 +56,7 @@ import dbt_charts.core.render.warnings.legend_position_width_fallback as legend_
 import dbt_charts.core.render.warnings.legend_values_unresolved as legend_values_unresolved
 import dbt_charts.core.render.warnings.likely_currency_or_percent_missing_formatter as likely_currency_or_percent_missing_formatter
 import dbt_charts.core.render.warnings.local_time_label_expr_on_bucketed_axis as local_time_label_expr_on_bucketed_axis
+import dbt_charts.core.render.warnings.low_text_contrast as low_text_contrast
 import dbt_charts.core.render.warnings.normalize_percent_format_reads_raw_value as normalize_percent_format_reads_raw_value
 import dbt_charts.core.render.warnings.palette_unsupported as palette_unsupported
 import dbt_charts.core.render.warnings.pie_dominant_segment as pie_dominant_segment
@@ -103,6 +104,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     layer_x_domain_paint_order,
     layout_min_exceeds_height,
     legend_position_width_fallback,
+    low_text_contrast,
     pie_total_exceeds_inner_radius,
     plot_height_below_minimum,
     plot_width_below_minimum,

@@ -90,12 +90,16 @@ class BarChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
             "setting it together with an active stack mode is an error."
         ),
     )
+    # None is the unset sentinel: render ranks by value, and no theme sets it.
     stack_order: Literal["value", "data", "alphabetical"] | None = Field(
         default=None,
         description=(
             "Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. "
-            "'data' follows SQL row order (orientation-stable not guaranteed). "
-            "'alphabetical' sorts by color column name. Ignored when stacking is off or no color."
+            "'data' stacks series in first-appearance order: SQL row order for color:, "
+            "the listed order for y: [a, b, ...] (a measure null in the first rows "
+            "appears later). "
+            "'alphabetical' sorts by series name. Ignored when stacking is off or "
+            "there is only one series."
         ),
     )
     # Stacked only: resolve turns the rail back off for a grouped bar, whose

@@ -96,6 +96,10 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
     XDomainPaintOrder,
     collect_x_domain_paint_orders,
 )
+from dbt_charts.core.render.contrast_warning import (
+    ContrastRecord,
+    collect_contrast_warnings,
+)
 from dbt_charts.core.render.controls import interactive_controls
 from dbt_charts.core.render.converters import to_html, to_pdf, to_png
 from dbt_charts.core.render.errors import (
@@ -220,6 +224,7 @@ def _collect_render_warnings(
     endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
     x_domain_paint_orders: dict[str, XDomainPaintOrder],
     plot_width_share_warnings: dict[str, PlotWidthShareWarning],
+    contrast_warnings: list[ContrastRecord],
 ) -> list[Diagnostic]:
     """Build WarningContext from cached query results and run all detectors.
 
@@ -402,6 +407,7 @@ def _collect_render_warnings(
             **plot_width_share_warnings,
             **_detection_plot_width_share_warnings,
         },
+        contrast_warnings=contrast_warnings,
     )
     return run_all(ctx)
 
@@ -681,6 +687,7 @@ def render(
         endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
         x_domain_paint_orders: dict[str, XDomainPaintOrder],
         plot_width_share_warnings: dict[str, PlotWidthShareWarning],
+        contrast_warnings: list[ContrastRecord],
     ) -> tuple[list[Diagnostic], list[Diagnostic]]:
         all_warnings = _collect_render_warnings(
             resolved_board,
@@ -695,6 +702,7 @@ def render(
             endpoint_label_gap_overflows,
             x_domain_paint_orders,
             plot_width_share_warnings,
+            contrast_warnings,
         )
         return _partition_warnings(
             all_warnings,
@@ -743,6 +751,7 @@ def render(
     _endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow | None] = {}
     _x_domain_paint_orders: dict[str, XDomainPaintOrder] = {}
     _plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
+    _contrast_warnings: list[ContrastRecord] = []
     try:
         # Render the canonical SVG once; output formats only wrap or convert it.
         # The capture sinks record each table's real post-cascade column overflow,
@@ -780,6 +789,7 @@ def render(
             collect_endpoint_label_gap_overflows() as _endpoint_label_gap_overflows,
             collect_x_domain_paint_orders() as _x_domain_paint_orders,
             collect_plot_width_share_warnings() as _plot_width_share_warnings,
+            collect_contrast_warnings() as _contrast_warnings,
             collect_painted_italic_families(),
             interactive_controls(options.get("controls", False)),
         ):
@@ -809,7 +819,7 @@ def render(
         # Render failed before a table could rasterize: finalize with an empty
         # capture so detector warnings still surface alongside the board error.
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}
+            {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     except Exception as e:  # noqa: BLE001
         from dbt_charts.core.diagnostics import ERR_INTERNAL
@@ -818,7 +828,7 @@ def render(
             ERR_INTERNAL, message=str(e)
         ).to_diagnostic()
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}
+            {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     finally:
         _reset_contexts()
@@ -852,6 +862,7 @@ def render(
             },
             {**_sizing_x_domain_paint_orders, **_x_domain_paint_orders},
             {**_sizing_plot_width_share_warnings, **_plot_width_share_warnings},
+            _contrast_warnings,
         )
 
     if format in _DATA_FORMATS:

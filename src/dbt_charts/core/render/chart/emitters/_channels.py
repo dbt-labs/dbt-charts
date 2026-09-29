@@ -6,6 +6,7 @@ import math
 import re
 from typing import Any
 
+from dbt_charts.core.colors import interpolate_hcl
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
 from dbt_charts.core.compile.models.primitives import (
@@ -24,6 +25,10 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
 )
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.render.chart._types import VLDict
+from dbt_charts.core.render.chart.table_support import (
+    diverging_arm_denominators,
+    resolve_hinge,
+)
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
     canonicalize_and_sort_ordinal_x,
@@ -111,6 +116,281 @@ def _nice_domain_ticks(
     return nice_tick_values(extent[0], extent[1], tick_count)
 
 
+def _raw_diverging_bounds(
+    scale: ScaleTargetConfig,
+    data: list[dict[str, Any]] | None,  # type-state: explicit_any — row dicts
+    field: str | None,
+) -> tuple[float, float] | None:
+    """Effective [lo, hi] domain, NEVER nice-widened: an authored bound wins
+    per edge, the free edge falls back to the raw data extent.
+
+    This is what ``resolve_hinge``'s ``"auto"`` decision (zero-crossing vs.
+    midpoint) must use even when the *rendered* domain (``_diverging_bounds``
+    below) is nice-widened — table/KPI's own ``resolve_hinge`` call
+    (``table_support.compute_scale_domain``) is always fed the raw extent,
+    never a nice-widened one, so the two must agree here too. Nice-widening
+    can shift or invent an edge that isn't really in the data: data
+    ``[-97, -3]`` nice-widens to ``[-100, 0]``, which would make the
+    zero-crossing rule fire (every value landing on one arm) even though the
+    real data never reaches zero — table's own auto-hinge on the same data
+    correctly picks the raw extent's midpoint instead.
+    """
+    if scale.min is not None and scale.max is not None:
+        return float(scale.min), float(scale.max)
+    if not (data and field):
+        return None
+    extent = _numeric_extent(data, field)
+    if extent is None:
+        return None
+    lo = float(scale.min) if scale.min is not None else extent[0]
+    hi = float(scale.max) if scale.max is not None else extent[1]
+    return lo, hi
+
+
+def _diverging_bounds(
+    scale: ScaleTargetConfig,
+    data: list[dict[str, Any]] | None,  # type-state: explicit_any — row dicts
+    field: str | None,
+) -> tuple[float, float] | None:
+    """Effective [lo, hi] domain a diverging hinge is *rendered* within.
+
+    Reuses the same nice-widening precedence as the sequential path below
+    (``_nice_domain_ticks``): both authored → that exact pair; neither
+    authored and ``scale.nice`` → the nice-widened extent; otherwise
+    ``_raw_diverging_bounds``. Sharing this precedence (rather than always
+    using the raw extent) keeps a heatmap/geo gradient's baked domain in
+    agreement with ``apply_gradient_legend_endpoint_labels``, which
+    nice-widens under the same conditions — a hinge domain narrower than its
+    own legend's labeled ticks would paint colors that stop short of where
+    the legend says they do. Returns ``None`` when neither an authored bound
+    nor a usable data extent is available — the caller's signal that hinge
+    cannot be resolved. This is the *rendered* domain only — see
+    ``_raw_diverging_bounds`` for what decides an ``"auto"`` hinge's pivot.
+    """
+    if scale.min is not None and scale.max is not None:
+        return float(scale.min), float(scale.max)
+    nice_ticks = _nice_domain_ticks(scale, data, field)
+    if nice_ticks is not None:
+        return nice_ticks[0], nice_ticks[-1]
+    return _raw_diverging_bounds(scale, data, field)
+
+
+def _resolve_hinge_value(
+    scale: ScaleTargetConfig,
+    data: list[dict[str, Any]] | None,  # type-state: explicit_any — row dicts
+    field: str | None,
+) -> float | None:
+    """The diverging pivot value, decided from the RAW (never nice-widened)
+    extent — see ``_raw_diverging_bounds``'s docstring for why "auto" must
+    never see a nice-widened edge. ``None`` when hinge is unset or bounds
+    can't be resolved at all (e.g. geoshape's pre-lookup-join opt-out with
+    no authored bounds either). Shared by ``gradient_scale_to_vl`` (which
+    then EXTENDS its rendered bounds to include this value) and
+    ``apply_gradient_legend_endpoint_labels`` (which does the same for its
+    labeled endpoints) so the two can never resolve a different pivot for
+    the same scale.
+    """
+    if scale.hinge is None:
+        return None
+    raw_bounds = _raw_diverging_bounds(scale, data, field)
+    if raw_bounds is None:
+        return None
+    return resolve_hinge(scale, raw_bounds[0], raw_bounds[1], None)
+
+
+def _diverging_domain(
+    n: int, hinge: float, neg_denom: float, pos_denom: float
+) -> list[float]:
+    """``n`` domain breakpoints pivoting a diverging gradient at ``hinge``,
+    given each arm's own interpolation-distance denominator.
+
+    Requires an odd ``n >= 3``: the middle index (``mid = n // 2``) always
+    sits at EXACTLY ``hinge``, a single breakpoint, never a half-integer
+    offset. An even-length palette has no such single center index — its one
+    caller, ``_diverging_breakpoints_truncated``, synthesizes one extra
+    center stop (an HCL 50/50 blend of the two original center stops) first,
+    making the effective count odd, rather than this function trying to
+    place two independently-spaced center breakpoints itself. That
+    alternative was tried and reverted: with unequal arm widths, two
+    independently-spaced center points put the visual 50% pivot measurably
+    off the real hinge (equal only by coincidence when both arms happen to
+    have the same width) — synthesizing a shared center color first and
+    reusing the exact-hinge odd-length placement is the only design that
+    keeps the pivot exact regardless of arm width.
+
+    Callers choose ``neg_denom``/``pos_denom`` via
+    ``diverging_arm_denominators``'s ``arm_mode`` argument: ``"symmetric"``
+    (each arm's own real width — every breakpoint this produces is then
+    provably within ``[lo, hi]``, the most extreme breakpoint on either side
+    landing exactly on that side's own bound) or ``"asymmetric"`` (one
+    shared, wider-arm denominator — can legitimately place a breakpoint past
+    the real bound on the narrower arm; see
+    ``_diverging_breakpoints_truncated``, which truncates that back to
+    ``[lo, hi]``).
+
+    VL/Vega's linear scale natively supports a multi-point ``domain``/
+    ``range`` pair — the same mechanism as a 2-point one, just with more
+    breakpoints, so no custom interpolation runs at render time for an
+    untruncated result. ``n`` is the caller's stop count for a discrete
+    palette (colors must be paired 1:1, in order, with these breakpoints).
+    """
+    if n < 3 or n % 2 == 0:
+        raise ValueError(
+            f"_diverging_domain requires an odd breakpoint count >= 3, got {n}"
+        )
+    mid = n // 2
+    domain: list[float] = []
+    for i in range(n):
+        if i <= mid:
+            frac = (mid - i) / mid
+            domain.append(hinge - frac * neg_denom)
+        else:
+            frac = (i - mid) / mid
+            domain.append(hinge + frac * pos_denom)
+    return domain
+
+
+def _diverging_scheme_extent(hinge: float, lo: float, hi: float) -> tuple[float, float]:
+    """VL ``scheme.extent`` bounds for a Vega scheme under
+    ``arm_mode="asymmetric"``, keeping ``domain`` exactly ``[lo, hi]``.
+
+    A scheme's continuous ramp runs 0..1 with a diverging palette's neutral
+    color conventionally at 0.5. ``extent`` selects a sub-range of that ramp
+    to map linearly across ``domain`` — this picks the sub-range that makes
+    ``hinge`` (not the domain midpoint) land exactly at ramp position 0.5,
+    with each arm's far edge reaching only as deep into the ramp as
+    asymmetric's shared (wider-arm) denominator allows, matching
+    ``diverging_arm_denominators``'s "no arm reaches full saturation past
+    the wider arm's per-unit rate" semantics — but, unlike baking that as
+    extra ``domain`` breakpoints past ``lo``/``hi``, ``domain`` here stays
+    exactly the real bounds, so VL's ``clamp`` pins an out-of-domain value
+    to the real edge's own (correctly asymmetric-compressed) color, not an
+    extended virtual one.
+
+    ``arm_mode="symmetric"`` needs no such trick — its per-arm denominators
+    equal each arm's own real width, which is exactly what a plain
+    ``domainMid`` already expresses natively (extent effectively `[0, 1]`
+    under symmetric's denominators, verified: the two are equivalent).
+    """
+    neg_denom, pos_denom = diverging_arm_denominators(hinge, lo, hi, "asymmetric")
+    a = 0.5 - (hinge - lo) / (2 * neg_denom)
+    b = 0.5 + (hi - hinge) / (2 * pos_denom)
+    return a, b
+
+
+def _diverging_breakpoints_truncated(
+    palette: list[Any],  # type-state: explicit_any — VL range: str or float stops
+    hinge: float,
+    lo: float,
+    hi: float,
+    neg_denom: float,
+    pos_denom: float,
+) -> tuple[list[float], list[Any]]:  # type-state: explicit_any — VL range: str stops
+    """``(domain, range)`` breakpoints for a discrete diverging stop list,
+    built from the ORIGINAL authored stops at their natural breakpoints (no
+    RGB-lerp resampling of them) and truncated to the real ``[lo, hi]``
+    bound.
+
+    An even-length palette has no single shared center stop to pivot on, so
+    it is normalized to odd first: an HCL 50/50 blend of the two original
+    center stops is synthesized and inserted as the new middle color, then
+    ``_diverging_domain``'s ordinary odd-length placement (a single
+    breakpoint at EXACTLY ``hinge``) runs unchanged — see that function's
+    docstring for why placing two independently-spaced center breakpoints
+    directly (the reverted approach) put the visual pivot off the real
+    hinge whenever the two arms had unequal widths.
+
+    ``neg_denom``/``pos_denom`` decide where each (now-odd-length) stop
+    lands (see ``_diverging_domain``): symmetric's own-arm-width
+    denominators keep every breakpoint inside ``[lo, hi]`` by construction,
+    so this is a no-op for the ordinary symmetric case; asymmetric's shared
+    (wider-arm) denominator can push the shorter arm's breakpoints past the
+    real bound, which this truncates. Called unconditionally for both arm
+    modes — a no-op truncation is cheap, and it also correctly handles a
+    degenerate (zero-width) arm under EITHER mode (see below), which
+    symmetric's plain breakpoint placement alone cannot.
+
+    The two outermost breakpoints are snapped to exactly ``lo``/``hi`` first
+    when they're already extremely close RELATIVE TO THE DOMAIN'S OWN SPAN
+    (``hi - lo``, not the raw magnitude of the breakpoint values — a fixed
+    tolerance scaled by magnitude alone would wrongly swallow a genuine,
+    substantial overshoot that just happens to sit at a large absolute
+    value) — float rounding in ``hinge - (hinge - lo)`` can leave a
+    wide-magnitude domain a ULP or two short of the real bound — AND
+    snapping wouldn't invert their order against the next breakpoint in
+    (a STRICT inequality: the center breakpoint of a fully degenerate arm
+    can legitimately land exactly ON the bound, and snapping the outer one
+    onto that same value would create a same-value duplicate rather than
+    fixing anything). The second condition is what keeps this from ever
+    firing on a genuinely degenerate arm, whose neighboring breakpoint is
+    deliberately on the wrong side of the bound (or, with only 3 stops,
+    exactly on it) — see below.
+
+    Any breakpoint landing outside ``[lo, hi]`` is dropped outright. If that
+    drops at least one breakpoint on an arm, exactly ONE synthetic boundary
+    breakpoint is added at the real bound, whose color is the perceptual
+    (CIE LCh / "hcl", matching Vega-Lite's own diverging-gradient
+    interpolation — see ``interpolate_hcl``) blend between the last
+    surviving in-bounds breakpoint and the first truncated one, at the exact
+    fraction where the real domain value crosses the bound. No synthetic
+    stop is added when a surviving breakpoint already sits exactly on the
+    bound — nothing to blend, the natural stop already terminates there.
+
+    That "already sits exactly on the bound" case is also how a fully
+    degenerate (zero-width) arm resolves: every breakpoint on that arm gets
+    truncated except the shared center one, which sits exactly at
+    ``hinge`` — itself the bound once the arm is zero-width — so the whole
+    arm collapses to a single neutral-colored stop, never the old bug where
+    a floored-denominator breakpoint landed a hair short of the bound,
+    paired with the extreme (not neutral) color.
+
+    A translucent original stop that survives untouched keeps its alpha
+    unmodified, passed straight through to VL/CSS, which renders it
+    natively; when it's one of the two stops straddling a truncation
+    boundary, the synthetic stop's alpha is interpolated linearly alongside
+    the perceptual L/C/H blend (``interpolate_hcl``'s own contract — alpha
+    has no analog in Lab/LCh space).
+    """
+    if len(palette) < 2:
+        raise ValueError(
+            f"diverging gradient (hinge set) requires at least 2 palette "
+            f"stops, got {len(palette)}"
+        )
+    if len(palette) % 2 == 0:
+        mid = len(palette) // 2
+        center = interpolate_hcl(palette[mid - 1], palette[mid], 0.5)
+        palette = [*palette[:mid], center, *palette[mid:]]
+
+    n = len(palette)
+    domain = _diverging_domain(n, hinge, neg_denom, pos_denom)
+    snap_tolerance = 1e-9 * (hi - lo)
+    if abs(domain[0] - lo) < snap_tolerance and lo < domain[1]:
+        domain[0] = lo
+    if abs(domain[-1] - hi) < snap_tolerance and hi > domain[-2]:
+        domain[-1] = hi
+    points = list(zip(domain, palette, strict=True))
+
+    kept = [(x, c) for x, c in points if lo <= x <= hi]
+    dropped_lo = [(x, c) for x, c in points if x < lo]
+    dropped_hi = [(x, c) for x, c in points if x > hi]
+
+    # hinge is always within [lo, hi] (extended, if needed, by the one
+    # caller — gradient_scale_to_vl), and the center breakpoint(s) always
+    # equal hinge exactly, so `kept` is never empty here.
+    if dropped_lo and kept[0][0] != lo:
+        x0, c0 = dropped_lo[-1]  # nearest truncated point to the boundary
+        x1, c1 = kept[0]  # nearest surviving point to the boundary
+        t = (lo - x0) / (x1 - x0)
+        kept.insert(0, (lo, interpolate_hcl(c0, c1, t)))
+    if dropped_hi and kept[-1][0] != hi:
+        x0, c0 = kept[-1]
+        x1, c1 = dropped_hi[0]
+        t = (hi - x0) / (x1 - x0)
+        kept.append((hi, interpolate_hcl(c0, c1, t)))
+
+    return [x for x, _ in kept], [c for _, c in kept]
+
+
 def gradient_scale_to_vl(
     scale: ResolvedScaleTarget,
     data: list[dict[str, Any]] | None = None,
@@ -148,7 +428,63 @@ def gradient_scale_to_vl(
     docstring for why) — ``_nice_domain_ticks`` requires ``data`` truthy
     regardless. ``channel_to_encoding``'s generic gradient branch omits them
     too, keeping its pre-existing domainMin/domainMax-only behavior
-    unchanged.
+    unchanged — except when ``scale.hinge`` is set, in which case it passes
+    them through so the diverging pivot can be resolved against the real
+    data extent (see that call site).
+
+    ``scale.hinge`` set makes this a diverging scale: the neutral point
+    pivots at the hinge value instead of the domain midpoint. This needs
+    resolvable bounds (authored min/max, or data/field) — when bounds can't
+    be resolved, a discrete stop list's hinge is silently a no-op and the
+    sequential path below runs instead, same opt-out shape as
+    ``_nice_domain_ticks``. With bounds resolved, ``[lo, hi]`` is first
+    EXTENDED (never clamped) to include ``hinge`` — a diverging palette
+    shared across charts means "hinge is neutral" on every one of them, even
+    a chart whose own data never reaches it; extending whichever bound
+    excludes it keeps that promise, rather than pinning the hinge onto the
+    nearer bound and silently repainting the pivot somewhere the author
+    never asked for. Then:
+
+    - Both a scheme and a discrete stop list honor ``arm_mode``: a scheme
+      keeps ``domain`` exactly ``[lo, hi]`` and either re-windows its ramp
+      via ``scheme.extent`` (``arm_mode="asymmetric"``, the shared
+      wider-arm denominator) or uses VL's native ``domainMid``
+      (``arm_mode="symmetric"``, each arm's own real width). A discrete
+      stop list gets a synthesized ``domain``/``range`` breakpoint pair via
+      ``_diverging_breakpoints_truncated`` — the original authored stops
+      placed at their natural breakpoints (``_diverging_domain``, fed the
+      same per-mode denominators) and truncated back to ``[lo, hi]`` with
+      one perceptually-blended (HCL) synthetic boundary stop wherever a
+      breakpoint would otherwise land outside it. Called for both arm
+      modes uniformly (symmetric truncates nothing in the ordinary case,
+      by construction) — this is also what correctly resolves a fully
+      degenerate (zero-width) arm under either mode, not a separate
+      special case.
+    - ``interpolate: "hcl"`` is pinned explicitly on every diverging branch
+      (scheme and discrete stop list alike), so it's not left implicit even
+      though it's a harmless no-op for a scheme: confirmed empirically that
+      ``interpolate`` has zero effect on a Vega-scheme-based scale (a scheme
+      is its own pre-baked continuous ramp, sampled by position — not
+      something ``interpolate`` re-blends) — it only actually changes
+      anything on the discrete stop-list (``range``) branch, where it
+      already equals VL's own default (see
+      ``dbt_charts.core.colors.interpolate_hcl``'s docstring), but a future
+      Vega-Lite default change should not silently retune that branch's
+      gradient.
+
+    A bare Vega scheme still has one narrower fallback when bounds can't be
+    resolved at all (e.g. geoshape's pre-lookup-join opt-out — see this
+    function's own docstring above — with no authored min/max either): an
+    explicit numeric hinge alone reaches VL's native ``domainMid`` (plus
+    ``domainMin``/``domainMax`` for whichever bound *is* authored, each
+    likewise extended rather than clamped when hinge falls outside it),
+    which needs no data because VL/Vega computes the rest of the domain from
+    the actual rendered mark data at render time (not this function's
+    ``data`` argument) and simply inserts the pivot into it. That fallback
+    is inherently symmetric-only — ``domainMid`` has no ``arm_mode`` concept,
+    and there is no known lo/hi to build asymmetric breakpoints from.
+    ``hinge="auto"`` can never use it, since deciding zero-crossing vs.
+    midpoint itself requires knowing the real domain.
     """
     if isinstance(scale, ResolvedNamedPaletteScaleTargetConfig):
         vl_scale: VLDict = {"range": list(scale.resolved_stops)}
@@ -158,6 +494,60 @@ def gradient_scale_to_vl(
             vl_scale = {"scheme": palette}
         else:
             vl_scale = {"range": list(palette)}
+
+    if scale.hinge is not None:
+        bounds = _diverging_bounds(scale, data, field)
+        if bounds is not None:
+            lo, hi = bounds
+            hinge_val = _resolve_hinge_value(scale, data, field)
+            if hinge_val is not None:
+                # resolve_hinge never checks an explicit (non-"auto") hinge
+                # against the domain — an author can genuinely set hinge: 0
+                # on data that never crosses zero. EXTEND whichever bound
+                # excludes it (never clamp the hinge onto the nearer bound —
+                # see this function's own docstring) so a shared diverging
+                # palette's pivot means the same thing on every chart that
+                # uses it, even one whose own data sits entirely on one side.
+                lo, hi = min(lo, hinge_val), max(hi, hinge_val)
+                asymmetric = scale.arm_mode == "asymmetric"
+                if "scheme" in vl_scale:
+                    vl_scale["domain"] = [lo, hi]
+                    if asymmetric:
+                        a, b = _diverging_scheme_extent(hinge_val, lo, hi)
+                        vl_scale["scheme"] = {
+                            "name": vl_scale["scheme"],
+                            "extent": [a, b],
+                        }
+                    else:
+                        vl_scale["domainMid"] = hinge_val
+                else:
+                    neg_denom, pos_denom = diverging_arm_denominators(
+                        hinge_val, lo, hi, scale.arm_mode
+                    )
+                    vl_scale["domain"], vl_scale["range"] = (
+                        _diverging_breakpoints_truncated(
+                            vl_scale["range"], hinge_val, lo, hi, neg_denom, pos_denom
+                        )
+                    )
+                vl_scale["clamp"] = True
+                vl_scale["interpolate"] = "hcl"
+                return vl_scale
+        elif "scheme" in vl_scale and isinstance(scale.hinge, (int, float)):
+            hinge_val = float(scale.hinge)
+            # Extend whichever bound IS authored when hinge falls outside it
+            # (never clamp hinge onto it — same reasoning as the
+            # resolved-bounds branch above). Neither bound authored (this
+            # fallback's core case) has nothing to extend against; that
+            # residual gap is documented on this function's own docstring.
+            if scale.min is not None:
+                vl_scale["domainMin"] = min(scale.min, hinge_val)
+            if scale.max is not None:
+                vl_scale["domainMax"] = max(scale.max, hinge_val)
+            vl_scale["domainMid"] = hinge_val
+            vl_scale["clamp"] = True
+            vl_scale["interpolate"] = "hcl"
+            return vl_scale
+
     if scale.min is not None and scale.max is not None:
         vl_scale["domain"] = [scale.min, scale.max]
     else:
@@ -224,25 +614,91 @@ def apply_gradient_legend_endpoint_labels(
     ``ResolvedLegendStyle.values`` wins outright either way) — or when the
     data has no numeric values for ``field`` on whichever edge isn't
     author-bound.
+
+    ``scale.hinge`` set threads hinge-awareness through every branch above:
+    the resolved pivot (``_resolve_hinge_value`` — the same resolution
+    ``gradient_scale_to_vl`` uses) EXTENDS whichever labeled endpoint
+    excludes it, so the legend's endpoints always match what
+    ``gradient_scale_to_vl`` actually rendered (a legend showing [500, 1000]
+    while the scale secretly renders [0, 1000] would be a real bug, not
+    cosmetic). When the resolved hinge sits strictly between the (possibly
+    now-extended) endpoints, it is also inserted into ``values`` as its own
+    labeled tick — sorted, deduplicated — so the legend shows where the
+    palette pivots, not just its two extremes. Does not add a hinge TICK to
+    ``apply_geo_choropleth_legend_endpoint_labels`` (see that function).
     """
     legend = enc.get("legend")
     if not isinstance(legend, dict):
         return
     if legend.get("values") is not None:
         return
+    hinge_val = _resolve_hinge_value(scale, data, field)
     if scale.min is not None and scale.max is not None:
-        legend["values"] = [scale.min, scale.max]
+        # No float() cast here -- an authored int bound (min: 0, max: 100)
+        # must stay an int in the emitted spec when there's no hinge to
+        # extend for; _extend_for_hinge passes it straight through unless
+        # hinge_val is set.
+        lo, hi = _extend_for_hinge(scale.min, scale.max, hinge_val)
+        legend["values"] = _with_hinge_tick([lo, hi], hinge_val)
         return
     nice_ticks = _nice_domain_ticks(scale, data, field)
     if nice_ticks is not None:
-        legend["values"] = nice_ticks
+        lo, hi = _extend_for_hinge(nice_ticks[0], nice_ticks[-1], hinge_val)
+        ticks = list(nice_ticks)
+        if lo < ticks[0]:
+            ticks.insert(0, lo)
+        if hi > ticks[-1]:
+            ticks.append(hi)
+        legend["values"] = _with_hinge_tick(ticks, hinge_val)
         return
     extent = _numeric_extent(data, field)
-    lo = scale.min if scale.min is not None else (extent[0] if extent else None)
-    hi = scale.max if scale.max is not None else (extent[1] if extent else None)
-    if lo is None or hi is None:
+    extent_lo = scale.min if scale.min is not None else (extent[0] if extent else None)
+    extent_hi = scale.max if scale.max is not None else (extent[1] if extent else None)
+    if extent_lo is None or extent_hi is None:
         return
-    legend["values"] = [lo, hi]
+    lo, hi = _extend_for_hinge(extent_lo, extent_hi, hinge_val)
+    legend["values"] = _with_hinge_tick([lo, hi], hinge_val)
+
+
+def _is_scheme_palette(scale: ScaleTargetConfig) -> bool:
+    """True iff ``scale``'s palette resolves to a Vega scheme string in
+    ``gradient_scale_to_vl`` (``{"scheme": ...}``, never ``{"range": ...}``)
+    -- the exact condition that function's own domainMid fallback branch
+    gates on. Shared here so a legend function's hinge extension can never
+    fire on a case the scale build itself doesn't support."""
+    return not isinstance(scale, ResolvedNamedPaletteScaleTargetConfig) and isinstance(
+        scale.palette, str
+    )
+
+
+def _extend_for_hinge(
+    lo: float, hi: float, hinge_val: float | None
+) -> tuple[float, float]:
+    """Extend ``[lo, hi]`` to include ``hinge_val``, or return it unchanged
+    when there's no hinge to extend for. Shared by every
+    ``apply_gradient_legend_endpoint_labels`` branch. ``lo``/``hi`` pass
+    through verbatim (including their own ``int`` vs ``float`` type) when
+    ``hinge_val`` is ``None`` -- callers must not pre-cast an authored int
+    bound to float, or a no-hinge scale's spec JSON gains an unrelated
+    float/int drift."""
+    if hinge_val is None:
+        return lo, hi
+    return min(lo, hinge_val), max(hi, hinge_val)
+
+
+def _with_hinge_tick(ticks: list[float], hinge_val: float | None) -> list[float]:
+    """Insert ``hinge_val`` into an ascending, already-extended tick ladder
+    when it sits strictly between the two endpoints and isn't already one
+    of the ticks — the diverging pivot earns its own labeled tick, not just
+    the two extremes."""
+    if (
+        hinge_val is None
+        or hinge_val <= ticks[0]
+        or hinge_val >= ticks[-1]
+        or hinge_val in ticks
+    ):
+        return ticks
+    return sorted([*ticks, hinge_val])
 
 
 def apply_geo_choropleth_legend_endpoint_labels(
@@ -275,6 +731,26 @@ def apply_geo_choropleth_legend_endpoint_labels(
     authored ``values`` ladder (``is not None``, so an authored empty ladder
     is respected too — see ``apply_gradient_legend_endpoint_labels``), or
     when neither bound is authored and ``scale.nice`` is True.
+
+    The upper edge reads ``peek(domain('color'))`` rather than
+    ``domain('color')[1]``: a diverging hinge can bake a 3-element resolved
+    domain (``[min, pivot, max]`` — see ``gradient_scale_to_vl``'s
+    ``domainMid`` fallback), and index ``[1]`` would then read the pivot
+    instead of the true max. ``peek`` (Vega's "last element" expression
+    function) returns the true max in both the 2- and 3-element case, so it
+    is correct whether or not a hinge is set.
+
+    ``scale.hinge`` set EXTENDS whichever labeled endpoint it falls outside
+    of — the same hinge resolution ``apply_gradient_legend_endpoint_labels``
+    uses — so the labeled endpoints always match what ``gradient_scale_to_vl``
+    actually baked. The both-authored branch extends outright (no data
+    dependency, unlike the join-drop concern above); the mixed
+    literal+signal branch extends only the literal half — the signal half
+    already reads Vega's own resolved domain, which reflects any extension
+    automatically. Unlike ``apply_gradient_legend_endpoint_labels``, this
+    does NOT insert a separate hinge TICK: doing that against a Vega
+    expression-computed legend (rather than a Python-computed list) is a
+    materially harder, separate change — left as an explicit follow-up.
     """
     legend = enc.get("legend")
     if not isinstance(legend, dict):
@@ -282,13 +758,39 @@ def apply_geo_choropleth_legend_endpoint_labels(
     if legend.get("values") is not None:
         return
     if scale.min is not None and scale.max is not None:
-        legend["values"] = [scale.min, scale.max]
+        hinge_val = _resolve_hinge_value(scale, None, None)
+        lo, hi = _extend_for_hinge(scale.min, scale.max, hinge_val)
+        legend["values"] = [lo, hi]
         return
     if scale.nice:
         return
-    lo = repr(scale.min) if scale.min is not None else "domain('color')[0]"
-    hi = repr(scale.max) if scale.max is not None else "domain('color')[1]"
-    legend["values"] = {"signal": f"[{lo}, {hi}]"}
+    # Bounds aren't both resolvable here, so "auto" can't decide
+    # zero-crossing vs. midpoint (same residual gap gradient_scale_to_vl's
+    # own domainMid fallback documents) — only an EXPLICIT numeric hinge on
+    # a SCHEME palette can still extend a literal bound directly, matching
+    # exactly the gate gradient_scale_to_vl's own domainMid fallback uses
+    # ("scheme" in vl_scale). A discrete stop list with unresolved bounds
+    # can't pivot at all there (a pre-existing, documented limitation, not
+    # something to newly fix here) — extending the legend for it anyway
+    # would label an endpoint the scale itself never renders.
+    hinge_val = (
+        float(scale.hinge)
+        if _is_scheme_palette(scale) and isinstance(scale.hinge, (int, float))
+        else None
+    )
+    min_literal = (
+        min(scale.min, hinge_val)
+        if scale.min is not None and hinge_val is not None
+        else scale.min
+    )
+    max_literal = (
+        max(scale.max, hinge_val)
+        if scale.max is not None and hinge_val is not None
+        else scale.max
+    )
+    lo_expr = repr(min_literal) if min_literal is not None else "domain('color')[0]"
+    hi_expr = repr(max_literal) if max_literal is not None else "peek(domain('color'))"
+    legend["values"] = {"signal": f"[{lo_expr}, {hi_expr}]"}
 
 
 def gap_fill_ordinal_time(
@@ -649,10 +1151,18 @@ def channel_to_encoding(
 
     if ch.mode == "gradient":
         assert ch.scale is not None
+        # data/field are withheld unless hinge is set: passing them
+        # unconditionally would also switch on _nice_domain_ticks widening
+        # for every unauthored-bound gradient channel here, a behavior
+        # change outside this branch's existing domainMin/domainMax-only
+        # contract (see gradient_scale_to_vl's docstring). hinge needs the
+        # real extent to pivot when no min/max is authored.
+        hinge_data = data if ch.scale.hinge is not None else None
+        hinge_field = ch.data_field if ch.scale.hinge is not None else None
         enc = {
             "field": ch.data_field,
             "type": "quantitative",
-            "scale": gradient_scale_to_vl(ch.scale),
+            "scale": gradient_scale_to_vl(ch.scale, hinge_data, hinge_field),
         }
         if axis_style is not None:
             ax = axis_to_vl(axis_style)

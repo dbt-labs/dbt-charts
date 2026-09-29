@@ -163,12 +163,14 @@ def _render_init_banner() -> None:
     """
     if is_plain_output():
         Console(force_terminal=False, no_color=True).print(
-            "Welcome to dbt charts — run `dct init` to start a new project."
+            "Welcome to dbt charts — run `dct init` to start a new project. "
+            "New to it, or an agent? Read `dct skills intro` first."
         )
         return
     Console().print(
         Panel(
-            "Run [bold cyan]dct init[/bold cyan] to start a new project!",
+            "Run [bold cyan]dct init[/bold cyan] to start a new project!\n"
+            "New to it, or an agent? Read [bold cyan]dct skills intro[/bold cyan] first.",
             title="Welcome to dbt charts",
             title_align="left",
             border_style="yellow",
@@ -275,7 +277,10 @@ def init_default(
         bool | None,
         typer.Option(
             "--skills/--no-skills",
-            help="Install workflow skills to agent skill directories",
+            help=(
+                "Write dbt Charts skills into this project (.agents/skills, "
+                ".claude/skills); recommended in a git repository"
+            ),
         ),
     ] = None,
     mcp: Annotated[

@@ -27,6 +27,7 @@ from dbt_charts.core.text.format_d3 import (
     Notation,
     _is_si_spec,
 )
+from dbt_charts.core.text.numeral_scale import SUB_UNIT_SCIENTIFIC_FLOOR
 
 _NOTATION_MAPS: dict[Notation, dict[str, str]] = {
     "analytic": _D3_TO_ANALYTIC,
@@ -100,3 +101,23 @@ def numeral_vega_expr(
             call = f"replace({call}, /{d3_suffix}$/, {json.dumps(house_suffix)})"
 
     return call
+
+
+def sub_unit_guarded_vega_expr(
+    value_expr: str, digit_format: str, scientific_format: str, at_least_one_expr: str
+) -> str:
+    """Paint a sub-1 value in digits, not through an SI spec's milli/micro prefix.
+
+    ``at_least_one_expr`` paints magnitudes >= 1. Below 1, ``digit_format``
+    (``sub_unit_digit_format``) applies, or ``scientific_format``
+    (``sub_unit_scientific_format``) below ``SUB_UNIT_SCIENTIFIC_FLOOR``;
+    zero stays in ``digit_format`` ("0", not "0e+0").
+    """
+    plain_e = f"format({value_expr},{json.dumps(digit_format)})"
+    scientific_e = f"format({value_expr},{json.dumps(scientific_format)})"
+    sub_one_e = (
+        f"({value_expr} !== 0 && abs({value_expr}) < "
+        f"{json.dumps(SUB_UNIT_SCIENTIFIC_FLOOR)} "
+        f"? {scientific_e} : {plain_e})"
+    )
+    return f"(abs({value_expr}) < 1 ? {sub_one_e} : {at_least_one_expr})"

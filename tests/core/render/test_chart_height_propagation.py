@@ -210,6 +210,7 @@ rows:
             20.0,
             resolved_style=resolve_style(get_theme_style()),
             render_cache={},
+            painted_canvas=None,
         )
 
         assert isinstance(layout_result, tuple), (
@@ -263,6 +264,7 @@ rows:
                 gap,
                 resolved_style=resolve_style(get_theme_style()),
                 render_cache={},
+                painted_canvas=None,
             )
 
         # First item lands at Y=0 — a no-op translate, so it's embedded with no
@@ -364,6 +366,7 @@ class TestCardPaddingHeightPropagation:
                 200.0,
                 resolved_style=resolve_style(get_theme_style()),
                 render_cache={},
+                painted_canvas=None,
             )
 
         # Vega: height returned as-is (internal padding already baked in by Vega)
@@ -397,6 +400,7 @@ class TestCardPaddingHeightPropagation:
                 200.0,
                 resolved_style=resolve_style(get_theme_style()),
                 render_cache={},
+                painted_canvas=None,
             )
 
         assert actual_height == pytest.approx(chart_height, abs=1.0), (
@@ -451,6 +455,7 @@ class TestLayoutBgRectUsesActualHeight:
                 background="#ffffff",
                 resolved_style=resolve_style(get_theme_style()),
                 render_cache={},
+                painted_canvas=None,
             )
 
         assert total_height == pytest.approx(400.0, abs=1.0)

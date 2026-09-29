@@ -220,6 +220,8 @@ def build_cartesian_axes(
     ay_is_quantitative: bool,
     ay_quantitative_for_alignment: bool | None = None,
     ay_format_raw: str | None = None,
+    *,
+    ay_floors_tick_step: bool,
 ) -> tuple[ResolvedAxisStyle, _StyleTail]:
     """Run the shared cartesian postlude: the resolved y-axis + the style tail.
 
@@ -297,6 +299,12 @@ def build_cartesian_axes(
     bool here instead. Every other family leaves this ``None`` — the two
     questions coincide there, so ``ay_is_quantitative`` alone answers both.
 
+    ``ay_floors_tick_step`` says whether the axis's own resolved format is the
+    one that paints its ticks, so a fixed-decimal format may floor Vega-Lite's
+    tick step (``build_resolved_axis``'s ``floor_tick_step``). False where the
+    paint format is overridden -- a ``stack: normalize`` axis always paints
+    percent -- or the y axis is not a measure. Required, never defaulted.
+
     ``ay_format_raw`` is the cascade's raw pre-resolve value-axis format
     (``CartesianPlan.ay_format_raw``, see ``_bake_cartesian_axes``), passed
     straight to ``build_resolved_axis``. Heatmap/histogram leave it at the
@@ -333,6 +341,7 @@ def build_cartesian_axes(
         # The tick-stub geometry rule resolves only on the x-axis (see the
         # `ax` build above) -- axis_y's own `ticks.visible` is never "auto".
         y_gridline_caps_bottom=None,
+        floor_tick_step=ay_floors_tick_step,
     )
     tail = _cartesian_style_tail(chart_style_context, ax, ay, tooltip_format_values)
     style_tail: _StyleTail = {

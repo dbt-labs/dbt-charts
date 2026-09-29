@@ -48,6 +48,8 @@ from dbt_charts.core.render.svg_utils import (
     authored_attrs,
     authored_kind_attr,
     border_dash_attrs,
+    checked_href,
+    css_color,
     escape_attr,
     extract_svg_inner_content,
     format_svg_numeric,
@@ -134,7 +136,7 @@ def _footer_attribution_svg(
     brand_run = run(right, brand_word, brand=True)
     if footer.link:
         brand_run = (
-            f'<a class="dbt-footer-link" href="{escape_attr(footer.link)}" '
+            f'<a class="dbt-footer-link" href="{escape_attr(checked_href(footer.link))}" '
             f'target="_blank" rel="noopener noreferrer">{brand_run}</a>'
         )
     parts.insert(0, brand_run)
@@ -377,14 +379,16 @@ def _paint_title_svg_fill(title_svg: str, color: str) -> str:
     # `\042` would decode into a literal `"` and break out of the attribute.
     no_style_re = re.compile(r"<text(?![^>]*\bstyle=)")
     title_svg = no_style_re.sub(
-        lambda _m: f'<text style="fill: {escape_attr(color_str)}"', title_svg
+        lambda _m: f'<text style="fill: {escape_attr(css_color(color_str))}"',
+        title_svg,
     )
 
     # Pass 2 — rewrite any existing fill: declaration inside a style attribute.
     attr_with_fill_re = re.compile(r'(style=")([^"]*\bfill\s*:\s*)[^;"]*([^"]*)(")')
     title_svg = attr_with_fill_re.sub(
         lambda m: (
-            f"{m.group(1)}{m.group(2)}{escape_attr(color_str)}{m.group(3)}{m.group(4)}"
+            f"{m.group(1)}{m.group(2)}"
+            f"{escape_attr(css_color(color_str))}{m.group(3)}{m.group(4)}"
         ),
         title_svg,
     )
@@ -574,16 +578,39 @@ def _render_text_svg(
     resolved_style: "ResolvedStyle",
     text_style: "TextStyle",
     allow_raw_html: bool = False,
+    path: str | None = None,
+    *,
+    painted_canvas: str | None,
 ) -> tuple[str, float]:
     """Render markdown text with Jinja resolution and board-link rewriting.
 
     Returns (svg_string, height).
+
+    ``painted_canvas`` is the background this text actually paints on: this
+    item's own resolved ``style.background`` composited over its ancestors',
+    all the way to the board (``composite_over_canvas``, computed by the
+    caller).
+
+    Renders before checking contrast: an invalid ``style.title.sizes`` (not
+    exactly 6 entries) is caught inside ``render_prose_svg`` with a clear
+    message, and the contrast check must never run first and raise its own,
+    less legible error on the same bad input.
     """
     from dbt_charts.core.render.board_links import get_link_context, rewrite_board_links
+    from dbt_charts.core.render.contrast_warning import check_markdown_contrast
 
     resolved = _resolve_markdown_jinja(text, variables)
     resolved = rewrite_board_links(resolved, get_link_context())
-    return render_prose_svg(resolved, width, text_style, resolved_style, allow_raw_html)
+    result = render_prose_svg(
+        resolved, width, text_style, resolved_style, allow_raw_html
+    )
+    check_markdown_contrast(
+        resolved,
+        resolved_style,
+        painted_canvas,
+        path=path,
+    )
+    return result
 
 
 def _build_board_content_items(
@@ -808,14 +835,20 @@ def _render_layout(
     *,
     render_cache: RenderCache,
     error_collector: list[Diagnostic] | None = None,
+    painted_canvas: str | None,
 ) -> tuple[str, float]:
     """Render layout based on type (single dispatch point).
 
     This is the single source of truth for layout type dispatch.
 
+    ``painted_canvas`` is this scope's own composited background (see
+    ``composite_over_canvas``) — forwarded to every item so a nested board
+    among ``items`` can composite its own background over it.
+
     Returns:
         (svg_elements_string, actual_layout_height)
     """
+    from dbt_charts.core.render.contrast_warning import composite_over_canvas
     from dbt_charts.core.render.layouts import (
         render_cols_layout,
         render_grid_layout,
@@ -830,6 +863,15 @@ def _render_layout(
     items = layout.items
     resolved_style = board.style  # ResolvedBoard.style is the ResolvedStyle
 
+    # Every layout kind below paints its own ``_bg_rect(background)`` under
+    # its items -- the canvas forwarded to them must reflect that paint too,
+    # not just the canvas this scope itself received.
+    item_canvas = (
+        composite_over_canvas(background, painted_canvas)
+        if background
+        else painted_canvas
+    )
+
     if layout.type == "cols":
         result = render_cols_layout(
             items,
@@ -843,6 +885,7 @@ def _render_layout(
             resolved_style=resolved_style,
             render_cache=render_cache,
             error_collector=error_collector,
+            painted_canvas=item_canvas,
         )
     elif layout.type == "grid":
         result = render_grid_layout(
@@ -857,6 +900,7 @@ def _render_layout(
             resolved_style=resolved_style,
             render_cache=render_cache,
             error_collector=error_collector,
+            painted_canvas=item_canvas,
         )
     elif layout.type == "tabs":
         result = render_tabs_layout(
@@ -874,6 +918,7 @@ def _render_layout(
             resolved_style=resolved_style,
             render_cache=render_cache,
             error_collector=error_collector,
+            painted_canvas=item_canvas,
         )
     else:
         # Default to rows (handles "rows" and any unknown type)
@@ -889,6 +934,7 @@ def _render_layout(
             resolved_style=resolved_style,
             render_cache=render_cache,
             error_collector=error_collector,
+            painted_canvas=item_canvas,
         )
 
     return result
@@ -1022,6 +1068,11 @@ def render_board_svg(
     font_family = resolved_style.font.family
     assert font_family is not None, "cascade should populate style.font.family"
     board_background = resolved_style.background
+    # The root board has no ancestor, so its own background IS the painted
+    # canvas everything inside it starts from.
+    from dbt_charts.core.render.contrast_warning import composite_over_canvas
+
+    painted_canvas = composite_over_canvas(resolved_style.background, None)
     # Board config is baked into ResolvedBoard, so no config lookup here. These are
     # None only on nested boards, which render through render_nested_board; on the
     # root path build_resolved_board sets all three unconditionally. Falling back
@@ -1110,6 +1161,8 @@ def render_board_svg(
             resolved_style=resolved_style,
             text_style=resolved_style.text,
             allow_raw_html=board.html_policy == "trusted-raw",
+            path="text",
+            painted_canvas=painted_canvas,
         )
 
     # Render variable controls for root-level variables only (skip when merged into title band).
@@ -1172,6 +1225,7 @@ def render_board_svg(
             resolved_style.background,
             render_cache=render_cache,
             error_collector=error_collector,
+            painted_canvas=painted_canvas,
         )
 
     # Combine title, content, variables, and layout into positioned SVG groups.
@@ -1375,6 +1429,7 @@ def render_nested_board(
     source_path: str = "",
     render_cache: RenderCache,
     error_collector: list[Diagnostic] | None = None,
+    painted_canvas: str | None,
 ) -> tuple[str, float]:
     """Render a nested board.
 
@@ -1387,12 +1442,18 @@ def render_nested_board(
         available_height: Pre-allocated slot height from parent layout (e.g. cols max
                           height). When provided, the board renders at least this tall so
                           all siblings in a cols row share the same height.
+        painted_canvas: The parent's own painted canvas (see
+            ``composite_over_canvas``) — this board's own ``style.background``
+            composites over it to produce the canvas its own text and
+            children paint on.
 
     Returns:
         (svg_string, actual_height) — actual_height is derived from rendered content.
     """
+    from dbt_charts.core.render.contrast_warning import composite_over_canvas
 
     resolved_style = board.style  # ResolvedBoard.style is the ResolvedStyle
+    own_canvas = composite_over_canvas(resolved_style.background, painted_canvas)
 
     gap = resolved_style.gap if resolved_style.gap is not None else 0.0
     ep = _effective_padding(resolved_style)
@@ -1464,6 +1525,8 @@ def render_nested_board(
             resolved_style=resolved_style,
             text_style=resolved_style.text,
             allow_raw_html=board.html_policy == "trusted-raw",
+            path=source_path or None,
+            painted_canvas=own_canvas,
         )
 
     # Read-only strip for this nested board's local variables, plus its control
@@ -1499,6 +1562,7 @@ def render_nested_board(
         authored_bg,
         render_cache=render_cache,
         error_collector=error_collector,
+        painted_canvas=own_canvas,
     )
 
     # Apply board-level title color overrides before building items. Painting

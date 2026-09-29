@@ -489,42 +489,137 @@ class TestInterpolateScaleColorDiverging:
             f"pos={pos!r} dist={pos_dist:.2f}, neg={neg!r} dist={neg_dist:.2f}"
         )
 
-    # Fix 2: even-length diverging palette must raise
-    def test_even_length_palette_raises(self) -> None:
-        with pytest.raises(ValueError, match="odd"):
-            interpolate_scale_color(
-                0.0,
-                -1.0,
-                1.0,
-                ["#0000ff", "#ffffff", "#ffeeee", "#ff0000"],
-                hinge=0.0,
-            )
+    # An even-length diverging palette is valid: the hinge sits at the
+    # boundary between the two center stops (a 50/50 blend), not on a single
+    # shared neutral stop the way an odd-length palette has one.
+    def test_even_length_palette_hinge_is_boundary_blend(self) -> None:
+        from dbt_charts.core.render.chart.table_support import _lerp_color
 
-    def test_two_stop_palette_raises(self) -> None:
-        with pytest.raises(ValueError, match="odd"):
-            interpolate_scale_color(
-                0.0,
-                -1.0,
-                1.0,
-                ["#ff0000", "#0000ff"],
-                hinge=0.0,
-            )
+        palette = ["#0000ff", "#ffffff", "#ffeeee", "#ff0000"]
+        expected_neutral = _lerp_color(palette[1], palette[2], 0.5)
+        at_hinge = interpolate_scale_color(0.0, -1.0, 1.0, palette, hinge=0.0)
+        assert at_hinge == expected_neutral
 
-    # Fix 3: hinge outside [lo, hi] clamps
-    def test_hinge_above_hi_clamps(self) -> None:
-        # hinge=300 but domain is [0, 200]; should clamp to 200.
-        # At value=100 (middle of domain), with hinge clamped to 200,
-        # we are on the neg arm at distance 100 from hinge=200.
-        result = interpolate_scale_color(
-            100.0, 0.0, 200.0, self._DIV_PALETTE, hinge=300.0
+    def test_two_stop_palette_hinge_is_boundary_blend(self) -> None:
+        from dbt_charts.core.render.chart.table_support import _lerp_color
+
+        palette = ["#ff0000", "#0000ff"]
+        expected_neutral = _lerp_color(palette[0], palette[1], 0.5)
+        at_hinge = interpolate_scale_color(0.0, -1.0, 1.0, palette, hinge=0.0)
+        assert at_hinge == expected_neutral
+        # Each extreme still fully saturates at the real domain bound.
+        assert interpolate_scale_color(-1.0, -1.0, 1.0, palette, hinge=0.0) == "#ff0000"
+        assert interpolate_scale_color(1.0, -1.0, 1.0, palette, hinge=0.0) == "#0000ff"
+
+    def test_even_length_palette_is_continuous_through_the_boundary(self) -> None:
+        """No jump at the hinge: a value just below and just above the
+        boundary must land close to the same shared blend color, not the
+        two center stops' own (unblended) colors."""
+        from dbt_charts.core.render.chart.table_support import _lerp_color, _parse_hex
+
+        palette = ["#0000ff", "#ffffff", "#ffeeee", "#ff0000"]
+        neutral = _parse_hex(_lerp_color(palette[1], palette[2], 0.5))
+        below = _parse_hex(
+            interpolate_scale_color(-0.01, -1.0, 1.0, palette, hinge=0.0)
         )
-        assert result != ""  # just verify it doesn't crash with garbage
+        above = _parse_hex(interpolate_scale_color(0.01, -1.0, 1.0, palette, hinge=0.0))
+        for n, b, a in zip(neutral, below, above, strict=True):
+            assert abs(b - n) <= 1
+            assert abs(a - n) <= 1
 
-    def test_hinge_below_lo_clamps(self) -> None:
+    def test_single_stop_palette_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least 2"):
+            interpolate_scale_color(0.0, -1.0, 1.0, ["#ff0000"], hinge=0.0)
+
+    # A hinge outside [lo, hi] now extends the domain to include it, instead
+    # of clamping the hinge onto the nearer bound.
+    def test_hinge_above_hi_extends_domain_instead_of_clamping(self) -> None:
+        """Discriminates old (clamp) vs new (extend) behavior directly: the
+        OLD code clamped hinge=300 down to hi=200, so value=200 (==hi)
+        landed exactly AT the clamped hinge, distance 0 — the exact neutral
+        stop. The NEW code extends the domain to [0, 300] instead, so
+        value=200 is still 100 away from the real hinge (300) — genuinely
+        graduated, never neutral."""
         result = interpolate_scale_color(
-            100.0, 0.0, 200.0, self._DIV_PALETTE, hinge=-50.0
+            200.0, 0.0, 200.0, self._DIV_PALETTE, hinge=300.0
         )
-        assert result != ""
+        assert result != "#ffffff"  # old-code clamp collapsed this to neutral
+        assert result != self._DIV_PALETTE[0]  # not fully saturated either
+
+    def test_hinge_below_lo_extends_domain_instead_of_clamping(self) -> None:
+        """Mirror of the above: OLD code clamped hinge=-50 up to lo=0, so
+        value=0 (==lo) was the clamped hinge itself, distance 0 → neutral.
+        NEW code extends the domain down to -50, so value=0 is still 50
+        away from the real hinge."""
+        result = interpolate_scale_color(
+            0.0, 0.0, 200.0, self._DIV_PALETTE, hinge=-50.0
+        )
+        assert result != "#ffffff"  # old-code clamp collapsed this to neutral
+        assert result != self._DIV_PALETTE[-1]
+
+    def test_hinge_outside_range_paints_graduated_not_saturated_color(self) -> None:
+        """A board sharing one diverging palette across charts needs
+        hinge=0 to mean 0 is neutral even on a chart whose own data never
+        reaches zero. Extending the domain (not
+        clamping the hinge) means a value halfway up the real data range
+        lands roughly halfway up the extended arm, not near full
+        saturation."""
+        halfway = interpolate_scale_color(
+            750.0, 500.0, 1000.0, self._DIV_PALETTE, hinge=0.0
+        )
+        near_hinge = interpolate_scale_color(
+            510.0, 500.0, 1000.0, self._DIV_PALETTE, hinge=0.0
+        )
+        far_from_hinge = interpolate_scale_color(
+            990.0, 500.0, 1000.0, self._DIV_PALETTE, hinge=0.0
+        )
+        near_dist = sum(
+            (a - b) ** 2
+            for a, b in zip(_parse_hex(near_hinge), _parse_hex("#ffffff"), strict=True)
+        )
+        half_dist = sum(
+            (a - b) ** 2
+            for a, b in zip(_parse_hex(halfway), _parse_hex("#ffffff"), strict=True)
+        )
+        far_dist = sum(
+            (a - b) ** 2
+            for a, b in zip(
+                _parse_hex(far_from_hinge), _parse_hex("#ffffff"), strict=True
+            )
+        )
+        assert near_dist < half_dist < far_dist
+        # The sharp discriminator: OLD code clamped hinge=0 up to lo=500,
+        # so value=500 (==lo) was exactly the clamped hinge, distance 0 →
+        # the exact neutral stop. NEW code extends the domain down to 0
+        # instead, so value=500 is still 500 away from the real hinge.
+        at_lo = interpolate_scale_color(
+            500.0, 500.0, 1000.0, self._DIV_PALETTE, hinge=0.0
+        )
+        assert at_lo != "#ffffff"
+
+    def test_value_clamp_stays_at_true_data_bound_not_extended_hinge(self) -> None:
+        """The domain EXTENSION is about where the neutral pivot sits, not
+        about widening what counts as in-range data: a value below the
+        real data minimum still clamps to that real minimum, even though
+        the hinge extension has pulled the palette's own domain further out.
+
+        Discriminates old vs new: OLD code clamped hinge=0 up to lo=500, so
+        both values (200 clamped to 500, and 500 itself) landed exactly AT
+        the clamped hinge — the exact neutral stop, "#ffffff" either way.
+        NEW code extends the domain down to 0, so the shared clamped value
+        (500) is 500 away from the real hinge — genuinely graduated, not
+        neutral. The equality itself (value-clamp lands on the same true
+        bound regardless of extension) holds under both, so it's paired
+        here with the neutral-color check that only the new behavior fails.
+        """
+        below_data_min = interpolate_scale_color(
+            200.0, 500.0, 1000.0, self._DIV_PALETTE, hinge=0.0
+        )
+        at_data_min = interpolate_scale_color(
+            500.0, 500.0, 1000.0, self._DIV_PALETTE, hinge=0.0
+        )
+        assert below_data_min == at_data_min
+        assert below_data_min != "#ffffff"
 
 
 # ---------------------------------------------------------------------------

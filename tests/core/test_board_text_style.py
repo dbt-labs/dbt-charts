@@ -457,6 +457,7 @@ style:
             400.0,
             text_style=text_style,
             resolved_style=resolve_style(get_theme_style()),
+            painted_canvas=None,
         )
         assert "<foreignObject" not in svg
         assert "<svg" in svg
@@ -478,6 +479,7 @@ style:
             container_width,
             text_style=resolved_style.text,
             resolved_style=resolved_style,
+            painted_canvas=None,
         )
 
         assert f'width="{container_width:g}"' in svg

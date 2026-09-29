@@ -124,6 +124,7 @@ class TestRenderedSVGContainsNotoEmoji:
             400.0,
             resolved_without_emoji_family,
             text_style=resolved_without_emoji_family.text,
+            painted_canvas=None,
         )
 
         body_rule = re.search(

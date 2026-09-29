@@ -112,7 +112,7 @@ def _emit_wide_scatter(
     wide = _wide_scatter_fold(chart, data)
     y_axis = measure_axis_to_vl(ay, data, chart.wide_measures)
     y_axis = compose_axis_label_expr(y_axis, ay.ruler, ay)
-    bake_tick_ladder(y_axis, ay.tick_values)
+    bake_tick_ladder(y_axis, ay)
     y_scale = emit_resolved_scale_vl(ay.scale)
     if "domain" not in y_scale:
         # Exact headroom-applied bounds baked at resolve(); an authored
@@ -341,7 +341,7 @@ class ScatterEmitter:
                 )
             # orient is baked at resolve time (ay.position is concrete, never "auto")
 
-            bake_tick_ladder(y_axis, ay.tick_values)
+            bake_tick_ladder(y_axis, ay)
 
             y_scale = emit_resolved_scale_vl(ay.scale)
             if y_type == "quantitative" and "domain" not in y_scale:

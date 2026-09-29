@@ -484,6 +484,7 @@ def _emit_histogram(
             chart.style.axis_y,
         ),
     }
+    bake_tick_ladder(y_enc["axis"], chart.style.axis_y)
 
     encoding: dict[str, Any] = {"x": x_enc, "y": y_enc}
     transforms: list[VLDict] = []
@@ -1101,7 +1102,7 @@ def _emit_vertical(
         ) or ay_scale_zero is True
         authored_domain = authored_measure_domain(ay)
         y_ticks: list[float] | None = list(ay.tick_values) if ay.tick_values else None
-        bake_tick_ladder(ay_vl, ay.tick_values)
+        bake_tick_ladder(ay_vl, ay)
 
         if authored_domain is not None:
             y_scale = {"domain": list(authored_domain)}
@@ -1496,7 +1497,7 @@ def _emit_horizontal(
     # The measure channel here is VL x, not y — bake the same domain-spanning
     # tick ladder the vertical path bakes, or two bars sharing a domain would
     # read on different rulers depending on orientation alone.
-    bake_tick_ladder(ay_vl, ay.tick_values)
+    bake_tick_ladder(ay_vl, ay)
 
     # Measure axis scale: anchored at zero by default; respects authored scale.zero.
     # Replicate V1: chart-level band_padding_inner (now baked into ax.scale via

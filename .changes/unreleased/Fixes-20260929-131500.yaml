@@ -1,0 +1,5 @@
+kind: Fixes
+body: A table whose requested page exceeded its page count (e.g. after a filter shrank the data) showed the last page, but Previous targeted the stale out-of-range page. The paginator now derives its targets from the page actually shown.
+time: 2026-09-29T13:15:00.000000-07:00
+custom:
+  DbtChartsIssue: 51

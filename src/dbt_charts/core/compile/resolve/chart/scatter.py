@@ -228,6 +228,7 @@ def _resolve_scatter(
             zero_anchor=_scatter_anchored,
             authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
             scale=multiples_scale,
+            is_quantitative=y_ch_type == "quantitative",
         )
     else:
         scatter_ticks = _CartesianTickResolution((), None)
@@ -283,6 +284,7 @@ def _resolve_scatter(
         tooltip_format_values=tooltip_format_values,
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=y_ch_type == "quantitative",
+        ay_floors_tick_step=True,
         zero_anchor=_scatter_anchored,
         # Scatter has no endpoint-label rail (naming.py never routes it
         # through EndpointLabelFeature), so its baked domain_min is never at

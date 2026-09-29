@@ -96,6 +96,8 @@ exclude = [
     # (tach 0.35.0 only reads [project] dependencies, not optional-deps).
     # Imported by file_source_materializer.py when parquet sources are used.
     "pyarrow",
+    # `streamlit` is an optional extra, which tach does not read.
+    "streamlit",
     # `filelock` is a test-only dev dep (declared in root pyproject.toml
     # dev group). Used by dbt-charts/tests/integration/conftest.py to guard
     # xdist TOCTOU races when creating example fixture DuckDB files.
@@ -142,6 +144,7 @@ depends_on = [
     "dbt_charts.core.dbt_manifest",
     "dbt_charts.core.font_measure",
     "dbt_charts.core.fonts",
+    "dbt_charts.core.links",
     "dbt_charts.core.numeric",
     "dbt_charts.core.utils",
     "dbt_charts.core.text",
@@ -172,6 +175,14 @@ layer = "core"
 # compile nor render reaches into the other's layer to validate a foreign
 # color string.
 depends_on = ["dbt_charts.core.diagnostics"]
+
+[[modules]]
+path = "dbt_charts.core.links"
+layer = "core"
+# leaf node — link-scheme safety (link_scheme/is_safe_href) shared by
+# compile and render, same shape as colors.py above; see the module
+# docstring in core/links.py.
+depends_on = []
 
 [[modules]]
 path = "dbt_charts.core.attribution"
@@ -249,6 +260,7 @@ depends_on = [
     "dbt_charts.core.colors",
     "dbt_charts.core.diagnostics",
     "dbt_charts.core.font_measure",
+    "dbt_charts.core.links",
     "dbt_charts.core.numeric",
     "dbt_charts.core.fonts",
     "dbt_charts.core.text",

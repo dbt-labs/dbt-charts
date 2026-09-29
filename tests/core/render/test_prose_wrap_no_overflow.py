@@ -79,7 +79,7 @@ def test_prose_never_paints_past_the_viewport_that_clips_it(theme: str) -> None:
     lines_checked = 0
     for width in _WIDTHS:
         svg, _height = _render_text_svg(
-            _PROSE, {}, width, resolved, text_style=resolved.text
+            _PROSE, {}, width, resolved, text_style=resolved.text, painted_canvas=None
         )
         width_match = _SVG_WIDTH.search(svg)
         assert width_match, f"rendered block at width {width} has no nested <svg width>"

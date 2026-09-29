@@ -109,6 +109,7 @@ def build_adapter_registry(
     observers: list[WarehouseObserver] | None = None,
     file_materializer: FileSourceMaterializer | None = None,
     file_materializer_factory: Callable[[], FileSourceMaterializer] | None = None,
+    extra_adapters: list[BaseAdapter] | None = None,
 ) -> AdapterRegistry:
     """Build an AdapterRegistry with standard adapters.
 
@@ -160,6 +161,10 @@ def build_adapter_registry(
             be built only on first use. Exactly one of the two is normally
             set; passing neither leaves file-source queries refused by
             ``AdapterRegistry.execute``.
+        extra_adapters: Host-supplied adapters registered before every
+            standard adapter, so each wins first-match-wins for whatever source
+            it claims. ``allowed_types`` gates these too. The registry owns
+            them: ``close()`` closes any that define it.
     """
     from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
     from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
@@ -179,6 +184,10 @@ def build_adapter_registry(
 
     def _should_register(types: set[str]) -> bool:
         return allowed_types is None or bool(types & allowed_types)
+
+    for adapter in extra_adapters if extra_adapters is not None else []:
+        if _should_register(adapter.supported_types):
+            registry.register(adapter)
 
     # Relative DuckDB/SQLite paths root against the project directory — only a
     # FilesystemProject has one. Any other host (Cloud's git-blob store, an

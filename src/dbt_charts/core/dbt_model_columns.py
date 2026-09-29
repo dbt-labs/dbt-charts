@@ -197,7 +197,7 @@ def _output_columns(sql: str, dialect: str | None) -> ModelColumns:
     return ModelColumns(columns=distinct.pop())
 
 
-def _unwrap_select(expr: exp.Expression) -> exp.Select | None:
+def _unwrap_select(expr: exp.Expr) -> exp.Select | None:
     """Peel set-operation arms (columns come from the first arm) and a bare
     subquery down to the ``SELECT`` whose projection list decides the
     statement's output columns, or ``None`` if it never bottoms out at one.
@@ -209,7 +209,7 @@ def _unwrap_select(expr: exp.Expression) -> exp.Select | None:
     return expr if isinstance(expr, exp.Select) else None
 
 
-def _carries_own_with(expr: exp.Expression) -> bool:
+def _carries_own_with(expr: exp.Expr) -> bool:
     """True if `expr` — or any set-operation/subquery layer ``_unwrap_select``
     would peel through on the way to its underlying ``SELECT`` — carries its
     own ``WITH`` clause (e.g. a set-operation arm defining a CTE, not just
@@ -230,7 +230,7 @@ def _carries_own_with(expr: exp.Expression) -> bool:
 
 
 def _statement_columns(
-    statement: exp.Expression, via_dbt: frozenset[str]
+    statement: exp.Expr, via_dbt: frozenset[str]
 ) -> frozenset[str] | str:
     """One statement's output column names, or why they cannot be known.
 

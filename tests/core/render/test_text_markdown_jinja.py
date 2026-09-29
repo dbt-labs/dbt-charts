@@ -25,6 +25,7 @@ text: "{{ segment }}"
         500.0,
         resolved_style=resolve_style(get_theme_style()),
         text_style=resolve_style(get_theme_style()).text,
+        painted_canvas=None,
     )
 
     text_content = _svg_text_content(svg)

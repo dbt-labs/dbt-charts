@@ -43,17 +43,27 @@ from dbt_charts.core.render.converters.png import to_png
 from dbt_charts.core.render.errors import FormatError
 from dbt_charts.core.render.font_support import register_vl_convert_fonts
 from dbt_charts.core.render.svg_cache import active_svg_cache, svg_cache_key
-from dbt_charts.core.render.svg_utils import authored_kind_attr, escape_attr
+from dbt_charts.core.render.svg_utils import (
+    authored_kind_attr,
+    checked_href,
+    escape_attr,
+)
 
-# Strip sentinel prefix from vl_convert-rendered chart href <a> elements.
-# vl_convert uses xlink:href and mangles relative URLs, so we embed a sentinel
-# prefix that we can detect and strip here. The prefix is defined as
-# _HREF_SENTINEL in render/chart/features/click_interactivity.py — change both.
-_SENTINEL_HREF_RE = re.compile(r'<a xlink:href="http://dct\.invalid([^"]*)"')
+# Every <a xlink:href="..."> vl_convert emits for chart click interactivity.
+# vl_convert uses xlink:href and mangles relative URLs, so a *relative* chart
+# link gets a sentinel prefix (embedded so vl_convert's own sanitizer sees a
+# harmless absolute http(s) URL) that this function detects and strips. An
+# absolute/template-first link (https://…, ./…, #…) never gets that sentinel
+# and never passes through Python before Vega emits it — this is the only
+# place either shape reaches a Python scheme check, so every match here runs
+# through checked_href, sentinel or not.
+_XLINK_HREF_RE = re.compile(r'<a xlink:href="([^"]*)"')
+_SENTINEL_PREFIX = "http://dct.invalid"
 
 
 def _fix_chart_click_hrefs(svg: str) -> str:
-    """Convert sentinel xlink:href to plain href in SVG <a> elements.
+    """Convert sentinel xlink:href to plain href in SVG <a> elements, and
+    scheme-check every xlink:href (sentinel or not).
 
     Converts ``<a xlink:href="http://dct.invalid/path?q=v">``
     to ``<a href="/path?q=v">`` so variables.js can intercept variable-update
@@ -71,12 +81,16 @@ def _fix_chart_click_hrefs(svg: str) -> str:
         # attribute value (e.g. "&" -> "&amp;" between query params) --
         # unescape before resolve_href (which expects a raw URL) and before
         # escape_attr re-escapes it, or a two-param link doubles to &amp;amp;.
-        url = html.unescape(m.group(1))
+        raw = html.unescape(m.group(1))
+        if not raw.startswith(_SENTINEL_PREFIX):
+            checked_href(raw)
+            return m.group(0)
+        url = raw[len(_SENTINEL_PREFIX) :]
         if ctx is not None:
             url = resolve_href(url, ctx)
-        return f'<a href="{escape_attr(url)}"'
+        return f'<a href="{escape_attr(checked_href(url))}"'
 
-    return _SENTINEL_HREF_RE.sub(_replace, svg)
+    return _XLINK_HREF_RE.sub(_replace, svg)
 
 
 # Inject stroke-linecap="round" on legend-symbol <path> elements emitted by

@@ -1042,11 +1042,7 @@ class EndpointLabelFeature:
                         ERR_ENDPOINT_LABELS_NEGATIVE_STACK, chart_id=chart.id
                     )
                 stack_mode = chart.stack or "zero"
-                stack_order = (
-                    chart.style.stack_order
-                    if isinstance(chart, ResolvedBarChart)
-                    else None
-                )
+                stack_order = chart.style.stack_order
                 # Read off the emitted encoding, not re-derived from the
                 # chart class: the rail has to rank columns the same way the
                 # axis does. Vega-Lite applies a field sort to a DISCRETE

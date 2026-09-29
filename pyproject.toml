@@ -28,6 +28,7 @@ dev = [
     "google-cloud-bigquery>=3.33.0",  # BigQuery warehouse-check tests
     "markdown>=3.0",  # Markdown reference and fence tests
     "mcp>=1.0.0,<2",  # MCP server tests
+    "streamlit>=1.51.0",  # Streamlit integration tests
     "brotli>=1.2.0",  # FontTools WOFF2 inspection tests
     "openai>=1.0.0",  # OpenAI client construction tests
     "ruff>=0.16.2",  # Static-rule tests invoke Ruff directly
@@ -103,11 +104,13 @@ dependencies = [
     # have no 6.x module-level equivalent). The import is unguarded, so
     # `dct render --format terminal` raises AttributeError under 6.x — a runtime
     # break for wheel consumers, not just a type-checker complaint, which is why
-    # this cap is a published bound (unlike the type-only openai/sqlglot caps in
+    # this cap is a published bound (unlike the type-only openai cap in
     # [tool.uv] below).
     "plotext>=5.0.0,<6",
     "rich>=13.0.0",
-    "sqlglot>=28.0.0",
+    # 30.x split the node hierarchy into Expr/Expression; core annotates
+    # against exp.Expr, which 28.x does not define.
+    "sqlglot>=30.0.0",
     "duckdb>=1.0.0",  # SET file_search_path (duckdb_adapter relative-path resolution)
     # core/execute/file_source_materializer.py parses CSV/Parquet file sources
     # via pyarrow.csv / pyarrow.parquet — load-bearing, not optional. No
@@ -205,6 +208,10 @@ server = [
     "uvicorn>=0.23.0",
 ]
 
+streamlit = [
+    "streamlit>=1.51.0",
+]
+
 mkdocs-plugin = [
     "mkdocs>=1.4.0",
 ]
@@ -255,8 +262,7 @@ markers = [
 # constraint-dependencies from the workspace root, so these entries protect
 # the standalone export, where dbt-charts is its own root. The root
 # pyproject.toml carries the same numpy/pyarrow/openai ceilings for the
-# monorepo's shared lock; sqlglot appears only here because libs/asql already
-# bounds it for the monorepo but isn't in the export.
+# monorepo's shared lock.
 constraint-dependencies = [
     # Transitive only (duckdb's stub surface pulls it in) — no direct
     # import in src/dbt_charts needs it. numpy>=2.5 ships __init__.pyi with
@@ -285,13 +291,10 @@ constraint-dependencies = [
     # the 2.x line today; this ceiling is what keeps the next re-lock from
     # walking into 3.x before those mocks are ported off httpx.
     "openai<3",
-    # sqlglot 30.x reshaped its expression type surface (Expr vs Expression,
-    # Query no longer assignable where an Expression is expected) and breaks
-    # core/column_refs.py under pyright. libs/asql already bounds the monorepo
-    # to sqlglot 28.x (>=28.0.0,<29.0.0) but isn't in the OSS export, so this
-    # entry is what keeps a re-lock of oss/uv.lock on that same 28.x line the
-    # monorepo type-checks against.
-    "sqlglot<29",
+    # sqlglot majors reshape the expression type surface (28 -> 30 did); this
+    # keeps a re-lock of oss/uv.lock on the major the monorepo type-checks
+    # against, the same ceiling libs/asql publishes for the shared lock.
+    "sqlglot<31",
 ]
 cache-keys = [
     { file = "pyproject.toml" },

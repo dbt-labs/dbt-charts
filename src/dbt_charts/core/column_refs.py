@@ -148,7 +148,7 @@ def _substitute_dbt_calls(sql: str) -> tuple[str, frozenset[str]] | None:
 
 def parse_sql_statements(
     sql: str, dialect: str | None
-) -> tuple[list[exp.Expression], frozenset[str]] | str:
+) -> tuple[list[exp.Expr], frozenset[str]] | str:
     """Parsed statements of the all-branches skeleton, or the failure reason.
 
     The shared front half of every static SQL read in the column-drift story:
@@ -304,9 +304,7 @@ def _restates_an_output_column(col: exp.Column) -> bool:
     )
 
 
-def _collect(
-    statement: exp.Expression, dialect: str | None, refs: QueryColumnRefs
-) -> None:
+def _collect(statement: exp.Expr, dialect: str | None, refs: QueryColumnRefs) -> None:
     # COLUMNS() selects by pattern, not by name — and the regex/lambda
     # spellings carry no Star node, so the star check below can't see them.
     # Ruled on first so every COLUMNS() spelling shares this reason.

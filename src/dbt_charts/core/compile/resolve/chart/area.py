@@ -510,6 +510,7 @@ def _resolve_area(
             zero_anchor=zero_anchored_area,
             authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
             scale=multiples_scale,
+            is_quantitative=True,  # area's y is always the measure
         )
     # domain_max/min stay None for stacked area: Vega-Lite owns the stacked
     # domain, and baking a nice-rounded ladder rung as domainMax would clip
@@ -543,6 +544,7 @@ def _resolve_area(
         # Area semantics fix x=dimension, y=value -- see _validate_area_encoding.
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=True,
+        ay_floors_tick_step=resolved_stack != "normalize",
         zero_anchor=zero_anchored_area,
         # A non-stacked, multi-series (color or wide) area with
         # endpoint_labels.visible renders its label pane as a second,
@@ -742,6 +744,7 @@ def _resolve_area(
                 width,
                 chart_local_style_context.ink_canvas,
             ),
+            stack_order=area.stack_order,
             area_mark=resolved_area_mark,
             line_mark=resolved_line_mark,
             point_mark=area.marks.point,

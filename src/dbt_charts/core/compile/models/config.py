@@ -404,6 +404,18 @@ class ChartRenderingConfig(ConfigNode):
         # default_config.yml comment for the practical ceiling.
         label_ink_min_contrast: float = Field(ge=1)
 
+    class TextContrastConfig(ConfigNode):
+        """WCAG 2.1 contrast floor for WARN-LOW-TEXT-CONTRAST.
+
+        The one config node the detector reads for a text block's heading
+        and body ink -- see ``render/contrast_warning.py``.
+        ``large_text_min_ratio`` applies under WCAG's own large-text
+        exception: >=24px at any weight, or >=18.67px (14pt) bold.
+        """
+
+        min_ratio: float = Field(ge=1)
+        large_text_min_ratio: float = Field(ge=1)
+
     pie: PieConfig
     bar: BarConfig
     plot_height_floor: PlotHeightFloorConfig
@@ -418,6 +430,7 @@ class ChartRenderingConfig(ConfigNode):
     legend: LegendConfig
     hover_emphasis: HoverEmphasisConfig
     color_variants: ColorVariantsConfig
+    text_contrast: TextContrastConfig
 
 
 class InspectorConfig(ConfigNode):

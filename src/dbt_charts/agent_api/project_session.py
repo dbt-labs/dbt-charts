@@ -54,8 +54,11 @@ from dbt_charts.core.render.board_links import LinkContext
 from dbt_charts.core.render.svg_cache import RenderedSvgCache, svg_cache_scope
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.board import BoardRenderResult
+    from dbt_charts.core.execute.adapters.base import BaseAdapter
     from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
     from dbt_charts.core.execute.source_resolver import SourceResolver
     from dbt_charts.core.inspect.query_validator import RelationshipContext
@@ -88,6 +91,7 @@ class ProjectSession:
     _allow_external_access_in_readonly: bool
     _resolver: SourceResolver | None
     _file_materializer: FileSourceMaterializer | None
+    _extra_adapters_factory: Callable[[], list[BaseAdapter]] | None
 
     def __init__(
         self,
@@ -112,6 +116,7 @@ class ProjectSession:
         self._allow_external_access_in_readonly = False
         self._resolver = None
         self._file_materializer = file_materializer
+        self._extra_adapters_factory = None
 
     @classmethod
     def open(
@@ -163,6 +168,7 @@ class ProjectSession:
         duckdb_config: dict[str, Any] | None = None,
         allow_external_access_in_readonly: bool = False,
         file_materializer: FileSourceMaterializer | None = None,
+        extra_adapters_factory: Callable[[], list[BaseAdapter]] | None = None,
     ) -> Self:
         """Construct a ProjectSession from a pre-built Project.
 
@@ -179,7 +185,18 @@ class ProjectSession:
         for this session, so ``close()`` releases its connections. Never set
         this for a registry the caller (or another session) reuses afterward —
         e.g. a warm registry shared across requests must stay caller-owned.
+
+        ``extra_adapters_factory`` builds the adapters registered ahead of the
+        standard ones (see ``build_adapter_registry``). It is a factory because
+        the registry closes its adapters and ``refresh()`` builds a new registry:
+        each build gets adapters of its own. Passing it alongside an injected
+        ``adapter_registry`` raises: that registry is already composed.
         """
+        if adapter_registry is not None and extra_adapters_factory is not None:
+            raise ValueError(
+                "extra_adapters_factory cannot be combined with an injected "
+                "adapter_registry; register the adapters on that registry instead."
+            )
         session = cls(
             project=project,
             cache=cache,
@@ -190,6 +207,7 @@ class ProjectSession:
         )
         session._duckdb_config = duckdb_config
         session._allow_external_access_in_readonly = allow_external_access_in_readonly
+        session._extra_adapters_factory = extra_adapters_factory
         return session
 
     @classmethod
@@ -244,6 +262,11 @@ class ProjectSession:
             file_materializer=self._file_materializer,
             file_materializer_factory=resolve_local_file_materializer_factory(
                 self.project, self._file_materializer
+            ),
+            extra_adapters=(
+                None
+                if self._extra_adapters_factory is None
+                else self._extra_adapters_factory()
             ),
         )
 

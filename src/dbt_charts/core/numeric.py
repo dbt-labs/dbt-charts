@@ -32,11 +32,28 @@ def nice_tick_values(
     domain_min: float,
     domain_max: float,
     target_count: int,
+    *,
+    min_step: float | None = None,
 ) -> list[float]:
     """Return <= target_count tick values at a "nice" step: 1, 2, or 5 x 10^k.
 
     This mirrors the spirit of d3-scale's tick algorithm, but enforces an upper
     bound on the number of ticks.
+
+    ``min_step``, when given, floors the chosen step: a fixed-decimal axis
+    format (``tick_min_step_for_format``, ``compile/format.py``) can't paint
+    ticks finer than its own precision as distinct labels, so a ladder step
+    below that floor is bumped up to it. ``min_step`` is always a bare power
+    of ten (``10 ** -precision``), which is itself one of this function's own
+    "nice" candidates, so a bumped step stays nice.
+
+    The floored ladder's own rounded extent may reach past ``[domain_min,
+    domain_max]`` on either side, same as an unfloored ladder always can --
+    fine as long as at least one rung still lands inside the domain (the
+    caller's, not this function's, since a caller may leave its own domain
+    bound narrower than this ladder's extent). When none does, this function
+    returns its unfloored pick instead: still duplicating under the format,
+    but every painted rung is a real, correctly positioned value.
 
     The important detail is that tick count must be checked against the actual
     rounded extent:
@@ -89,7 +106,7 @@ def nice_tick_values(
         start, end = rounded_extent_for_step(step)
         return round((end - start) / step) + 1
 
-    step = next(
+    natural_step = next(
         (
             candidate
             for candidate in nice_steps
@@ -98,10 +115,16 @@ def nice_tick_values(
         nice_steps[-1],
     )
 
-    start, end = rounded_extent_for_step(step)
-    intervals = round((end - start) / step)
+    def ticks_for_step(step: float) -> list[float]:
+        start, end = rounded_extent_for_step(step)
+        intervals = round((end - start) / step)
+        return [round(start + i * step, 10) for i in range(intervals + 1)]
 
-    ticks = [round(start + i * step, 10) for i in range(intervals + 1)]
+    ticks = ticks_for_step(natural_step)
+    if min_step is not None and natural_step < min_step:
+        floored = ticks_for_step(min_step)
+        if any(domain_min <= t <= domain_max for t in floored):
+            ticks = floored
 
     if reverse:
         ticks.reverse()

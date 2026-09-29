@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.style.theme import FontStyle
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.chart.features.value_labels import _house_register_expr
 from dbt_charts.core.render.chart.vega_lite import (
     generate_vega_lite_spec,
     render_chart,
@@ -798,7 +799,7 @@ class TestFormatNullInherit:
         assert lyr["encoding"]["text"].get("format") is None, (
             "an SI-shaped format must not be handed to Vega verbatim"
         )
-        expected = numeral_vega_expr("datum['revenue']", "~s", "narrative")
+        expected = _house_register_expr("datum['revenue']", "~s")
         calc = next(
             (t for t in spec.get("transform", []) if t.get("as") == text_field), None
         )
@@ -827,8 +828,8 @@ class TestFormatNullInherit:
         lyr = _get_text_layer(spec)
         assert lyr is not None
         text_field = lyr["encoding"]["text"]["field"]
-        expected = numeral_vega_expr(
-            "datum['revenue']", resolved.style.axis_y.labels.format, "narrative"
+        expected = _house_register_expr(
+            "datum['revenue']", resolved.style.axis_y.labels.format
         )
         calc = next(
             (t for t in spec.get("transform", []) if t.get("as") == text_field), None
@@ -917,7 +918,7 @@ class TestFormatTracksEffectiveAxis:
         assert lyr is not None
         assert lyr["encoding"]["text"].get("format") is None
         text_field = lyr["encoding"]["text"]["field"]
-        expected = numeral_vega_expr("datum['revenue']", ".3~s", "narrative")
+        expected = _house_register_expr("datum['revenue']", ".3~s")
         calc = next(
             (t for t in spec.get("transform", []) if t.get("as") == text_field), None
         )
@@ -2360,7 +2361,7 @@ class TestHouseRegister:
         )
         text_field = lyr["encoding"]["text"]["field"]
         # "number" resolves to ".3~s" (trim already set; round_aware_spec is no-op).
-        expected = numeral_vega_expr("datum['revenue']", ".3~s", "narrative")
+        expected = _house_register_expr("datum['revenue']", ".3~s")
         calc = next(
             (t for t in spec.get("transform", []) if t.get("as") == text_field), None
         )

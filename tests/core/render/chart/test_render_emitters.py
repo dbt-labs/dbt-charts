@@ -1483,6 +1483,55 @@ def test_vertical_stacked_bar_with_gradient_color_emits_no_order(
     assert spec.transforms == []
 
 
+def test_bar_gradient_color_hinge_pivots_at_zero(bar_style: ResolvedBarStyle) -> None:
+    """Regression for https://github.com/dbt-labs/dbt-charts/issues/48: a bar
+    chart's diverging color gradient must pivot at the authored ``hinge``
+    value, not the midpoint of the data-derived domain — even with no
+    authored min/max, reproducing the reported board's profit-by-category
+    repro (no ``min``/``max``, just ``hinge: 0``)."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.compile.models.primitives import ScaleTargetConfig
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
+    scale = ScaleTargetConfig(
+        palette=["#08306b", "#2166ac", "#e4e4e4", "#b2182b", "#67001f"], hinge=0
+    )
+    ch = ResolvedStyleChannel(
+        channel="color", mode="gradient", data_field="profit_ratio", scale=scale
+    )
+    bar = ResolvedBarChart(
+        panel_axes=(),
+        id="hb",
+        chart_type="bar",
+        x="category",
+        y="profit",
+        orientation="horizontal",
+        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{**_C, "resolved_channels": {"color": ch}},
+    )
+    data = [
+        {"category": "A", "profit": 56000, "profit_ratio": 0.35},
+        {"category": "B", "profit": 30000, "profit_ratio": 0.276},
+        {"category": "C", "profit": 10000, "profit_ratio": 0.125},
+        {"category": "D", "profit": -2000, "profit_ratio": -0.086},
+        {"category": "E", "profit": -20000, "profit_ratio": -0.1},
+    ]
+    spec = BarEmitter().emit(bar, _DEFAULT_BOX, regroup((), data))
+
+    color_scale = spec.encoding["color"]["scale"]
+    domain = color_scale["domain"]
+    assert 0.0 in domain  # hinge is always an exact breakpoint, never approximated
+    assert domain[0] < 0.0  # confined to the real (nice-widened) domain, never past it
+    # Nice-widened (scale.nice defaults True) — never narrower than the real
+    # data max, so the legend's labeled ticks can never fall inside it.
+    assert domain[-1] >= 0.35
+    assert color_scale["clamp"] is True
+    # Negative (shorter) arm never reaches the full extreme stop.
+    assert color_scale["range"][0] != "#08306b"
+    assert color_scale["range"][-1] == "#67001f"
+
+
 def test_bar_vertical_honors_chart_sort_field(bar_style: ResolvedBarStyle) -> None:
     """A vertical bar with chart.sort emits a field-based VL sort on the x axis.
 
@@ -1919,6 +1968,55 @@ def test_heatmap_color_gradient_domain_min_max_reaches_scale(
         hm_with_color, _DEFAULT_BOX, regroup((), [{"col": "A", "row": "1", "value": 1}])
     )
     assert spec.encoding["color"]["scale"]["domain"] == [0, 100]
+
+
+def test_heatmap_hinge_domain_matches_legend_endpoint_labels(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    """A diverging heatmap gradient's baked color domain must reach exactly
+    as far as its legend's labeled endpoint — both derive from the same
+    unauthored-bound, nice-widened extent. A domain narrower than the label
+    (the pre-fix bug: hinge used the raw extent while the legend nice-widens)
+    paints colors that visibly stop short of where the legend says they do."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.compile.models.primitives import ScaleTargetConfig
+    from dbt_charts.core.render.chart.emitters.heatmap import HeatmapEmitter
+
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="value")
+    hinge_style = heatmap_style.model_copy(
+        update={
+            "color_gradient": ScaleTargetConfig(
+                palette=["#08306b", "#2166ac", "#e4e4e4", "#b2182b", "#67001f"],
+                hinge=0,
+            )
+        }
+    )
+    _hm_ax, _hm_ay = _make_resolved_axes("heatmap", "nominal", "nominal")
+    hm_with_color = ResolvedHeatmapChart(
+        panel_axes=(),
+        id="h",
+        chart_type="heatmap",
+        x="col",
+        y="row",
+        resolved_channels={"color": ch},
+        style=hinge_style.model_copy(update={"axis_x": _hm_ax, "axis_y": _hm_ay}),
+        variable_dependencies=frozenset(),
+        palette=(),
+        legend=_default_legend().model_copy(update={"visible": True}),
+        background=_DEFAULT_CHARTS.background,
+        title_style=_DEFAULT_CHARTS.title,
+        layout_padding=_ZERO_PADDING,
+    )
+    data = [
+        {"col": "A", "row": "1", "value": 56000},
+        {"col": "B", "row": "1", "value": -20000},
+    ]
+    spec = HeatmapEmitter().emit(hm_with_color, _DEFAULT_BOX, regroup((), data))
+
+    domain = spec.encoding["color"]["scale"]["domain"]
+    legend_values = spec.encoding["color"]["legend"]["values"]
+    assert domain[-1] == legend_values[-1]
+    assert domain[0] <= legend_values[0]
 
 
 def test_heatmap_emits_visible_color_legend_by_default(
@@ -3709,3 +3807,40 @@ def test_binding_capability_matches_every_authored_chart_family(
             point_map_chart, _DEFAULT_BOX, regroup((), point_map_data)
         )
     )
+
+
+def test_support_table_series_order_strip_stacked_area_honors_stack_order(
+    area_style: ResolvedAreaStyle,
+) -> None:
+    """A stacked area's strip lists series in the same ``stack_order`` the
+    bands paint in."""
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        _series_order_strip,
+    )
+
+    ax, ay = _make_resolved_axes("area", "temporal", "quantitative")
+    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="fruit")
+    area = ResolvedAreaChart(
+        panel_axes=(),
+        id="strip-area-data-order",
+        chart_type="area",
+        x="month",
+        y="revenue",
+        stack="zero",
+        style=area_style.model_copy(
+            update={"axis_x": ax, "axis_y": ay, "stack_order": "data"}
+        ),
+        **{**_C, "resolved_channels": {"color": ch}},
+    )
+    # First-encounter (mango, apple, cherry) differs from sum order
+    # (apple, mango, cherry) and alphabetical order (apple, cherry, mango).
+    data = [
+        {"month": "2024-01", "fruit": "mango", "revenue": 30},
+        {"month": "2024-01", "fruit": "apple", "revenue": 90},
+        {"month": "2024-01", "fruit": "cherry", "revenue": 10},
+    ]
+    order = _series_order_strip(
+        "area", area, data, "fruit", {"cherry", "apple", "mango"}, None
+    )
+    assert order == ["mango", "apple", "cherry"]

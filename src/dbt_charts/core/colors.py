@@ -629,6 +629,203 @@ def oklch_to_hex(L: float, C: float, H: float) -> str:
     return f"#{int(round(rs * 255)):02x}{int(round(gs * 255)):02x}{int(round(bs * 255)):02x}"
 
 
+# CIE Lab under the D50 white point, plus its cylindrical form LCh(ab) --
+# distinct from this module's OKLCH functions above (a newer, different
+# perceptual space). This one exists solely to reproduce Vega-Lite's own
+# continuous color-scale `interpolate: "hcl"` (also its unset default --
+# confirmed empirically: see `interpolate_hcl`'s docstring), which is built
+# on d3-color's Lab/HCL, not OKLab. The matrices and white point below are
+# d3-color's own sRGB to XYZ (white point D50) coefficients (the CSS Color 4
+# Lab definition), not the D65 CIE textbook values, so a bit-for-bit match
+# with Vega's rendered output requires them exactly as given.
+_CIE_LAB_XN, _CIE_LAB_YN, _CIE_LAB_ZN = 0.96422, 1.0, 0.82521
+_CIE_LAB_T0 = 4 / 29
+_CIE_LAB_T1 = 6 / 29
+_CIE_LAB_T2 = 3 * _CIE_LAB_T1 * _CIE_LAB_T1
+_CIE_LAB_T3 = _CIE_LAB_T1**3
+
+
+def _xyz_to_lab_f(t: float) -> float:
+    return t ** (1 / 3) if t > _CIE_LAB_T3 else t / _CIE_LAB_T2 + _CIE_LAB_T0
+
+
+def _lab_to_xyz_f(t: float) -> float:
+    return t**3 if t > _CIE_LAB_T1 else _CIE_LAB_T2 * (t - _CIE_LAB_T0)
+
+
+def _rgb01_to_lab(r: float, g: float, b: float) -> tuple[float, float, float]:
+    rl, gl, bl = _srgb_to_linear(r), _srgb_to_linear(g), _srgb_to_linear(b)
+    y = _xyz_to_lab_f((0.2225045 * rl + 0.7168786 * gl + 0.0606169 * bl) / _CIE_LAB_YN)
+    if r == g == b:
+        # d3-color's own shortcut (rgb2lab): for any true gray, x and z are
+        # set equal to y directly rather than computed independently through
+        # the X/Z matrix rows. Computing them independently -- even for an
+        # exact gray input -- leaves floating-point noise on most gray
+        # levels (e.g. #e4e4e4 comes out with a/b around 1e-14, not exactly
+        # 0), enough to read as a spurious ~90-degree hue and mistint the
+        # color. Reusing the SAME y value for x and z instead makes a=b=0
+        # exact by construction (x - y and y - z both become "v - v"), no
+        # floating-point luck required.
+        fx = fz = y
+    else:
+        fx = _xyz_to_lab_f(
+            (0.4360747 * rl + 0.3850649 * gl + 0.1430804 * bl) / _CIE_LAB_XN
+        )
+        fz = _xyz_to_lab_f(
+            (0.0139322 * rl + 0.0971045 * gl + 0.7141733 * bl) / _CIE_LAB_ZN
+        )
+    return 116 * y - 16, 500 * (fx - y), 200 * (y - fz)
+
+
+def _lab_to_rgb01(lightness: float, a: float, b: float) -> tuple[float, float, float]:
+    fy = (lightness + 16) / 116
+    fx = fy + a / 500
+    fz = fy - b / 200
+    x = _CIE_LAB_XN * _lab_to_xyz_f(fx)
+    y = _CIE_LAB_YN * _lab_to_xyz_f(fy)
+    z = _CIE_LAB_ZN * _lab_to_xyz_f(fz)
+    rl = 3.1338561 * x - 1.6168667 * y - 0.4906146 * z
+    gl = -0.9787684 * x + 1.9161415 * y + 0.0334540 * z
+    bl = 0.0719453 * x - 0.2289914 * y + 1.4052427 * z
+    # d3-color's own lab2rgb clamps each channel to [0, 1] rather than
+    # gamut-clipping (unlike this module's oklch_to_hex) -- matched here so
+    # an interpolated point that briefly leaves sRGB gamut (rare, between two
+    # in-gamut endpoints) degrades the same way Vega's own renderer does.
+    return (
+        max(0.0, min(1.0, _linear_to_srgb(rl))),
+        max(0.0, min(1.0, _linear_to_srgb(gl))),
+        max(0.0, min(1.0, _linear_to_srgb(bl))),
+    )
+
+
+def _rgb01_to_lch(r: float, g: float, b: float) -> tuple[float, float, float]:
+    """(lightness, chroma, hue-degrees), with d3-color's own UNDEFINED-value
+    rules for an achromatic color: hue is undefined (``nan``) whenever
+    ``a == b == 0`` (any true gray, including black/white); chroma is
+    ADDITIONALLY undefined at the two lightness poles (pure black or pure
+    white), where even "no hue" isn't enough to pin the color down. A
+    genuine in-between gray (e.g. ``#f7f7f7``) keeps a perfectly good,
+    defined chroma of 0 -- only its hue is undefined. See
+    ``interpolate_hcl``'s docstring for why this distinction is load-bearing.
+    """
+    lightness, a, b_ = _rgb01_to_lab(r, g, b)
+    if a == 0.0 and b_ == 0.0:
+        return lightness, (0.0 if 0.0 < lightness < 100.0 else math.nan), math.nan
+    chroma = math.hypot(a, b_)
+    hue = math.degrees(math.atan2(b_, a)) % 360
+    return lightness, chroma, hue
+
+
+def _lch_to_rgb01(
+    lightness: float, chroma: float, hue: float
+) -> tuple[float, float, float]:
+    # An undefined (nan) hue carries no direction -- d3-color's own
+    # hcl-to-lab conversion drops chroma entirely in this case (a=b=0)
+    # rather than propagating `chroma * nan`, which IEEE 754 always turns
+    # into nan even when chroma is exactly 0.
+    if math.isnan(hue):
+        return _lab_to_rgb01(lightness, 0.0, 0.0)
+    hue_rad = math.radians(hue)
+    return _lab_to_rgb01(
+        lightness, chroma * math.cos(hue_rad), chroma * math.sin(hue_rad)
+    )
+
+
+def _hue_lerp(h0: float, h1: float, t: float) -> float:
+    """Interpolate hue angles the short way around the circle -- 350deg to
+    10deg moves through 0 (a 20-degree step), never the long way through
+    180. Matches d3-interpolate's own ``interpolateHue``, including its
+    undefined-hue rule: when either endpoint's hue is undefined (``nan`` --
+    an achromatic color), the result holds CONSTANT at whichever endpoint
+    DOES have a defined hue for the entire ramp, rather than interpolating
+    toward/through an arbitrary placeholder angle."""
+    if math.isnan(h0) or math.isnan(h1):
+        return h1 if math.isnan(h0) else h0
+    d = h1 - h0
+    if d == 0:
+        return h0
+    if d > 180 or d < -180:
+        d -= 360 * round(d / 360)
+    return h0 + d * t
+
+
+def _hold_or_lerp(a: float, b: float, t: float) -> float:
+    """Plain linear interpolation, except when either endpoint is undefined
+    (``nan``) -- an achromatic color's chroma at a lightness pole, or every
+    channel of ``transparent`` -- in which case the result holds CONSTANT at
+    whichever endpoint DOES have a defined value, for the entire ramp.
+    Mirrors d3-interpolate's own ``nogamma`` fallback (the numeric sibling
+    of ``_hue_lerp``'s hue rule)."""
+    if math.isnan(a) or math.isnan(b):
+        return b if math.isnan(a) else a
+    return a + (b - a) * t
+
+
+_UNDEFINED_COLOR_KEYWORDS = frozenset({"transparent", "none"})
+
+
+def interpolate_hcl(color1: str, color2: str, t: float) -> str:
+    """Blend two CSS/SVG colors in CIE LCh(ab) space at position ``t`` in [0, 1].
+
+    Matches Vega-Lite's own continuous color-scale ``interpolate: "hcl"`` --
+    also its unset default: confirmed empirically by compiling
+    ``{"domain": [0, 1], "range": [c1, c2]}`` through
+    ``vl_convert.vegalite_to_svg`` with no ``interpolate`` set, with
+    ``interpolate: "rgb"``, and with ``interpolate: "hcl"`` -- the unset case
+    matches "hcl" exactly (bit-for-bit on the rendered fill) and differs from
+    "rgb" at every interior sample. Pinned by
+    ``tests/core/test_colors.py::TestHclInterpolation``.
+
+    An achromatic endpoint (gray, white, black) or a wholly undefined one
+    (``transparent``/``none``) has no real hue (and, at a lightness pole or
+    for ``transparent``, no real chroma either) -- d3-color's own HCL
+    conversion leaves these components UNDEFINED rather than pinning them to
+    an arbitrary value, and d3-interpolate then HOLDS the other endpoint's
+    defined hue/chroma CONSTANT across the whole ramp instead of
+    interpolating toward/through an undefined placeholder. Getting this
+    wrong (forcing hue 0 on an achromatic center stop) is a parity bug: a
+    diverging ramp through a gray/white/black/transparent center swings
+    through red/magenta instead of holding the correct hue, tinting
+    negative-side values toward the positive color.
+
+    Alpha is interpolated linearly, independent of the perceptual L/C/H path
+    -- alpha has no analog in Lab/LCh space, and this mirrors d3-interpolate's
+    own separate ``opacity`` lerp run alongside ``hcl``. Returned as
+    ``rgba(r, g, b, a)`` when the blended alpha is below 1, otherwise a plain
+    6-digit hex -- both are native VL/CSS color strings.
+    """
+    l1, c1, h1 = _endpoint_lch(color1)
+    l2, c2, h2 = _endpoint_lch(color2)
+    lightness = _hold_or_lerp(l1, l2, t)
+    chroma = _hold_or_lerp(c1, c2, t)
+    hue = _hue_lerp(h1, h2, t)
+    r, g, b = _lch_to_rgb01(lightness, chroma, hue)
+    _, _, _, a1 = parse_css_color(color1)
+    _, _, _, a2 = parse_css_color(color2)
+    alpha = a1 + (a2 - a1) * t
+    if alpha >= 1.0:
+        return rgb01_to_hex(r, g, b)
+
+    def _byte(c: float) -> int:
+        return max(0, min(255, round(c * 255)))
+
+    return f"rgba({_byte(r)}, {_byte(g)}, {_byte(b)}, {round(alpha, 4)})"
+
+
+def _endpoint_lch(color: str) -> tuple[float, float, float]:
+    """``interpolate_hcl``'s own color-to-LCh step, with ``transparent``/
+    ``none`` special-cased to an entirely undefined (``nan``, ``nan``,
+    ``nan``) color -- matching d3-color's ``Rgb(NaN, NaN, NaN, 0)`` for the
+    literal keyword, rather than ``parse_css_color``'s general-purpose
+    ``(0, 0, 0, 0)`` (opaque black), which is correct for compositing but
+    would wrongly darken an HCL ramp toward black instead of holding the
+    other endpoint's own color."""
+    if color.strip().lower() in _UNDEFINED_COLOR_KEYWORDS:
+        return math.nan, math.nan, math.nan
+    r, g, b, _a = parse_css_color(color)
+    return _rgb01_to_lch(r, g, b)
+
+
 def relative_luminance(hex_str: str) -> float:
     """WCAG 2.1 relative luminance of an sRGB hex color."""
     h = hex_str.lstrip("#")

@@ -216,3 +216,8 @@ def run_wizard(
     )
     typer.echo("")
     typer.echo("  Run `dct serve` to preview it in your browser.")
+    typer.echo("")
+    typer.echo(
+        "  New to dbt Charts, or an agent? Read `dct skills intro` before "
+        "authoring boards."
+    )

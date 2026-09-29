@@ -1544,3 +1544,68 @@ WARN_AXIS_ALIGN_DISCARDED = REGISTRY.register(
         docs_topic="charts",
     )
 )
+
+ERR_LINK_SCHEME_UNSAFE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINK-SCHEME-UNSAFE",
+        domain="compile",
+        title="Link uses a URL scheme dbt Charts does not allow",
+        message_template=(
+            "Link {link!r} at {field_path} uses scheme {scheme!r}. Use a "
+            "board path (/, ./, ?, #) or http, https, mailto."
+        ),
+        doc=(
+            "Fired when an authored link (chart link, table column link/"
+            "header_link, or footer link) resolves to a URL scheme other "
+            "than http, https, or mailto. A board path (starting with /, "
+            "./, ../, ?, or #) is always allowed; any other scheme — "
+            "javascript:, data:, vbscript:, or an editor deeplink like "
+            "vscode:// — is rejected so a link can never execute script or "
+            "navigate somewhere unexpected."
+        ),
+        summary="Fired when a link resolves to a disallowed URL scheme.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LINK_SCHEME_UNANCHORED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINK-SCHEME-UNANCHORED",
+        domain="compile",
+        title="Link template starts with data, so its scheme is unknown",
+        message_template=(
+            "Link {link!r} at {field_path} begins with a template. Start it "
+            "with /, ?, # or https:// so data cannot choose the scheme."
+        ),
+        doc=(
+            "Fired when a chart or footer link's literal text before its "
+            "first `{{` template placeholder does not itself fix a safe "
+            "scheme — the query row or variable value filling the template "
+            "would then decide what scheme the browser navigates to. Start "
+            "the link with a board path or a fixed https:// prefix instead."
+        ),
+        summary="Fired when a link template's scheme is decided by data.",
+        docs_topic="charts",
+    )
+)
+
+ERR_VARIABLE_NAME_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-NAME-INVALID",
+        domain="compile",
+        title="Variable name is not an identifier",
+        message_template=(
+            "Variable {name!r} must be a valid identifier: letters, digits "
+            "and underscores, not starting with a digit."
+        ),
+        doc=(
+            "Fired when a name under `variables:` is not a valid identifier. "
+            "Variables are referenced as bare Jinja names in queries and "
+            "templates, so a name with a space, hyphen, or leading digit "
+            "never actually worked — this catches it at compile instead of "
+            "a confusing render-time failure."
+        ),
+        summary="Fired when a variable name is not a valid identifier.",
+        docs_topic="variables",
+    )
+)

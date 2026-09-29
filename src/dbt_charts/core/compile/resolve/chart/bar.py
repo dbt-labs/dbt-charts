@@ -1033,6 +1033,7 @@ def _resolve_bar(
             zero_anchor=bar_zero,
             authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
             scale=multiples_scale,
+            is_quantitative=True,  # bar's y is always the measure
         )
         tick_values = _bar_ticks.ticks
         bar_domain_max, bar_domain_min = _bar_ticks.domain_max, _bar_ticks.domain_min
@@ -1094,6 +1095,7 @@ def _resolve_bar(
         # fact is unconditionally True -- unlike column_forming above, which
         # tracks the render geometry orientation swaps instead.
         ay_is_quantitative=True,
+        ay_floors_tick_step=resolved_stack != "normalize",
         # The digit-alignment gate still needs the old geometry-based
         # question (does this axis render as the column-forming measure
         # axis) since a horizontal bar's measure axis renders on VL's x
@@ -1305,6 +1307,7 @@ def _resolve_histogram(
         # is always the measure, regardless of the x column's own type.
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=True,
+        ay_floors_tick_step=True,
         # Inert: ticks is always the empty _CartesianTickResolution above, so
         # _y_gridline_caps_bottom returns before this bool is ever read.
         zero_anchor=True,
@@ -1363,7 +1366,6 @@ def _resolve_histogram(
                 width,
                 chart_local_style_context.ink_canvas,
             ),
-            stack_order=None,
             mark=hist_mark,
             overlap=None,
             single_series_fill=_effective_single_series_fill(

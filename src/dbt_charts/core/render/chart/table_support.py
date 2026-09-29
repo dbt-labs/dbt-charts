@@ -374,7 +374,13 @@ def resolve_cell_link_with_board(
     row: dict[str, Any],
     columns: list[str],
 ) -> str | None:
-    """Resolve a cell link and apply board-path rewriting if link context is set."""
+    """Resolve a cell link and apply board-path rewriting if link context is set.
+
+    A table cell/row link puts raw query-row data into a scheme decision
+    that compile-time validation (``compile/validate/links.py``) never sees.
+    ``table.py``'s emission sites (row-link band, cell-link) run
+    ``checked_href`` on the value this function returns.
+    """
     resolved = resolve_cell_link(link, row, columns)
     if resolved is None:
         return None
@@ -1492,6 +1498,33 @@ def _interpolate_arm(t: float, stops: list[str]) -> str:
     return _lerp_color(stops[i], stops[i + 1], segment - i)
 
 
+def diverging_arm_denominators(
+    hinge: float, min_val: float, max_val: float, arm_mode: str
+) -> tuple[float, float]:
+    """(neg_denom, pos_denom): the interpolation-distance unit for each arm
+    of a diverging scale pivoting at ``hinge`` over ``[min_val, max_val]``.
+
+    Shared by ``interpolate_scale_color`` (table/KPI's direct color
+    interpolation) and ``emitters._channels._diverging_domain`` (which
+    places the same arm math's breakpoints on a Vega-Lite ``domain`` array
+    instead) — one formula for what "asymmetric" vs "symmetric" means,
+    never two.
+
+    ``arm_mode="asymmetric"``: both arms share one denominator (the wider
+    arm's width), so per-unit intensity from the pivot is consistent
+    across both arms — the narrower arm never reaches full palette
+    saturation within the real domain. ``arm_mode="symmetric"``: each arm
+    uses its own width, so both extremes always reach full saturation
+    exactly at ``min_val``/``max_val``.
+    """
+    neg_width = hinge - min_val
+    pos_width = max_val - hinge
+    if arm_mode == "asymmetric":
+        denom = max(neg_width, pos_width, 1e-12)
+        return denom, denom
+    return max(neg_width, 1e-12), max(pos_width, 1e-12)
+
+
 def interpolate_scale_color(
     value: float,
     min_val: float,
@@ -1509,7 +1542,10 @@ def interpolate_scale_color(
 
     Diverging mode (``hinge is not None``):
       Palette is split at the midpoint. Left half maps to [min_val, hinge];
-      right half maps to [hinge, max_val].
+      right half maps to [hinge, max_val]. An odd-length palette shares one
+      neutral center stop between the two arms; an even-length one has no
+      such stop, so the hinge sits at the boundary between the two center
+      stops instead (blended 50/50 — see the even-length branch below).
 
       ``arm_mode="asymmetric"`` (default): each arm's t is computed relative
       to the actual arm width — per-unit intensity is consistent across the
@@ -1518,6 +1554,11 @@ def interpolate_scale_color(
       ``arm_mode="symmetric"``: each arm stretches fully from neutral to
       its extreme regardless of absolute width — useful when visual parity
       between arms matters more than per-unit consistency.
+
+      A ``hinge`` outside ``[min_val, max_val]`` EXTENDS the domain to
+      include it rather than clamping the hinge into range — see the
+      extension comment below for why, and for the VALUE clamp's
+      deliberately different (unextended) domain.
     """
     palette = [_expand_hex(c) for c in palette]
 
@@ -1532,44 +1573,60 @@ def interpolate_scale_color(
         i = min(int(segment), n_segments - 1)
         return _lerp_color(palette[i], palette[i + 1], segment - i)
 
-    # Diverging path.
-    if len(palette) < 3 or len(palette) % 2 == 0:
+    # Diverging path. An odd-length palette has one shared neutral stop; an
+    # even-length one has none, so the hinge sits at the boundary between
+    # the two center stops instead — see the even-length branch below.
+    if len(palette) < 2:
         raise ValueError(
-            f"diverging palette must have an odd number of stops >= 3, got {len(palette)}"
+            f"diverging palette must have at least 2 stops, got {len(palette)}"
         )
 
-    # Clamp hinge to [min_val, max_val] so out-of-domain author values don't
-    # produce negative arm widths or meaningless interpolation.
-    hinge = max(min_val, min(max_val, hinge))
+    # Extend whichever bound doesn't already include hinge, rather than
+    # clamping hinge into [min_val, max_val]: a diverging palette shared
+    # across charts means "hinge is neutral" on every one of them, even a
+    # chart whose own data never reaches it -- the same HINGE-EXTENSION
+    # decision gradient_scale_to_vl makes for the VL-native emitters. The two
+    # do diverge on the VALUE clamp, though: VL's own `clamp: true` clamps a
+    # rendered value to the EXTENDED domain (gradient_scale_to_vl bakes the
+    # extended [lo, hi] as the actual VL `domain`), while the VALUE clamp a
+    # few lines down here deliberately stays against the ORIGINAL
+    # (unextended) min_val/max_val -- a value that never occurs in this
+    # column's own data still clamps to this column's own true edge, not to
+    # wherever a hinge shared with a sibling chart happens to sit. A value
+    # between the two bounds (never in this column's real data, but inside
+    # the hinge-extended range) therefore reads a genuinely different color
+    # in a table cell than in a chart's gradient -- a real, documented
+    # tradeoff, not a bug to chase down further here.
+    domain_min = min(min_val, hinge)
+    domain_max = max(max_val, hinge)
 
     mid = len(palette) // 2
-    neg_stops = palette[: mid + 1][::-1]  # neutral → neg extreme
-    pos_stops = palette[mid:]  # neutral → pos extreme
+    if len(palette) % 2 == 0:
+        # No shared center stop to pivot on — blend the two center stops
+        # 50/50 and give BOTH arms that blend as their own nearest-to-hinge
+        # stop, so each arm's curve reaches the exact same color at
+        # distance 0. Without this, the two arms would independently reach
+        # their own (unblended) center stop right at the hinge, a visible
+        # color jump exactly where the gradient should read as continuous.
+        neutral = _lerp_color(palette[mid - 1], palette[mid], 0.5)
+        neg_stops = [neutral, *palette[:mid][::-1]]
+        pos_stops = [neutral, *palette[mid:]]
+    else:
+        neg_stops = palette[: mid + 1][::-1]  # neutral → neg extreme
+        pos_stops = palette[mid:]  # neutral → pos extreme
 
-    # Clamp value to domain.
+    # Clamp value to the TRUE (unextended) data domain — see comment above.
     clamped = max(min_val, min(max_val, value))
 
-    neg_width = hinge - min_val
-    pos_width = max_val - hinge
-    # Asymmetric uses the longer arm as the common intensity unit so that
-    # equal absolute distance from the hinge produces equal palette depth
-    # on both sides — the shorter arm will never reach full palette saturation.
-    # Symmetric uses per-arm width so both arms always fill their full palette
-    # range regardless of absolute length.
+    neg_denom, pos_denom = diverging_arm_denominators(
+        hinge, domain_min, domain_max, arm_mode
+    )
     if clamped <= hinge:
         distance = hinge - clamped
-        if arm_mode == "asymmetric":
-            denom = max(neg_width, pos_width, 1e-12)
-        else:
-            denom = max(neg_width, 1e-12)
-        return _interpolate_arm(distance / denom, neg_stops)
+        return _interpolate_arm(distance / neg_denom, neg_stops)
     else:
         distance = clamped - hinge
-        if arm_mode == "asymmetric":
-            denom = max(neg_width, pos_width, 1e-12)
-        else:
-            denom = max(pos_width, 1e-12)
-        return _interpolate_arm(distance / denom, pos_stops)
+        return _interpolate_arm(distance / pos_denom, pos_stops)
 
 
 def compute_scale_domain(

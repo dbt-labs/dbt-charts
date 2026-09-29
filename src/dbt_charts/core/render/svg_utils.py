@@ -26,7 +26,13 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from dbt_charts.core.diagnostics.codes_render import ERR_INPUT_INVALID
+from dbt_charts.core.colors import InvalidColorError, parse_css_color
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_CSS_COLOR_INVALID_AT_RENDER,
+    ERR_INPUT_INVALID,
+    ERR_LINK_SCHEME_UNSAFE_AT_RENDER,
+)
+from dbt_charts.core.links import is_safe_href, link_scheme
 from dbt_charts.core.render.errors import RenderError
 
 # ---------------------------------------------------------------------------
@@ -69,6 +75,43 @@ def escape_css_string(value: str) -> str:
         ch if _CSS_STRING_SAFE_RE.fullmatch(ch) else f"\\{ord(ch):x} " for ch in value
     )
     return f'"{escaped}"'
+
+
+def checked_href(href: str) -> str:
+    """Return ``href`` unchanged if a browser navigating it lands on an
+    allowed scheme (http, https, mailto, or a relative board path).
+
+    Raises otherwise. This is the render-time half of the scheme check:
+    compile-time validation (``compile/validate/links.py``) cannot see a
+    table cell/row link built from query row data, or a chart link's
+    sentinel-stripped scheme, since both only exist once the query has run
+    or Vega has rendered — so every href sink re-validates here regardless
+    of whether its value already passed a compile-time check.
+    """
+    if not is_safe_href(href):
+        raise RenderError.from_code(
+            ERR_LINK_SCHEME_UNSAFE_AT_RENDER, href=href, scheme=link_scheme(href)
+        )
+    return href
+
+
+def css_color(value: str) -> str:
+    """Return ``value`` unchanged if it parses as exactly one CSS color.
+
+    Raises ``RenderError`` (``ERR-CSS-COLOR-INVALID-AT-RENDER``) otherwise —
+    never silently declines and never leaves the raw ``InvalidColorError``
+    to surface as a bare ``ERR-INTERNAL``. Escaping alone is not enough: a
+    value like ``red; background-image:url(//evil)`` needs no quote or angle
+    bracket to open a new declaration, so the value itself must be proven to
+    be nothing but a color.
+    """
+    try:
+        parse_css_color(value)
+    except InvalidColorError as e:
+        raise RenderError.from_code(
+            ERR_CSS_COLOR_INVALID_AT_RENDER, value=value, detail=str(e)
+        ) from e
+    return value
 
 
 def attr_name(name: str) -> str:

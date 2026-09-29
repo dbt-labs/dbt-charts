@@ -731,7 +731,7 @@ Authored overlay for BarChartStyle. Bar chart style: chart-level fields + marks 
 | `orientation` | enum: "horizontal", "vertical", "auto" | Preferred bar orientation; None behaves like 'auto', which picks horizontal for a categorical x and vertical for a continuous one (temporal, quantitative, or date-like). Never remaps x/y. |
 | `stack` | enum: "none", "zero", "normalize", "center" | Default stack mode for bar charts; none renders side-by-side columns. |
 | `overlap` | float \| enum: "auto", "none", "flush", "partial", "full" | Within-group spacing for grouped bars. Keywords: 'auto' (2 series → partial, 3+ → none), 'none' (small gap), 'flush' (bars touch), 'partial' (25% overlap), 'full' (bars coincide). Or a number as a fraction of bar width: &gt;0 overlaps, 0 touches, &lt;0 gaps; 1 is the maximum (bars fully coincide, same as 'full') and values above 1 are clamped to 1; bars never cross past each other. None uses the renderer default ('auto'). Only applies to grouped bars; setting it together with an active stack mode is an error. |
-| `stack_order` | enum: "value", "data", "alphabetical" | Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. 'data' follows SQL row order (orientation-stable not guaranteed). 'alphabetical' sorts by color column name. Ignored when stacking is off or no color. |
+| `stack_order` | enum: "value", "data", "alphabetical" | Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. 'data' stacks series in first-appearance order: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series. |
 | `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed on stacked bars instead of in a legend. |
 | `marks` | [BarChartMarksStyle](#barchartmarksstyle) | Bar-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
 
@@ -874,6 +874,7 @@ Authored overlay for AreaChartStyle. Area chart style: chart-level fields + mark
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `stack` | enum: "none", "zero", "normalize", "center" | Default stack mode for area charts: 'none', 'zero', 'normalize', or 'center'. |
+| `stack_order` | enum: "value", "data", "alphabetical" | Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. 'data' stacks series in first-appearance order: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series. |
 | `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed on the bands instead of in a legend. |
 | `marks` | [AreaChartMarksStyle](#areachartmarksstyle) | Area-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
 

@@ -52,9 +52,17 @@ from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.step_band import STEP_BAND_EDGE_FIELD, is_band_step
 from dbt_charts.core.render.chart.x_domain import rendered_x_domain
-from dbt_charts.core.render.numeral_expr import numeral_vega_expr
+from dbt_charts.core.render.numeral_expr import (
+    numeral_vega_expr,
+    sub_unit_guarded_vega_expr,
+)
 from dbt_charts.core.render.utils import DomainValue, ordered_distinct_values
 from dbt_charts.core.text.format_d3 import format_d3
+from dbt_charts.core.text.numeral_scale import (
+    SUB_UNIT_SCIENTIFIC_FLOOR,
+    sub_unit_digit_format,
+    sub_unit_scientific_format,
+)
 from dbt_charts.core.utils import Rows, is_vega_numeric_value
 
 # ---------------------------------------------------------------------------
@@ -294,13 +302,20 @@ def painted_label_text(
     """The string a value label paints for one row's value.
 
     Python-side mirror of `_house_register_text_encoding`: the narrative
-    register under the house register, the bare d3 spec otherwise, through
-    the same d3 engine. With no format the text is Python's ``str`` of the
-    value, which can differ from Vega's default number printing.
+    register under the house register (sub-1 values in digits, see
+    `_house_register_expr`), the bare d3 spec otherwise, through the same d3
+    engine. With no format the text is Python's ``str`` of the value, which
+    can differ from Vega's default number printing.
     """
     if format_spec is None:
         return format_d3(value, "")
-    return format_d3(value, format_spec, notation="narrative" if is_house else None)
+    if not is_house:
+        return format_d3(value, format_spec)
+    if abs(value) >= 1:
+        return format_d3(value, format_spec, notation="narrative")
+    if value != 0 and abs(value) < SUB_UNIT_SCIENTIFIC_FLOOR:
+        return format_d3(value, sub_unit_scientific_format(format_spec))
+    return format_d3(value, sub_unit_digit_format(format_spec))
 
 
 def painted_span_label_text(
@@ -315,6 +330,18 @@ def painted_span_label_text(
         return painted_label_text(end, format_spec, is_house)
     sign = "+" if end >= start else "\u2212"
     return sign + painted_label_text(abs(end - start), format_spec, is_house)
+
+
+def _house_register_expr(value_expr: str, format_spec: str) -> str:
+    """The house register's Vega text for one value: narrative SI from 1 up,
+    digits below 1. d3's milli/micro prefixes are not house suffixes, so 0.67
+    paints "0.67", not "670m" -- the same split a ladder-less axis uses."""
+    return sub_unit_guarded_vega_expr(
+        value_expr,
+        sub_unit_digit_format(format_spec),
+        sub_unit_scientific_format(format_spec),
+        numeral_vega_expr(value_expr, format_spec, "narrative"),
+    )
 
 
 def _house_register_text_encoding(
@@ -336,8 +363,8 @@ def _house_register_text_encoding(
     upstream, in ``resolve_label_format`` (``compile/format.py``), which only
     ever sets ``is_house`` True for an SI-shaped alias.
 
-    When ``is_house`` is True, the narrative register fires (``1.2mn``) via a
-    ``calculate`` transform -- Vega, not Python, paints datum-driven text, so
+    When ``is_house`` is True, the house register fires (``1.2mn``, ``0.67``;
+    see ``_house_register_expr``) via a ``calculate`` transform -- Vega, not Python, paints datum-driven text, so
     format_d3's post-process never runs on values Vega formats itself from a
     bare d3 spec.
 
@@ -358,7 +385,7 @@ def _house_register_text_encoding(
             {"field": label_field, "type": "quantitative", "format": labels.format},
             [],
         )
-    expr = numeral_vega_expr(f"datum[{label_field!r}]", labels.format, "narrative")
+    expr = _house_register_expr(f"datum[{label_field!r}]", labels.format)
     return (
         {"field": calc_field, "type": "nominal"},
         [{"calculate": expr, "as": calc_field}],
@@ -639,7 +666,7 @@ def _span_label_text_expr(
 
     def fmt(value: str) -> str:
         if is_house and labels.format is not None:
-            return numeral_vega_expr(value, labels.format, "narrative")
+            return _house_register_expr(value, labels.format)
         if labels.format is not None:
             return f"format({value}, {_json.dumps(labels.format)})"
         return f"format({value}, {_json.dumps('')})"

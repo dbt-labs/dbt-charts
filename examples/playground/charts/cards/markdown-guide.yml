@@ -1,11 +1,11 @@
 # Markdown Guide
-# This board showcases all markdown features available in dbt charts content blocks.
+# This board showcases all markdown features available in dbt Charts content blocks.
 
 title: "Markdown Guide"
-notes: "All markdown features you can use in dbt charts content blocks"
+notes: "All markdown features you can use in dbt Charts content blocks"
 
 text: |
-  dbt charts supports rich markdown in `content` blocks. This guide showcases everything you can do!
+  dbt Charts supports rich markdown in `content` blocks. This guide showcases everything you can do!
 
   ---
 
@@ -57,7 +57,7 @@ rows:
       > Blockquotes are great for callouts and quotes.
       > They can span multiple lines.
 
-      Normal text with a [link to dbt charts docs](https://dbtcharts.com).
+      Normal text with a [link to dbt Charts docs](https://dbtcharts.com).
 
   - text: |
       ---
@@ -168,7 +168,7 @@ rows:
       ### Shell Commands
 
       ```bash
-      # Install dbt charts
+      # Install dbt Charts
       pip install "dbt-charts"
 
       # Render a board
@@ -317,7 +317,7 @@ rows:
       ### Special Punctuation
 
       - En dash: 2020–2024
-      - Em dash: dbt charts—the best tool—is here
+      - Em dash: dbt Charts—the best tool—is here
       - Ellipsis: Loading...
       - Quotes: "Smart quotes" and 'single quotes'
 
@@ -393,7 +393,7 @@ rows:
 
       ---
 
-      That's everything you can do with markdown in dbt charts! 🎉
+      That's everything you can do with markdown in dbt Charts! 🎉
     style:
       background: "#f5f5f5"
       padding: "20px"

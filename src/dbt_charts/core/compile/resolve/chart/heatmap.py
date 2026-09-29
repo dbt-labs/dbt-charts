@@ -138,6 +138,7 @@ def _resolve_heatmap(
         # own "nominal", "nominal" call above.
         ax_is_quantitative=False,
         ay_is_quantitative=False,
+        ay_floors_tick_step=False,
         # Inert: ticks is always the empty _CartesianTickResolution above, so
         # _y_gridline_caps_bottom returns before this bool is ever read.
         zero_anchor=False,

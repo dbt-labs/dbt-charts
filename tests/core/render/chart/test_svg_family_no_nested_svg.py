@@ -324,6 +324,7 @@ def test_render_layout_item_notes_no_tooltip() -> None:
         available_height=200.0,
         resolved_style=_RESOLVED_STYLE,
         render_cache={},
+        painted_canvas=None,
     )
     assert 'data-layout-notes="Quarterly revenue KPI"' in svg
     # No tooltip sources on the layout-item wrapper.

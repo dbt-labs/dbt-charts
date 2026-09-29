@@ -13,7 +13,7 @@ family models. extra="forbid" on the root propagates to all subclasses.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +24,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     FieldConditionalFormatting,
     MultiplesConfig,
 )
+from dbt_charts.core.compile.models.markers import Url
 from dbt_charts.core.compile.models.primitives import FormatConfig, VariableDependencies
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.vega_lite.contracts import Projection
@@ -76,7 +77,7 @@ class _BaseChartFields(BaseModel):
     )
     # False is the authored per-chart auto_link opt-out; resolve clears it to
     # None at the resolved boundary, so ResolvedChart.link stays str | None.
-    link: str | Literal[False] | None = Field(
+    link: Annotated[str | Literal[False] | None, Url()] = Field(
         default=None,
         description="Click-through URL template, or false to stay unlinked.",
     )

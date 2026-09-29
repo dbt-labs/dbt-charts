@@ -383,6 +383,59 @@ def test_apply_gradient_legend_endpoint_labels_does_not_clobber_authored_values(
     assert enc["legend"]["values"] == authored_values
 
 
+def test_apply_gradient_legend_endpoint_labels_authored_bounds_include_hinge_tick() -> (
+    None
+):
+    """A hinge strictly between the two (authored) endpoints is labeled
+    alongside them, so the legend shows where the diverging palette
+    actually pivots -- not just the two extremes."""
+    enc: dict[str, Any] = {"legend": {}}
+    scale = ScaleTargetConfig(palette="dbt-seq-blue", min=-1000, max=1000, hinge=0)
+    data = [{"v": -500}, {"v": 500}]
+    apply_gradient_legend_endpoint_labels(enc, scale, data, "v")
+    assert enc["legend"]["values"] == [-1000, 0, 1000]
+
+
+def test_apply_gradient_legend_endpoint_labels_hinge_extends_authored_bound() -> None:
+    """A hinge outside the authored bound EXTENDS the labeled endpoint to
+    match gradient_scale_to_vl's own extended rendered domain -- a legend
+    showing [500, 1000] while the scale secretly renders [0, 1000] would
+    disagree with what's actually painted. The hinge itself lands exactly
+    on the extended endpoint here, so no separate third tick is added."""
+    enc: dict[str, Any] = {"legend": {}}
+    scale = ScaleTargetConfig(palette="dbt-seq-blue", min=500, max=1000, hinge=0)
+    data = [{"v": 600}, {"v": 900}]
+    apply_gradient_legend_endpoint_labels(enc, scale, data, "v")
+    assert enc["legend"]["values"] == [0, 1000]
+
+
+def test_apply_gradient_legend_endpoint_labels_nice_ticks_include_hinge() -> None:
+    """The nice-widened tick ladder gets the hinge inserted too, when it
+    isn't already one of the nice ticks."""
+    enc: dict[str, Any] = {"legend": {}}
+    scale = ScaleTargetConfig(palette="dbt-seq-blue", hinge=5)
+    data = [{"v": 3}, {"v": 97}]
+    apply_gradient_legend_endpoint_labels(enc, scale, data, "v")
+    values = enc["legend"]["values"]
+    assert values == sorted(values)
+    assert 5 in values
+    assert values[0] == 0
+    assert values[-1] == 100
+
+
+def test_apply_gradient_legend_endpoint_labels_no_hinge_unchanged() -> None:
+    """A sequential (no hinge) scale keeps its existing two/nice-ladder
+    behavior untouched -- including the authored ints' own type: hinge
+    handling must never force an unrelated no-hinge scale's plain int
+    bounds into floats in the emitted spec JSON."""
+    enc: dict[str, Any] = {"legend": {}}
+    scale = ScaleTargetConfig(palette="dbt-seq-blue", min=0, max=100)
+    data = [{"v": 5}, {"v": 8}]
+    apply_gradient_legend_endpoint_labels(enc, scale, data, "v")
+    assert enc["legend"]["values"] == [0, 100]
+    assert [type(v) for v in enc["legend"]["values"]] == [int, int]
+
+
 def test_bar_categorical_legend_has_no_endpoint_values() -> None:
     """A categorical (series-color) legend's rendered ticks stay untouched by
     the gradient seam — the min/max endpoint-label logic (a 2-element numeric
@@ -477,13 +530,19 @@ def test_geoshape_nice_false_generates_client_side_domain_signal() -> None:
     scale already excludes it — no join-awareness needed in Python, and no
     risk of labeling an endpoint that doesn't correspond to anything shaded
     on the map.
+
+    The upper edge reads `peek(domain('color'))` rather than
+    `domain('color')[1]`: a diverging `hinge` can bake a 3-element resolved
+    domain (`[min, pivot, max]`), and index `[1]` would then read the pivot
+    instead of the true max. `peek` (Vega's "last element" function) is
+    correct for both the 2- and 3-element case.
     """
     data = [{"state": "CA", "pop": 39_500_000}, {"state": "TX", "pop": 29_000_000}]
     vc = _geo_chart(style={"color": {"gradient": {"nice": False}}})
     v2_vl = translate_to_vl(GeoshapeEmitter().emit(vc, _DEFAULT_BOX, regroup((), data)))
     color_enc = v2_vl["layer"][1]["encoding"]["color"]
     assert color_enc["legend"]["values"] == {
-        "signal": "[domain('color')[0], domain('color')[1]]"
+        "signal": "[domain('color')[0], peek(domain('color'))]"
     }
 
 
@@ -496,7 +555,47 @@ def test_geoshape_nice_false_min_only_bound_mixes_literal_and_signal() -> None:
     vc = _geo_chart(style={"color": {"gradient": {"min": 0, "nice": False}}})
     v2_vl = translate_to_vl(GeoshapeEmitter().emit(vc, _DEFAULT_BOX, regroup((), data)))
     color_enc = v2_vl["layer"][1]["encoding"]["color"]
-    assert color_enc["legend"]["values"] == {"signal": "[0, domain('color')[1]]"}
+    assert color_enc["legend"]["values"] == {"signal": "[0, peek(domain('color'))]"}
+
+
+def test_geoshape_nice_false_hinge_scheme_legend_still_reads_true_max() -> None:
+    """Regression: a diverging hinge on a geoshape's Vega-scheme gradient
+    bakes ``domainMid`` (see gradient_scale_to_vl), which makes Vega's own
+    resolved ``domain('color')`` a 3-element ``[min, pivot, max]`` array
+    instead of 2. The legend signal's upper edge must still read the true
+    max (`peek`), not the pivot (`[1]`, the pre-fix indexing bug)."""
+    data = [{"state": "CA", "pop": 39_500_000}, {"state": "TX", "pop": 29_000_000}]
+    vc = _geo_chart(
+        style={"color": {"gradient": {"palette": "redblue", "hinge": 0, "nice": False}}}
+    )
+    v2_vl = translate_to_vl(GeoshapeEmitter().emit(vc, _DEFAULT_BOX, regroup((), data)))
+    color_enc = v2_vl["layer"][1]["encoding"]["color"]
+    assert color_enc["scale"]["domainMid"] == 0.0
+    assert color_enc["legend"]["values"] == {
+        "signal": "[domain('color')[0], peek(domain('color'))]"
+    }
+
+
+def test_geoshape_hinge_scheme_single_sided_bound_survives_domainMid_fallback() -> None:
+    """Regression: a geoshape scheme's domainMid fallback (bounds
+    unresolved — no data, and here only min authored) must not silently
+    drop an authored single-sided bound. Before this fix the scale carried
+    only {scheme, domainMid, clamp}; the authored min vanished, so
+    apply_geo_choropleth_legend_endpoint_labels's nice:false legend
+    labeled the literal authored min while the actual color domain started
+    at the data minimum instead — label and colors disagreed."""
+    vc = _geo_chart(
+        style={"color": {"gradient": {"palette": "redblue", "min": -50, "hinge": 0}}}
+    )
+    v2_vl = translate_to_vl(
+        GeoshapeEmitter().emit(
+            vc, _DEFAULT_BOX, regroup((), [{"state": "CA", "pop": 1}])
+        )
+    )
+    color_enc = v2_vl["layer"][1]["encoding"]["color"]
+    assert color_enc["scale"]["domainMin"] == -50
+    assert color_enc["scale"]["domainMid"] == 0.0
+    assert "domainMax" not in color_enc["scale"]
 
 
 @pytest.mark.network
@@ -532,6 +631,85 @@ def test_geoshape_nice_false_legend_renders_true_data_endpoints() -> None:
     }
     assert "39538223" in tick_texts, f"legend missing CA endpoint: {tick_texts}"
     assert "29145505" in tick_texts, f"legend missing TX endpoint: {tick_texts}"
+
+
+def test_geoshape_legend_labels_authored_bounds_extend_for_hinge_outside_range() -> (
+    None
+):
+    """A hinge outside BOTH authored bounds extends the labeled endpoint to
+    match gradient_scale_to_vl's own extended rendered domain -- an
+    authored-both-bounds legend is not exempt from hinge-awareness just
+    because it skips the join-drop concern. No hinge TICK is added here --
+    geoshape is deliberately exempt from that (see
+    apply_geo_choropleth_legend_endpoint_labels's own docstring) -- just
+    the two endpoints, extended."""
+    data = [{"state": "CA", "pop": 600}, {"state": "TX", "pop": 900}]
+    vc = _geo_chart(
+        style={"color": {"gradient": {"min": 500, "max": 1000, "hinge": 0}}}
+    )
+    v2_vl = translate_to_vl(GeoshapeEmitter().emit(vc, _DEFAULT_BOX, regroup((), data)))
+    color_enc = v2_vl["layer"][1]["encoding"]["color"]
+    assert color_enc["scale"]["domain"][0] == 0.0
+    assert color_enc["legend"]["values"] == [0.0, 1000]
+
+
+def test_geoshape_legend_labels_single_sided_bound_signal_extends_for_hinge() -> None:
+    """The literal half of the mixed literal+signal expression must also
+    reflect hinge extension -- the free (signal) edge already reads Vega's
+    own resolved domain automatically, but the literal edge would otherwise
+    disagree with what gradient_scale_to_vl actually baked once hinge pulls
+    that bound further out."""
+    vc = _geo_chart(
+        style={
+            "color": {
+                "gradient": {
+                    "palette": "redblue",
+                    "min": 500,
+                    "hinge": 0,
+                    "nice": False,
+                }
+            }
+        }
+    )
+    v2_vl = translate_to_vl(
+        GeoshapeEmitter().emit(
+            vc, _DEFAULT_BOX, regroup((), [{"state": "CA", "pop": 1}])
+        )
+    )
+    color_enc = v2_vl["layer"][1]["encoding"]["color"]
+    assert color_enc["scale"]["domainMin"] == 0.0
+    assert color_enc["legend"]["values"] == {"signal": "[0.0, peek(domain('color'))]"}
+
+
+def test_geoshape_legend_labels_discrete_stop_list_single_bound_does_not_extend() -> (
+    None
+):
+    """A discrete stop list (not a Vega scheme) with unresolved bounds can't
+    pivot at all -- gradient_scale_to_vl's own domainMid fallback only fires
+    for a scheme (documented, pre-existing limitation). The legend must NOT
+    extend the literal bound in this case either, or it disagrees with the
+    scale it's labeling (a legend/color mismatch is exactly what this whole
+    PR exists to prevent)."""
+    vc = _geo_chart(
+        style={
+            "color": {
+                "gradient": {
+                    "palette": ["#2166ac", "#f7f7f7", "#b2182b"],
+                    "min": 500,
+                    "hinge": 0,
+                    "nice": False,
+                }
+            }
+        }
+    )
+    v2_vl = translate_to_vl(
+        GeoshapeEmitter().emit(
+            vc, _DEFAULT_BOX, regroup((), [{"state": "CA", "pop": 1}])
+        )
+    )
+    color_enc = v2_vl["layer"][1]["encoding"]["color"]
+    assert color_enc["scale"]["domainMin"] == 500
+    assert color_enc["legend"]["values"] == {"signal": "[500, peek(domain('color'))]"}
 
 
 def test_geoshape_legend_labels_use_authored_min_max_override() -> None:

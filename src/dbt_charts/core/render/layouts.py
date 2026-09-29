@@ -44,6 +44,7 @@ from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import (
     border_dash_attrs,
+    checked_href,
     escape_attr,
     px,
     translate_group,
@@ -91,6 +92,7 @@ def render_rows_layout(
     resolved_style: ResolvedStyle,
     render_cache: RenderCache,
     error_collector: list[Diagnostic] | None = None,
+    painted_canvas: str | None,
 ) -> tuple[str, float]:
     """Render items in vertical stack.
 
@@ -135,6 +137,7 @@ def render_rows_layout(
             render_cache=render_cache,
             source_path=item.source_path,
             error_collector=error_collector,
+            painted_canvas=painted_canvas,
         )
 
         if item_svg:
@@ -162,6 +165,7 @@ def render_cols_layout(
     resolved_style: ResolvedStyle,
     render_cache: RenderCache,
     error_collector: list[Diagnostic] | None = None,
+    painted_canvas: str | None,
 ) -> tuple[str, float]:
     """Render items in horizontal distribution.
 
@@ -205,6 +209,7 @@ def render_cols_layout(
             render_cache=render_cache,
             source_path=item.source_path,
             error_collector=error_collector,
+            painted_canvas=painted_canvas,
         )
 
         if item_svg:
@@ -231,6 +236,7 @@ def render_grid_layout(
     resolved_style: ResolvedStyle,
     render_cache: RenderCache,
     error_collector: list[Diagnostic] | None = None,
+    painted_canvas: str | None,
 ) -> tuple[str, float]:
     """Render items in positioned grid.
 
@@ -276,6 +282,7 @@ def render_grid_layout(
             render_cache=render_cache,
             source_path=item.source_path,
             error_collector=error_collector,
+            painted_canvas=painted_canvas,
         )
 
         if item_svg:
@@ -319,6 +326,7 @@ def render_tabs_layout(
     resolved_style: ResolvedStyle,
     render_cache: RenderCache,
     error_collector: list[Diagnostic] | None = None,
+    painted_canvas: str | None,
 ) -> tuple[str, float]:
     """Render tabbed container (active tab only).
 
@@ -370,6 +378,7 @@ def render_tabs_layout(
         render_cache=render_cache,
         source_path=active_item.source_path,
         error_collector=error_collector,
+        painted_canvas=painted_canvas,
     )
 
     # Compute tab titles once - use provided titles or generate defaults
@@ -415,7 +424,9 @@ def render_tabs_layout(
 
         if tab_variable and not is_active:
             href = _build_toggle_url(variables, tab_variable, slug)
-            tab_bar_parts.append(f'<a href="{escape_attr(href)}">{tab_svg}</a>')
+            tab_bar_parts.append(
+                f'<a href="{escape_attr(checked_href(href))}">{tab_svg}</a>'
+            )
         else:
             tab_bar_parts.append(tab_svg)
 
@@ -518,7 +529,7 @@ def render_details_summary(
         f'rx="{escape_attr(details_config.border.radius)}" class="dbt-details-toggle"/>'
     )
     return (
-        f'<a href="{escape_attr(href)}">'
+        f'<a href="{escape_attr(checked_href(href))}">'
         + _summary_rect
         + f'<text x="{escape_attr(details_config.arrow.x)}" y="{escape_attr(summary_height / 2 + details_config.text_baseline_offset)}" font-size="{escape_attr(details_config.arrow.font.size)}" fill="{escape_attr(resolved_style.title.font.color)}">{arrow}</text>'
         + f'<text x="{escape_attr(details_config.label_x)}" y="{escape_attr(summary_height / 2 + details_config.text_baseline_offset)}" font-size="{escape_attr(details_config.font.size)}" '

@@ -311,25 +311,19 @@ def _branch_join_is_the_artifact(
     return True
 
 
-def as_expression(
-    node: object,  # type-state: object_annotation — sqlglot's node base class varies by installed release
-) -> exp.Expression | None:
-    """Narrow any object to a sqlglot ``Expression``, or ``None`` if it is not one.
+def as_expression(node: exp.Expr) -> exp.Expression | None:
+    """Narrow a sqlglot node to an ``Expression``, or ``None`` if it is not one.
 
     sqlglot's generic tree-walk methods (``walk``, ``find_all``, ...) and the
-    base classes some statement types share (``Query``, ``DDL``, ``AggFunc``)
-    are typed against a broader base than ``Expression`` in newer sqlglot
-    releases. Every concrete node the parser can actually produce still
-    multiply-inherits ``Expression``, so this narrows back to what the rest
-    of dbt_charts assumes, at a parameter type generic enough that the check
-    is never a no-op regardless of which sqlglot release is installed.
+    trait bases some node types share (``Query``, ``DDL``, ``AggFunc``) are
+    typed against ``Expr``, the abstract base. Every concrete node the parser
+    can actually produce multiply-inherits ``Expression``, so this narrows
+    back to what the rest of dbt_charts assumes.
     """
     return node if isinstance(node, exp.Expression) else None
 
 
-def as_expressions(
-    nodes: Iterable[object],  # type-state: object_annotation — sqlglot version drift
-) -> list[exp.Expression]:
+def as_expressions(nodes: Iterable[exp.Expr | None]) -> list[exp.Expression]:
     """Narrow every node in *nodes* to ``Expression``, dropping bare ``None``\\s
     (sqlglot's own empty-statement/separator artifact).
 

@@ -28,6 +28,9 @@ EXTRA_PROBES: dict[str, str] = {
         "create_server(DbtChartsAIContext(project_session=session))\n"
         "print('ok')\n"
     ),
+    "streamlit": (
+        "from dbt_charts.integrations.streamlit import st_board\nprint('ok')\n"
+    ),
 }
 
 # Declared extras deliberately not probed here, and why. Every entry needs a

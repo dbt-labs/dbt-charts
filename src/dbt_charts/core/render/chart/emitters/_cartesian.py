@@ -1246,8 +1246,11 @@ def apply_domain_headroom_bounds(
 
     Both bounds are exact (never nice-rounded). ``domain_max`` is the
     headroom-applied top; ``domain_min`` is the symmetric span-relative bottom
-    on a zoomed axis, or the headroom-expanded data floor on an all-negative
-    zero-anchored one. None on either means VL auto-fits that edge. Callers must have already confirmed no authored domain is set.
+    on a zoomed axis, the headroom-expanded data floor on an all-negative
+    zero-anchored one, or (mixed-sign, format-floored) the real data floor
+    pinned against a ladder rung that rounded below it. None on either means
+    VL auto-fits that edge. Callers must have already confirmed no authored
+    domain is set.
     """
     if domain_max is None and domain_min is None:
         return scale
@@ -1632,7 +1635,7 @@ def build_cartesian_y_encoding(
 
     Callers that need a VL ``stack`` key (area charts) mutate the returned dict.
     """
-    bake_tick_ladder(ay_vl, ay.tick_values)
+    bake_tick_ladder(ay_vl, ay)
     return {
         "field": y_field,
         "type": "quantitative",

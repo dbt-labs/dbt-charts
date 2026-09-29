@@ -10,7 +10,7 @@ Everything below is reviewer-enforced. This section exceeds the usual length bud
 
 ```
 diagnostics/, warnings/, text/, utils/, dialects/, fonts.py, font_measure.py,
-colors.py, aliases.py
+colors.py, aliases.py, links.py
     (leaf — no deps on compile/execute/render)
     ↑
 compile/
@@ -24,13 +24,15 @@ cli/, ai/          → core modules (thin wrappers only)
 ```
 
 `core/diagnostics/`, `core/text/`, `core/utils.py`, `core/dialects/`,
-`core/fonts.py`, `core/font_measure.py`, `core/colors.py`, and `core/aliases.py`
+`core/fonts.py`, `core/font_measure.py`, `core/colors.py`, `core/aliases.py`,
+and `core/links.py`
 hold types and services shared by compile *and* render/execute — and, for
 `aliases.py`, by any host that resolves a board's `aliases:` without running the
 `serve/` HTTP application
 (`DbtChartsError`, `ChartDataError`, `Diagnostic`, `slug_to_text`,
 `to_plain_dict`, `is_year_shaped`, `SQLDialect`/`get_dialect`/`VALID_OPERATORS`,
-strict font measurement, `sanitize_color`/`is_sanitizable_color`, …) — anything
+strict font measurement, `sanitize_color`/`is_sanitizable_color`,
+`link_scheme`/`is_safe_href`, …) — anything
 `compile/` needs that would otherwise force `compile → render` or
 `compile → execute`. `tach.toml` enforces `compile ↛ render` and
 `compile ↛ execute`, except pre-existing compile→execute edges each carrying an

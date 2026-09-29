@@ -62,14 +62,14 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/compile/config.py", 567): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 189): (
+    ("core/execute/adapters/adapter_registry.py", 198): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 195): (
+    ("core/execute/adapters/adapter_registry.py", 204): (
         "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
         "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 197): (
+    ("core/execute/adapters/adapter_registry.py", 206): (
         "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
@@ -146,7 +146,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/_paths.py", 533): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
-    ("agent_api/project_session.py", 300): (
+    ("agent_api/project_session.py", 323): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
     ("agent_api/serve.py", 80): (

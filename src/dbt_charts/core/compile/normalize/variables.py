@@ -17,6 +17,7 @@ from dbt_charts.core.compile.template.jinja import (
     RESERVED_VARIABLE_NAMES,
     extract_variable_dependencies,
 )
+from dbt_charts.core.diagnostics.codes_compile import ERR_VARIABLE_NAME_INVALID
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory
@@ -375,6 +376,21 @@ def promote_column_option_queries(
         var.options.column = None
         # Clear the top-level column field unconditionally (handles both cases)
         var.column = None
+
+
+def validate_authored_variable_name(name: str) -> None:
+    """Raise unless `name` is a legal Jinja identifier.
+
+    Callers must apply this only to authored `variables:` keys, before
+    `generate_layout_variables` merges in its own hidden tabs/details
+    variables (`_tab_<id>`, `_details_<id>`) — those derive from a
+    free-form chart/tab `id:` and are never referenced as bare Jinja names.
+
+    isidentifier(), not an ASCII regex: Jinja accepts Unicode identifiers
+    ("région" is a legal variable name).
+    """
+    if not name.isidentifier():
+        raise CompilationError.from_code(ERR_VARIABLE_NAME_INVALID, name=name)
 
 
 def build_variable_registry(board: Board) -> dict[str, Variable]:

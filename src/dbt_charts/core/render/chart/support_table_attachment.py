@@ -2475,7 +2475,6 @@ def _label_period_filter_expr(
     resolved_chart_style: ResolvedChartDefaults,
     data: list[dict[str, Any]],
     x_field: str,
-    chart_type: str,
     chart_local_axis_x: ResolvedAxisStyle,
     axis_x_width: float | None,
 ) -> str | None:
@@ -2509,12 +2508,6 @@ def _label_period_filter_expr(
     """
     enc_x = spec.get("encoding", {}).get("x", {})
     x_type = enc_x.get("type")
-
-    # Chart-type-specific axis_x patch (Layer 4, theme-level, sparse) —
-    # used below by the ordinal path's own time_unit precedence, which needs
-    # the raw patch rather than the fully-cascaded axis.
-    ct_style = getattr(resolved_chart_style, chart_type, None)
-    ct_axis_x = getattr(ct_style, "axis_x", None) if ct_style is not None else None
 
     # Temporal path: timeUnit present in spec x encoding.
     enc_time_unit = enc_x.get("timeUnit")
@@ -2588,17 +2581,10 @@ def _label_period_filter_expr(
             return None
         return gate
 
-    # Ordinal bucketed-time path: no VL timeUnit marker exists (an ordinal
-    # domain is plain strings), so resolve the encoding grain and visibility
-    # independently — preferring an authored axis_x.time_unit/label.time_unit
-    # (board-level ct_axis_x, else chart-local), falling back to detecting the
-    # grain straight from the data when nothing is authored. This mirrors
-    # resolve_axis_x_overlap's own precedence so both paths agree on the same
-    # grain and land on the same shared render-time visibility decision.
+    # Ordinal bucketed-time path: cascaded axis_x.time_unit, else detect the
+    # grain from the data; must match resolve_axis_x_overlap's precedence.
     if x_type == "ordinal":
-        authored_encoding_tu = ct_axis_x.time_unit if ct_axis_x is not None else None
-        if authored_encoding_tu is None:
-            authored_encoding_tu = chart_local_axis_x.time_unit
+        authored_encoding_tu = chart_local_axis_x.time_unit
         raw_x_values = [
             row.get(x_field)
             for row in data
@@ -2727,7 +2713,8 @@ def _series_order_strip(
       ``stacked_series_order`` (below), never computed in this function.
     Bar (non-stacked / grouped): alphabetical ascending.
     Line / non-stacked area: series_order[0] = lowest last-x y (bottom of chart).
-    Stacked area: series_order[0] = largest global sum (baseline).
+    Stacked area: series_order[0] = baseline per ``style.stack_order``
+      (unset: largest global sum).
 
     ``stacked_series_order`` is the emitter's OWN already-computed baseline
     order for a stacked bar (``ChartSpec.stacked_series_order``, stamped
@@ -2775,8 +2762,13 @@ def _series_order_strip(
     if is_stacked_area:
         if y_field is None:
             return sorted(distinct)
+        assert isinstance(resolved_chart, ResolvedAreaChart)
         return sorted_series_by_stack_order(
-            list(distinct), data, color_field, None, y_field=y_field
+            list(distinct),
+            data,
+            color_field,
+            resolved_chart.style.stack_order,
+            y_field=y_field,
         )
 
     # Line / non-stacked area: highest last-x y at chart top → series_order[N].
@@ -4595,7 +4587,6 @@ def apply_chart_support_table_post_pass(
             charts_style,
             data,
             resolved_chart.x,
-            chart_type,
             chart_local_axis_x=axis_x_style,
             axis_x_width=axis_x_width,
         )

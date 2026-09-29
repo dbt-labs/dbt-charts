@@ -21,9 +21,11 @@ from dbt_charts.core.render.chart.emitters._measured_label_padding import (
     numeric_values,
     quantitative_tick_labels,
 )
-from dbt_charts.core.render.numeral_expr import numeral_vega_expr
+from dbt_charts.core.render.numeral_expr import (
+    numeral_vega_expr,
+    sub_unit_guarded_vega_expr,
+)
 from dbt_charts.core.text.numeral_scale import (
-    SUB_UNIT_SCIENTIFIC_FLOOR,
     SuffixMode,
     with_symbol,
 )
@@ -281,19 +283,25 @@ def axis_to_vl(
     return d
 
 
-def bake_tick_ladder(ay_vl: VLDict, tick_values: tuple[float, ...]) -> None:
-    """Bake the resolved measure-axis tick ladder into VL ``axis.values``.
+def bake_tick_ladder(ay_vl: VLDict, ay: ResolvedAxisStyle) -> None:
+    """Bake a measure axis's resolved tick decision into its VL axis dict.
 
-    ``tick_values`` (``ResolvedAxisStyle.tick_values``) is the domain-spanning
-    nice-tick ladder computed at resolve() — it must reach every cartesian
-    measure channel (vertical/horizontal bar, single/multi-metric line, area,
-    and scatter) so two charts pinned to the same authored domain read on one
-    ruler regardless of orientation or emit path. A no-op when the author
-    already supplied an explicit ``axis.values`` list (``axis_to_vl`` already
-    wrote it) or when no ladder was baked (``ticks.count`` unset).
+    ``ay.tick_values`` is the domain-spanning nice-tick ladder computed at
+    resolve() -- it must reach every cartesian measure channel (vertical/
+    horizontal bar, single/multi-metric line, area, and scatter) so two charts
+    pinned to the same authored domain read on one ruler regardless of
+    orientation or emit path. Where resolve baked no ladder, Vega-Lite picks
+    the ticks and the resolved ``ay.ticks.step`` (the format's precision floor)
+    becomes ``tickMinStep`` instead -- never beside explicit ``values``. A
+    no-op on either side when the author already supplied ``axis.values``
+    (``axis_to_vl`` already wrote it).
     """
-    if tick_values and "values" not in ay_vl:
-        ay_vl["values"] = list(tick_values)
+    if "values" in ay_vl:
+        return
+    if ay.tick_values:
+        ay_vl["values"] = list(ay.tick_values)
+    elif ay.ticks.step is not None:
+        ay_vl["tickMinStep"] = ay.ticks.step
 
 
 def measure_axis_to_vl(
@@ -611,7 +619,10 @@ def inject_axis_numeral_expr(
     if ruler is None:
         if tick_label is None:
             return ax_vl
-        if tick_label.si_format is not None:
+        if (
+            tick_label.si_format is not None
+            and tick_label.scientific_format is not None
+        ):
             # No ladder means no step to derive one fixed spec from (the
             # branch below's mechanism) -- Vega's own auto-picked ticks can
             # land anywhere the domain allows. Gate on each tick's own
@@ -625,29 +636,17 @@ def inject_axis_numeral_expr(
             # `tick_label.scientific_format` (`sub_unit_scientific_format`,
             # gated at `SUB_UNIT_SCIENTIFIC_FLOOR`) applies instead, mirroring
             # `non_compacting_tick_format`'s own fixed-point/scientific split
-            # for a real ladder. `tick_label.scientific_format` is never None
-            # here -- `ResolvedTickLabel.__post_init__` requires it whenever
-            # `si_format` is set, which this branch already checked -- so
-            # there is no unguarded arm to fall back to. Neither arm has a
+            # for a real ladder. Neither arm has a
             # prefix/decimal-pad device of its own -- see
             # `sub_unit_digit_format`'s own docstring for why.
-            si_e = f"format(datum.value,{json.dumps(tick_label.si_format)})"
-            plain_e = f"format(datum.value,{json.dumps(tick_label.format)})"
-            # `datum.value !== 0` first: zero is exactly representable at any
-            # precision and reads as a plain "0" -- the fixed-point register
-            # handles it correctly on its own; scientific would print "0e+0"
-            # instead.
-            scientific_e = (
-                f"format(datum.value,{json.dumps(tick_label.scientific_format)})"
-            )
-            sub_one_e = (
-                f"(datum.value !== 0 && abs(datum.value) < "
-                f"{json.dumps(SUB_UNIT_SCIENTIFIC_FLOOR)} "
-                f"? {scientific_e} : {plain_e})"
-            )
             return {
                 **ax_vl,
-                "labelExpr": f"(abs(datum.value) < 1 ? {sub_one_e} : {si_e})",
+                "labelExpr": sub_unit_guarded_vega_expr(
+                    "datum.value",
+                    tick_label.format,
+                    tick_label.scientific_format,
+                    f"format(datum.value,{json.dumps(tick_label.si_format)})",
+                ),
             }
         trimmed_e = f"format(datum.value,{json.dumps(tick_label.format)})"
         text_e = _apply_decimal_pad(trimmed_e, tick_label.decimal_pad_table)

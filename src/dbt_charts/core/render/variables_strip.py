@@ -34,6 +34,7 @@ from dbt_charts.core.render.svg_utils import (
     attr_name,
     authored_attrs,
     authored_kind_attr,
+    css_color,
     escape_attr,
     px,
 )
@@ -124,7 +125,8 @@ def render_variables_strip_svg(
     # the two stay independent.
     return (
         f'<g data-dbt-variables="true" '
-        f'style="--dbt-variable-field-border: {escape_attr(variables_style.border.color)}">'
+        f'style="--dbt-variable-field-border: '
+        f'{escape_attr(css_color(variables_style.border.color))}">'
         f'{anchor}<g data-dbt-variables-static="true">{"".join(drawn)}</g></g>',
         layout.height,
     )

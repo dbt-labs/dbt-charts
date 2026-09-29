@@ -22,6 +22,8 @@ _SCAN_ROOT = DBT_CHARTS_PKG_DIR / "core" / "render"
 
 _ALLOWED_VALUE_CALLS = {"escape_attr", "format_svg_numeric", "px"}
 _ALLOWED_NAME_CALLS = {"attr_name"}
+_HREF_ATTR_NAMES = {"href", "xlink:href"}
+_STYLE_ATTR_NAME = "style"
 
 _NUMERIC_FORMAT_TYPES = set("dfFgGeEn") | {"%"}
 _FORMAT_SPEC_BODY_RE = re.compile(r"^[<>=^]?[+\- ]?#?0?[0-9]*[,_]?(\.[0-9]+)?$")
@@ -86,6 +88,41 @@ def _is_allowed_name(node: ast.expr) -> bool:
     return _call_name(node) in _ALLOWED_NAME_CALLS
 
 
+def _call_args(node: ast.expr) -> list[ast.expr]:
+    return node.args if isinstance(node, ast.Call) else []
+
+
+def _is_allowed_href_value(node: ast.expr) -> bool:
+    """href/xlink:href value must be ``escape_attr(checked_href(...))`` —
+    the sentinel-bypass CVE (``http://dct.invalidjavascript:...``) proved a
+    scheme check has to run on the final resolved string, not just on
+    literal-prefix authoring, so every href sink re-validates inline rather
+    than trusting an upstream resolver was called."""
+    if _call_name(node) != "escape_attr":
+        return False
+    args = _call_args(node)
+    return bool(args) and _call_name(args[0]) == "checked_href"
+
+
+def _is_allowed_style_value(node: ast.expr, format_spec: ast.expr | None) -> bool:
+    """style="..." value must be css_color-validated, a numeric format, or a
+    literal constant — escaping alone doesn't stop a color value like
+    ``red; background-image:url(//evil)`` from opening a new declaration."""
+    spec_text = _format_spec_text(format_spec)
+    if spec_text is not None and _is_numeric_format_spec(spec_text):
+        return True
+    if _is_literal_constant(node):
+        return True
+    if _call_name(node) in {"format_svg_numeric", "px"}:
+        return True
+    if _call_name(node) == "escape_attr":
+        args = _call_args(node)
+        if not args:
+            return False
+        return _call_name(args[0]) == "css_color" or _is_literal_constant(args[0])
+    return False
+
+
 def _regex_compile_args(tree: ast.AST) -> set[int]:
     """id() of every ``JoinedStr`` passed directly to ``re.compile(...)`` —
     a regex *pattern*, never markup, so the attribute-escaping check doesn't
@@ -104,9 +141,15 @@ def _regex_compile_args(tree: ast.AST) -> set[int]:
     return ids
 
 
-def _scan_literal(literal: str, quote_state: str | None) -> str | None:
+_ATTR_TOKEN_RE = re.compile(r"([A-Za-z][A-Za-z0-9:_-]*)=$")
+
+
+def _scan_literal(
+    literal: str, quote_state: str | None, attr_name: str | None
+) -> tuple[str | None, str | None]:
     """Advance *quote_state* (None, or the quote char of an attribute value
-    currently open) across every character of *literal*.
+    currently open) and *attr_name* (the name of that open attribute, lower-
+    cased) across every character of *literal*.
 
     A single ``before``-fragment check (endswith ``="``) only catches an
     interpolation that is the *first* thing inside its attribute value. A
@@ -120,12 +163,15 @@ def _scan_literal(literal: str, quote_state: str | None) -> str | None:
         ch = literal[i]
         if quote_state is None and ch == "=" and i + 1 < n and literal[i + 1] in "\"'":
             quote_state = literal[i + 1]
+            token = _ATTR_TOKEN_RE.search(literal[: i + 1])
+            attr_name = token.group(1).lower() if token else None
             i += 2
             continue
         if quote_state is not None and ch == quote_state:
             quote_state = None
+            attr_name = None
         i += 1
-    return quote_state
+    return quote_state, attr_name
 
 
 def _is_safe_sub_replacement(node: ast.expr) -> bool:
@@ -186,9 +232,12 @@ def find_violations(source: str, filename: str) -> list[str]:
             continue
         parts = node.values
         quote_state: str | None = None
+        attr_name: str | None = None
         for i, part in enumerate(parts):
             if isinstance(part, ast.Constant) and isinstance(part.value, str):
-                quote_state = _scan_literal(part.value, quote_state)
+                quote_state, attr_name = _scan_literal(
+                    part.value, quote_state, attr_name
+                )
                 continue
             if not isinstance(part, ast.FormattedValue):
                 continue
@@ -199,6 +248,18 @@ def find_violations(source: str, filename: str) -> list[str]:
                 violations.append(
                     f'{filename}:{line}: single-quoted attribute value (use "...")'
                 )
+            elif quote_state == '"' and attr_name in _HREF_ATTR_NAMES:
+                if not _is_allowed_href_value(part.value):
+                    violations.append(
+                        f"{filename}:{line}: href/xlink:href value not routed "
+                        "through escape_attr(checked_href(...))"
+                    )
+            elif quote_state == '"' and attr_name == _STYLE_ATTR_NAME:
+                if not _is_allowed_style_value(part.value, part.format_spec):
+                    violations.append(
+                        f'{filename}:{line}: style="..." value not routed '
+                        "through escape_attr(css_color(...))/a numeric format spec"
+                    )
             elif quote_state == '"' and not _is_allowed_value(
                 part.value, part.format_spec
             ):
@@ -264,6 +325,19 @@ _BAD_SAMPLES = {
     """x = re.sub(r'<a', f'<a href="{escape_attr(url)}"', svg)""": (
         "same bug via the module-level re.sub(pattern, repl, string) form"
     ),
+    """x = f'<a href="{escape_attr(url)}">'""": (
+        "href value escaped but not scheme-checked via checked_href()"
+    ),
+    """x = f'<a xlink:href="{escape_attr(url)}">'""": (
+        "xlink:href value escaped but not scheme-checked via checked_href()"
+    ),
+    """x = f'<a href="{url}">'""": "bare href value, not even escaped",
+    """x = f'<g style="fill: {escape_attr(color)}">'""": (
+        "style color escaped but not validated via css_color()"
+    ),
+    """x = f'<g style="--dbt-link: {color}">'""": (
+        "bare style color value, not even escaped"
+    ),
 }
 
 _GOOD_SAMPLES = [
@@ -282,6 +356,10 @@ _GOOD_SAMPLES = [
     """x = pattern.sub(_replace, svg)""",
     """x = pattern.sub("", svg)""",
     """x = re.sub(r'<a', _replace, svg)""",
+    """x = f'<a href="{escape_attr(checked_href(url))}">'""",
+    """x = f'<a xlink:href="{escape_attr(checked_href(url))}">'""",
+    """x = f'<g style="fill: {escape_attr(css_color(color))}">'""",
+    """x = f'<g style="display:{escape_attr("" if a else "none")}">'""",
 ]
 
 

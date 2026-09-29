@@ -95,6 +95,44 @@ def resolve_format(
     return format_str
 
 
+def tick_min_step_for_format(d3_spec: str) -> float | None:
+    """Minimum tick step a fixed-decimal d3 spec can distinguish, or None.
+
+    A quantitative axis with no authored tick cadence lets Vega-Lite pick its
+    own "nice" step (e.g. 0.5 on a [0, 2] domain). If the axis's own number
+    format has a fixed decimal count coarser than that step, distinct ticks
+    round to the same label -- an integer format on 0, 0.5, 1, 1.5, 2 paints
+    0, 1, 1, 2, 2. This is the floor that prevents that: the smallest value
+    the format can paint as distinct from zero.
+
+    ``d`` (always whole) and ``f`` (fixed ``precision`` decimals) derive
+    ``10 ** -precision``. ``%`` derives two extra zeros of precision, since it
+    multiplies the underlying value by 100 before applying its own decimals
+    (``.0%`` distinguishes down to 0.01, not 1). A precision-less ``f``/``%``
+    (a bare ``,f``) falls back to d3's own default of 6 -- the same fallback
+    this module's sibling ``decimal_pad_table_for`` already uses, for the
+    same reason: d3 itself paints 6 decimals when none is authored, not 0.
+    Every other type -- SI (``s``), or no type at all (auto) -- has no fixed
+    decimal count to derive from and returns None. Also None for a spec
+    ``_d3_parse`` can't parse: a native predefined name (``percent_number``)
+    that bypasses d3 entirely.
+    """
+    if not d3_spec:
+        return None
+    try:
+        parsed = _d3_parse(d3_spec)
+    except D3FormatError:
+        return None
+    precision = 6 if parsed.precision is None else parsed.precision
+    if parsed.type == "d":
+        return 1.0
+    if parsed.type == "f":
+        return 10.0**-precision
+    if parsed.type == "%":
+        return 10.0 ** -(precision + 2)
+    return None
+
+
 def get_format_prefix_suffix(
     format_input: str
     | FormatConfig

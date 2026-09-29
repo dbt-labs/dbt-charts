@@ -456,6 +456,14 @@ chart_rendering:
     # cannot clear the floor from either ink direction -- raising this
     # much past 4.5 needs a check against the canvases it will run on.
     label_ink_min_contrast: 4.5
+  text_contrast:
+    # WCAG 2.1 contrast floor a resolved font color must clear against the
+    # background it paints on, checked at render time (WARN-LOW-TEXT-CONTRAST).
+    # min_ratio is the standard floor (WCAG AA, normal text). large_text_min_ratio
+    # applies under WCAG's own large-text exception: >=24px at any weight, or
+    # >=18.67px (14pt) bold -- see render/contrast_warning.py.
+    min_ratio: 4.5
+    large_text_min_ratio: 3.0
 
 
 # ============================================================================

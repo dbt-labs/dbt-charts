@@ -57,6 +57,7 @@ class TestTabsLayoutNoEmptyFill:
             background=None,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
         assert 'fill=""' not in svg, (
             'render_tabs_layout emitted empty fill="" — browsers treat '
@@ -92,6 +93,7 @@ class TestTabsLayoutNoEmptyFill:
             background=None,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
         assert 'fill=""' not in svg
 

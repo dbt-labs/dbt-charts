@@ -663,6 +663,37 @@ class TestPaginationControlsInSvg:
         assert next_ch, "next chevron <text> not found"
         assert "onclick" not in next_ch.group(0)
 
+    def test_out_of_range_page_previous_targets_last_page_minus_one(
+        self, make_chart
+    ) -> None:
+        from dbt_charts.core.compile.models.style.authored import (
+            TableChartStylePatch,
+        )
+
+        chart = make_chart(
+            "table",
+            x=None,
+            y=None,
+            id="stale",
+            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+        )
+        data = _make_data(20)
+        chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        svg = render_table_svg(
+            chart,
+            data,
+            width=600,
+            variables={"stale_page": "9"},
+            board_style=resolve_style(get_theme_style()),
+        )
+
+        inner = _find_paginator_group(svg, "stale_page")
+        targets = [int(t) for t in re.findall(r'data-dbt-page-target="(\d+)"', inner)]
+        assert targets and max(targets) <= 4
+        assert 3 in targets
+        assert 'data-pagination-current="stale_page"' in svg
+        assert ">4</text>" in _find_active_page_text(svg, "stale_page")
+
     def test_active_page_has_emphasis_weight(self, make_chart) -> None:
         """Current page renders at the theme's active weight (default 600)
         and is marked with ``data-pagination-current``. Other page numbers

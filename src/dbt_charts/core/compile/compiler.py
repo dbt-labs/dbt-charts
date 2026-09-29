@@ -103,6 +103,7 @@ from dbt_charts.core.compile.validate.authoring_warnings import (
 from dbt_charts.core.compile.validate.board_warnings import detect_board_warnings
 from dbt_charts.core.compile.validate.dispatch import validate_board
 from dbt_charts.core.compile.validate.formats import validate_board_format_specs
+from dbt_charts.core.compile.validate.links import validate_board_links
 from dbt_charts.core.compile.validate.palettes import validate_board_palette_specs
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -435,6 +436,13 @@ def compile_authored_board(
     # deep inside rasterization (see validate/formats.py).
     try:
         validate_board_format_specs(compiled)
+    except CompilationError as e:
+        return CompileResult(errors=[e.to_diagnostic(file=file)])
+
+    # Link fields: a chart/table-column/footer link's scheme must be a board
+    # path, http, https, or mailto (see validate/links.py).
+    try:
+        validate_board_links(compiled)
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 

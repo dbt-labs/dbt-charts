@@ -125,6 +125,8 @@ from dbt_charts.core.render.script_embedding import embed_svg_script
 from dbt_charts.core.render.svg_utils import (
     authored_kind_attr,
     card_box,
+    checked_href,
+    css_color,
     escape_attr,
     px,
 )
@@ -1266,7 +1268,7 @@ def _render_header_section(
             anchor = "start"
 
         if header_link:
-            svg_parts.append(f'<a href="{escape_attr(header_link)}">')
+            svg_parts.append(f'<a href="{escape_attr(checked_href(header_link))}">')
 
         if len(display_lines) > 1:
             lines = display_lines
@@ -2188,9 +2190,10 @@ def _render_data_rows(
                 # on top after the loop but is pointer-transparent, so hover
                 # still reaches the band across the boundary.
                 svg_parts.append(
-                    f'<a href="{escape_attr(row_link)}" aria-label="{escape_attr(row_label)}">'
+                    f'<a href="{escape_attr(checked_href(row_link))}" '
+                    f'aria-label="{escape_attr(row_label)}">'
                     f'<rect class="dbt-table-row-link" fill="transparent" '
-                    f'style="--dbt-link: {escape_attr(colors["link"])}" '
+                    f'style="--dbt-link: {escape_attr(css_color(colors["link"]))}" '
                     f'x="{escape_attr(row_link_x1)}" '
                     f'y="{escape_attr(row_y)}" width="{escape_attr(row_link_x2 - row_link_x1)}" '
                     f'height="{escape_attr(per_row_height)}"/></a>',
@@ -2482,8 +2485,9 @@ def _render_data_rows(
 
             if cell_link:
                 svg_parts.append(
-                    f'<a href="{escape_attr(cell_link)}"><g class="dbt-table-link" '
-                    f'style="color: {escape_attr(fill_color)}">',
+                    f'<a href="{escape_attr(checked_href(cell_link))}">'
+                    f'<g class="dbt-table-link" '
+                    f'style="color: {escape_attr(css_color(fill_color))}">',
                 )
             # Class on the cell <text>: the link-text class for wired cells;
             # else, in a banded row, the inert-cell class whose stylesheet rule
@@ -2974,7 +2978,6 @@ def _render_pagination_controls(
                 f'fill="transparent"{page_var} data-dbt-page-target="{escape_attr(target)}"/>'
             )
 
-        text_style = "font-variant-numeric: tabular-nums;"
         data_attrs = f' data-paginator-role="{escape_attr(role)}"'
         if is_active_page:
             data_attrs += f' data-pagination-current="{escape_attr(page_var_name)}"'
@@ -2991,7 +2994,7 @@ def _render_pagination_controls(
             f'font-size="{escape_attr(font_size)}" fill="{escape_attr(color)}" text-anchor="middle" '
             f'font-family="{escape_attr(font_family)}" font-weight="{escape_attr(weight)}" '
             f'class="dbt-paginator-glyph" '
-            f'style="{escape_attr(text_style)}"{data_attrs}>{glyph}</text>'
+            f'style="font-variant-numeric: tabular-nums;"{data_attrs}>{glyph}</text>'
         )
 
     parts.append("</g>")
@@ -3958,6 +3961,9 @@ def _render_table_svg_core(
         header_visible=tc.header.visible,
         chart_id=chart_id,
     )
+    # A stale page (e.g. after a filter shrank the data) renders the last page;
+    # the paginator must target neighbors of that page, not the requested one.
+    current_page = max(1, min(current_page, total_pages))
     # Cramping capture: the renderer has now settled its column budget and its
     # header wrapping, so the width rung of the degradation ladder is known.
     # Recorded into the sink WARN_TABLE_CRAMPED reads (a no-op unless a
@@ -4394,10 +4400,10 @@ def _render_table_svg_core(
                     padding=padding,
                 )
             )
-            display = "" if page_n == initial_page else "none"
             svg_parts.append(
                 f'<g class="dbt-table-page" data-dbt-table-page="{escape_attr(chart_id)}" '
-                f'data-page="{escape_attr(page_n)}" style="display:{escape_attr(display)}">'
+                f'data-page="{escape_attr(page_n)}" '
+                f'style="display:{escape_attr("" if page_n == initial_page else "none")}">'
                 + "".join(page_parts)
                 + "</g>"
             )

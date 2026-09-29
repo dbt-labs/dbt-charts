@@ -388,7 +388,7 @@ def apply_x_tick_cadence(
     Moving it would newly break boards that render today.
     """
     ticks = axis.ticks
-    out: dict[str, int] = {}
+    out: dict[str, int | float] = {}
 
     if ticks.step is not None and ticks.time_unit is None:
         if vl_type != "quantitative":

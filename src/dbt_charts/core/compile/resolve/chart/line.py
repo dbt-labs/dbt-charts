@@ -306,6 +306,7 @@ def _resolve_line(
         zero_anchor=zero_anchored_line,
         authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
         scale=multiples_scale,
+        is_quantitative=True,  # line's y is always the measure
     )
     # Line's x is always a bottom-orient temporal/ordinal axis — no left/right edge.
     # No tick_values on the categorical axis -- the non-compacting bake
@@ -333,6 +334,7 @@ def _resolve_line(
         # above near the categorical-y guard.
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=True,
+        ay_floors_tick_step=True,
         zero_anchor=zero_anchored_line,
         # A multi-series (color or wide) line with endpoint_labels.visible
         # renders its label pane as a second, unscaled view sharing the

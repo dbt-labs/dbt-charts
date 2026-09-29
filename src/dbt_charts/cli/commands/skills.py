@@ -68,7 +68,8 @@ def _print_skills_table(result: _api.SkillList) -> None:
     typer.echo(
         "Agent skills — workflows and layout patterns for building dbt charts dashboards."
     )
-    typer.echo("YAML field reference is `dct docs`, not skills.\n")
+    typer.echo("YAML field reference is `dct docs`, not skills.")
+    typer.echo("Start here: `dct skills intro`.\n")
 
     name_width = max(len(s.name) for s in result.skills)
 

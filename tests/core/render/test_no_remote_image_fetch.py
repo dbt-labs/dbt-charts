@@ -31,6 +31,7 @@ def _render_text_with_http_image(text: str, width: float = 800.0) -> None:
         width,
         resolved_style=resolve_style(get_theme_style()),
         text_style=resolve_style(get_theme_style()).text,
+        painted_canvas=None,
     )
 
 
@@ -70,6 +71,7 @@ def test_http_image_in_columned_text_does_not_call_urlopen() -> None:
             800.0,
             text_style=text_style,
             resolved_style=resolve_style(get_theme_style()),
+            painted_canvas=None,
         )
 
     mock_urlopen.assert_not_called()

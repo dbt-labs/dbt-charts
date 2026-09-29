@@ -80,6 +80,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 )
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.utils import (
+    Rows,
     layered_endpoint_rail_fires,
     layered_endpoint_rail_shape,
     sorted_series_by_stack_order,
@@ -138,12 +139,17 @@ def _normalize_area_data(
 
 
 def _area_spatial_order(
-    chart: ResolvedAreaChart, data: list[dict[str, Any]], series_field: str
+    chart: ResolvedAreaChart,
+    data: Rows,
+    series_field: str,
+    rank_rows: Rows,
 ) -> tuple[list[str], list[str]]:
     """Resolve area's distinct series and spatial legend order in one pass.
 
     Returns ``(series, order)``. Stacked: ``order`` is top-of-stack first,
-    reversing the chart-global descending-total baseline order. Unstacked
+    reversing the ``stack_order`` baseline order ranked over *rank_rows*:
+    the pre-gap-fill rows, since ordinal-time gap-fill re-emits rows as
+    ``buckets x sorted(series)`` and would turn ``data`` order alphabetical. Unstacked
     (overlap): stable order by each series' most-recent non-null value.
     ``order`` is empty when there's no series, or no x/y anchor to order by
     — the caller treats that as "nothing to reorder."
@@ -156,7 +162,11 @@ def _area_spatial_order(
         return series, list(
             reversed(
                 sorted_series_by_stack_order(
-                    series, data, series_field, None, y_field=y_field
+                    series,
+                    rank_rows,
+                    series_field,
+                    chart.style.stack_order,
+                    y_field=y_field,
                 )
             )
         )
@@ -171,6 +181,7 @@ def _apply_area_color_encoding(
     chart: ResolvedAreaChart,
     data: list[dict[str, Any]],
     top_encoding: VLDict,
+    rank_rows: Rows,
 ) -> ResolvedStyleChannel | None:
     """Apply color encoding to top_encoding in-place.
 
@@ -182,7 +193,9 @@ def _apply_area_color_encoding(
         apply_color_legend(enc, chart.legend)
         enc_type = enc.get("type")
         if categorical_color_encoding(color_ch, enc_type) and enc_type == "nominal":
-            series, order = _area_spatial_order(chart, data, color_ch.data_field)
+            series, order = _area_spatial_order(
+                chart, data, color_ch.data_field, rank_rows
+            )
             # `order` is empty only when there's no x/y anchor to
             # reorder by (see _area_spatial_order's own docstring) --
             # `series` (plain alphabetical) is still the correct domain
@@ -260,6 +273,7 @@ def _build_area_top_encoding(
     box: RenderBox,
     x_domain: list[Any] | None,  # type-state: explicit_any — raw x values
     panel_fields: tuple[str, ...],
+    rank_rows: Rows,
 ) -> tuple[VLDict, ResolvedStyleChannel | None, str | None, str | None, float | None]:
     """Build the VL encoding dict, color channel, resolved x VL type
     (None when the chart has no x channel at all), plain y label, and the
@@ -323,7 +337,7 @@ def _build_area_top_encoding(
         pin_sorted_domain(top_encoding["x"], data, chart, axis="x")
     if chart.y:
         top_encoding["y"] = y_enc
-    color_ch = _apply_area_color_encoding(chart, data, top_encoding)
+    color_ch = _apply_area_color_encoding(chart, data, top_encoding, rank_rows)
     x_type = vl_type if chart.x else None
     return top_encoding, color_ch, x_type, titles.y_plain, x_res.label_block_height
 
@@ -333,8 +347,13 @@ def _emit_multi_metric_area(
     data: list[dict[str, Any]],
     box: RenderBox,
     panel_fields: tuple[str, ...],
+    raw_rows: Rows,
 ) -> ChartSpec:
-    """Emit a folded unit spec for a multi-metric (y: [a, b, ...]) area chart."""
+    """Emit a folded unit spec for a multi-metric (y: [a, b, ...]) area chart.
+
+    *raw_rows* are the pre-gap-fill rows the stacked order is ranked over
+    (see ``_area_spatial_order``).
+    """
     assert chart.wide_measures
     style = chart.style
     area_mark = style.area_mark
@@ -378,9 +397,9 @@ def _emit_multi_metric_area(
     if is_stacked:
         raw_baseline_order = sorted_series_by_stack_order(
             raw_series,
-            folded,
+            unfold_wide_rows(raw_rows, measures, dimension),
             WIDE_LABEL_FIELD,
-            None,
+            chart.style.stack_order,
             y_field=WIDE_VALUE_FIELD,
         )
         baseline_order = [
@@ -390,7 +409,9 @@ def _emit_multi_metric_area(
         display_order = list(reversed(baseline_order))
         raw_fold_order = measures
     else:
-        _series, raw_order = _area_spatial_order(chart, folded, WIDE_LABEL_FIELD)
+        _series, raw_order = _area_spatial_order(
+            chart, folded, WIDE_LABEL_FIELD, folded
+        )
         display_order = (
             [
                 humanize_wide_series_name(name, dimension, wide_labels)
@@ -505,7 +526,7 @@ class AreaEmitter:
         dataset: ChartDataset,
         datasets: dict[str | None, list[dict[str, Any]]] | None = None,
     ) -> ChartSpec:
-        data = dataset.all_rows()
+        data = raw_rows = dataset.all_rows()
         validate_preaggregated_data_per_panel(chart, dataset)
         validate_color_series(chart, data)
         # Normalize labeled temporal strings and fill ordinal-time gaps before
@@ -517,7 +538,7 @@ class AreaEmitter:
         if chart.wide_measures:
             # A folded (wide-measures) chart returns before chart.layers ever
             # applies (below) — no union to compute here.
-            spec = _emit_multi_metric_area(chart, data, box, panel_fields)
+            spec = _emit_multi_metric_area(chart, data, box, panel_fields, raw_rows)
             if transformed:
                 spec.data = normalize_data_types(data)
             return spec
@@ -542,7 +563,9 @@ class AreaEmitter:
             else None
         )
         top_encoding, color_ch, x_type, y_plain, x_label_block = (
-            _build_area_top_encoding(chart, data, style, box, x_domain, panel_fields)
+            _build_area_top_encoding(
+                chart, data, style, box, x_domain, panel_fields, raw_rows
+            )
         )
         step_band_data = _apply_area_step_band(
             chart, data, top_encoding, style.area_mark, x_type
@@ -558,7 +581,7 @@ class AreaEmitter:
         )
         series_field = raw_series_field if isinstance(raw_series_field, str) else None
         _series, display_order = (
-            _area_spatial_order(chart, data, series_field)
+            _area_spatial_order(chart, data, series_field, raw_rows)
             if is_stacked and series_field
             else ([], [])
         )

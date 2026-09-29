@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.style.theme import PointMarkStyle
@@ -21,6 +23,10 @@ class ResolvedAreaStyle(_SeriesCartesianResolvedStyle):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    stack_order: Literal["value", "data", "alphabetical"] | None = Field(
+        default=None,
+        description="Z-order of stacked bands. None / 'value' = largest at bottom.",
+    )
     area_mark: ResolvedAreaMarkStyle = Field(
         description="Cascade-merged area fill mark geometry — opacity and curve.",
     )

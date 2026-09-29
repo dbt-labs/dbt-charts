@@ -434,8 +434,9 @@ class ResolvedAxisTicksStyle:
     # scale alike. None → VL picks automatically.
     count: int | None
     # Tick interval. With time_unit below, a multiple of that calendar grain;
-    # alone on a quantitative axis_x, VL's axis.tickMinStep at emit.
-    step: int | None
+    # alone on a quantitative axis_x, VL's axis.tickMinStep at emit. On axis_y
+    # a float derived from the measure format where no ladder is baked.
+    step: int | float | None
     # Step-anchored cadence unit. Continuous temporal axis_x only (populated
     # only when the source is DimensionTicksStyle — see build_resolved_axis);
     # passed through as VL axis.tickCount: {interval, step} at emit. None →

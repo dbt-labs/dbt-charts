@@ -876,10 +876,8 @@ def _is_symmetric_aggregate_half(agg: exp.AggFunc) -> bool:
     ``libs/looker/likeml/src/likeml/symmetric.py``.
     """
     agg_expr = as_expression(agg)
-    # AggFunc is typed against a broader base than Expression in sqlglot 30
-    # (unconditionally true under 28.x, where AggFunc -> Func -> Condition
-    # -> Expression already), so this narrowing is what satisfies the type
-    # checker across both releases, not a runtime-meaningful check. None
+    # AggFunc is an Expr trait, not an Expression subclass, so this narrowing
+    # is what satisfies the type checker, not a runtime-meaningful check. None
     # falls through to the same "not a match" answer this predicate already
     # gives a plain non-hashed-sum aggregate.
     if agg_expr is None or not _is_hashed_sum_distinct(agg_expr):

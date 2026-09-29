@@ -15,6 +15,7 @@ from dbt_charts.core.render.chart.text_truncation import record_text_truncation
 from dbt_charts.core.render.svg_utils import (
     authored_kind_attr,
     border_dash_attrs,
+    checked_href,
     escape_attr,
 )
 from mdsvg import Style as MdsvgStyle, parse as parse_md
@@ -325,7 +326,7 @@ def render_callout_svg(
             f'fill="{escape_attr(message_color)}">{html.escape(code)}</text>'
         )
         code_svg = (
-            f'<a href="{escape_attr(build_doc_url(code))}" target="_blank">'
+            f'<a href="{escape_attr(checked_href(build_doc_url(code)))}" target="_blank">'
             f"{code_text_svg}</a>"
         )
         current_y += code_badge_height + section_gap
@@ -413,7 +414,10 @@ def render_callout_svg(
             f'font-family="{escape_attr(message_rf.family)}" '
             f'fill="{escape_attr(title_color)}">{doc_link_label}</text>'
         )
-        doc_svg = f'<a href="{escape_attr(doc_url)}" target="_blank">{doc_text_svg}</a>'
+        doc_svg = (
+            f'<a href="{escape_attr(checked_href(doc_url))}" '
+            f'target="_blank">{doc_text_svg}</a>'
+        )
 
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" class="dbt-chart-callout" '

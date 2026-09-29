@@ -67,6 +67,16 @@ class TestSkillsList:
         assert result.exit_code == 0, result.output
         assert "dct docs" in result.output
 
+    def test_start_here_line_precedes_the_list(self) -> None:
+        result = runner.invoke(app, ["skills"])
+        assert result.exit_code == 0, result.output
+        output = _plain(result.output)
+        start_here_pos = output.find("dct skills intro")
+        workflows_pos = output.find("Workflows")
+        assert start_here_pos != -1, output
+        assert workflows_pos != -1, output
+        assert start_here_pos < workflows_pos
+
     def test_scaffold_marker_shown_for_skills_with_examples(self) -> None:
         result = runner.invoke(app, ["skills"])
         assert result.exit_code == 0, result.output

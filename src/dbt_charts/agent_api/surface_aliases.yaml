@@ -163,11 +163,6 @@ skill_name_data_exploration:
   dct: "data-exploration"
   install: "dct-data-exploration"
 
-skill_name_mcp_setup:
-  tool: "mcp-setup"
-  dct: "mcp-setup"
-  install: "dct-mcp-setup"
-
 skill_name_design_report:
   tool: "report-design"
   dct: "report-design"

@@ -437,6 +437,7 @@ class TestTabRendering:
             active_tab=0,
             resolved_style=_rs(),
             render_cache={},
+            painted_canvas=None,
         )
 
         # Active tab should NOT be a link (already selected)
@@ -489,6 +490,7 @@ class TestTabRendering:
             active_tab=0,
             resolved_style=_rs(),
             render_cache={},
+            painted_canvas=None,
         )
 
         # "overview" should appear as a link (inactive)
@@ -539,6 +541,7 @@ class TestTabRendering:
             active_tab=0,
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
 
         assert 'stroke-dasharray="4,4"' in svg

@@ -18,6 +18,11 @@ from dbt_charts.core.render.chart.features.value_labels import (
         (4_230_000_000, "$.3s", True, "$4.23bn"),
         (4_230_000_000, "$.3s", False, "$4.23G"),
         (28, "$,.0f", False, "$28"),
+        (0.67, ".3~s", True, "0.67"),
+        (-0.25, ".3~s", True, "−0.25"),
+        (0, ".3~s", True, "0"),
+        (1.5e-13, ".3~s", True, "1.5e-13"),
+        (0.67, ".3~s", False, "670m"),
     ],
 )
 def test_painted_label_text(

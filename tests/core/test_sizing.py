@@ -3415,6 +3415,7 @@ rows:
             497.92,
             resolve_style(get_theme_style()),
             text_style=resolve_style(get_theme_style()).text,
+            painted_canvas=None,
         )
 
         assert (

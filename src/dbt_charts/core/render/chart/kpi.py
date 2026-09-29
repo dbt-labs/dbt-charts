@@ -72,6 +72,7 @@ from dbt_charts.core.render.svg_utils import (
     authored_kind_attr,
     border_dash_attrs,
     card_box,
+    checked_href,
     escape_attr,
 )
 from dbt_charts.core.render.utils import resolve_tone_color
@@ -518,7 +519,13 @@ def _emit_card_chrome(
 
 
 def _resolve_kpi_link(chart_link: str | None) -> str | None:
-    """Return the link-context-resolved href if the chart has a link, else ``None``."""
+    """Return the link-context-resolved href if the chart has a link, else ``None``.
+
+    Scheme safety is re-checked by ``checked_href`` at each of this
+    function's three call sites, right where the value becomes an
+    ``href="..."`` — not here, so the check stays visible at the emission
+    point rather than several calls removed from it.
+    """
     if not chart_link:
         return None
     ctx = get_link_context()
@@ -1167,7 +1174,7 @@ def _emit_kpi_stacked(
     # the same weight. The cascade resolves it from ``kpi.value.font.weight``.
     kpi_link = _resolve_kpi_link(chart.link)
     if kpi_link:
-        parts.append(f'<a href="{escape_attr(kpi_link)}">')
+        parts.append(f'<a href="{escape_attr(checked_href(kpi_link))}">')
     parts.append(
         f'<text x="{escape_attr(value_x)}" y="{escape_attr(layout.value_baseline)}" '
         f'text-anchor="{escape_attr(_TEXT_ANCHOR)}" font-family="{escape_attr(value_font_family)}" '
@@ -1384,7 +1391,7 @@ def _emit_kpi_inline(
 
     kpi_link = _resolve_kpi_link(chart.link)
     if kpi_link:
-        parts.append(f'<a href="{escape_attr(kpi_link)}">')
+        parts.append(f'<a href="{escape_attr(checked_href(kpi_link))}">')
 
     tspans = _emit_value_tspans(
         kpi_config,
@@ -1766,7 +1773,7 @@ def _emit_kpi_compact(
 
     kpi_link = _resolve_kpi_link(chart.link)
     if kpi_link:
-        parts.append(f'<a href="{escape_attr(kpi_link)}">')
+        parts.append(f'<a href="{escape_attr(checked_href(kpi_link))}">')
 
     value_tspans = _emit_value_tspans(
         kpi_config,

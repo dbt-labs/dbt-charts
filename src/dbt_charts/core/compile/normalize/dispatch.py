@@ -100,6 +100,7 @@ from dbt_charts.core.compile.normalize.variables import (
     generate_layout_variables,
     promote_column_option_queries,
     promote_inline_option_queries,
+    validate_authored_variable_name,
     validate_choice_type,
     validate_variable_references,
     validate_variable_value,
@@ -673,6 +674,7 @@ def normalize_board(
     local_variables: dict[str, Variable] = {}
     if board.variables:
         for var_name, var_def in board.variables.items():
+            validate_authored_variable_name(var_name)
             if isinstance(var_def, Variable):
                 local_variables[var_name] = var_def
             else:

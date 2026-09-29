@@ -87,6 +87,7 @@ def render_layout_item(
     render_cache: RenderCache,
     source_path: str = "",
     error_collector: list[Diagnostic] | None = None,
+    painted_canvas: str | None,
 ) -> tuple[str, float]:
     """Render a single layout item (chart, nested board, or details section).
 
@@ -149,6 +150,7 @@ def render_layout_item(
                 source_path=source_path,
                 render_cache=render_cache,
                 error_collector=error_collector,
+                painted_canvas=painted_canvas,
             )
             actual_height = float(
                 px(summary_height + details_config.content_y_offset)
@@ -213,6 +215,7 @@ def render_layout_item(
                 source_path=source_path,
                 render_cache=render_cache,
                 error_collector=error_collector,
+                painted_canvas=painted_canvas,
             )
 
     if rendered and item.notes:

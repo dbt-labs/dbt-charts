@@ -2780,3 +2780,79 @@ ERR_TABLE_FORMAT_KIND_MISMATCH = REGISTRY.register(
         docs_topic="charts",
     )
 )
+
+WARN_LOW_TEXT_CONTRAST = REGISTRY.register(
+    WarningCode(
+        code="WARN-LOW-TEXT-CONTRAST",
+        domain="render",
+        title="Text ink has too little contrast against its background",
+        message_template=(
+            "{element} is painted {ink} on {background} -- {ratio:.1f}:1 contrast, "
+            "below the {floor:.1f}:1 floor for {size} text."
+        ),
+        fix_template="Set {key} to a color with more contrast against {background}.",
+        summary="Fired when a text block's ink has too little contrast against its background.",
+        doc=(
+            "Fires when a text block's heading or body ink clears less than "
+            "the configured WCAG 2.1 contrast ratio "
+            "(`chart_rendering.text_contrast.min_ratio`, or "
+            "`large_text_min_ratio` for WCAG's own large-text exception) "
+            "against the opaque background it "
+            "paints on. The common case is a row's own default ink left "
+            "unchanged after authoring a `style.background` on that row; the "
+            "fix names the key that governs that element's ink today "
+            "(`style.title.font.color` for a heading, `style.font.color` for "
+            "body text). The engine never repaints -- the color pair is still "
+            "painted exactly as written."
+        ),
+        docs_topic="board",
+    )
+)
+
+ERR_LINK_SCHEME_UNSAFE_AT_RENDER = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINK-SCHEME-UNSAFE-AT-RENDER",
+        domain="render",
+        title="A rendered link uses a disallowed URL scheme",
+        message_template=(
+            "Rendered link {href!r} uses scheme {scheme!r}. Allowed: board "
+            "paths (/, ./, ?, #), http, https, mailto."
+        ),
+        doc=(
+            "Fired when a link resolved at render time — a table cell/row "
+            "link built from query row data, or a chart link whose scheme "
+            "only becomes known after Vega renders it — uses a scheme other "
+            "than http, https, or mailto. Compile-time validation "
+            "(ERR-LINK-SCHEME-UNSAFE) cannot see this: the value only "
+            "exists once the query has run, or once a chart-link sentinel "
+            "prefix used to survive Vega's own sanitizer has been stripped. "
+            "The affected chart renders an inline error instead of the "
+            "unsafe link."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_CSS_COLOR_INVALID_AT_RENDER = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CSS-COLOR-INVALID-AT-RENDER",
+        domain="render",
+        title='A style="..." color value does not parse as exactly one color',
+        summary="A color written into a CSS declaration is not a single valid color.",
+        message_template=(
+            "Color {value!r} is not a valid CSS color ({detail}). Use a hex "
+            "color, a CSS named color, or transparent/none."
+        ),
+        doc=(
+            'Fired when a value destined for a style="..." CSS declaration '
+            "(a table row/cell link color, a board title's font color, or "
+            "the variables strip's border color) does not parse as exactly "
+            "one CSS color. Escaping alone cannot make such a value safe: a "
+            "string like `red; background-image:url(//evil)` needs no quote "
+            "or angle bracket to open a second declaration, so the value "
+            "itself must be proven to be nothing but a color before it "
+            "reaches the attribute."
+        ),
+        docs_topic="charts",
+    )
+)

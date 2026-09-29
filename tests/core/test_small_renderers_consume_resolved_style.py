@@ -62,6 +62,7 @@ class TestRenderTabsLayout:
             background=None,
             resolved_style=resolved,
             render_cache={},
+            painted_canvas=None,
         )
         assert isinstance(svg, str)
 
@@ -101,6 +102,7 @@ class TestRenderTabsLayout:
             tab_slugs=["tab-1"],
             resolved_style=rs,
             render_cache={},
+            painted_canvas=None,
         )
         # Tab bar is 999px; item height is 100px → total = 999 + 100 = 1099
         assert height == pytest.approx(1099.0), (

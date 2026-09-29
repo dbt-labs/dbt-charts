@@ -71,6 +71,15 @@ def test_banner_shown_on_root_help_when_no_boards_dir(
     assert "dct init" in output
 
 
+def test_banner_names_skills_intro_as_where_to_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0, result.output
+    assert "dct skills intro" in _strip_ansi(result.output)
+
+
 def test_banner_hidden_when_boards_dir_in_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -120,3 +129,7 @@ def test_banner_absent_on_subcommand_help(
     result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
     assert BANNER_PHRASE not in _strip_ansi(result.output)
+
+
+def test_rich_banner_names_skills_intro_as_where_to_start() -> None:
+    assert "dct skills intro" in _strip_ansi(_render_banner_to_string(plain=False))

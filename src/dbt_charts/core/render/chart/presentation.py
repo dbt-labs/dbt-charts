@@ -1,8 +1,6 @@
 """Shared presentation helpers for chart rendering.
 
-``overlay_merge`` and ``apply_presentation_defaults`` live here rather than in
-``translate.py`` (their only caller) to keep this a leaf with compile-layer
-dependencies only.
+Leaf module: compile-layer imports only.
 """
 
 from __future__ import annotations
@@ -10,22 +8,11 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from dbt_charts.core.compile.merge import deep_merge_dict
+
 # Internal field name for the calculate-transform output backing the href
 # click-interactivity encoding. Consumed by translate.py.
 _HREF_FIELD = "__df_href__"
-
-
-def overlay_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Shallow-copy merge of nested dicts. Top-level keys are shallow-copied;
-    nested dicts are merged recursively. Non-dict leaf values from *overlay*
-    are assigned by reference."""
-    merged = base.copy()
-    for key, value in overlay.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-            merged[key] = overlay_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
 
 
 def apply_presentation_defaults(
@@ -43,8 +30,8 @@ def apply_presentation_defaults(
 
     ``spec`` is mutated and returned in place — its caller (``assemble_final_vl``)
     builds it fresh per chart via ``translate_to_vl``, so nothing else holds a
-    reference. ``overlay_merge`` never mutates its ``base``/``overlay`` arguments,
-    so ``authored_config`` needs no defensive copy either.
+    reference. ``deep_merge_dict`` never mutates its ``base``/``overlay``
+    arguments, so ``authored_config`` needs no defensive copy either.
 
     ``effective_vega_config`` (``board_style.vega_config``) is different: it is
     cached and shared well beyond one board render — ``get_theme_style()`` memoizes
@@ -73,5 +60,5 @@ def apply_presentation_defaults(
     if not preserve_transparent_background:
         result_spec["background"] = background
 
-    result_spec["config"] = overlay_merge(result_spec["config"], authored_config)
+    result_spec["config"] = deep_merge_dict(result_spec["config"], authored_config)
     return result_spec

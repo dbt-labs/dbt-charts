@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any, Literal, NamedTuple
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.format import tick_min_step_for_format
 from dbt_charts.core.compile.models.chart.authored._layer import BarLayer
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.style.theme import (
@@ -45,6 +46,10 @@ from dbt_charts.core.diagnostics.codes_compile import (
 )
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.utils import numeric_column_values
+
+# Approximate Vega-Lite tick count on a ladder-less measure axis (height-derived,
+# about ten on a default-height plot).
+_VEGA_DEFAULT_TICK_COUNT = 11
 
 __all__ = [
     "_CartesianTickResolution",
@@ -401,14 +406,31 @@ class _CartesianTickResolution(NamedTuple):
     ``domain_max`` / ``domain_min`` are None when VL should auto-fit that edge:
     authored ``scale.domain`` is in effect, no data available, or headroom is 0.
     On a zero-anchored axis only ``domain_max`` is set and the bottom stays
-    at 0 — except with all-negative data, where 0 is the ceiling instead and
-    ``domain_min`` carries the headroom-expanded data floor.
+    at 0 -- except with all-negative data, where 0 is the ceiling instead and
+    ``domain_min`` carries the headroom-expanded data floor, or with
+    mixed-sign data whose format-driven ``min_step`` floor rounded the
+    ladder's own bottom rung below the real data floor, where ``domain_min``
+    pins that real floor instead of letting the ladder's rung leak through.
     On zoomed axes both are set via symmetric span-relative headroom.
     """
 
     ticks: tuple[float, ...]
     domain_max: float | None
     domain_min: float | None = None
+
+
+def _measure_axis_min_step(ay: AxisYStyle) -> float | None:
+    """The min tick step ``ay``'s resolved format implies, or None.
+
+    ``ay.labels.format`` is already the resolved d3 spec by the time any
+    caller here runs (``_bake_cartesian_axes`` resolves it before returning
+    ``ay``) -- feeds ``nice_tick_values``'s own ``min_step`` floor, so a
+    baked ladder never proposes a step finer than the axis's own format can
+    paint as distinct labels.
+    """
+    if ay.labels.format is None:
+        return None
+    return tick_min_step_for_format(ay.labels.format)
 
 
 def _authored_tick_ladder(ay: AxisYStyle) -> tuple[float, ...] | None:
@@ -438,6 +460,8 @@ def _resolve_cartesian_ticks(
     zero_anchor: bool,
     authored_ticks_count: int | None,
     scale: Literal["shared", "independent"],
+    *,
+    is_quantitative: bool,
 ) -> _CartesianTickResolution:
     """Compute the nice tick ladder + domain bounds for a cartesian y-axis (non-stacked).
 
@@ -477,6 +501,22 @@ def _resolve_cartesian_ticks(
     column-wise union read is identical whether the chart is faceted or
     not — only an aggregate needs one panel's rows); what changes is only
     whether the result gets baked.
+
+    An unauthored ``ticks.count`` (a theme like ``stark`` that leaves it
+    unset, deliberately, for Vega-Lite's own dynamic tick density) always
+    returns an empty ladder: a fixed-density ladder would replace that
+    density with a much coarser one on a large-magnitude axis. A fixed-decimal
+    format instead reaches Vega-Lite as a resolved ``tickMinStep``
+    (``build_resolved_axis``). Vega-Lite honors it inconsistently without an
+    explicit domain, so the domain bounds bake where the floor could matter.
+    Required, never defaulted: ``is_quantitative`` says whether ``ay``'s own
+    resolved format should floor the step at all -- scatter's y can be a
+    numeric-string column Vega still renders nominal (a numeric-looking
+    category, not this axis's measure). The ladder itself still bakes there
+    either way once ``ticks.count`` is authored (``numeric_column_values``
+    coerces the strings), but flooring its step by that axis's format would
+    apply a measure-axis precision rule to a category. Every other family's
+    y is unconditionally the measure, so they pass ``True``.
     """
     _cont = ay.scale.continuous if ay.scale is not None else None
     if _cont is not None and _cont.type == "log":
@@ -493,8 +533,10 @@ def _resolve_cartesian_ticks(
     # BOTTOM of an all-negative domain, collapsing every mark onto one pixel
     # row. Mirrors the positive branch's headroom-expanded top.
     # `independent` is excluded at the computation, not at one exit: the
-    # authored-ladder and `ticks.count is None` exits both return before the
-    # `scale` check below, and a floor escaping through either becomes one
+    # authored-ladder exit and the `ticks.count is None` exit both return
+    # before the `scale` check below (and are the only exits reachable while
+    # `scale == "independent"`, since that branch always returns before this
+    # point is ever baked), and a floor escaping through either becomes one
     # `domainMin` on the shared encoding while `resolve.scale` says every panel
     # owns its own.
     negative_floor: float | None = None
@@ -505,16 +547,37 @@ def _resolve_cartesian_ticks(
     authored_ladder = _authored_tick_ladder(ay)
     if authored_ladder is not None:
         return _CartesianTickResolution(authored_ladder, None, negative_floor)
-    if ay.ticks.count is None or not y_floats:
+    # Gated on is_quantitative: scatter is the one caller whose "y_floats"
+    # can be a numeric-STRING column Vega still renders nominal (a
+    # numeric-looking category, not a measure) -- the ladder still bakes
+    # over it either way, but its step must not be floored by a format rule
+    # meant for a measure axis.
+    min_step = _measure_axis_min_step(ay) if is_quantitative else None
+    # A theme leaving ticks.count unset (stark, deliberately, for Vega-Lite's
+    # own dynamic tick density) bakes no ladder: Vega-Lite picks the ticks and
+    # the format floor reaches it as a resolved tickMinStep (see
+    # build_resolved_axis); a floored format also bakes the domain bounds
+    # below, since Vega-Lite honors it inconsistently against an auto domain.
+    if (ay.ticks.count is None and min_step is None) or not y_floats:
         return _CartesianTickResolution((), None, negative_floor)
+    target_count = ay.ticks.count
     authored = numeric_domain_bounds(_cont.domain if _cont is not None else None)
     domain_max: float | None = None
     domain_min: float | None = None
+    # Set only in the zero-anchored, mixed-sign (raw_min < 0 < raw_max) case:
+    # the headroom-expanded data floor to fall back on if the floored ladder's
+    # own bottom rung (computed below, after target_count/min_step are both
+    # known) turns out to be below the real data -- see the post-check after
+    # `ticks` is computed.
+    mixed_sign_floor: float | None = None
     if authored is not None:
         tick_min, tick_max = authored
     elif scale == "independent":
-        # No chart-wide floor: `independent` gives each panel its own scale,
-        # and one pinned domainMin would apply to all of them. `negative_floor`
+        # No chart-wide floor OR ladder: `independent` gives each panel its
+        # own scale, and either one pinned domainMin or one union-of-panels
+        # ladder would apply to all of them regardless of what this axis's
+        # own format implies -- unconditional, not skipped only when a
+        # format-driven floor would otherwise force a bake. `negative_floor`
         # is already None here — see its own guard above.
         #
         # Area additionally suppresses its own zero-anchor bake for this
@@ -539,11 +602,17 @@ def _resolve_cartesian_ticks(
         h = _axis_headroom(ay)
         tick_min = min(0.0, raw_min)
         tick_max = max(0.0, apply_headroom(raw_max, h))
-        if raw_max > 0:
+        if raw_max >= 0:
+            # >= 0, not > 0: a data max of exactly 0 (a zero-valued row) is
+            # mixed-sign the same way a strictly positive max is -- the
+            # anchored edge (0) is still the data's own ceiling, not the
+            # floor negative_floor's strict `< 0` guard describes below.
             # Bake domainMax only when headroom expanded past the data max.
             # headroom=0 leaves it None — VL auto-fits.
             if tick_max > raw_max:
                 domain_max = tick_max
+            if raw_min < 0:
+                mixed_sign_floor = raw_min * (1.0 + h) if h else raw_min
         else:
             # All-negative: the anchored edge is the ladder's TOP (0, pinned by
             # `zero: True`), so the floor can no longer come from its bottom
@@ -568,7 +637,27 @@ def _resolve_cartesian_ticks(
             tick_max = domain_max
         else:
             tick_min, tick_max = data_min, raw_max
-    ticks = tuple(nice_tick_values(tick_min, tick_max, ay.ticks.count))
+    if target_count is None:
+        # Bake the domain only where the floor could bind, judged by a probe
+        # at about Vega-Lite's default density; elsewhere its auto-fit domain
+        # stays untouched.
+        assert min_step is not None
+        probe = (tick_min, tick_max, _VEGA_DEFAULT_TICK_COUNT)
+        if nice_tick_values(*probe) == nice_tick_values(*probe, min_step=min_step):
+            return _CartesianTickResolution((), None, negative_floor)
+        return _CartesianTickResolution((), domain_max, domain_min)
+    ticks = tuple(nice_tick_values(tick_min, tick_max, target_count, min_step=min_step))
+    if mixed_sign_floor is not None and min_step is not None and ticks:
+        # Compare against the UNFLOORED pick, not the raw data: nice
+        # rounding always extends a ladder's bottom rung past the data by
+        # itself (that's the whole point), so comparing the floored rung
+        # against raw data would fire on every ordinary ladder. Only a floor
+        # that pushed the bottom rung FURTHER than the unfloored pick already
+        # would have needs the pin -- render's zero_anchor_pinned_floor
+        # fallback (domain_min left None) is otherwise already correct.
+        unfloored = nice_tick_values(tick_min, tick_max, target_count)
+        if unfloored and ticks[0] < unfloored[0]:
+            domain_min = mixed_sign_floor
     return _CartesianTickResolution(ticks, domain_max, domain_min)
 
 
@@ -625,10 +714,10 @@ def _y_domain_floor(
     scale field alone under-detects the zero-anchored case.
 
     Returns None only when nothing pins the floor at all: no tick ladder
-    was baked (a log measure axis, a theme that never sets
-    ``axis_quantitative.ticks.count`` such as stark/plain, ``scale:
-    independent`` small multiples, or no data), or a zoomed axis with an
-    authored (never data-related) ladder and no authored/baked bound.
+    was baked (a log measure axis, ``scale: independent`` small multiples,
+    a theme that never sets ``axis_quantitative.ticks.count`` -- stark --
+    unconditionally, or no data), or a zoomed axis with an authored (never
+    data-related) ladder and no authored/baked bound.
     ``_y_gridline_caps_bottom`` treats this as the undecidable case.
 
     ``endpoint_rail_may_discard_domain`` skips case 2 (the baked
@@ -683,8 +772,8 @@ def _y_gridline_caps_bottom(
     default is to show it. An earlier revision answered False here by
     treating "no ladder baked" as if it meant "gridlines already reach the
     labels" -- confirmed wrong by rendering a log-scale axis and a
-    ``stark``/``plain``-themed chart, where Vega-Lite draws gridlines with
-    no ladder baked on our side at all.
+    ``stark``-themed chart, where Vega-Lite draws gridlines with no ladder
+    baked on our side at all.
 
     Otherwise: an exact/near-exact match between the ladder's lowest rung
     and the floor (a span-relative tolerance, not an absolute one -- a
@@ -728,12 +817,25 @@ def _resolve_stacked_bar_ticks(
     ``multiples: {scale: independent}`` suppresses. Absent either override,
     ``independent`` bakes no ladder at all: each panel gets its own,
     Vega-Lite-computed scale.
+
+    A format-driven ``min_step`` floor (``tick_min_step_for_format``) floors
+    the ladder's step. When a negative row lets that floor round the ladder's
+    bottom rung below what an unfloored pick would choose, it bakes no ladder
+    instead: a stack pins its floor from ``tick_values[0]``, so Vega-Lite picks
+    the ticks and the floor reaches it as a resolved ``tickMinStep``
+    (``build_resolved_axis``). An authored domain skips that check.
     """
     authored_ladder = _authored_tick_ladder(ay)
     if authored_ladder is not None:
         return authored_ladder
+    # See _resolve_cartesian_ticks's matching gate. A stacked
+    # measure is always genuinely quantitative (there is no
+    # numeric-string-but-nominal case for a stack total), so this reads
+    # ay.labels.format unconditionally, unlike the non-stacked sibling.
+    min_step = _measure_axis_min_step(ay)
     if ay.ticks.count is None:
         return ()
+    target_count = ay.ticks.count
     data = dataset.all_rows()
     if not data:
         return ()
@@ -747,6 +849,10 @@ def _resolve_stacked_bar_ticks(
     if authored is not None:
         tick_min, tick_max = authored
     elif scale == "independent":
+        # Unconditional, matching _resolve_cartesian_ticks: `independent`
+        # gives each panel its own scale regardless of what this axis's own
+        # format implies -- never skipped only because a floor would
+        # otherwise force a bake.
         return ()
     else:
         # cat_field can itself be the multiples field — partition() strips a
@@ -761,7 +867,15 @@ def _resolve_stacked_bar_ticks(
         raw_max = sm if sm is not None else max(y_floats)
         tick_max = apply_headroom(raw_max, _axis_headroom(ay))
         tick_min = min(0.0, min(y_floats))  # stacked bars always zero-anchor
-    return tuple(nice_tick_values(tick_min, tick_max, ay.ticks.count))
+    ticks = tuple(nice_tick_values(tick_min, tick_max, target_count, min_step=min_step))
+    if authored is None and min_step is not None and tick_min < 0:
+        # A stack pins its floor from ticks[0], which the format floor can
+        # round below the real data. Bake nothing then; the floor reaches
+        # Vega-Lite as a resolved tickMinStep (see build_resolved_axis).
+        unfloored = nice_tick_values(tick_min, tick_max, target_count)
+        if ticks[0] < unfloored[0]:
+            return ()
+    return ticks
 
 
 def _first_non_numeric_y(

@@ -360,6 +360,20 @@ Overshoot correction produced a non-positive pane width ({new_w:.1f}px): pane wi
 
 Fired when the overshoot correction algorithm for a concatenated layout produces a non-positive pane width. The chart content (title, subtitle, axis labels, series labels, or legend) is wider than the available canvas. Series labels come from the column bound to `color:`, and are the usual cause when that column holds long text.
 
+### ERR-CSS-COLOR-INVALID-AT-RENDER: A style="..." color value does not parse as exactly one color
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Color {value!r} is not a valid CSS color ({detail}). Use a hex color, a CSS named color, or transparent/none.
+```
+
+Fired when a value destined for a style="..." CSS declaration (a table row/cell link color, a board title's font color, or the variables strip's border color) does not parse as exactly one CSS color. Escaping alone cannot make such a value safe: a string like `red; background-image:url(//evil)` needs no quote or angle bracket to open a second declaration, so the value itself must be proven to be nothing but a color before it reaches the attribute.
+
 ### ERR-ENDPOINT-LABELS-CENTER-STACK: stack: center is not supported for horizontal endpoint labels
 
 - **Level:** error
@@ -681,6 +695,48 @@ Chart {chart_id!r} (line): y column {y_field!r} is not numeric. Line charts alwa
 ```
 
 Fired when a line chart's `y:` column contains non-numeric data. Line charts always use y as the value axis; use a numeric column for y.
+
+### ERR-LINK-SCHEME-UNANCHORED: Link template starts with data, so its scheme is unknown
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Link {link!r} at {field_path} begins with a template. Start it with /, ?, # or https:// so data cannot choose the scheme.
+```
+
+Fired when a chart or footer link's literal text before its first `{{` template placeholder does not itself fix a safe scheme — the query row or variable value filling the template would then decide what scheme the browser navigates to. Start the link with a board path or a fixed https:// prefix instead.
+
+### ERR-LINK-SCHEME-UNSAFE: Link uses a URL scheme dbt Charts does not allow
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Link {link!r} at {field_path} uses scheme {scheme!r}. Use a board path (/, ./, ?, #) or http, https, mailto.
+```
+
+Fired when an authored link (chart link, table column link/header_link, or footer link) resolves to a URL scheme other than http, https, or mailto. A board path (starting with /, ./, ../, ?, or #) is always allowed; any other scheme — javascript:, data:, vbscript:, or an editor deeplink like vscode:// — is rejected so a link can never execute script or navigate somewhere unexpected.
+
+### ERR-LINK-SCHEME-UNSAFE-AT-RENDER: A rendered link uses a disallowed URL scheme
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Rendered link {href!r} uses scheme {scheme!r}. Allowed: board paths (/, ./, ?, #), http, https, mailto.
+```
+
+Fired when a link resolved at render time — a table cell/row link built from query row data, or a chart link whose scheme only becomes known after Vega renders it — uses a scheme other than http, https, or mailto. Compile-time validation (ERR-LINK-SCHEME-UNSAFE) cannot see this: the value only exists once the query has run, or once a chart-link sentinel prefix used to survive Vega's own sanitizer has been stripped. The affected chart renders an inline error instead of the unsafe link.
 
 ### ERR-LOG-SCALE-REQUIRES-POSITIVE-DATA: Log scale requires strictly positive data
 
@@ -2092,3 +2148,17 @@ Fired when the warehouse rejects a query for an unclassified runtime error. The 
 ```
 
 Fired when a Jinja template references a variable name that is not declared under `variables:`. Check for typos and ensure the variable is declared before the template that uses it.
+
+### ERR-VARIABLE-NAME-INVALID: Variable name is not an identifier
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Variable {name!r} must be a valid identifier: letters, digits and underscores, not starting with a digit.
+```
+
+Fired when a name under `variables:` is not a valid identifier. Variables are referenced as bare Jinja names in queries and templates, so a name with a space, hyphen, or leading digit never actually worked — this catches it at compile instead of a confusing render-time failure.

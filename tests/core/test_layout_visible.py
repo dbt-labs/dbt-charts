@@ -66,6 +66,7 @@ def _render_rows(
         8.0,
         resolved_style=_rs(),
         render_cache={},
+        painted_canvas=None,
     )
 
 

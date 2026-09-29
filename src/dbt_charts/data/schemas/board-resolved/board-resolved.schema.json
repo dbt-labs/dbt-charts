@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.8.1.dev339",
+  "version": "0.8.1.dev354",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -299,6 +299,24 @@
           ],
           "title": "Stack",
           "type": "string"
+        },
+        "stack_order": {
+          "anyOf": [
+            {
+              "enum": [
+                "alphabetical",
+                "data",
+                "value"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. 'data' stacks series in first-appearance order: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series.",
+          "title": "Stack Order"
         },
         "endpoint_labels": {
           "$ref": "#/$defs/EndpointLabelsConfig",
@@ -2416,7 +2434,7 @@
             }
           ],
           "default": null,
-          "description": "Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. 'data' follows SQL row order (orientation-stable not guaranteed). 'alphabetical' sorts by color column name. Ignored when stacking is off or no color.",
+          "description": "Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. 'data' stacks series in first-appearance order: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series.",
           "title": "Stack Order"
         },
         "endpoint_labels": {
@@ -9476,6 +9494,24 @@
           "title": "Label Usable Ratio",
           "type": "number"
         },
+        "stack_order": {
+          "anyOf": [
+            {
+              "enum": [
+                "alphabetical",
+                "data",
+                "value"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Z-order of stacked bands. None / 'value' = largest at bottom.",
+          "title": "Stack Order"
+        },
         "area_mark": {
           "$ref": "#/$defs/ResolvedAreaMarkStyle",
           "description": "Cascade-merged area fill mark geometry \u2014 opacity and curve."
@@ -10132,6 +10168,9 @@
             },
             {
               "type": "null"
+            },
+            {
+              "type": "number"
             }
           ],
           "title": "Step"

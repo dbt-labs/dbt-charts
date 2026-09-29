@@ -51,6 +51,7 @@ from dbt_charts.core.compile.sizing import board_container_width, get_board_gap
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_LINK_SCHEME_UNSAFE_AT_RENDER
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
 from dbt_charts.core.render.chart.spec_builders import additive_padding
@@ -995,6 +996,18 @@ def _make_data_aware_height_provider(
                         # OSError/RuntimeError/LookupError are bug-class exceptions
                         # — let them surface loudly, do not silently render an
                         # aspect-ratio fallback that masks the bug.
+                        _log.warning(
+                            "Render-first sizing failed for chart %r "
+                            "(will use aspect-ratio estimate): %s",
+                            item.chart.id,
+                            exc,
+                        )
+                    except RenderError as exc:
+                        # The only RenderError this probe can hit from a chart's
+                        # own authored content is an unsafe link scheme — estimate
+                        # around it too.
+                        if exc.code is not ERR_LINK_SCHEME_UNSAFE_AT_RENDER:
+                            raise
                         _log.warning(
                             "Render-first sizing failed for chart %r "
                             "(will use aspect-ratio estimate): %s",

@@ -133,6 +133,7 @@ rows:
                 300.0,
                 resolved_style=style,
                 render_cache={},
+                painted_canvas=None,
             )
 
         assert f"translate({card_padding}, {card_padding})" not in svg, (
@@ -182,6 +183,7 @@ rows:
                 300.0,
                 resolved_style=style,
                 render_cache={},
+                painted_canvas=None,
             )
 
         assert render_calls, "render_resolved_chart must be called"
@@ -226,6 +228,7 @@ rows:
                 300.0,
                 resolved_style=resolve_style(get_theme_style()),
                 render_cache={},
+                painted_canvas=None,
             )
 
         assert render_calls, "render_resolved_chart must be called"
@@ -271,6 +274,7 @@ rows:
                 300.0,
                 resolved_style=resolve_style(get_theme_style()),
                 render_cache={},
+                painted_canvas=None,
             )
 
         # Vega chart height must NOT have 2*card_pad added (Vega handles padding internally)
@@ -317,6 +321,7 @@ rows:
                 200.0,
                 resolved_style=resolve_style(get_theme_style()),
                 render_cache={},
+                painted_canvas=None,
             )
 
         assert render_calls, "render_chart_item must be called for SVG-family charts"

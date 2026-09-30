@@ -161,9 +161,8 @@ def test_compile_migrates_kpi_style_color() -> None:
     """`migrate_mapping()` skips the currency check, the fallbacks, and the
     whole-document gate that `compile()` applies — pin it at `compile()` too,
     and pin that the author is told what replaced the key."""
-    with pytest.warns(SchemaMigrationWarning, match="style.value.font.color"):
-        result = compile(
-            """title: Test
+    result = compile(
+        """title: Test
 queries:
   q: {type: values, rows: [{n: 1}]}
 charts:
@@ -176,6 +175,11 @@ charts:
 rows:
 - k
 """
-        )
+    )
+    assert any(
+        "style.value.font.color" in d.message
+        for d in result.warnings
+        if d.code == "WARN-SCHEMA-MIGRATED"
+    ), result.warnings
 
     assert result.success, [e.message for e in result.errors]

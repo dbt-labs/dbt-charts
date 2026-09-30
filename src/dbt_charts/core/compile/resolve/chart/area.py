@@ -6,6 +6,7 @@ from typing import Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.format import resolve_label_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -100,7 +101,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_AREA_STACKED_MARK_STYLE_CLEARED,
     ERR_AREA_STACKED_STROKE_INCOMPLETE,
 )
-from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.utils import (
     layered_endpoint_rail_fires,
     layered_endpoint_rail_shape,
@@ -519,7 +519,7 @@ def _resolve_area(
     area_domain_min = area_ticks.domain_min if not is_stacked else None
     # Area's x is always a bottom-orient temporal/ordinal axis — no left/right edge.
     # No tick_values on the categorical axis -- the non-compacting bake
-    # can't fire regardless, but format_authored is required, not defaulted
+    # can't fire regardless, but format_raw is required, not defaulted
     # (see build_resolved_axis's docstring).
     tooltip_format_values = quantitative_channel_values(data, normalized.y)
     ay, area_style_tail = build_cartesian_axes(
@@ -530,8 +530,6 @@ def _resolve_area(
         ax_band_position=plan.ax_band_position,
         ay_band_position=plan.ay_band_position,
         ax_edge=None,
-        ay_format_authored=plan.ay_format_authored,
-        ay_format_is_alias=plan.ay_format_is_alias,
         ay_format_raw=plan.ay_format_raw,
         ticks=_CartesianTickResolution(
             area_ticks.ticks, area_domain_max, area_domain_min
@@ -626,15 +624,13 @@ def _resolve_area(
                     chart_id=normalized.id,
                 )
             line_mark_merged = line_mark_merged.model_copy(update=line_overrides)
-    axis_is_house = (
-        ay.labels.format is not None
-        and is_d3_si_spec(ay.labels.format)
-        and (not plan.ay_format_authored or plan.ay_format_is_alias)
+    _, axis_house_default = resolve_label_format(
+        plan.ay_format_raw, chart_style_context.formats
     )
     resolved_area_line_labels, area_label_is_house = _label_format_fallback(
         line_mark_merged.labels,
         ay.labels.format,
-        axis_is_house,
+        axis_house_default,
         chart_style_context.formats,
     )
     line_mark_merged = line_mark_merged.model_copy(

@@ -151,8 +151,12 @@ charts:
   bar1: {type: bar, query: q1, x: a, y: b, conditional_formatting: {b: {when: [{gt: 1, background: "#ff0000"}]}}}
 rows: [bar1]
 """
-    with pytest.warns(SchemaMigrationWarning, match="conditional_formatting"):
-        result = compile(yaml_content)
+    result = compile(yaml_content)
+    assert any(
+        "conditional_formatting" in d.message
+        for d in result.warnings
+        if d.code == "WARN-SCHEMA-MIGRATED"
+    ), result.warnings
 
     assert result.success, [f"{e.code}: {e.message}" for e in result.errors]
     assert result.board is not None

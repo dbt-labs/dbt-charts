@@ -161,7 +161,7 @@
         "clip": true,
         "interpolate": "linear",
         "opacity": 1,
-        "stroke": "#FFFFFF",
+        "stroke": "#ffffff",
         "strokeCap": "round",
         "strokeJoin": "round",
         "strokeOpacity": 1,
@@ -173,12 +173,12 @@
     {
       "mark": {
         "aria": false,
-        "fill": "#FFFFFF",
+        "fill": "#ffffff",
         "fillOpacity": 1,
         "filled": true,
         "opacity": 1,
         "size": 92.47999999999999,
-        "stroke": "#FFFFFF",
+        "stroke": "#ffffff",
         "strokeOpacity": 1,
         "tooltip": false,
         "type": "point"

@@ -308,8 +308,7 @@ cache-keys = [
 
 # Duplicates a subset of the root [tool.vulture]: the root config scans the
 # whole monorepo; this one is what the standalone export runs (`just lint`,
-# cwd = repo root there). Not used from inside the monorepo — the root
-# config already covers dbt-charts/ from its own [tool.vulture].paths.
+# cwd = repo root there). The monorepo's `just ci-lint` also runs it.
 [tool.vulture]
 min_confidence = 80
 sort_by_size = true

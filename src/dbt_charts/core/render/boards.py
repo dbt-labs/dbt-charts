@@ -1443,9 +1443,8 @@ def render_nested_board(
                           height). When provided, the board renders at least this tall so
                           all siblings in a cols row share the same height.
         painted_canvas: The parent's own painted canvas (see
-            ``composite_over_canvas``) — this board's own ``style.background``
-            composites over it to produce the canvas its own text and
-            children paint on.
+            ``composite_over_canvas``) — this board's own fill composites
+            over it to produce the canvas its own text and children paint on.
 
     Returns:
         (svg_string, actual_height) — actual_height is derived from rendered content.
@@ -1453,6 +1452,11 @@ def render_nested_board(
     from dbt_charts.core.render.contrast_warning import composite_over_canvas
 
     resolved_style = board.style  # ResolvedBoard.style is the ResolvedStyle
+    # style.background is CSS background-color: not inherited -- an
+    # unstyled nested board's own resolve already carries "transparent"
+    # here (compile_board_resolved_style in normalize/dispatch.py pins it;
+    # every board scope gets its own resolve, never a verbatim reused
+    # object), so this can composite unconditionally.
     own_canvas = composite_over_canvas(resolved_style.background, painted_canvas)
 
     gap = resolved_style.gap if resolved_style.gap is not None else 0.0

@@ -58,6 +58,7 @@ _B: dict[str, Any] = {
     "resolved_channels": {},
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": _ZERO_PADDING,
 }
@@ -86,29 +87,25 @@ def _bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            rcs,
-            fixture_chart_for_type("bar"),
-            "bar",
-            "nominal",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        rcs,
+        fixture_chart_for_type("bar"),
+        "bar",
+        "nominal",
+        "quantitative",
+        AxisOverrides(),
     )
     ax = build_resolved_axis(
         ax_merged,
         band_position=ax_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     ay = build_resolved_axis(
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     return ResolvedBarChart(
         panel_axes=(),
@@ -224,7 +221,11 @@ def test_resolved_kpi_chart_has_no_title_or_subtitle() -> None:
         chart_type="kpi",
         value="total",
         style=ResolvedKpiStyle(title=_make_style().chart_defaults.title),
-        **{k: v for k, v in _B.items() if k not in ("background", "title_style")},
+        **{
+            k: v
+            for k, v in _B.items()
+            if k not in ("background", "canvas", "title_style")
+        },
     )
     assert kpi.title is None
     assert kpi.subtitle is None

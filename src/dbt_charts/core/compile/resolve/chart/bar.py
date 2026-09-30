@@ -121,7 +121,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_Y_NOT_NUMERIC,
 )
 from dbt_charts.core.font_measure import get_font_measurer
-from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
     bar_sort_op,
@@ -1080,8 +1079,6 @@ def _resolve_bar(
         ax_band_position=plan.ax_band_position,
         ay_band_position=plan.ay_band_position,
         ax_edge=x_edge,
-        ay_format_authored=plan.ay_format_authored,
-        ay_format_is_alias=plan.ay_format_is_alias,
         ay_format_raw=plan.ay_format_raw,
         ticks=_CartesianTickResolution(tick_values, bar_domain_max, bar_domain_min),
         column_forming=orientation != "horizontal",
@@ -1108,10 +1105,8 @@ def _resolve_bar(
         # on the sibling ticks=... empty-ladder calls).
         endpoint_rail_may_discard_domain=False,
     )
-    axis_is_house = (
-        ay.labels.format is not None
-        and is_d3_si_spec(ay.labels.format)
-        and (not plan.ay_format_authored or plan.ay_format_is_alias)
+    _, axis_house_default = resolve_label_format(
+        plan.ay_format_raw, chart_style_context.formats
     )
     _tf = _title_font(normalized, chart_local_style_context, width)
     bkw = _base_kwargs(
@@ -1146,7 +1141,7 @@ def _resolve_bar(
     raw_total = bar.marks.bar.total_label
     if raw_total.format is None and ay.labels.format is not None:
         resolved_total = raw_total.model_copy(update={"format": ay.labels.format})
-        total_label_is_house = axis_is_house
+        total_label_is_house = axis_house_default
     elif raw_total.format is not None:
         resolved_total_fmt, total_label_is_house = resolve_label_format(
             raw_total.format, chart_style_context.formats
@@ -1158,7 +1153,7 @@ def _resolve_bar(
     resolved_labels, label_is_house = _label_format_fallback(
         bar.marks.bar.labels,
         ay.labels.format,
-        axis_is_house,
+        axis_house_default,
         chart_style_context.formats,
     )
     bar_mark = bar.marks.bar.model_copy(
@@ -1278,15 +1273,15 @@ def _resolve_histogram(
     ay_merged = _bake_ay_position_left(ay_merged)
     # Histogram's x is always a bottom-orient bin axis — no left/right edge.
     # Neither axis carries tick_values on a histogram (VL computes bins
-    # client-side). ay_format_authored=True below does not describe a real
-    # authoring (histogram has no cascade to read one from), yet it is not
-    # inert: empty tick_values is also the ladder-less sub-unit guard's own
-    # entry condition (build_resolved_axis's `elif`, axis_cascade.py), and
-    # True is what keeps that branch from firing here — histogram's y is a
-    # VL-computed row count, not real user data, so nothing chose it to
-    # receive that guard. The label gate below uses the REAL
-    # ay_format_authored from plan_cartesian so the narrative/native decision
-    # matches bar's behavior for the same format provenance.
+    # client-side). ay_format_raw is passed None explicitly below -- it
+    # does not describe a real authoring (histogram has no cascade to read
+    # one from), yet it is not inert: empty tick_values is also the
+    # ladder-less sub-unit guard's own entry condition (build_resolved_axis's
+    # `elif`, axis_cascade.py), and None (never a predefined name) is what
+    # keeps that branch from firing here — histogram's y is a VL-computed row
+    # count, not real user data, so nothing chose it to receive that guard.
+    # The label gate below uses the REAL plan.ay_format_raw so the
+    # narrative/native decision matches bar's behavior for the same format.
     ay, style_tail = build_cartesian_axes(
         normalized.id,
         chart_style_context,
@@ -1295,8 +1290,6 @@ def _resolve_histogram(
         ax_band_position=plan.ax_band_position,
         ay_band_position=plan.ay_band_position,
         ax_edge=None,
-        ay_format_authored=True,
-        ay_format_is_alias=False,
         ticks=_CartesianTickResolution((), None, None),
         column_forming=True,
         measure_tooltip_format=None,
@@ -1307,16 +1300,15 @@ def _resolve_histogram(
         # is always the measure, regardless of the x column's own type.
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=True,
+        ay_format_raw=None,
         ay_floors_tick_step=True,
         # Inert: ticks is always the empty _CartesianTickResolution above, so
         # _y_gridline_caps_bottom returns before this bool is ever read.
         zero_anchor=True,
         endpoint_rail_may_discard_domain=False,
     )
-    hist_axis_is_house = (
-        ay.labels.format is not None
-        and is_d3_si_spec(ay.labels.format)
-        and (not plan.ay_format_authored or plan.ay_format_is_alias)
+    _, hist_axis_house_default = resolve_label_format(
+        plan.ay_format_raw, chart_style_context.formats
     )
     # histogram reuses ResolvedBarStyle; these bar-only fields are unread by
     # the histogram emit path (no stack, no endpoint labels, no grouped x offset).
@@ -1324,7 +1316,7 @@ def _resolve_histogram(
     hist_labels, hist_label_is_house = _label_format_fallback(
         hist.marks.bar.labels,
         ay.labels.format,
-        hist_axis_is_house,
+        hist_axis_house_default,
         chart_style_context.formats,
     )
     hist_mark = hist.marks.bar.model_copy(update={"labels": hist_labels})

@@ -2,7 +2,7 @@
 
 A static export (``dct render --format html/svg`` with no interactive host)
 ships no JS runtime to re-request a page from the server, so
-``_render_table_svg_core`` pre-renders every page's rows into its own toggle
+``_paint_table`` pre-renders every page's rows into its own toggle
 group and a small inline script flips which one is visible (see
 ``static_multi_page`` in ``render/chart/table.py``). Left uncapped, that loop
 makes export size scale with total row count instead of page size —

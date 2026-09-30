@@ -38,16 +38,20 @@ _LONG_NOTE = (
 )
 
 
-def _board(rows: list[dict[str, Any]]) -> str:
+def _board(rows: list[dict[str, Any]], height: str | None = None) -> str:
     body = "\n".join(
         "      - {" + ", ".join(f"{k}: '{v}'" for k, v in row.items()) + "}"
         for row in rows
     )
+    layout = (
+        f"rows:\n  - height: {height}\n    rows:\n      - t\n"
+        if height
+        else "rows:\n  - t\n"
+    )
     return (
         "title: T\n"
         "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
-        "charts:\n  t: {query: q, type: table}\n"
-        "rows:\n  - t\n"
+        "charts:\n  t: {query: q, type: table}\n" + layout
     )
 
 
@@ -78,7 +82,7 @@ def test_wrapped_headers_are_reported() -> None:
 
 
 def test_pagination_collapse_is_page_squeezed_not_cramped() -> None:
-    """A long note drops four rows to one per page — data behind a pager.
+    """A pinned slot drops four long-note rows to one per page.
 
     The height axis is WARN-TABLE-PAGE-SQUEEZED's: its fix (grow the slot)
     matches the cause. Cramping's width fix would not clear this, so a
@@ -94,7 +98,8 @@ def test_pagination_collapse_is_page_squeezed_not_cramped() -> None:
                     "notes": _LONG_NOTE,
                 }
                 for i in range(4)
-            ]
+            ],
+            height="150px",
         )
     )
     assert _page_squeezed(codes)

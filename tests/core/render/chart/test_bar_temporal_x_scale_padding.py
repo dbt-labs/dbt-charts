@@ -55,30 +55,26 @@ def _sparse_daily_data() -> list[dict[str, Any]]:
 def _temporal_bar_axes():
     """Bake axis_x/axis_y for a bar chart with a temporal x channel."""
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            chart_style_context,
-            fixture_chart_for_type("bar"),
-            "bar",
-            "temporal",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        chart_style_context,
+        fixture_chart_for_type("bar"),
+        "bar",
+        "temporal",
+        "quantitative",
+        AxisOverrides(),
     )
     return (
         build_resolved_axis(
             ax_merged,
             band_position=ax_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
         build_resolved_axis(
             ay_merged,
             band_position=ay_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
     )
 
@@ -99,6 +95,7 @@ def _build_chart(bar_style):
         resolved_channels={},
         legend=charts.legend,
         background=charts.background,
+        canvas=charts.ink_canvas,
         title_style=charts.title,
         layout_padding=PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0),
     )

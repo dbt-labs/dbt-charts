@@ -382,13 +382,13 @@ class TestValidateIgnoreCodesDirect:
     """Direct unit coverage of _validate_ignore_codes's three branches."""
 
     def test_known_warning_code_does_not_exit(self) -> None:
-        _validate_ignore_codes({_FAKE_CODE})
+        _validate_ignore_codes({_FAKE_CODE}, diagnostics_json=False)
 
     def test_unknown_code_exits_with_unknown_message(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         with pytest.raises(SystemExit) as exc_info:
-            _validate_ignore_codes({"NOT-A-REAL-CODE"})
+            _validate_ignore_codes({"NOT-A-REAL-CODE"}, diagnostics_json=False)
         assert exc_info.value.code == 1
         assert "unknown warning code" in capsys.readouterr().err.lower()
 
@@ -396,7 +396,7 @@ class TestValidateIgnoreCodesDirect:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         with pytest.raises(SystemExit) as exc_info:
-            _validate_ignore_codes({_REAL_ERROR_CODE})
+            _validate_ignore_codes({_REAL_ERROR_CODE}, diagnostics_json=False)
         assert exc_info.value.code == 1
         stderr = capsys.readouterr().err.lower()
         assert "unknown warning code" not in stderr

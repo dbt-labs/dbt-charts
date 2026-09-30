@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     import datetime as dt
 
     from dbt_charts.core.compile.models.chart.authored import (
-        FieldConditionalFormatting,
         SparkConfig,
     )
     from dbt_charts.core.compile.models.chart.resolved.table import ResolvedTableChart
@@ -50,7 +49,6 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedChartDefaults,
         ResolvedStyle,
-        ResolvedTableStyle,
     )
     from mdsvg.fonts import FontMeasurer
 
@@ -155,13 +153,8 @@ _STATIC_MULTI_PAGE_MAX_PAGES = 20
 # both left-anchored at the same x/y -- before this reservation existed).
 _PAGINATION_CAP_NOTE_HEIGHT = 20
 
-# Engine politeness for table pagination. When total_rows would overflow the
-# resolved page_rows by this many or fewer AND the rows physically fit in the
-# available slot height, render every row on one page without pagination
-# chrome. Paired with the layout-sizing-side grow-by-2 rule in
-# ``_get_table_height_from_data`` so the slot is sized to fit (case b), and so
-# constrained-slot cases also gain the politeness when the slot already has
-# the room (e.g., card grew for a sibling chart).
+# An overflow of this many rows or fewer grows the table instead of paginating:
+# unbounded, the table draws every row; in a slot, only when they fit.
 _PAGINATION_GROW_CAP = 2
 
 # Anti-dangle: collapse a small trailing page by squeezing row_height.
@@ -678,26 +671,17 @@ def _resolve_visible_rows(
     passes it — the layout probe and the per-page re-renders resolve the same
     rows again and would record the same squeeze twice.
     """
-    # Chart-local pagination is pre-merged into ``pagination`` by the cascade —
-    # read the resolved page_rows off the merged value. When pagination is
-    # enabled but no page_rows is set, default to ``len(data)`` so the bounded
-    # auto-shrink branch still fires: a small cell will then split into pages
-    # rather than silently dropping rows into the "+ N more rows" footer.
+    # ``page_rows: null`` means unlimited: the slot alone bounds the page, and
+    # there is no authored page size for TABLE_PAGE_SQUEEZED to report.
     if pagination is not None and pagination.enabled:
-        page_rows = (
-            pagination.page_rows
-            if pagination.page_rows is not None
-            else (len(data) if data else 1)
-        )
+        page_rows = pagination.page_rows
+        if page_rows is None:
+            page_rows = max(1, len(data))
     else:
         page_rows = None
     page = max(1, page)
 
-    # Header-body gap is the visual buffer between the header rule and the first
-    # data row. When the header is hidden, this gap must collapse to zero so the
-    # sizer (layout_sizing._get_table_height_from_data) and the renderer's final
-    # placement (current_y bump after the header section, ~line 2762) agree on
-    # total height. The squeezed-row path below mirrors the same conditional.
+    # Buffer between the header rule and the first data row; none without a header.
     header_body_gap = int(row_height * 0.25) if header_visible else 0
 
     def _slice_heights(start: int, count: int) -> list[int] | None:
@@ -721,14 +705,8 @@ def _resolve_visible_rows(
             - bottom_padding
         )
         if page_rows is not None:
-            # Grow-by-2 short-circuit (engine politeness; pairs with the
-            # layout-side grow rule in ``_get_table_height_from_data``).
-            # When (a) every row physically fits in the available slot at its
-            # natural row height, and (b) the overflow vs the resolved
-            # page_rows is within the cap, render every row on one page with
-            # no pagination chrome. This catches the case where the sizer
-            # allocated extra room for an overflow ≤ _PAGINATION_GROW_CAP
-            # rows and the renderer would otherwise still cap at page_rows.
+            # Grow-by-2: every row fits and the overflow is within the cap, so
+            # draw them all on one page with no pagination chrome.
             if row_heights is not None:
                 total_data_height: float = float(sum(row_heights))
             else:
@@ -737,17 +715,8 @@ def _resolve_visible_rows(
                 total_data_height <= available_height
                 and len(data) <= page_rows + _PAGINATION_GROW_CAP
             ):
-                # Shrink to content: the slot may be oversized (e.g. sizer
-                # reserved a full page_rows height but the pivot table only
-                # rendered 1 wide row). Return the content-sized height so the
-                # table SVG never pads below the last row.
-                # Note: for tables in rows/stack layouts, actual_item_height
-                # propagates the shrunk height and next-tile offsets collapse.
-                # For tables in cols/equalized layouts, the card is floored at
-                # the tallest sibling (boards.py:1233), so the whitespace moves
-                # to between the table and the card edge rather than disappearing
-                # entirely. Full elimination in cols requires also fixing the
-                # sizer's pivot row count (Solution A).
+                # Shrink to content so an oversized slot (a card grown for a
+                # sibling) never pads below the last row.
                 content_table_height = (
                     title_height
                     + header_height
@@ -820,12 +789,17 @@ def _resolve_visible_rows(
                 )
             else:
                 effective = probe_effective
-            # The slot, not the table, decided the page size: the sizer reserved
-            # room for `requested` rows and only `effective` fit. Record it so
+            # The slot, not the table, decided the page size. Record it so
             # TABLE_PAGE_SQUEEZED can say so — otherwise the export photographs
             # as a faithful table showing a fraction of the data.
             requested = min(page_rows, len(data))
-            if chart_id is not None and effective < requested:
+            # Unlimited (``page_rows: null``) asked for no page size to squeeze.
+            if (
+                chart_id is not None
+                and pagination is not None
+                and pagination.page_rows is not None
+                and effective < requested
+            ):
                 record_table_page_squeeze(
                     chart_id,
                     TablePageSqueeze(
@@ -859,55 +833,18 @@ def _resolve_visible_rows(
         # limit. Fall through to the natural-height path so the static table stays
         # truthful instead of hiding rows behind a non-actionable "+ N more rows".
 
-    if page_rows is not None:
-        n_data = len(data)
-        overflow = n_data - page_rows
-        # Anti-dangle (unbounded path): if a 1-2 row tail would create a
-        # second page, squeeze row_height to fit all rows on one page.
-        # Only fire for uniform-height rows (row_heights is None).
-        if (
-            row_heights is None
-            and n_data > 0
-            and 0 < overflow <= _ANTI_DANGLE_MAX_OVERFLOW
-        ):
-            squeeze_ratio = page_rows / n_data
-            if squeeze_ratio >= (1.0 - _ANTI_DANGLE_MAX_SQUEEZE):
-                squeezed = max(
-                    _ANTI_DANGLE_MIN_ROW_H, int(round(row_height * squeeze_ratio))
-                )
-                squeezed_rows_height = squeezed * n_data
-                squeezed_header_body_gap = int(squeezed * 0.25) if header_visible else 0
-                squeezed_table_height = (
-                    title_height
-                    + header_height
-                    + squeezed_header_body_gap
-                    + squeezed_rows_height
-                    + padding
-                    + bottom_padding
-                )
-                return (
-                    squeezed_table_height,
-                    data,
-                    1,
-                    0,
-                    None,
-                    squeezed_rows_height,
-                    squeezed,
-                )
-        total_pages = max(1, -(-n_data // page_rows)) if data else 1
+    # Unbounded, a small overflow grows the table rather than paginating.
+    if page_rows is not None and len(data) > page_rows + _PAGINATION_GROW_CAP:
+        total_pages = -(-len(data) // page_rows)
         page = min(page, total_pages)
         start = (page - 1) * page_rows
         visible_data = data[start : start + page_rows]
         visible_heights = _slice_heights(start, page_rows)
         # Size to the tallest page so every page renders at the same height.
-        if row_heights is not None and total_pages > 1:
+        if row_heights is not None:
             rows_height = _max_page_sum(row_heights, page_rows)
         else:
-            # Use page_rows (not len(visible_data)) for uniform height across
-            # pages when paginating uniform-height rows; the last page may
-            # have fewer rows but keeps the same table height.
-            row_slots = page_rows if total_pages > 1 else len(visible_data)
-            rows_height = _rows_height(visible_heights, row_slots)
+            rows_height = page_rows * row_height
         table_height = (
             title_height
             + header_height
@@ -3033,7 +2970,7 @@ def _table_pagination_script() -> str:
     """The static-export pagination toggle, embedded inline like the tooltip runtime.
 
     Every page's rows and paginator are pre-rendered into the table's own SVG
-    (the ``static_multi_page`` branch of ``_render_table_svg_core``); this
+    (the ``static_multi_page`` branch of ``_paint_table``); this
     script only flips which ``data-dbt-table-page`` group is visible on
     click — no server, no re-render. Cached: the packaged asset can't change
     under a running process.
@@ -3128,7 +3065,7 @@ def _transpose_data_for_render(
     # set during resolve — the caller passes it directly, no chart reach-back needed.
     column_configs: dict[str, ResolvedTableColumnConfig] = dict(columns or {})
     row = data[0]
-    # Same unreachable-authoring guard as the core render path: a `visible:`
+    # Same unreachable-authoring guard as the table render path: a `visible:`
     # entry naming no query column would silently do nothing here too.
     _unaddressed = sorted(
         key
@@ -3240,43 +3177,97 @@ def _fanned_leaf_config(
     )
 
 
-def _render_table_svg_core(
-    *,
-    chart_id: str,
-    title: str | None,
-    subtitle: str | None,
-    link: str | None,
-    rows: list[str] | None,
-    pivot_columns: list[str] | None,
-    values: list[str] | None,
-    columns_promoted: dict[str, ResolvedTableColumnConfig] | None,
-    column_defaults_promoted: TableColumnDefaultsConfig | None,
-    header_overflow_promoted: str | None,
-    conditional_formatting: dict[str, FieldConditionalFormatting] | None,
-    table_style: ResolvedTableStyle,
-    # board_style carries board/placeholder layout config, muted, link ink,
-    # and the existing inline-spark and KPI-tone tokens consumed by row cells.
-    # Table-local title, formats, pagination, and family style come only from
-    # table_style.
-    board_style: ResolvedStyle,
+WhenRules = dict[str, tuple[Any, ...]]  # type-state: explicit_any — rule payloads
+
+
+@dataclass(frozen=True)
+class TableLayout:
+    """Everything the table painter needs that sizing also decides.
+
+    ``table_width`` and ``table_height`` are final; ``slot_width`` is the card
+    width before column overflow widened the table.
+    """
+
+    data: list[dict[str, Any]]  # type-state: explicit_any — query rows
+    columns: list[str]
+    column_configs: dict[str, ResolvedTableColumnConfig]
+    column_when_rules: WhenRules
+    pivot_groups: list[list[tuple[str, int, int]]] | None
+    pivot_group_row_height: int
+    col_widths: dict[str, float]
+    col_x_offsets: list[float]
+    lane_positions: dict[str, tuple[float, float, float, float, float]]
+    wrapped_headers: dict[str, list[str]]
+    truncated_headers: dict[str, bool]
+    header_height: int
+    all_row_heights: list[int] | None
+    all_wrapped_lines: list[dict[str, list[str]]] | None
+    visible_data: list[dict[str, Any]]  # type-state: explicit_any — query rows
+    per_row_heights: list[int] | None
+    visible_wrapped_lines: list[dict[str, list[str]]] | None
+    page_offset: int
+    total_pages: int
+    current_page: int
+    row_height: int
+    rendered_title: str
+    title_lines: list[str]
+    subtitle_lines: list[str]
+    subtitle_font_size: float
+    title_height: int
+    table_width: float
+    slot_width: float
+    table_height: float
+    pagination_active: bool
+    static_multi_page: bool
+    static_export_capped: bool
+    row_numbers: TableRowNumbersStyle
+    bar_auto_max: dict[str, float | None]
+    signed_layout_columns: dict[str, bool]
+    padding: int
+    cell_pad: int
+    cell_font: FontStyle
+    header_font: FontStyle
+    bottom_padding: int
+    table_font_family: str
+
+
+def _layout_table(
+    chart: ResolvedTableChart,
     data: list[dict[str, Any]],
     width: float | None,
     height: float | None,
-    is_placeholder: bool,
-    variables: dict[str, Any] | None,
-    inset: dict[str, float] | None,
-) -> str:
-    """Shared SVG body for the table renderer.
+    *,
+    board_style: ResolvedStyle,
+    variables: VariableValues | None,
+) -> TableLayout:
+    """Resolve every table dimension without painting.
 
-    ``render_table_svg`` maps the resolved chart onto this signature; this is
-    the single place the actual table SVG gets built.
+    Sizing calls this alone; ``_paint_table`` draws from the result. Side
+    effects into the warning sinks (overflow, cramping, page squeeze, static
+    page cap) are recorded here, so measuring and rendering report the same.
     """
+    chart_id = chart.id
+    table_style = chart.style
+    effective_variables = (
+        variables if variables is not None else current_board_variables()
+    )
+    data = normalize_data_types(data)
+    columns_promoted = chart.columns
+
+    if table_style.table.transpose and data:
+        data, columns_promoted = _transpose_data_for_render(
+            table_style.formats,
+            columns_promoted,
+            chart.column_defaults,
+            data,
+            _table_numeric_cell_font(table_style.table.font.family),
+        )
+
     tc = table_style.table
 
     # Chart-level pivot (rows/columns/values channels): reshape long → wide.
     # Called unconditionally — a flat table (no pivot_columns) and empty data
-    # both pass straight through, so the layout sizer can call the same way and
-    # can't disagree with us about which shapes reshape.
+    # both pass straight through.
     # groups is None for flat tables and single-dim single-measure pivot;
     # list-of-levels otherwise (triggers N-row header rendering below).
     # row_role_spec is hoisted here (ahead of the row loop that also reads it) so
@@ -3286,63 +3277,12 @@ def _render_table_svg_core(
     row_role_spec = tc.row.role
     data, _pivot_groups, _pivot_effective_values = pivot_table_data(
         data,
-        rows=rows or [],
-        columns=pivot_columns,
-        values=values,
+        rows=chart.rows
+        or [],  # type-state: silent_fallback — rows is an optional authored channel; none means no row dimension
+        columns=chart.pivot_columns,
+        values=chart.values,
         row_role_spec=row_role_spec,
     )
-
-    # Build colors dict from chart-local TableChartStyle (which already has
-    # board-level values cascaded in). board_style is only needed for font
-    # color (link color), muted, and placeholder — do not add more reads
-    # from it.
-    #
-    # TitleStyle.font is an InheritSlot filled from Style.font, so None
-    # post-cascade is a cascade bug.
-    assert table_style.title.font.color is not None, (
-        "title.font.color must be populated by cascade"
-    )
-    # Subtitle fill comes from the same style.title.subtitle chart families use
-    # for their Vega-Lite subtitle — not board_style.muted, a generic secondary-
-    # text role that happens to diverge from it in some themes (e.g. editorial).
-    assert table_style.title.subtitle.font.color is not None, (
-        "title.subtitle.font.color must be populated by cascade"
-    )
-    colors: dict[str, str] = {
-        "background": tc.background or "",
-        "header_background": tc.header.background or "",
-        "label_color": tc.header.font.color or "",
-        "row_stripe": (tc.row.stripe.color if tc.row.stripe else None) or "",
-        "color": tc.font.color or "",
-        "title_color": table_style.title.font.color,
-        "subtitle_color": table_style.title.subtitle.font.color,
-        "muted": board_style.muted,
-        # Table links render as body ink + weight 500 (the weight bump is
-        # applied in the row loop) — emphasis comes from weight, not from
-        # the colorful accent, matching the "bolder, not colorful" link
-        # treatment used table-wide.
-        "link": board_style.font.color,
-    }
-    colors["header_background"] = sanitize_color(
-        tc.header.background,
-        colors["header_background"],
-    )
-    colors["label_color"] = sanitize_color(
-        tc.header.font.color,
-        colors["label_color"],
-    )
-    colors["row_stripe"] = sanitize_color(
-        tc.row.stripe.color if tc.row.stripe else None, colors["row_stripe"]
-    )
-    # Link color rides as the --dbt-link custom property on the row-link rect (row-link
-    # hover) and into cell fill attributes, so it must be a validated color —
-    # an authored font.color is free-form and would otherwise be a CSS/attr
-    # injection sink. sanitize_color raises on anything but hex/transparent.
-    colors["link"] = sanitize_color(board_style.font.color, colors["color"])
-    # If tc.color has a static override, use it for text color.
-    _tc_color_static = tc.color.static if tc.color is not None else None
-    if _tc_color_static is not None:
-        colors["color"] = sanitize_color(_tc_color_static, colors["color"])
 
     # tc IS both the style and the layout constants (TableChartStyle has all fields)
     table_config = tc
@@ -3378,27 +3318,11 @@ def _render_table_svg_core(
         header_font_weight = str(tc.header.font_compact.weight)
     else:
         header_font_weight = _default_header_weight
-    symbol_mode = tc.symbol_mode
     wrap_cells = tc.wrap
-    header_rule_width = float(tc.header.rule.width)
     # Header height: theme-required field (never unset after cascade).
     # Collapse to 0 when the header is hidden so the layout assigns all
     # vertical room to data rows.
     header_height = 0 if not tc.header.visible else int(tc.header.height)
-    row_rule_width = float(tc.row.rule.width)
-    # Summary rule: falls back to row_rule_width when not explicitly set.
-    summary_rule_width = float(
-        tc.row.roles.summary.rule_width or row_rule_width,
-    )
-    _summary_role_font = tc.row.roles.summary.font
-    summary_font_weight = (
-        font_weight_as_css(_summary_role_font.weight)
-        if _summary_role_font is not None and _summary_role_font.weight is not None
-        else None
-    )
-    # Per-role presentation from row.roles (summary / total).
-    _role_summary = tc.row.roles.summary
-    _role_total = tc.row.roles.total
     # Table font family can be overridden at the table level (e.g. Classic
     # variant uses Source Serif), falling back to the global body font.
     # Strip CSS-style quotes from font names for SVG compatibility — SVG
@@ -3410,32 +3334,19 @@ def _render_table_svg_core(
     assert tc.font.family is not None, "style.font.family must be configured"
     table_font_family = _svg_font_family(tc.font.family)
     numeric_cell_font = _table_numeric_cell_font(tc.font.family)
-    header_rule_continuous = bool(tc.header.rule.continuous or False)
-    # Rules default to the body text color for strong visibility.
-    # Row-level rule color takes precedence over table-level rule color.
-    # Sanitize all user-provided colors; fall back to theme text color.
-    _raw_rule_color = tc.row.rule.color or (tc.rule.color if tc.rule else None)
-    rule_color = sanitize_color(_raw_rule_color, colors["color"])
     bottom_padding = int(tc.bottom_padding)
-    title_text = title  # authored; the visible canvas text gets cased
-    # by compute_table_title_block_layout. Keep title_text uncased so the
-    # tooltip <title> shows the original authored text for hover/screen-readers.
-    subtitle_text = subtitle
-
     table_width: float = tc.preferred_width if width is None else width
     # The card is the slot, not the table: on column overflow table_width
     # widens past the slot (below) but the card must not follow it into the
     # neighbor, so the wrapper's box and this rect agree on the outer edge.
     slot_width = table_width
     title_font = table_style.title_font
-    title_font_weight: int | str = int(title_font.weight)
-    title_font_size = int(title_font.size)
-    title_font_family_str = title_font.family
     title_style = table_style.title
-    title_line_height = title_font_size + 2
+    chart_title = chart.title or ""  # type-state: silent_fallback — untitled ok
+    chart_subtitle = chart.subtitle or ""  # type-state: silent_fallback — optional
     title_block = compute_table_title_block_layout(
-        chart_title=str(title_text or ""),
-        chart_subtitle=str(subtitle_text or ""),
+        chart_title=chart_title,
+        chart_subtitle=chart_subtitle,
         table_width=table_width,
         tc=tc,
         padding=padding,
@@ -3455,9 +3366,8 @@ def _render_table_svg_core(
 
     # Tables read conditional_formatting rules directly at render time — no
     # internal lowering into column configs.
-    column_when_rules: dict[str, tuple[Any, ...]] = {
-        col: tuple(entry.when) for col, entry in (conditional_formatting or {}).items()
-    }
+    cf = chart.conditional_formatting or {}  # type-state: silent_fallback — optional
+    column_when_rules: WhenRules = {col: tuple(entry.when) for col, entry in cf.items()}
 
     # For multi-dim / multi-measure pivot, expand measure-keyed configs/rules to leaf
     # keys. Authors key configs/rules by measure field name; leaf keys encode the full
@@ -3497,7 +3407,7 @@ def _render_table_svg_core(
                     existing,
                     fallback_label=slug_to_text(_display_label),
                     measure_identity=_authored_here,
-                    defaults=column_defaults_promoted,
+                    defaults=chart.column_defaults,
                     values=[row.get(leaf) for row in data],
                 )
             else:
@@ -3507,7 +3417,7 @@ def _render_table_svg_core(
                 _expanded_cc[leaf] = _as_resolved_table_column(
                     fill_table_column_defaults(
                         None,
-                        column_defaults_promoted,
+                        chart.column_defaults,
                         fallback_label=slug_to_text(_display_label),
                         values=[row.get(leaf) for row in data],
                     ),
@@ -3523,7 +3433,7 @@ def _render_table_svg_core(
             if _measure_part and _measure_part in column_when_rules:
                 _expanded_cwr[leaf] = column_when_rules[_measure_part]
         column_when_rules = {**column_when_rules, **_expanded_cwr}
-    elif pivot_columns and data:
+    elif chart.pivot_columns and data:
         # Single-dim single-measure pivot: leaf keys are the bare pivoted
         # values themselves (no separator). A measure-keyed entry fans out to
         # every leaf, same authoring shape as the multi-measure branch — so
@@ -3548,14 +3458,14 @@ def _render_table_svg_core(
                     _measure_cfg,
                     fallback_label=slug_to_text(leaf),
                     measure_identity=False,
-                    defaults=column_defaults_promoted,
+                    defaults=chart.column_defaults,
                     values=[row.get(leaf) for row in data],
                 )
                 continue
             column_configs[leaf] = _as_resolved_table_column(
                 fill_table_column_defaults(
                     None,
-                    column_defaults_promoted,
+                    chart.column_defaults,
                     fallback_label=slug_to_text(leaf),
                     values=[row.get(leaf) for row in data],
                 ),
@@ -3563,7 +3473,7 @@ def _render_table_svg_core(
                 numeric_cell_font,
             )
 
-    header_overflow = resolve_header_overflow(table_config, header_overflow_promoted)
+    header_overflow = resolve_header_overflow(table_config, chart.header_overflow)
 
     # A `visible: false` entry must address something the render can act on: a
     # post-pivot column, or a measure key the leaf expansion above fanned
@@ -3917,7 +3827,9 @@ def _render_table_svg_core(
         header_height = header_height + _pivot_group_row_height * len(_pivot_groups)
 
     # Pagination: extract current page from variables using chart ID
-    current_page = _extract_page_from_variables(chart_id, variables) if chart_id else 1
+    current_page = (
+        _extract_page_from_variables(chart_id, effective_variables) if chart_id else 1
+    )
 
     # Pre-compute per-row heights AND cache wrapped lines for the full
     # dataset. Heights flow into pagination/height-constrained slicing;
@@ -3968,8 +3880,7 @@ def _render_table_svg_core(
     # header wrapping, so the width rung of the degradation ladder is known.
     # Recorded into the sink WARN_TABLE_CRAMPED reads (a no-op unless a
     # warning sink is open). The height rung — a slot cutting rows-per-page —
-    # is recorded separately as a TablePageSqueeze where the paginator
-    # overrides the sizer.
+    # is recorded separately as a TablePageSqueeze.
     #
     # The demand is each column's own content width, or its header label plus
     # its cell padding where that is wider — the padded width the wrap
@@ -4048,13 +3959,19 @@ def _render_table_svg_core(
     static_multi_page = (
         pagination_active and bool(chart_id) and not controls_are_interactive()
     )
-    # Computed early -- needs only total_pages, already known from the outer
-    # _resolve_visible_rows call above -- so table_height can reserve room
-    # for the cap note's own line before table_height_s is finalized below.
+    # Computed early -- needs only total_pages -- so table_height can reserve
+    # room for the cap note's own line.
     static_export_capped = (
         static_multi_page
         and min(total_pages, _STATIC_MULTI_PAGE_MAX_PAGES) < total_pages
     )
+    if static_export_capped:
+        record_static_pagination_cap(
+            chart_id,
+            StaticPaginationCap(
+                rendered_pages=_STATIC_MULTI_PAGE_MAX_PAGES, total_pages=total_pages
+            ),
+        )
 
     # Add breathing room before summary/total rows so double rules don't
     # crowd the last data row. Compute here to adjust total SVG height.
@@ -4087,8 +4004,7 @@ def _render_table_svg_core(
         )
     # Apply summary gap when: (a) auto-sized (no explicit slot), or (b) the
     # renderer shrunk an oversized slot to content (table_height < height).
-    # The sizer never includes summary gaps in its height estimate, so we
-    # cannot rely on slot slack to absorb them.
+    # An explicit slot already holds it: the sizer measures this same height.
     # Invariant: in the explicit-slot branch, every non-shrink path returns
     # table_height == height (squeezed/anti-dangle and pagination paths echo
     # the slot), so `table_height < height` is equivalent to "shrink fired."
@@ -4102,32 +4018,177 @@ def _render_table_svg_core(
     if pagination_active and not (height and height > 0):
         table_height += pagination_control_height
 
-    # The cap note's own line. Gated the same way as pagination_control_height
-    # just above: layout_sizing._get_table_height_from_data already reserves
-    # _PAGINATION_CAP_NOTE_HEIGHT (beside its own _PAGINATION_CONTROL_HEIGHT
-    # add) whenever it estimates more pages than the static-export cap, so an
-    # explicit height already includes it -- adding it again here would
-    # double-reserve and, on a grid: layout, paint 20px into whatever sits
-    # below (grid items are placed at a precomputed pixel_y that a sibling's
-    # height never corrects, unlike rows:/cols:).
+    # The cap note's own line, gated like the controls above: an explicit
+    # height already includes it, and adding it again would paint 20px into a
+    # grid: sibling below.
     if static_export_capped and not (height and height > 0):
         table_height += _PAGINATION_CAP_NOTE_HEIGHT
 
+    return TableLayout(
+        data=data,
+        columns=columns,
+        column_configs=column_configs,
+        column_when_rules=column_when_rules,
+        pivot_groups=_pivot_groups,
+        pivot_group_row_height=_pivot_group_row_height,
+        col_widths=col_widths,
+        col_x_offsets=col_x_offsets,
+        lane_positions=lane_positions,
+        wrapped_headers=wrapped_headers,
+        truncated_headers=truncated_headers,
+        header_height=header_height,
+        all_row_heights=all_row_heights,
+        all_wrapped_lines=all_wrapped_lines,
+        visible_data=visible_data,
+        per_row_heights=per_row_heights,
+        visible_wrapped_lines=visible_wrapped_lines,
+        page_offset=page_offset,
+        total_pages=total_pages,
+        current_page=current_page,
+        row_height=row_height,
+        rendered_title=rendered_title,
+        title_lines=title_lines,
+        subtitle_lines=subtitle_lines,
+        subtitle_font_size=subtitle_font_size,
+        title_height=title_height,
+        table_width=table_width,
+        slot_width=slot_width,
+        table_height=table_height,
+        pagination_active=pagination_active,
+        static_multi_page=static_multi_page,
+        static_export_capped=static_export_capped,
+        row_numbers=row_numbers,
+        bar_auto_max=bar_auto_max,
+        signed_layout_columns=signed_layout_columns,
+        padding=padding,
+        cell_pad=cell_pad,
+        cell_font=_cell_font,
+        header_font=_header_font,
+        bottom_padding=bottom_padding,
+        table_font_family=table_font_family,
+    )
+
+
+def _paint_table(
+    layout: TableLayout,
+    chart: ResolvedTableChart,
+    *,
+    board_style: ResolvedStyle,
+    height: float | None,
+    is_placeholder: bool,
+    inset: dict[str, float] | None,
+) -> str:
+    """Draw the SVG for a resolved ``layout``."""
+    chart_id = chart.id
+    link = chart.link
+    table_style = chart.style
+    tc = table_style.table
+    row_role_spec = tc.row.role
+    wrap_cells = tc.wrap
+    # Uncased authored text: the tooltip <title> shows the original for
+    # hover/screen-readers; the layout already cased the visible canvas text.
+    title_text = chart.title
+    subtitle_text = chart.subtitle
+
+    # Build colors dict from chart-local TableChartStyle (which already has
+    # board-level values cascaded in). board_style is only needed for font
+    # color (link color), muted, and placeholder — do not add more reads
+    # from it.
+    #
+    # TitleStyle.font is an InheritSlot filled from Style.font, so None
+    # post-cascade is a cascade bug.
+    assert table_style.title.font.color is not None, (
+        "title.font.color must be populated by cascade"
+    )
+    # Subtitle fill comes from the same style.title.subtitle chart families use
+    # for their Vega-Lite subtitle — not board_style.muted, a generic secondary-
+    # text role that happens to diverge from it in some themes (e.g. editorial).
+    assert table_style.title.subtitle.font.color is not None, (
+        "title.subtitle.font.color must be populated by cascade"
+    )
+    colors: dict[str, str] = {
+        "background": tc.background
+        or "",  # type-state: silent_fallback — unset color means no paint; sanitize_color and painters test truthiness
+        "header_background": tc.header.background
+        or "",  # type-state: silent_fallback — unset color means no paint; sanitize_color and painters test truthiness
+        "label_color": tc.header.font.color
+        or "",  # type-state: silent_fallback — unset color means no paint; sanitize_color and painters test truthiness
+        "row_stripe": (tc.row.stripe.color if tc.row.stripe else None)
+        or "",  # type-state: silent_fallback — unset stripe color means no stripe paint
+        "color": tc.font.color
+        or "",  # type-state: silent_fallback — unset color means no paint; sanitize_color and painters test truthiness
+        "title_color": table_style.title.font.color,
+        "subtitle_color": table_style.title.subtitle.font.color,
+        "muted": board_style.muted,
+        # Table links render as body ink + weight 500 (the weight bump is
+        # applied in the row loop) — emphasis comes from weight, not from
+        # the colorful accent, matching the "bolder, not colorful" link
+        # treatment used table-wide.
+        "link": board_style.font.color,
+    }
+    colors["header_background"] = sanitize_color(
+        tc.header.background,
+        colors["header_background"],
+    )
+    colors["label_color"] = sanitize_color(
+        tc.header.font.color,
+        colors["label_color"],
+    )
+    colors["row_stripe"] = sanitize_color(
+        tc.row.stripe.color if tc.row.stripe else None, colors["row_stripe"]
+    )
+    # Link color rides as the --dbt-link custom property on the row-link rect (row-link
+    # hover) and into cell fill attributes, so it must be a validated color —
+    # an authored font.color is free-form and would otherwise be a CSS/attr
+    # injection sink. sanitize_color raises on anything but hex/transparent.
+    colors["link"] = sanitize_color(board_style.font.color, colors["color"])
+    # If tc.color has a static override, use it for text color.
+    _tc_color_static = tc.color.static if tc.color is not None else None
+    if _tc_color_static is not None:
+        colors["color"] = sanitize_color(_tc_color_static, colors["color"])
+    symbol_mode = tc.symbol_mode
+    header_rule_width = float(tc.header.rule.width)
+    row_rule_width = float(tc.row.rule.width)
+    # Summary rule: falls back to row_rule_width when not explicitly set.
+    summary_rule_width = float(
+        tc.row.roles.summary.rule_width or row_rule_width,
+    )
+    _summary_role_font = tc.row.roles.summary.font
+    summary_font_weight = (
+        font_weight_as_css(_summary_role_font.weight)
+        if _summary_role_font is not None and _summary_role_font.weight is not None
+        else None
+    )
+    # Per-role presentation from row.roles (summary / total).
+    _role_summary = tc.row.roles.summary
+    _role_total = tc.row.roles.total
+    header_rule_continuous = tc.header.rule.continuous
+    # Rules default to the body text color for strong visibility.
+    # Row-level rule color takes precedence over table-level rule color.
+    # Sanitize all user-provided colors; fall back to theme text color.
+    _raw_rule_color = tc.row.rule.color or (tc.rule.color if tc.rule else None)
+    rule_color = sanitize_color(_raw_rule_color, colors["color"])
+    title_font = table_style.title_font
+    title_font_weight: int | str = int(title_font.weight)
+    title_font_size = int(title_font.size)
+    title_font_family_str = title_font.family
+    title_line_height = title_font_size + 2
+
     # Start building SVG
     svg_parts: list[str] = []
-    table_width_s = _format_svg_numeric(table_width)
-    table_height_s = _format_svg_numeric(table_height)
+    table_width_s = _format_svg_numeric(layout.table_width)
+    table_height_s = _format_svg_numeric(layout.table_height)
 
     # Background — omit rect when table.background is unset or transparent.
     if colors["background"] and colors["background"].lower() != "transparent":
-        bx, by, bw, bh = card_box(slot_width, table_height, inset)
+        bx, by, bw, bh = card_box(layout.slot_width, layout.table_height, inset)
         svg_parts.append(
             f'<rect x="{escape_attr(_format_svg_numeric(bx))}" y="{escape_attr(_format_svg_numeric(by))}" '
             f'width="{escape_attr(_format_svg_numeric(bw))}" height="{escape_attr(_format_svg_numeric(bh))}" '
             f'fill="{escape_attr(colors["background"])}" rx="4"/>',
         )
 
-    current_y = padding
+    current_y = layout.padding
 
     # Title
     if title_text:
@@ -4144,56 +4205,54 @@ def _render_table_svg_core(
             if _title_case and _title_case != "none"
             else str(title_text)
         )
-        is_title_truncated = rendered_title != _cased_authored
+        is_title_truncated = layout.rendered_title != _cased_authored
         inner_title = (
             f"<title>{html_module.escape(str(title_text))}</title>"
             if is_title_truncated
             else ""
         )
         svg_parts.append(
-            f'<text x="{escape_attr(padding)}" y="{escape_attr(title_baseline)}" '
+            f'<text x="{escape_attr(layout.padding)}" y="{escape_attr(title_baseline)}" '
             f'font-size="{escape_attr(title_font_size)}" font-weight="{escape_attr(title_font_weight)}" fill="{escape_attr(colors["title_color"])}" '
             f'font-family="{escape_attr(title_font_family_str)}"{authored_kind_attr("title")}>{inner_title}',
         )
-        for line_index, line in enumerate(title_lines):
+        for line_index, line in enumerate(layout.title_lines):
             line_y = title_baseline + (line_index * title_line_height)
             svg_parts.append(
-                f'<tspan x="{escape_attr(padding)}" y="{escape_attr(line_y)}">{html_module.escape(line)}</tspan>',
+                f'<tspan x="{escape_attr(layout.padding)}" y="{escape_attr(line_y)}">{html_module.escape(line)}</tspan>',
             )
         svg_parts.append("</text>")
         if subtitle_text:
             last_title_baseline = title_baseline + (
-                (len(title_lines) - 1) * title_line_height
+                (len(layout.title_lines) - 1) * title_line_height
             )
             subtitle_y = _subtitle_baseline_below_title(
                 title_baseline=last_title_baseline,
                 title_font_size=title_font_size,
-                title_subtitle_gap=table_config.title_subtitle_gap,
-                subtitle_font_size=subtitle_font_size,
+                title_subtitle_gap=tc.title_subtitle_gap,
+                subtitle_font_size=layout.subtitle_font_size,
             )
-            subtitle_line_height = subtitle_font_size + 2
+            subtitle_line_height = layout.subtitle_font_size + 2
             # Same contract as the title above: when wrap-two clips a very long
             # subtitle, the inner <title> keeps the full text reachable on hover
             # and to screen readers.
             subtitle_inner_title = (
                 f"<title>{html_module.escape(subtitle_text)}</title>"
-                if " ".join(subtitle_lines) != subtitle_text
+                if " ".join(layout.subtitle_lines) != subtitle_text
                 else ""
             )
             svg_parts.append(
-                f'<text x="{escape_attr(padding)}" '
-                f'font-size="{escape_attr(subtitle_font_size)}" fill="{escape_attr(colors["subtitle_color"])}" '
-                f'font-family="{escape_attr(table_font_family)}"{authored_kind_attr("subtitle")}>{subtitle_inner_title}',
+                f'<text x="{escape_attr(layout.padding)}" '
+                f'font-size="{escape_attr(layout.subtitle_font_size)}" fill="{escape_attr(colors["subtitle_color"])}" '
+                f'font-family="{escape_attr(layout.table_font_family)}"{authored_kind_attr("subtitle")}>{subtitle_inner_title}',
             )
-            for line_index, line in enumerate(subtitle_lines):
+            for line_index, line in enumerate(layout.subtitle_lines):
                 line_y = subtitle_y + (line_index * subtitle_line_height)
                 svg_parts.append(
-                    f'<tspan x="{escape_attr(padding)}" y="{escape_attr(line_y)}">{html_module.escape(line)}</tspan>',
+                    f'<tspan x="{escape_attr(layout.padding)}" y="{escape_attr(line_y)}">{html_module.escape(line)}</tspan>',
                 )
             svg_parts.append("</text>")
-        current_y += title_height
-
-    # lane_positions already computed above (before resolve_wrapped_headers)
+        current_y += layout.title_height
 
     # Skip header rendering when style.header.visible is False. Header
     # contributes 0 to layout (header_height has been zeroed above) so
@@ -4202,53 +4261,57 @@ def _render_table_svg_core(
     if tc.header.visible:
         # Multi-dim / multi-measure pivot: render N group-label rows (one per level)
         # stacked above the leaf-header row.
-        if _pivot_groups is not None and _pivot_group_row_height > 0:
+        if layout.pivot_groups is not None and layout.pivot_group_row_height > 0:
             _render_pivot_group_header(
                 svg_parts,
-                levels=_pivot_groups,
-                columns=columns,
+                levels=layout.pivot_groups,
+                columns=layout.columns,
                 colors=colors,
-                table_width=table_width,
-                group_row_height=_pivot_group_row_height,
+                table_width=layout.table_width,
+                group_row_height=layout.pivot_group_row_height,
                 current_y=current_y,
-                padding_x=padding,
-                col_x_offsets=col_x_offsets,
-                col_widths=col_widths,
-                header_font=_header_font,
-                cell_pad=cell_pad,
+                padding_x=layout.padding,
+                col_x_offsets=layout.col_x_offsets,
+                col_widths=layout.col_widths,
+                header_font=layout.header_font,
+                cell_pad=layout.cell_pad,
             )
-        _n_group_rows = len(_pivot_groups) if _pivot_groups is not None else 0
-        _leaf_header_y = current_y + _pivot_group_row_height * _n_group_rows
-        _leaf_header_h = header_height - _pivot_group_row_height * _n_group_rows
+        _n_group_rows = (
+            len(layout.pivot_groups) if layout.pivot_groups is not None else 0
+        )
+        _leaf_header_y = current_y + layout.pivot_group_row_height * _n_group_rows
+        _leaf_header_h = (
+            layout.header_height - layout.pivot_group_row_height * _n_group_rows
+        )
         _render_header_section(
             svg_parts,
-            columns=columns,
-            column_configs=column_configs,
+            columns=layout.columns,
+            column_configs=layout.column_configs,
             colors=colors,
-            table_config=table_config,
-            table_width=table_width,
+            table_config=tc,
+            table_width=layout.table_width,
             header_height=_leaf_header_h,
             current_y=_leaf_header_y,
-            padding_x=padding,
-            col_x_offsets=col_x_offsets,
-            col_widths=col_widths,
-            col_lane_positions=lane_positions,
-            header_font=_header_font,
-            wrapped_headers=wrapped_headers,
-            truncated_headers=truncated_headers,
-            cell_pad=cell_pad,
+            padding_x=layout.padding,
+            col_x_offsets=layout.col_x_offsets,
+            col_widths=layout.col_widths,
+            col_lane_positions=layout.lane_positions,
+            header_font=layout.header_font,
+            wrapped_headers=layout.wrapped_headers,
+            truncated_headers=layout.truncated_headers,
+            cell_pad=layout.cell_pad,
             header_rule_width=header_rule_width,
             rule_color=rule_color,
             header_rule_continuous=header_rule_continuous,
-            row_numbers=row_numbers if row_numbers.visible else None,
+            row_numbers=layout.row_numbers if layout.row_numbers.visible else None,
             chart_id=chart_id,
         )
 
-    current_y += header_height
+    current_y += layout.header_height
     # Small whitespace gap between header and first data row for visual
     # hierarchy. Scales with row height. Skipped when header is disabled —
     # data rows start at the table top (after the title, if any).
-    header_body_gap = int(row_height * 0.25) if tc.header.visible else 0
+    header_body_gap = int(layout.row_height * 0.25) if tc.header.visible else 0
     current_y += header_body_gap
 
     def _paint_data_rows(
@@ -4260,21 +4323,21 @@ def _render_table_svg_core(
     ) -> None:
         _render_data_rows(
             target,
-            table_config=table_config,
+            table_config=tc,
             rows=rows,
-            columns=columns,
-            column_configs=column_configs,
-            column_when_rules=column_when_rules,
+            columns=layout.columns,
+            column_configs=layout.column_configs,
+            column_when_rules=layout.column_when_rules,
             colors=colors,
-            col_widths=col_widths,
-            col_x_offsets=col_x_offsets,
-            col_lane_positions=lane_positions,
-            padding_x=padding,
+            col_widths=layout.col_widths,
+            col_x_offsets=layout.col_x_offsets,
+            col_lane_positions=layout.lane_positions,
+            padding_x=layout.padding,
             current_y=current_y,
-            row_height=row_height,
-            cell_font=_cell_font,
-            table_width=table_width,
-            cell_pad=cell_pad,
+            row_height=layout.row_height,
+            cell_font=layout.cell_font,
+            table_width=layout.table_width,
+            cell_pad=layout.cell_pad,
             symbol_mode=symbol_mode,
             row_rule_width=row_rule_width,
             summary_rule_width=summary_rule_width,
@@ -4285,15 +4348,15 @@ def _render_table_svg_core(
             role_total=_role_total,
             resolved_style=board_style.chart_defaults,
             formats=table_style.formats,
-            row_numbers=row_numbers if row_numbers.visible else None,
+            row_numbers=layout.row_numbers if layout.row_numbers.visible else None,
             page_offset=offset,
             row_heights=row_heights_page,
             wrapped_lines_by_row=wrapped_lines_page,
             wrap=wrap_cells,
             chart_root_link=link,
             chart_id=chart_id,
-            bar_auto_max=bar_auto_max,
-            signed_layout_columns=signed_layout_columns,
+            bar_auto_max=layout.bar_auto_max,
+            signed_layout_columns=layout.signed_layout_columns,
         )
 
     # The pager sits off the CURRENT page's own rows height, not `rows_height`
@@ -4305,28 +4368,21 @@ def _render_table_svg_core(
     # current page's own values regardless of pagination — _resolve_visible_rows
     # only substitutes the max-page sum into the sizing return, not these.
     current_page_rows_height = (
-        sum(per_row_heights)
-        if per_row_heights is not None
-        else len(visible_data) * row_height
+        sum(layout.per_row_heights)
+        if layout.per_row_heights is not None
+        else len(layout.visible_data) * layout.row_height
     )
-    indicator_y = current_y + current_page_rows_height + bottom_padding
+    indicator_y = current_y + current_page_rows_height + layout.bottom_padding
 
-    if static_multi_page:
+    if layout.static_multi_page:
         assert chart_id is not None  # static_multi_page requires a truthy chart_id
         page_var_name = f"{chart_id}_page"
-        rendered_pages = min(total_pages, _STATIC_MULTI_PAGE_MAX_PAGES)
-        capped = static_export_capped
-        if capped:
-            record_static_pagination_cap(
-                chart_id,
-                StaticPaginationCap(
-                    rendered_pages=rendered_pages, total_pages=total_pages
-                ),
-            )
+        rendered_pages = min(layout.total_pages, _STATIC_MULTI_PAGE_MAX_PAGES)
+        capped = layout.static_export_capped
         # A deep-linked page past what the export can pre-render has nothing
         # to show — fall back to the last rendered page rather than leaving
         # every toggle group hidden.
-        initial_page = min(current_page, rendered_pages)
+        initial_page = min(layout.current_page, rendered_pages)
         # Tracks the tallest RENDERED page's own indicator_y, for the cap
         # note's anchor below -- the outer _max_page_sum value spans every
         # page in the whole dataset, including pages past the rendered_pages
@@ -4343,16 +4399,16 @@ def _render_table_svg_core(
                 _page_rows_height,
                 page_row_h,
             ) = _resolve_visible_rows(
-                data,
+                layout.data,
                 height=height,
-                title_height=title_height,
-                header_height=header_height,
-                padding=padding,
-                row_height=row_height,
-                bottom_padding=bottom_padding,
+                title_height=layout.title_height,
+                header_height=layout.header_height,
+                padding=layout.padding,
+                row_height=layout.row_height,
+                bottom_padding=layout.bottom_padding,
                 pagination=tc.pagination,
                 page=page_n,
-                row_heights=all_row_heights,
+                row_heights=layout.all_row_heights,
                 header_visible=tc.header.visible,
             )
             # This page's own pager y — see the outer indicator_y comment
@@ -4364,17 +4420,19 @@ def _render_table_svg_core(
                 if page_row_heights is not None
                 else len(page_visible_data) * page_row_h
             )
-            page_indicator_y = current_y + page_current_rows_height + bottom_padding
+            page_indicator_y = (
+                current_y + page_current_rows_height + layout.bottom_padding
+            )
             if (
                 max_rendered_page_indicator_y is None
                 or page_indicator_y > max_rendered_page_indicator_y
             ):
                 max_rendered_page_indicator_y = page_indicator_y
             page_wrapped_lines = (
-                all_wrapped_lines[
+                layout.all_wrapped_lines[
                     page_offset_n : page_offset_n + len(page_visible_data)
                 ]
-                if all_wrapped_lines is not None
+                if layout.all_wrapped_lines is not None
                 else None
             )
             page_parts: list[str] = []
@@ -4390,14 +4448,14 @@ def _render_table_svg_core(
                     page=page_n,
                     total_pages=rendered_pages,
                     page_var_name=page_var_name,
-                    table_width=table_width,
+                    table_width=layout.table_width,
                     y=page_indicator_y,
-                    font_family=table_font_family,
-                    paginator=table_config.paginator,
+                    font_family=layout.table_font_family,
+                    paginator=tc.paginator,
                     row_start=page_offset_n + 1,
                     row_end=page_offset_n + len(page_visible_data),
-                    total_rows=len(data),
-                    padding=padding,
+                    total_rows=len(layout.data),
+                    padding=layout.padding,
                 )
             )
             svg_parts.append(
@@ -4425,61 +4483,64 @@ def _render_table_svg_core(
             # No second bottom_padding on the right-hand side: cap_note_y is
             # measured off page_indicator_y, which already carries one, and
             # table_height reserves the note's band as a flat
-            # _PAGINATION_CAP_NOTE_HEIGHT on both the sizer and the renderer
-            # side. Subtracting bottom_padding again demands room nobody
+            # _PAGINATION_CAP_NOTE_HEIGHT. Subtracting bottom_padding again demands room nobody
             # reserved, dropping the note under any bottom_padding above ~8.
             note_bottom = cap_note_y + _PAGINATION_CAP_NOTE_HEIGHT
-            if note_bottom <= table_height:
+            if note_bottom <= layout.table_height:
                 svg_parts.append(
                     _render_static_pagination_cap_note(
                         rendered_pages=rendered_pages,
-                        total_pages=total_pages,
-                        padding=padding,
+                        total_pages=layout.total_pages,
+                        padding=layout.padding,
                         y=cap_note_y,
-                        font_family=table_font_family,
-                        paginator=table_config.paginator,
+                        font_family=layout.table_font_family,
+                        paginator=tc.paginator,
                     )
                 )
         svg_parts.append(_table_pagination_script())
     else:
         _paint_data_rows(
-            svg_parts, visible_data, page_offset, per_row_heights, visible_wrapped_lines
+            svg_parts,
+            layout.visible_data,
+            layout.page_offset,
+            layout.per_row_heights,
+            layout.visible_wrapped_lines,
         )
 
         # Show pagination controls or "more rows" indicator if data was truncated.
-        if len(data) > len(visible_data):
-            if pagination_active and chart_id:
+        if len(layout.data) > len(layout.visible_data):
+            if layout.pagination_active and chart_id:
                 # Interactive pagination controls
                 page_var_name = f"{chart_id}_page"
                 controls_svg = _render_pagination_controls(
-                    page=current_page,
-                    total_pages=total_pages,
+                    page=layout.current_page,
+                    total_pages=layout.total_pages,
                     page_var_name=page_var_name,
-                    table_width=table_width,
+                    table_width=layout.table_width,
                     y=indicator_y,
-                    font_family=table_font_family,
-                    paginator=table_config.paginator,
-                    row_start=page_offset + 1,
-                    row_end=page_offset + len(visible_data),
-                    total_rows=len(data),
-                    padding=padding,
+                    font_family=layout.table_font_family,
+                    paginator=tc.paginator,
+                    row_start=layout.page_offset + 1,
+                    row_end=layout.page_offset + len(layout.visible_data),
+                    total_rows=len(layout.data),
+                    padding=layout.padding,
                 )
                 svg_parts.append(controls_svg)
             else:
-                more_count = len(data) - len(visible_data)
+                more_count = len(layout.data) - len(layout.visible_data)
                 svg_parts.append(
-                    f'<text x="{escape_attr(table_width / 2)}" y="{escape_attr(indicator_y)}" '
-                    f'font-size="{escape_attr(table_config.more_rows.font.size)}" fill="{escape_attr(colors["muted"])}" text-anchor="middle" font-style="italic" '
-                    f'font-family="{escape_attr(table_font_family)}">'
+                    f'<text x="{escape_attr(layout.table_width / 2)}" y="{escape_attr(indicator_y)}" '
+                    f'font-size="{escape_attr(tc.more_rows.font.size)}" fill="{escape_attr(colors["muted"])}" text-anchor="middle" font-style="italic" '
+                    f'font-family="{escape_attr(layout.table_font_family)}">'
                     f"+ {more_count} more rows</text>",
                 )
 
     # Empty state (only show if not placeholder - placeholder has data)
-    if not data and not is_placeholder:
+    if not layout.data and not is_placeholder:
         svg_parts.append(
-            f'<text x="{escape_attr(table_width / 2)}" y="{escape_attr(table_height / 2)}" '
-            f'font-size="{escape_attr(table_config.empty_state.font.size)}" fill="{escape_attr(colors["muted"])}" text-anchor="middle" '
-            f'font-family="{escape_attr(table_font_family)}">'
+            f'<text x="{escape_attr(layout.table_width / 2)}" y="{escape_attr(layout.table_height / 2)}" '
+            f'font-size="{escape_attr(tc.empty_state.font.size)}" fill="{escape_attr(colors["muted"])}" text-anchor="middle" '
+            f'font-family="{escape_attr(layout.table_font_family)}">'
             f"No data</text>",
         )
 
@@ -4504,9 +4565,9 @@ def _render_table_svg_core(
         svg_result = apply_placeholder_opacity(svg_result, resolved_style=board_style)
         svg_result = add_placeholder_overlay(
             svg_result,
-            table_width,
-            table_height,
-            font=FontStyle(family=table_font_family),
+            layout.table_width,
+            layout.table_height,
+            font=FontStyle(family=layout.table_font_family),
             resolved_style=board_style,
         )
 
@@ -4515,7 +4576,7 @@ def _render_table_svg_core(
 
 def render_table_svg(
     chart: ResolvedTableChart,
-    data: list[dict[str, Any]],
+    data: list[dict[str, Any]],  # type-state: explicit_any — query rows
     width: float | None = None,
     height: float | None = None,
     *,
@@ -4536,45 +4597,30 @@ def render_table_svg(
     caller cannot forget to wire up, unlike a parameter each call site has to
     remember to pass. See ``board_variables.py``.
     """
-    effective_variables = (
-        variables if variables is not None else current_board_variables()
+    layout = _layout_table(
+        chart, data, width, height, board_style=board_style, variables=variables
     )
-    data = normalize_data_types(data)
-    columns = chart.columns
-
-    if chart.style.table.transpose and data:
-        _transpose_numeric_font = _table_numeric_cell_font(
-            chart.style.table.font.family
-        )
-        data, columns = _transpose_data_for_render(
-            chart.style.formats,
-            columns,
-            chart.column_defaults,
-            data,
-            _transpose_numeric_font,
-        )
-
-    return _render_table_svg_core(
-        chart_id=chart.id,
-        title=chart.title,
-        subtitle=chart.subtitle,
-        link=chart.link,
-        rows=chart.rows,
-        pivot_columns=chart.pivot_columns,
-        values=chart.values,
-        columns_promoted=columns,
-        column_defaults_promoted=chart.column_defaults,
-        header_overflow_promoted=chart.header_overflow,
-        conditional_formatting=chart.conditional_formatting,
-        table_style=chart.style,
+    return _paint_table(
+        layout,
+        chart,
         board_style=board_style,
-        data=data,
-        width=width,
         height=height,
         is_placeholder=is_placeholder,
-        variables=effective_variables,
         inset=inset,
     )
+
+
+def measure_table_height(
+    chart: ResolvedTableChart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — query rows
+    width: float,
+    *,
+    board_style: ResolvedStyle,
+) -> float:
+    """The height the table draws at ``width`` when nothing bounds it."""
+    return _layout_table(
+        chart, data, width, None, board_style=board_style, variables=None
+    ).table_height
 
 
 # ---------------------------------------------------------------------------
@@ -4793,10 +4839,7 @@ def pivot_table_data(
     """Reshape long-form tidy data into a wide pivot matrix.
 
     Also the single owner of the "is this a pivot?" decision: no ``columns``
-    means a flat table and the rows pass through untouched. The renderer and
-    the layout sizer (``layout_sizing._get_table_height_from_data``) both call
-    unconditionally, so the height the sizer reserves is always the row count
-    the renderer draws.
+    means a flat table and the rows pass through untouched.
 
     Args:
         data: Long-form source rows.

@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'A nested board no longer inherits its parent''s `style.background`; like CSS `background-color`, it is transparent unless the nested board sets its own background or its own theme. An unstyled board inside a translucent panel is no longer tinted twice.'
+time: 2026-09-29T13:00:00.000000-07:00

@@ -128,9 +128,14 @@ class TestHoistRoundTrip:
     def test_identical_styles_collapse_to_one_table_entry(self) -> None:
         original = _board_json(_NESTED_YAML)
         _, styles = hoist_styles(original)
-        # The corpus resolves one style for the whole tree; the point of the
-        # table is that N copies become 1 entry, not that N entries appear.
-        assert len(styles) == 1
+        # The corpus resolves two distinct styles: the root's own theme
+        # canvas, and one shared style for every unstyled nested board
+        # (background is non-inherited, so a nested board's own fill is
+        # transparent, not the root's canvas -- a real difference, not
+        # three copies of one style). The point of the table is that the
+        # THREE nested boards collapse to the one entry they share, not
+        # that the whole tree collapses to a single entry.
+        assert len(styles) == 2
 
     def test_hoisting_shrinks_the_payload(self) -> None:
         original = _board_json(_NESTED_YAML)
@@ -154,7 +159,11 @@ class TestDistinctStyles:
         nested["style"] = {**nested["style"], "palettes": {"sentinel": "#123456"}}
 
         board, styles = hoist_styles(original)
-        assert len(styles) == 2
+        # Three groups: the root's own canvas, the patched board's unique
+        # palette, and the remaining unstyled nested boards' shared style
+        # (background is non-inherited, so they differ from the root but
+        # match each other).
+        assert len(styles) == 3
         assert inline_styles(board, styles) == original
 
 
@@ -414,10 +423,13 @@ class TestCompiledEnvelope:
         assert result.success, result.errors
 
         artifact = dump_compiled_board_artifact(result)
-        # Every board in the tree shares one resolved_style and one
-        # chart_style_context; both hoist into the same content-addressed
-        # table, so this is 2 entries total, never N per nested board.
-        assert len(artifact["styles"]) == 2
+        # The three unstyled nested boards share one resolved_style and one
+        # chart_style_context (background is non-inherited, so all three
+        # get the same transparent own-fill); the root's differ (its own
+        # theme canvas). Both kinds hoist into the same content-addressed
+        # table, so this is 4 entries total (2 boards x 2 style types),
+        # never N per nested board.
+        assert len(artifact["styles"]) == 4
 
     def test_load_raises_on_dangling_style_ref(self) -> None:
         result = compile_board(_NESTED_YAML)

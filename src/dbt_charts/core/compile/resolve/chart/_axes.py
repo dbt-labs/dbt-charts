@@ -61,7 +61,6 @@ from dbt_charts.core.diagnostics.codes_render import (
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.numeric import aspect_ratio_height
 from dbt_charts.core.text.case import default_axis_title
-from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
 
 __all__ = [
     "SeriesNaming",
@@ -133,30 +132,16 @@ def _bake_cartesian_axes(
     axis_overrides: AxisOverrides,
     multiples: MultiplesConfig | None = None,
     y: str | list[str] | None = None,
-) -> tuple[AxisXStyle, AxisYStyle, float | None, float | None, bool, bool, str | None]:
-    """Walk the 13-layer axis cascade for axis_x and axis_y, returning the
-    merged, theme-typed axis pair, each axis's band_position (None unless
-    that channel classified ordinal/nominal and a band override authored it),
-    axis_y's format_authored/format_is_alias flags (see
-    ``_merge_axis_cascade``), and axis_y's raw pre-resolve format string
-    (``ay_format_raw``, None unless ``ay_format_authored`` — see
-    ``ResolvedAxisStyle.format_authored_raw``), captured here before this
-    function's own ``resolve_format()`` call overwrites it. axis_x's
-    format_authored/format_is_alias are discarded — no caller threads them
-    into ``build_resolved_axis`` today,
-    since no caller passes ``tick_values`` for axis_x.
-
-    ``ay_format_is_alias`` returned here is NOT just ``_merge_axis_cascade``'s
-    own value verbatim: that function only ever sees an EXPLICITLY authored
-    layer (chart-level fallback or chart-local override), so a bare axis that
-    just inherits the theme's own baseline format
-    (``axis_quantitative.labels.format: number``, itself a predefined
-    name) would otherwise never count as alias-derived — the overwhelming
-    common case (no format authored at all) would silently miss
-    ``build_resolved_axis``'s forced-right-align treatment. This function
-    ORs in a direct ``ay.labels.format in ALL_PREDEFINED_NAMES`` check
-    (below, right before resolving the format) against the final winner of
-    the whole cascade, which is correct regardless of which layer set it.
+) -> tuple[AxisXStyle, AxisYStyle, float | None, float | None, str | None]:
+    """Walk the axis cascade for axis_x and axis_y, returning the merged,
+    theme-typed axis pair, each axis's band_position (None unless that
+    channel classified ordinal/nominal and a band override authored it),
+    and axis_y's raw pre-resolve format string (``ay_format_raw`` — see
+    ``ResolvedAxisStyle.format_raw``), captured here before this function's
+    own ``resolve_format()`` call overwrites it. axis_x's raw format is
+    resolved the same way but not returned: no caller threads a raw format
+    into ``build_resolved_axis`` for axis_x, since no caller passes
+    ``tick_values`` for it either.
 
     axis_x = categorical axis (normalized.x column, dbt charts semantics).
     axis_y = measure axis (normalized.y column, dbt charts semantics).
@@ -197,7 +182,7 @@ def _bake_cartesian_axes(
     # own isinstance-guarded access — _bake_cartesian_axes is only ever
     # called with a cartesian family in practice, but its declared parameter
     # type is the full Chart union.
-    ax, ax_band_position, _, _, _ = _merge_axis_cascade(
+    ax, ax_band_position = _merge_axis_cascade(
         chart_style_context,
         "axis_x",
         x_channel_type,
@@ -211,13 +196,7 @@ def _bake_cartesian_axes(
         chart_type=chart_type,
         label_authored=bool(getattr(chart, "x_label", None)),
     )
-    (
-        ay,
-        ay_band_position,
-        ay_format_authored,
-        ay_format_is_alias,
-        ay_format_raw,
-    ) = _merge_axis_cascade(
+    ay, ay_band_position = _merge_axis_cascade(
         chart_style_context,
         "axis_y",
         y_channel_type,
@@ -261,30 +240,11 @@ def _bake_cartesian_axes(
                 "labels": ax.labels.model_copy(update={"format": resolved_ax_format})
             }
         )
-    # ay_format_raw (unpacked from _merge_axis_cascade above) is the raw
-    # pre-alias-resolution name/spec, kept only when an authored cascade
-    # layer actually set it (never a bare theme default) -- see
-    # ResolvedAxisStyle.format_authored_raw. It must be read off that return
-    # value, not re-derived from ay.labels.format here: the chart-format-
-    # fallback layer (Layer 10, below in _merge_axis_cascade) already
-    # resolves its own contribution to ay.labels.format before returning, so
-    # by this point the raw name is gone for that layer's case.
-    if ay.labels.format is not None:
-        # ay.labels.format is still the raw pre-resolve string here -- the
-        # final winner of the whole 13-layer cascade, whichever layer set it
-        # last (authored or theme-default). _merge_axis_cascade's own
-        # format_is_alias only ever sees an EXPLICITLY authored layer (board
-        # 6-9, chart-format fallback 10, or chart-local 11-13); a bare axis
-        # inheriting the theme's own baseline
-        # (axis_quantitative.labels.format: number, itself a
-        # predefined name) never touches that tracking. Checking the final
-        # raw value directly against ALL_PREDEFINED_NAMES covers both cases
-        # uniformly -- it doesn't matter which layer won, only that the
-        # winner is a predefined name.
-        ay_format_is_alias = ay_format_is_alias or (
-            ay.labels.format in ALL_PREDEFINED_NAMES
-        )
-        resolved_ay_format = resolve_format(ay.labels.format, fmts)
+    # ay_format_raw is captured here, before resolve_format overwrites
+    # ay.labels.format with the resolved d3 spec. See ResolvedAxisStyle.format_raw.
+    ay_format_raw = ay.labels.format
+    if ay_format_raw is not None:
+        resolved_ay_format = resolve_format(ay_format_raw, fmts)
         ay = ay.model_copy(
             update={
                 "labels": ay.labels.model_copy(update={"format": resolved_ay_format})
@@ -310,8 +270,6 @@ def _bake_cartesian_axes(
         ay,
         ax_band_position,
         ay_band_position,
-        ay_format_authored,
-        ay_format_is_alias,
         ay_format_raw,
     )
 

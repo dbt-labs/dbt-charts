@@ -110,9 +110,11 @@ def test_area_halo_emits_line_stroke_in_background_color(make_chart):
     halo_mark = _halo_line_mark(spec)
     layer_types = [layer.get("mark", {}).get("type") for layer in spec.get("layer", [])]
     assert halo_mark, f"No halo line mark found in layers: {layer_types}"
-    bg = resolved.background
-    assert halo_mark.get("stroke") == bg, (
-        f"Halo line.stroke must equal background {bg!r}, got {halo_mark.get('stroke')!r}"
+    # Halo knocks out against the chart's opaque composited canvas
+    # (ink_canvas), not the raw (possibly transparent) background field.
+    canvas = resolved.canvas
+    assert halo_mark.get("stroke") == canvas, (
+        f"Halo line.stroke must equal canvas {canvas!r}, got {halo_mark.get('stroke')!r}"
     )
 
 
@@ -219,11 +221,13 @@ def test_area_halo_fill_survives_zero_stroke_width(make_chart):
         f"lines; got {layer_types}"
     )
     halo_fill, fg_fill = layers[0]["mark"], layers[1]["mark"]
-    bg = resolved.background
-    assert halo_fill.get("fill") == bg, (
-        f"Halo area fill must equal background {bg!r}, got {halo_fill.get('fill')!r}"
+    # Halo knocks out against the chart's opaque composited canvas
+    # (ink_canvas), not the raw (possibly transparent) background field.
+    canvas = resolved.canvas
+    assert halo_fill.get("fill") == canvas, (
+        f"Halo area fill must equal canvas {canvas!r}, got {halo_fill.get('fill')!r}"
     )
     assert halo_fill.get("fillOpacity") == 1, "Halo area must stay fully opaque"
-    assert fg_fill.get("fillOpacity") != 1 or fg_fill.get("fill") != bg, (
-        "Foreground fill must remain the series tint, not the background"
+    assert fg_fill.get("fillOpacity") != 1 or fg_fill.get("fill") != canvas, (
+        "Foreground fill must remain the series tint, not the canvas"
     )

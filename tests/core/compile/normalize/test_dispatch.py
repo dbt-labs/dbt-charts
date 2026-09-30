@@ -728,3 +728,414 @@ class TestRootBoardWidth:
             left_item.board.resolved_style.frame.width
             == board.resolved_style.frame.width
         )
+
+
+# ---------------------------------------------------------------------------
+# style.background is not inherited into nested boards (CSS background-color
+# semantics)
+# ---------------------------------------------------------------------------
+
+
+class TestNestedBoardBackgroundIsNotInherited:
+    """style.background is CSS background-color: not inherited. A nested
+    board that authors no background of its own paints nothing of its own
+    -- render's own wrapper rect for it is transparent, not a second copy
+    of the parent's translucent tint (which would visually double the
+    alpha) -- and its ink canvas (used for text/contrast) is its parent's,
+    via the compile-time fast path that reuses the parent's resolved_style
+    object verbatim (so resolved_style.background there reads as the
+    parent's own value -- the object IS the parent's; render, not that
+    field, is where "my own fill" must be judged for an unauthored nested
+    scope; see render_nested_board's own_background in render/boards.py)."""
+
+    _YAML = """\
+title: Root
+style:
+  background: "rgba(0, 0, 0, 0.5)"
+rows:
+  - title: Child
+    text: "hello"
+"""
+
+    def test_unauthored_nested_board_paints_no_second_tint(self):
+        from ..._svg_render import render_board_to_svg
+
+        svg = render_board_to_svg(self._YAML)
+        # Root legitimately paints its own tint twice -- the page rect and
+        # the layout's own "under items" card, both the ROOT's own value.
+        # A third occurrence would be Child's render_nested_board wrapper
+        # rect re-painting the SAME tint on top; that must not happen, and
+        # its own rect must read "transparent" instead.
+        assert svg.count('fill="rgba(0, 0, 0, 0.5)"') == 2
+
+    def test_unauthored_nested_canvas_is_parents_for_contrast(self):
+        result = compile(self._YAML)
+        assert result.success, result.errors
+        board = result.board
+        assert board is not None
+        child = board.layout.items[0].board
+        assert child is not None
+        assert (
+            child.chart_style_context.ink_canvas == board.chart_style_context.ink_canvas
+        )
+
+
+class TestNestedBoardAuthoringUnrelatedKeyStillPaintsNoSecondTint:
+    """A nested board authoring an unrelated key (``gap``, no ``background``)
+    takes the OTHER branch of compile_board_resolved_style (board_style is
+    not None) -- unlike the pure-fast-path case above, this scope always
+    gets its own, non-shared resolved_style object, so this guards a
+    genuinely different code path: own_patch.background must still be
+    pinned transparent rather than crossing in from parent_patch via the
+    ordinary scope_patch/merge_patches cascade every other field uses."""
+
+    _YAML = """\
+title: Root
+style:
+  background: "rgba(0, 0, 0, 0.5)"
+rows:
+  - title: Child
+    style:
+      gap: 12
+    text: "hello"
+"""
+
+    def test_paints_no_second_tint(self):
+        from ..._svg_render import render_board_to_svg
+
+        svg = render_board_to_svg(self._YAML)
+        assert svg.count('fill="rgba(0, 0, 0, 0.5)"') == 2
+
+    def test_resolved_style_background_is_transparent_not_inherited(self):
+        result = compile(self._YAML)
+        assert result.success, result.errors
+        board = result.board
+        assert board is not None
+        child = board.layout.items[0].board
+        assert child is not None
+        assert child.resolved_style.background == "transparent"
+
+
+class TestNestedBoardOwnTranslucentBackgroundCompositesOnce:
+    """A nested board that DOES author its own translucent background
+    composites it exactly once over its parent's already-composited
+    canvas -- not the theme's raw canvas underneath that, and not a
+    double application of the same tint."""
+
+    _YAML = """\
+title: Root
+theme: neon
+style:
+  background: "rgba(255, 255, 255, 0.08)"
+rows:
+  - title: Child
+    style:
+      background: "rgba(255, 255, 255, 0.08)"
+    text: "hello"
+"""
+
+    def test_own_translucent_background_composites_once_over_parents_canvas(self):
+        result = compile(self._YAML)
+        assert result.success, result.errors
+        board = result.board
+        assert board is not None
+        root_canvas = board.chart_style_context.ink_canvas
+        # Hand-composited: rgba(255, 255, 255, 0.08) over neon's own raw canvas.
+        assert root_canvas == "#292929"
+        child = board.layout.items[0].board
+        assert child is not None
+        # One more composite of the same tint on top of the root's own.
+        assert child.chart_style_context.ink_canvas == "#3a3a3a"
+        assert child.chart_style_context.ink_canvas != root_canvas
+
+
+class TestUnstyledGrandchildrenResolveTheirOwnParentsStyleNotASiblings:
+    """Six identical styled siblings (same font + background) under one
+    root, each with two unstyled grandchildren. Font (an ordinary
+    cascading field) and ink canvas (contrast, composited down the tree)
+    must match the grandchild's OWN parent -- guards the style-cascade
+    cache key against conflating two distinct board scopes that happen to
+    produce the same style. background itself is excluded from the match:
+    it is non-inherited, so an unstyled grandchild's own fill is
+    transparent even though its sibling parent authored one."""
+
+    @staticmethod
+    def _sibling(n: int) -> dict:
+        return {
+            "title": f"Sibling{n}",
+            "style": {"font": {"family": "F0"}, "background": "#000000"},
+            "rows": [{"text": "grandchild-a"}, {"text": "grandchild-b"}],
+        }
+
+    def test_every_grandchild_resolves_its_own_parents_font_and_canvas(self):
+        board = normalize_board(
+            AuthoredBoard.model_validate(
+                {
+                    "title": "Root",
+                    "style": {"background": "#eeeeee"},
+                    "cols": [self._sibling(n) for n in range(6)],
+                }
+            )
+        )
+        for item in board.layout.items:
+            sibling = item.board
+            assert sibling is not None
+            # startswith, not equality: the cascade appends an emoji-fallback
+            # family after the authored one (font.emoji default) -- an
+            # unrelated theme default this test must not pin.
+            assert sibling.resolved_style.font.family.startswith("F0")
+            for grandchild_item in sibling.layout.items:
+                grandchild = grandchild_item.board
+                assert grandchild is not None
+                assert grandchild.resolved_style.font.family.startswith("F0")
+                assert (
+                    grandchild.chart_style_context.ink_canvas
+                    == sibling.chart_style_context.ink_canvas
+                )
+
+
+class TestChartsBackgroundCardFillNeverDarkensAcrossNestingLevels:
+    """style.charts.background is a chart card-fill DEFAULT -- it cascades
+    like any style.charts.* field, but never touches the board's own
+    canvas. Three levels deep, each authoring only an unrelated key
+    (gap), the board canvas stays exactly the root's -- no darkening per
+    nesting level -- while the card-fill default keeps cascading down
+    unchanged."""
+
+    _YAML = """\
+title: Root
+theme: neon
+style:
+  charts:
+    background: "rgba(255, 255, 255, 0.08)"
+rows:
+  - title: Level1
+    style:
+      gap: 12
+    rows:
+      - title: Level2
+        style:
+          gap: 12
+        rows:
+          - title: Level3
+            style:
+              gap: 12
+            text: leaf
+"""
+
+    def test_no_darkening_across_three_nesting_levels(self):
+        result = compile(self._YAML)
+        assert result.success, result.errors
+        board = result.board
+        assert board is not None
+        root_canvas = board.chart_style_context.ink_canvas
+        root_card_fill = board.chart_style_context.background
+
+        level1 = board.layout.items[0].board
+        assert level1 is not None
+        level2 = level1.layout.items[0].board
+        assert level2 is not None
+        level3 = level2.layout.items[0].board
+        assert level3 is not None
+
+        for level in (level1, level2, level3):
+            assert level.chart_style_context.ink_canvas == root_canvas
+            assert level.chart_style_context.background == root_card_fill
+
+
+class TestThemeBackgroundTokenResolvesTheThemesRawCanvas:
+    """``theme.background`` is a theme-self token resolved against the
+    unmodified theme base, never against this board's own (possibly
+    non-inherited-transparent) resolved background. A nested board that
+    authors an unrelated style key must still resolve a
+    theme.background-linked stroke to the theme's own canvas, not
+    'transparent'."""
+
+    _YAML = """\
+title: Root
+theme: stark
+style:
+  charts:
+    marks:
+      slice:
+        stroke:
+          color: theme.background
+rows:
+  - title: Child
+    style:
+      font:
+        family: Arial
+    text: hi
+"""
+
+    def test_nested_board_slice_stroke_resolves_theme_canvas_not_transparent(self):
+        result = compile(self._YAML)
+        assert result.success, result.errors
+        board = result.board
+        assert board is not None
+        child = board.layout.items[0].board
+        assert child is not None
+        from dbt_charts.core.compile.config import get_theme_style
+
+        expected = get_theme_style("stark").background
+        assert child.chart_style_context.marks.slice.stroke.color == expected
+        assert child.chart_style_context.marks.slice.stroke.color != "transparent"
+
+
+class TestRepeatedDonutTitleTypographyIsPinnedAcrossUnstyledWrapperWidths:
+    """The same donut chart (chart_id) placed under three unstyled `cols:`
+    wrappers of different widths must keep identical title typography at
+    every width -- layout_sizing.py's canonical_resolved cache pins the
+    first-resolved placement's title font and every later placement of the
+    same chart_id reuses it. Since compile_board_resolved_style now gives
+    every board scope its own resolved_style object (no verbatim reuse --
+    see normalize/dispatch.py), that pin is keyed by VALUE
+    (canonical_resolved_key), not id(resolved_style): an identity key would
+    treat these three equal-but-distinct unstyled scopes as different
+    placements, and the narrowest would resolve its own, smaller title
+    tier instead of inheriting the widest one's."""
+
+    _YAML = """\
+title: Root
+queries:
+  q:
+    columns: [k, v]
+    values:
+      - [a, 1]
+      - [b, 2]
+      - [c, 3]
+charts:
+  donut1:
+    query: q
+    type: donut
+    theta: v
+    color: k
+    title: Share
+cols:
+  - width: 600
+    rows:
+      - donut1
+  - width: 300
+    rows:
+      - donut1
+  - width: 100
+    rows:
+      - donut1
+"""
+
+    def _title_font_attrs(self, svg: str) -> list[tuple[str, str]]:
+        import re
+
+        # vl-convert's text metrics are platform-dependent: on Linux the
+        # narrowest title's limit truncates "Share" to an ellipsis.
+        return re.findall(
+            r'<text[^>]*font-family="([^"]*)"[^>]*font-size="([^"]*)"[^>]*>'
+            r"(?:Share|[^<]*…)</text>",
+            svg,
+        )
+
+    def test_narrowest_placement_keeps_the_widest_placements_typography(self):
+        from ..._svg_render import render_board_to_svg
+
+        svg = render_board_to_svg(self._YAML)
+        title_fonts = self._title_font_attrs(svg)
+        assert len(title_fonts) == 3, title_fonts
+        assert len(set(title_fonts)) == 1, title_fonts
+
+    def test_lone_narrow_donut_would_otherwise_pick_a_smaller_tier(self):
+        """Confirms the pin in the test above is load-bearing: a narrow
+        donut resolved with no wider sibling picks a genuinely different
+        (smaller, sans-serif) title tier on its own."""
+        from ..._svg_render import render_board_to_svg
+
+        lone_narrow = """\
+title: Root
+queries:
+  q:
+    columns: [k, v]
+    values:
+      - [a, 1]
+      - [b, 2]
+      - [c, 3]
+charts:
+  donut1:
+    query: q
+    type: donut
+    theta: v
+    color: k
+    title: Share
+cols:
+  - width: 100
+    rows:
+      - donut1
+"""
+        svg = render_board_to_svg(lone_narrow)
+        [(family, size)] = self._title_font_attrs(svg)
+        pinned_svg = render_board_to_svg(self._YAML)
+        [(pinned_family, pinned_size), *_rest] = self._title_font_attrs(pinned_svg)
+        assert (family, size) != (pinned_family, pinned_size)
+
+
+class TestBoardCanvasIsAlwaysOpaqueNeverTheTransparentLiteral:
+    """ink_canvas -- what undercoat/halo/knockout consumers read for
+    contrast (support_table_attachment.py's ``charts_style.ink_canvas``)
+    -- is always a real opaque color, never the literal 'transparent', on
+    both a top-level board and an unstyled nested board underneath a
+    translucent root background."""
+
+    _YAML = """\
+title: Root
+style:
+  background: "rgba(0, 0, 0, 0.5)"
+rows:
+  - title: Child
+    text: hello
+"""
+
+    def test_root_and_unstyled_nested_canvas_are_opaque(self):
+        from dbt_charts.core.colors import parse_css_color
+
+        result = compile(self._YAML)
+        assert result.success, result.errors
+        board = result.board
+        assert board is not None
+        child = board.layout.items[0].board
+        assert child is not None
+
+        for ctx in (board.chart_style_context, child.chart_style_context):
+            canvas = ctx.ink_canvas
+            assert canvas != "transparent"
+            _, _, _, alpha = parse_css_color(canvas)
+            assert alpha == 1.0
+
+
+class TestChartsBackgroundAloneSetsChartInkCanvasNotJustCardFill:
+    """style.charts.background on a ROOT board (no nesting involved) must
+    feed the chart ink canvas chart-ink helpers derive label/mark contrast
+    against, not just the raw card paint -- two canvases per the model:
+    board canvas (own fill over parent board canvas) and chart canvas
+    (charts.background over the board canvas), and chart ink reads the
+    latter. Guards CRITICAL #2: ink_canvas silently reverting to the
+    board's own fill (the theme default here) while the card paints a
+    different color picks contrast for the wrong background."""
+
+    _YAML = """
+title: Root
+style:
+  charts:
+    background: "#111111"
+rows:
+  - text: hello
+"""
+
+    def test_root_charts_background_sets_ink_canvas_and_label_contrast(self):
+        from dbt_charts.core.colors import wcag_contrast
+
+        result = compile(self._YAML)
+        assert result.success, result.errors
+        board = result.board
+        assert board is not None
+        ctx = board.chart_style_context
+        assert ctx.ink_canvas == "#111111"
+        for mark, ink in zip(ctx.palette, ctx.dark_companion_palette, strict=True):
+            assert wcag_contrast(ink, ctx.ink_canvas) >= 4.5 - 1e-6, (mark, ink)

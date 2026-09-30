@@ -72,6 +72,7 @@ _B: dict[str, Any] = {
     "resolved_channels": {},
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": _ZERO_PADDING,
 }
@@ -121,6 +122,7 @@ def _bar(
         style=bar_style,
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -144,6 +146,7 @@ def _line(
         style=line_style,
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -167,6 +170,7 @@ def _line_with_binding(
         style=line_style,
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -202,29 +206,25 @@ def _scatter(scatter_style: ResolvedScatterStyle) -> ResolvedScatterChart:
     from ...conftest import fixture_chart_for_type
 
     _rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            _rcs,
-            fixture_chart_for_type("scatter"),
-            "scatter",
-            "quantitative",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        _rcs,
+        fixture_chart_for_type("scatter"),
+        "scatter",
+        "quantitative",
+        "quantitative",
+        AxisOverrides(),
     )
     ax = build_resolved_axis(
         ax_merged,
         band_position=ax_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     ay = build_resolved_axis(
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
         is_quantitative=True,
         zero_anchored=True,
     )
@@ -320,30 +320,26 @@ def _baked_axes_for(chart_type: str) -> tuple[Any, Any]:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            rcs,
-            fixture_chart_for_type(chart_type),
-            chart_type,
-            "nominal",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        rcs,
+        fixture_chart_for_type(chart_type),
+        chart_type,
+        "nominal",
+        "quantitative",
+        AxisOverrides(),
     )
     return (
         build_resolved_axis(
             ax_merged,
             band_position=ax_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
         build_resolved_axis(
             ay_merged,
             band_position=ay_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
     )
 
@@ -772,6 +768,7 @@ def test_unity_baseline_applies_to_format_alias_line(
         style=pct_style,
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -1330,29 +1327,25 @@ def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -
     overrides = AxisOverrides(
         x=AxisXStylePatch.model_validate({"time_unit": "yearquarter"})
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            rcs,
-            fixture_chart_for_type("line"),
-            "line",
-            "nominal",
-            "quantitative",
-            overrides,
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        rcs,
+        fixture_chart_for_type("line"),
+        "line",
+        "nominal",
+        "quantitative",
+        overrides,
     )
     ax = build_resolved_axis(
         ax_merged,
         band_position=ax_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     ay = build_resolved_axis(
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     chart = ResolvedLineChart(
         panel_axes=(),
@@ -1365,6 +1358,7 @@ def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -
         palette=(),
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
@@ -1538,8 +1532,6 @@ def test_heatmap_emitter_color_ignores_chart_color_fallback() -> None:
         _hm_ax_band_position,
         _hm_ay_band_position,
         _,
-        _,
-        _,
     ) = _bake_cartesian_axes(
         _rcs,
         fixture_chart_for_type("heatmap"),
@@ -1552,15 +1544,13 @@ def test_heatmap_emitter_color_ignores_chart_color_fallback() -> None:
         _hm_ax_merged,
         band_position=_hm_ax_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     _hm_ay = build_resolved_axis(
         _hm_ay_merged,
         band_position=_hm_ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     chart = ResolvedHeatmapChart(
         panel_axes=(),
@@ -1796,29 +1786,25 @@ def _baked_bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            rcs,
-            fixture_chart_for_type("bar"),
-            "bar",
-            "nominal",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        rcs,
+        fixture_chart_for_type("bar"),
+        "bar",
+        "nominal",
+        "quantitative",
+        AxisOverrides(),
     )
     ax = build_resolved_axis(
         ax_merged,
         band_position=ax_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     ay = build_resolved_axis(
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     return ResolvedBarChart(
         panel_axes=(),
@@ -2232,6 +2218,7 @@ def test_dashes_with_empty_chart_local_palette_and_board_category_colors_does_no
         style=line_style.model_copy(update={"dashes": [[4, 4], [8, 8]]}),
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )

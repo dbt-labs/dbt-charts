@@ -279,6 +279,39 @@ def nothing_to_render_diagnostic() -> Diagnostic:
     return DbtChartsError.from_code(ERR_NOTHING_TO_RENDER).to_diagnostic()
 
 
+def empty_stdin_diagnostic() -> Diagnostic:
+    from dbt_charts.core.diagnostics.codes_compile import ERR_EMPTY_YAML_DOCUMENT
+
+    return DbtChartsError.from_code(
+        ERR_EMPTY_YAML_DOCUMENT, path="stdin"
+    ).to_diagnostic()
+
+
+def invalid_ignore_code_diagnostics(ignore_codes: set[str]) -> list[Diagnostic]:
+    """One error per ``--ignore-warning`` code that isn't a registered WARN-* code."""
+    from dbt_charts.core.diagnostics import REGISTRY
+    from dbt_charts.core.diagnostics.codes_compile import (
+        ERR_IGNORE_ERROR_CODE,
+        ERR_UNKNOWN_WARNING_CODE,
+    )
+
+    warning_codes = REGISTRY.codes(level="warning")
+    error_codes = REGISTRY.codes(level="error")
+    return [
+        DbtChartsError.from_code(
+            ERR_IGNORE_ERROR_CODE if code in error_codes else ERR_UNKNOWN_WARNING_CODE,
+            code=code,
+        ).to_diagnostic()
+        for code in sorted(ignore_codes - warning_codes)
+    ]
+
+
+def render_crash_diagnostic(board_path: Path, exc: Exception) -> Diagnostic:
+    return DbtChartsError.from_code(
+        ERR_INTERNAL, message=f"Error rendering {board_path}: {exc}"
+    ).to_diagnostic()
+
+
 def resolve_board_relpath(relpath: PurePosixPath, project: Project) -> ProjectPath:
     """Project-relative board identity -> ProjectPath, with the boards-first retry.
 

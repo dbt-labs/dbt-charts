@@ -1631,7 +1631,6 @@ class TestAspectRatioDrivenSizing:
         """Auto-sized tables should reserve space for the paginated row count."""
         from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
-        from dbt_charts.core.render.chart.table_support import reserve_header_band
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
         class _Executor:
@@ -1648,13 +1647,14 @@ class TestAspectRatioDrivenSizing:
             _Executor(),
             {},
             card_padding=float(_rs.frame.card_padding),
+            board_style=_rs,
         )
 
         tc, charts_style = self._get_table_style_defaults()
         assert charts_style.pagination is not None
         row_height = int(tc.row.height)
         header_body_gap = int(row_height * 0.25)
-        header_height = reserve_header_band(tc, int(tc.font.size))
+        header_height = int(tc.header.height)  # the short header fits one line
         expected = (
             self._expected_title_height(chart, tc)
             + header_height
@@ -1670,7 +1670,6 @@ class TestAspectRatioDrivenSizing:
         """Chart-level pagination should override the default page size in layout sizing."""
         from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
-        from dbt_charts.core.render.chart.table_support import reserve_header_band
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
         class _Executor:
@@ -1691,12 +1690,13 @@ class TestAspectRatioDrivenSizing:
             _Executor(),
             {},
             card_padding=float(_rs.frame.card_padding),
+            board_style=_rs,
         )
 
         tc, _ = self._get_table_style_defaults()
         row_height = int(tc.row.height)
         header_body_gap = int(row_height * 0.25)
-        header_height = reserve_header_band(tc, int(tc.font.size))
+        header_height = int(tc.header.height)  # the short header fits one line
         expected = (
             self._expected_title_height(chart, tc)
             + header_height
@@ -1712,7 +1712,6 @@ class TestAspectRatioDrivenSizing:
         """Enabled chart pagination without page_rows should inherit the default size."""
         from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
-        from dbt_charts.core.render.chart.table_support import reserve_header_band
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
         class _Executor:
@@ -1731,13 +1730,14 @@ class TestAspectRatioDrivenSizing:
             _Executor(),
             {},
             card_padding=float(_rs.frame.card_padding),
+            board_style=_rs,
         )
 
         tc, charts_style = self._get_table_style_defaults()
         assert charts_style.pagination is not None
         row_height = int(tc.row.height)
         header_body_gap = int(row_height * 0.25)
-        header_height = reserve_header_band(tc, int(tc.font.size))
+        header_height = int(tc.header.height)  # the short header fits one line
         expected = (
             self._expected_title_height(chart, tc)
             + header_height
@@ -1752,7 +1752,6 @@ class TestAspectRatioDrivenSizing:
     def test_data_aware_table_height_includes_header_body_gap(self):
         """Data-aware height must include the header-to-data gap to prevent bottom clipping."""
         from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.render.chart.table_support import reserve_header_band
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
         class _Executor:
@@ -1769,12 +1768,13 @@ class TestAspectRatioDrivenSizing:
             _Executor(),
             {},
             card_padding=float(_rs.frame.card_padding),
+            board_style=_rs,
         )
 
         tc, _ = self._get_table_style_defaults()
         row_height = int(tc.row.height)
         header_body_gap = int(row_height * 0.25)
-        header_height = reserve_header_band(tc, int(tc.font.size))
+        header_height = int(tc.header.height)  # the short header fits one line
         expected = (
             header_height
             + header_body_gap
@@ -1835,6 +1835,7 @@ class TestAspectRatioDrivenSizing:
             _Executor(),
             {},
             card_padding=float(_resolved.frame.card_padding),
+            board_style=_resolved,
             width=560.0,
         )
         height_with_subtitle = _get_table_height_from_data(
@@ -1843,6 +1844,7 @@ class TestAspectRatioDrivenSizing:
             _Executor(),
             {},
             card_padding=float(_resolved.frame.card_padding),
+            board_style=_resolved,
             width=560.0,
         )
         assert height_with_subtitle > height_no_subtitle, (
@@ -4790,20 +4792,24 @@ rows:
   - g
 """
 
-    # Same three post-pivot rows, already wide, no role marker — no pivot.
+    # Same three post-pivot rows, already wide — no pivot. The total keeps its
+    # role so both tables draw the same summary gap above it.
     _CONTROL_3ROW_YAML = """
 title: Control 3-row
 queries:
   grid:
-    columns: [rk, a, b]
+    columns: [rk, a, b, role]
     values:
-      - [r1, 1, 2]
-      - [r2, 3, 4]
-      - [Total, 4, 6]
+      - [r1, 1, 2, value]
+      - [r2, 3, 4, value]
+      - [Total, 4, 6, total]
 charts:
   g:
     query: grid
     type: table
+    style:
+      row:
+        role: role
 rows:
   - g
 """

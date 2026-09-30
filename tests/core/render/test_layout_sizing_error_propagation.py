@@ -73,12 +73,14 @@ def _executor_raising(exc: Exception) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# _get_table_height_from_data: only ExecutionError is suppressed
+# _get_table_height_from_data: every failure sizes the error card
 # ---------------------------------------------------------------------------
 
 
 class TestTableHeightErrorPropagation:
-    """``_get_table_height_from_data`` must suppress only ``ExecutionError``."""
+    """Sizing runs the table renderer; the main pass draws any failure there as
+    the chart's error card, so sizing reserves that card instead of aborting the
+    board."""
 
     def _call(self, exc: Exception) -> float:
         from dbt_charts.core.compile.resolve import resolve
@@ -95,40 +97,22 @@ class TestTableHeightErrorPropagation:
             _executor_raising(exc),
             variables={},
             card_padding=float(board_style.frame.card_padding),
+            board_style=board_style,
         )
 
-    def test_execution_error_is_suppressed_to_estimate(self) -> None:
-        """ExecutionError → estimated single-row height. Allowlisted."""
-        height = self._call(ExecutionError("query failed"))
-        assert height > 0  # falls through to estimate
-
-    def test_chart_data_error_is_suppressed_to_estimate(self) -> None:
-        """ChartDataError (bad pivot/data contract) → estimate, not a board
-        crash. render draws the per-chart error card for the same signal."""
-        height = self._call(ChartDataError("pivot.column 'x' not in data rows"))
-        assert height > 0  # falls through to estimate
-
-    def test_runtime_error_propagates(self) -> None:
-        """RuntimeError is bug-class — must NOT be silently swallowed."""
-        with pytest.raises(RuntimeError, match="bug"):
-            self._call(RuntimeError("bug"))
-
-    def test_value_error_propagates(self) -> None:
-        with pytest.raises(ValueError, match="bug"):
-            self._call(ValueError("bug"))
-
-    def test_key_error_propagates(self) -> None:
-        with pytest.raises(KeyError):
-            self._call(KeyError("bug"))
-
-    def test_lookup_error_propagates(self) -> None:
-        """LookupError was previously caught; must now propagate."""
-        with pytest.raises(LookupError):
-            self._call(LookupError("bug"))
-
-    def test_os_error_propagates(self) -> None:
-        with pytest.raises(OSError, match="bug"):
-            self._call(OSError("bug"))
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            ExecutionError("query failed"),
+            ChartDataError("pivot.column 'x' not in data rows"),
+            RuntimeError("bug"),
+            ValueError("bug"),
+            KeyError("bug"),
+            OSError("bug"),
+        ],
+    )
+    def test_failure_sizes_the_error_card(self, exc: Exception) -> None:
+        assert self._call(exc) > 0
 
 
 # ---------------------------------------------------------------------------

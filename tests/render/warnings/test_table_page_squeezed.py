@@ -65,6 +65,7 @@ def test_fires_when_slot_squeezed_the_page() -> None:
         "the rest moved onto later pages."
     ), w.message
     assert w.fix is not None
+    assert "page_rows: 1" in w.fix, w.fix
 
 
 def test_no_squeeze_no_warning() -> None:

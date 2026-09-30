@@ -400,9 +400,10 @@ def _data_summary(
 
     ``y_range_display`` is the y-role range, pre-formatted by
     ``board_to_dict._cartesian_y_range_display`` (inside that chart's own
-    error isolation) the same way the chart's value axis draws it, e.g.
-    "$80–$120" instead of the raw "80–120". Unset (the common case — no
-    chart-authored format) leaves the range as plain numbers.
+    error isolation) with the axis's own format, e.g. "$80–$120" instead of
+    the raw "80–120". None when the axis has no format (a non-cartesian
+    family, or a non-numeric y column); the range then falls back to plain
+    numbers.
     """
     if rows_truncated:
         parts = [f"showing {kept_rows_phrase(rows_truncated)}"]

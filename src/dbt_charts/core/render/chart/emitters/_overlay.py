@@ -464,7 +464,7 @@ def overlay_x_domain_values(
 def _build_layer_label_specs(
     layer: ResolvedLayer,
     y_field: str,
-    background: str,
+    canvas: str,
     rows: list[_Row],
     band: BandLabelAnchor | None,
     val_ch: str,
@@ -502,7 +502,7 @@ def _build_layer_label_specs(
             y_field,
             is_horizontal=val_ch == "x",
             is_stacked=False,
-            background=background,
+            canvas=canvas,
             is_house=layer.label_is_house,
             label_is_text=labels_draw_text(bar_labels, rows),
             # An overlay bar layer never stacks (is_stacked=False above), so
@@ -965,7 +965,7 @@ def render_cartesian_overlay(
     base_orientation: Literal["vertical", "horizontal"],
     base_x_authored_temporal: bool,
     tooltip_format: str,
-    background: str,
+    canvas: str,
     single_series_fill: str,
     legend: ResolvedLegendStyle,
     config: VLDict,
@@ -1711,7 +1711,7 @@ def render_cartesian_overlay(
             sub_layers = emit_line_layer(
                 line_mark=layer.line_mark,
                 point_mark=layer.point_mark,
-                halo_color=background,
+                halo_color=canvas,
                 single_series_color=layer_series_fill,
                 has_color_encoding=has_color_encoding,
                 tooltip=[],
@@ -1765,7 +1765,7 @@ def render_cartesian_overlay(
                 area_mark=layer.area_mark,
                 line_mark=layer.line_mark,
                 point_mark=layer.point_mark,
-                background=background,
+                background=canvas,
                 single_series_fill=layer_series_fill,
                 has_color_encoding=has_color_encoding,
                 tooltip=[],
@@ -1925,7 +1925,7 @@ def render_cartesian_overlay(
         # below, the same already-normalized rows the base renders against —
         # same fallback contract as the wrapper specs above.
         for label_spec in _build_layer_label_specs(
-            layer, y_field, background, rows_for_layer, layer_band, val_ch
+            layer, y_field, canvas, rows_for_layer, layer_band, val_ch
         ):
             if own_data is not None:
                 label_spec.data = own_data

@@ -1087,8 +1087,12 @@ style:
 rows:
   - c1
 """
-        with pytest.warns(match="migrated this YAML in memory"):
-            result = compile(yaml_content)
+        result = compile(yaml_content)
+        assert any(
+            "migrated this YAML in memory" in d.message
+            for d in result.warnings
+            if d.code == "WARN-SCHEMA-MIGRATED"
+        ), result.warnings
 
         assert result.success, result.errors
 

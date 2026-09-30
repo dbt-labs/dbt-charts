@@ -26,14 +26,12 @@ through the real cascade.
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
-from dbt_charts.core.compile.migrations import SchemaMigrationWarning
 from dbt_charts.core.diagnostics import WARN_PALETTE_UNSUPPORTED
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
@@ -233,9 +231,7 @@ def test_a_retired_gradient_spelling_migrates_in_memory_and_renders() -> None:
     and that respelled scalar must then render, not crash in the very walk
     the migration hands it to."""
     board = _GRADIENT_BOARD.format(chart_type="bar", y="y", palette="vivid-10-dark")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", SchemaMigrationWarning)
-        rendered = _render_yaml(board)
+    rendered = _render_yaml(board)
     assert rendered.board_error is None, rendered.board_error
     assert not rendered.chart_errors, rendered.chart_errors
     assert rendered.output

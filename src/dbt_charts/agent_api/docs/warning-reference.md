@@ -87,6 +87,22 @@ Fires when a board's authored `html_policy` is above the effective deployment ce
 
 Fires when a text block's heading or body ink clears less than the configured WCAG 2.1 contrast ratio (`chart_rendering.text_contrast.min_ratio`, or `large_text_min_ratio` for WCAG's own large-text exception) against the opaque background it paints on. The common case is a row's own default ink left unchanged after authoring a `style.background` on that row; the fix names the key that governs that element's ink today (`style.title.font.color` for a heading, `style.font.color` for body text). The engine never repaints -- the color pair is still painted exactly as written.
 
+### WARN-SCHEMA-MIGRATED: Board YAML uses retired syntax
+
+- **Level:** warning
+- **Domain:** compile
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+{message}
+```
+
+**Fix:** Run `dct migrate` to rewrite the file, or update the YAML by hand where the message says `dct migrate` cannot.
+
+Fired when a board, meta.yml, or `extends:` file uses syntax from an older dbt charts release. The board is migrated in memory and still renders, but the file on disk is stale. When migration could not finish, the message says so, and errors reported alongside it may name retired syntax.
+
 ### WARN-SINGLE-CHART-REDUNDANT-TITLE: Single-chart dashboard has both a board title and a chart title
 
 - **Level:** warning
@@ -758,9 +774,9 @@ Fires when a table still fits its box widthwise but only because the renderer de
 Table {chart_id!r}: the layout slot fits {drawn_rows} of the {page_rows} rows a page holds ({total_rows} rows total); the rest moved onto later pages.
 ```
 
-**Fix:** Give the tile more height (layout height:, a taller row, or fewer siblings sharing the row), or set style.pagination.page_rows to the page size you actually want so the sizer reserves room for it.
+**Fix:** Give the tile more height (layout height:, a taller row, or fewer siblings sharing the row), or set `style.pagination.page_rows: {drawn_rows}` to page at what the slot fits. page_rows is a ceiling: raising it does not make the slot taller.
 
-Fires when a table's layout slot is shorter than the height the sizer reserved for it, so the paginator draws fewer rows per page than the table's own pagination settled on. The two estimates are computed independently: layout_sizing._get_table_height_from_data reserves the slot, table._largest_safe_page_rows decides what fits, and when they disagree the paginator wins in silence: the render exits 0 and the export photographs as a faithful table while showing a fraction of its rows. Paginating because the data is genuinely longer than the page is not this warning; only a page cut down by the slot is.
+Fires when a pinned layout slot (explicit height, grid row, equalized siblings) fits fewer rows than the table's page_rows, so the paginator draws fewer rows per page and the export photographs as a faithful table showing a fraction of its rows. An auto-sized tile is measured by the renderer and always fits its page; page_rows: null never warns. Paginating because the data is longer than the page is not this warning.
 
 ### WARN-TABLE-TEXT-TRUNCATED: Table column header or cell text was truncated
 

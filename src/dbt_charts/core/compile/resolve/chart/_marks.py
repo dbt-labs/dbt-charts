@@ -108,7 +108,7 @@ _LabelsT = TypeVar("_LabelsT", bound=MarkLabelsStyle)
 def _label_format_fallback(
     labels: _LabelsT,
     axis_format: str | None,
-    axis_is_house: bool,
+    axis_house_default: bool,
     formats: dict[str, str] | None,
 ) -> tuple[_LabelsT, bool]:
     """Fall an unset value-label format back to the resolved measure-axis format.
@@ -118,15 +118,12 @@ def _label_format_fallback(
     passes it straight to Vega (raw d3: 1.2M).
 
     An explicit label format is decided by predefined-membership alone
-    (``resolve_label_format``): a raw format string that is an engine-
-    predefined name (``ALL_PREDEFINED_NAMES``) takes house rules; a
-    ``style.formats`` alias or a literal d3 spec is a native opt-out
-    (``is_house=False``). The fallback branch (no label format authored) instead inherits
-    ``axis_is_house`` as callers compute it — ``is_d3_si_spec(axis_format) and
-    (not axis_format_authored or axis_format_is_alias)`` — the same
-    authored-or-alias rule axis itself uses for its non-compacting tick label,
+    (``resolve_label_format`` — see ``ResolvedAxisStyle.format_raw`` for the
+    house-vs-literal rule it applies). The fallback branch (no label format
+    authored) instead inherits ``axis_house_default`` as callers compute it
+    — the axis's own raw format winner run through the same predicate,
     since inheriting a label must agree with what its own axis renders,
-    including the axis's own authored-literal escape hatch.
+    including the axis's own literal-format escape hatch.
 
     Unlike ``axis_format`` (already resolved via ``resolve_format``), an explicit
     ``labels.format`` passes through ``resolve_label_format`` for both alias
@@ -138,7 +135,7 @@ def _label_format_fallback(
         return labels.model_copy(update={"format": resolved}), is_house
     if axis_format is None:
         return labels, False
-    return labels.model_copy(update={"format": axis_format}), axis_is_house
+    return labels.model_copy(update={"format": axis_format}), axis_house_default
 
 
 def _build_resolved_line_mark(merged: LineMarkStyle) -> ResolvedLineMarkStyle:

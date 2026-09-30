@@ -261,15 +261,25 @@ class ChartStyleContext:
     # at compile time. Raw -- may be translucent (rgba(...)), a CSS name, or
     # transparent; label ink never reads this directly, see ink_canvas below.
     background: str = ""
-    # The opaque canvas label ink derives contrast against (`ink_canvas()`
-    # in compile/resolve/style/palette.py). Always a fully opaque hex. An
-    # authored translucent style.background composites exactly once over
-    # this value; a scope that only inherits a background carries it
-    # forward unchanged. Computed, not authored -- excluded from the
-    # generic charts.* passthrough below. kw_only, not defaulted: every
-    # constructor call sets it explicitly (see the class docstring's
-    # requirement).
+    # The CHART canvas: `background` (above) composited over `board_canvas`
+    # (below). Always opaque. Chart ink helpers (bar/line/area/pie/_palette,
+    # dark_companion_palette below) derive label/mark contrast against this,
+    # not board_canvas -- a card painted a different color than its board
+    # needs its own contrast math. Computed, not authored. kw_only, not
+    # defaulted: every constructor call sets it explicitly.
     ink_canvas: str = dataclasses.field(kw_only=True)
+    # The BOARD canvas: this board's own fill (style.background) composited
+    # over its parent's board_canvas. Always opaque. Threads the "what's
+    # beneath me" canvas to a nested board's own compile
+    # (compile_board_resolved_style's bottom_layer in normalize/dispatch.py),
+    # and is the composite base for a chart's own style.background: that
+    # override REPLACES the card fill (charts.background) rather than
+    # painting over it, so its ink_canvas composites against board_canvas,
+    # never against this context's own ink_canvas (chart_context.py). Chart
+    # ink helpers that read the BOARD's default canvas (no chart-local
+    # override) still want ink_canvas. kw_only, not defaulted, same reason
+    # as ink_canvas.
+    board_canvas: str = dataclasses.field(kw_only=True)
 
     # Board-wide value→color scales, one per bound categorical field — the
     # PLANNED output the planner builds from ``category_color_pins`` plus

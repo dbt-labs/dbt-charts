@@ -1413,6 +1413,20 @@ Unknown format: {format!r}
 
 Fired when a render verb is called with an output format that is not supported. Check the supported formats in the CLI reference.
 
+### ERR-IGNORE-ERROR-CODE: --ignore-warning names an error code
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+cannot ignore {code!r}: it is an error code, not a warning code
+```
+
+Fired when `dct render --ignore-warning` names an error code. Only warnings can be suppressed; fix the board to clear an error.
+
 ### ERR-INTERNAL: Internal error
 
 - **Level:** error
@@ -1454,6 +1468,20 @@ Server failed to start: {detail}.
 ```
 
 Fired when the uvicorn server process fails to start. The detail carries the inner error message from uvicorn.
+
+### ERR-UNKNOWN-WARNING-CODE: --ignore-warning names an unregistered code
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+unknown warning code: {code!r}
+```
+
+Fired when `dct render --ignore-warning` names a code that is not a registered warning code: usually a typo or a stale suppression. Check the code against the warning reference.
 
 ## layout
 

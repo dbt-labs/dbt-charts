@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.format import resolve_label_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
@@ -75,7 +76,6 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SCATTER_MULTI_Y_NOT_NUMERIC,
 )
-from dbt_charts.core.text.format_d3 import is_d3_si_spec
 
 __all__ = [
     "_resolve_scatter",
@@ -236,7 +236,7 @@ def _resolve_scatter(
     # Scatter's x (even a categorical "dot plot" x) is always bottom-orient —
     # only y ever places on a left/right edge.
     # No tick_values on the categorical axis -- the non-compacting bake
-    # can't fire regardless, but format_authored is required, not defaulted
+    # can't fire regardless, but format_raw is required, not defaulted
     # (see build_resolved_axis's docstring).
     # Scatter's tooltip_format tracks an explicit chart-authored measure format
     # (style.number_format / chart.format) — falls back to the board default
@@ -269,8 +269,6 @@ def _resolve_scatter(
         ax_band_position=plan.ax_band_position,
         ay_band_position=plan.ay_band_position,
         ax_edge=None,
-        ay_format_authored=plan.ay_format_authored,
-        ay_format_is_alias=plan.ay_format_is_alias,
         ay_format_raw=plan.ay_format_raw,
         ticks=scatter_ticks,
         column_forming=True,
@@ -291,15 +289,13 @@ def _resolve_scatter(
         # risk of the shared-scale composition _y_domain_floor guards against.
         endpoint_rail_may_discard_domain=False,
     )
-    axis_is_house = (
-        ay.labels.format is not None
-        and is_d3_si_spec(ay.labels.format)
-        and (not plan.ay_format_authored or plan.ay_format_is_alias)
+    _, axis_house_default = resolve_label_format(
+        plan.ay_format_raw, chart_style_context.formats
     )
     resolved_scatter_labels, scatter_label_is_house = _label_format_fallback(
         scatter.marks.point.labels,
         ay.labels.format,
-        axis_is_house,
+        axis_house_default,
         chart_style_context.formats,
     )
     scatter_point_mark = scatter.marks.point.model_copy(

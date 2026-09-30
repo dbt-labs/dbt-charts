@@ -487,7 +487,7 @@ class ScatterEmitter:
                 # never skip either.
                 base_x_authored_temporal=False,
                 tooltip_format=chart.style.tooltip_format,
-                background=chart.background,
+                canvas=chart.canvas,
                 single_series_fill=chart.style.single_series_fill,
                 legend=chart.legend,
                 config=config,

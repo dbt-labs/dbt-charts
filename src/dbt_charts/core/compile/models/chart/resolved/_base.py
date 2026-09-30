@@ -161,6 +161,14 @@ class _SharedResolvedChartFields(_BaseResolvedChartFields):
             "when authored, otherwise the board/board background."
         ),
     )
+    canvas: str = Field(
+        description=(
+            "This chart's own composited canvas: background (above) over the "
+            "board's own canvas. Always opaque -- knockout strokes, halos, and "
+            "undercoats read this, never background directly, which may be "
+            "transparent."
+        ),
+    )
     title_style: TitleStyle = Field(
         description=(
             "Effective title style — chart-local style.<family>.title merged "

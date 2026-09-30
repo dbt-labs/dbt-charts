@@ -90,8 +90,6 @@ def _merged_axis_y():
         ay_merged,
         _ax_band_position,
         _ay_band_position,
-        _ay_format_authored,
-        _ay_format_is_alias,
         _ay_format_raw,
     ) = _bake_cartesian_axes(
         chart_style_context,
@@ -122,8 +120,7 @@ def test_ruler_is_none_when_ladder_does_not_compact():
         ay_merged,
         tick_values=_PLAIN_TICKS,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is None
 
@@ -134,8 +131,7 @@ def test_ruler_baked_from_tick_ladder_matches_the_pure_resolver():
         ay_merged,
         tick_values=_ANCHOR_TICKS,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     expected = shared_scale_for_ladder(list(_ANCHOR_TICKS))
     assert expected is not None
@@ -161,8 +157,7 @@ def test_reservation_is_composed_against_the_axis_own_resolved_font():
         ay_merged,
         tick_values=_ANCHOR_TICKS,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is not None
     assert ay.labels.font.family == DBT_SERIF_OLDSTYLE_TABULAR_FONT_FAMILY
@@ -178,8 +173,7 @@ def test_reservation_is_composed_against_the_axis_own_resolved_font():
         _merged_axis_y(),
         tick_values=_ANCHOR_TICKS,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert default_ay.ruler is not None
     assert ay.ruler.reservation != default_ay.ruler.reservation
@@ -193,8 +187,7 @@ def test_non_column_forming_axis_bakes_no_reservation():
         tick_values=_REPEAT_TICKS,
         column_forming=False,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is not None
     assert ay.ruler.reservation == ""
@@ -217,8 +210,7 @@ def test_anchor_at_start_is_true_for_an_all_negative_zero_topped_ladder():
         ay_merged,
         tick_values=negative_ticks,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is not None
     assert ay.ruler.anchor_at_start is True
@@ -233,8 +225,7 @@ def test_no_tick_values_never_compacts():
         ay_merged,
         tick_values=(),
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is None
 
@@ -254,8 +245,7 @@ def test_non_si_format_never_bakes_ruler_even_when_the_ladder_compacts():
         ay_merged,
         tick_values=_ANCHOR_TICKS,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is None
 
@@ -273,8 +263,7 @@ def test_authored_label_expr_never_bakes_ruler():
         ay_expr,
         tick_values=_ANCHOR_TICKS,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is None
 
@@ -303,8 +292,7 @@ def test_non_column_forming_axis_bakes_repeat_mode_regardless_of_ladder():
             tick_values=ticks,
             column_forming=False,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.ruler is not None
         assert ay.ruler.mode is SuffixMode.REPEAT
@@ -319,8 +307,7 @@ def test_column_forming_compacting_axis_on_non_tabular_font_raises():
             tick_values=_ANCHOR_TICKS,
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
     assert exc_info.value.code is ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT
 
@@ -345,8 +332,7 @@ def test_column_forming_compacting_axis_on_vendored_non_tabular_font_raises():
             tick_values=_ANCHOR_TICKS,
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
     assert exc_info.value.code is ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT
 
@@ -358,8 +344,7 @@ def test_column_forming_compacting_axis_on_tabular_font_does_not_raise():
         tick_values=_ANCHOR_TICKS,
         column_forming=True,
         chart_id="fixture",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is not None
 
@@ -374,8 +359,7 @@ def test_non_column_forming_axis_on_non_tabular_font_does_not_raise():
         tick_values=_ANCHOR_TICKS,
         column_forming=False,
         chart_id="fixture",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is not None
 
@@ -411,8 +395,7 @@ def test_right_edge_axis_with_no_authored_align_bakes_no_ruler():
         edge="right",
         column_forming=True,
         chart_id="fixture",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is None
 
@@ -425,8 +408,7 @@ def test_left_edge_axis_still_bakes_reservation():
         edge="left",
         column_forming=True,
         chart_id="fixture",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is not None
     assert ay.ruler.reserve is True
@@ -445,8 +427,7 @@ def test_right_edge_axis_on_non_tabular_font_does_not_raise():
         edge="right",
         column_forming=True,
         chart_id="fixture",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is None
 
@@ -475,8 +456,7 @@ class TestMechanismFollowsResolvedAnchoringNotEdge:
             edge="right",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.labels.align == "right"
         assert ay.ruler is not None
@@ -494,8 +474,7 @@ class TestMechanismFollowsResolvedAnchoringNotEdge:
                 edge="right",
                 column_forming=True,
                 chart_id="fixture",
-                format_authored=True,
-                format_is_alias=False,
+                format_raw=None,
             )
         assert exc_info.value.code is ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT
 
@@ -514,8 +493,7 @@ class TestMechanismFollowsResolvedAnchoringNotEdge:
             edge="left",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.labels.align == "left"
         assert ay.ruler is None
@@ -539,8 +517,7 @@ class TestMechanismFollowsResolvedAnchoringNotEdge:
             edge="right",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.ruler is None
 
@@ -556,8 +533,7 @@ class TestMechanismFollowsResolvedAnchoringNotEdge:
             edge="left",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.ruler is not None
         assert ay.ruler.reserve is True
@@ -582,8 +558,7 @@ class TestMechanismFollowsResolvedAnchoringNotEdge:
             edge="left",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.labels.align == "left"
         assert ay.ruler is not None
@@ -601,8 +576,7 @@ class TestMechanismFollowsResolvedAnchoringNotEdge:
             edge="left",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.labels.align == "right"
         assert ay.ruler is not None
@@ -637,8 +611,7 @@ class TestMirrorRulerBakedAtResolve:
             edge="right",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.ruler is None
         assert ay.mirror_ruler is None
@@ -656,8 +629,7 @@ class TestMirrorRulerBakedAtResolve:
             edge="left",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.ruler is not None
         assert ay.ruler.reserve is True
@@ -671,8 +643,7 @@ class TestMirrorRulerBakedAtResolve:
             edge="right",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.mirror_ruler is None
 
@@ -684,8 +655,7 @@ class TestMirrorRulerBakedAtResolve:
             edge="right",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.ruler is None
         assert ay.mirror_ruler is None
@@ -703,8 +673,7 @@ class TestMirrorRulerBakedAtResolve:
             edge="right",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.mirror_ruler is None
 
@@ -716,8 +685,7 @@ class TestMirrorRulerBakedAtResolve:
             edge="right",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.mirror_ruler is None
 
@@ -736,8 +704,7 @@ class TestMirrorRulerBakedAtResolve:
             edge="right",
             column_forming=True,
             chart_id="fixture",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         )
         assert ay.ruler is None
         assert ay.mirror_ruler is None
@@ -758,8 +725,7 @@ class TestMirrorRulerBakedAtResolve:
                 edge="left",
                 column_forming=True,
                 chart_id="fixture",
-                format_authored=True,
-                format_is_alias=False,
+                format_raw=None,
             )
         assert exc_info.value.code is ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT
 
@@ -783,8 +749,7 @@ def test_non_compacting_ladder_bakes_tick_label_when_unauthored():
     ay = build_resolved_axis(
         ay_merged,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.ruler is None
@@ -798,9 +763,9 @@ def test_non_compacting_ladder_bakes_tick_label_when_unauthored():
 
 
 def test_non_compacting_ladder_leaves_an_authored_format_untouched():
-    """``format_authored`` is a required keyword, no default — this call
-    passes True explicitly for an author who wrote the SI format
-    themselves, keeping today's behavior.
+    """``format_raw`` is a required keyword, no default — this call passes
+    ``None`` explicitly (a literal SI format, not a predefined name), keeping
+    today's behavior.
     """
     ay_merged = _merged_axis_y()
     ticks = (0.0, 20_000.0, 40_000.0, 60_000.0)
@@ -808,8 +773,7 @@ def test_non_compacting_ladder_leaves_an_authored_format_untouched():
         ay_merged,
         tick_values=ticks,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is None
     assert ay.labels.format == ".3~s"
@@ -819,12 +783,11 @@ def test_non_compacting_ladder_leaves_an_authored_format_untouched():
 def test_non_compacting_ladder_bakes_tick_label_when_format_is_an_authored_alias():
     """An author who reaches for a named format alias (``currency``,
     ``"$~s"``) to get the ``$`` prefix still gets the ruler's own settled
-    non-compacting rule -- ``format_is_alias`` relaxes the ``format_authored``
-    gate so an alias-sourced SI format bakes plain digits below the
-    compaction threshold exactly like the unauthored theme default does.
-    Reproduces the bug report's ``hero_bookings`` case: an 8,000-topping
-    ladder authored via ``currency`` must write ``0, $2,000, ...``,
-    not stay permanently SI-compacted.
+    non-compacting rule -- a predefined-name ``format_raw`` earns house
+    treatment (the plain-digit bake) below the compaction threshold exactly
+    like the unauthored theme default does. Reproduces the bug report's
+    ``hero_bookings`` case: an 8,000-topping ladder authored via ``currency``
+    must write ``0, $2,000, ...``, not stay permanently SI-compacted.
     """
     ay_merged = _merged_axis_y()
     ay_currency = ay_merged.model_copy(
@@ -835,8 +798,7 @@ def test_non_compacting_ladder_bakes_tick_label_when_format_is_an_authored_alias
     ay = build_resolved_axis(
         ay_currency,
         tick_values=ticks,
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         edge="right",
         chart_id="test",
     )
@@ -869,8 +831,7 @@ def test_non_compacting_ladder_bakes_tick_label_repeat_when_not_column_forming()
     ay = build_resolved_axis(
         ay_currency,
         tick_values=ticks,
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         column_forming=False,
         chart_id="test",
     )
@@ -893,8 +854,7 @@ def test_non_compacting_ladder_leaves_a_literal_authored_format_untouched():
     ay = build_resolved_axis(
         ay_currency,
         tick_values=ticks,
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
         chart_id="test",
     )
     assert ay.ruler is None
@@ -904,15 +864,14 @@ def test_non_compacting_ladder_leaves_a_literal_authored_format_untouched():
 
 
 # The two tests above call ``build_resolved_axis`` directly with a hand-set
-# ``format_is_alias``, which only proves the gate itself is wired correctly --
-# it never exercises how ``format_is_alias`` gets COMPUTED and threaded from a
-# real authored patch through ``resolve()``'s production seam
-# (BarChart -> resolve_bar_chart -> _bake_cartesian_axes -> build_resolved_axis,
-# via _extract_axis_overrides's non-Optional AxisOverrides -- the only path
-# production ever takes). A bug in that wiring (e.g. a swapped argument in one
-# of _bake_cartesian_axes's 6 return values, or a mixed-up variable in one of
-# _merge_axis_cascade's four v2-path provenance blocks) would leave the tests
-# above green while shipping the bug report's original behavior unfixed.
+# ``format_raw``, which only proves the gate itself is wired correctly -- it
+# never exercises how the raw winner gets COMPUTED and threaded from a real
+# authored patch through ``resolve()``'s production seam (BarChart ->
+# resolve_bar_chart -> _bake_cartesian_axes -> build_resolved_axis, via
+# _extract_axis_overrides's non-Optional AxisOverrides -- the only path
+# production ever takes). A bug in that wiring (e.g. a swapped argument in
+# one of _bake_cartesian_axes's 5 return values) would leave the tests above
+# green while shipping the bug report's original behavior unfixed.
 _NON_COMPACTING_BAR_DATA = [
     {"month": "Jan", "revenue": 2000},
     {"month": "Feb", "revenue": 4000},
@@ -956,12 +915,10 @@ def test_end_to_end_board_authored_alias_bakes_plain_digits():
 
     The same ``currency`` alias, authored at board level
     (``style.charts.axis_y.labels.format``) instead of on the chart, must bake
-    the same plain-digit tick_label. This pins the board tier's
-    ``format_is_alias`` computation: without it the board layer reports
-    format_authored=True / format_is_alias=False, which closes the compaction
-    gate in build_resolved_axis, and the axis stays SI-compacted ($8k) while
-    the identical chart-level authoring bakes plain digits — a board-vs-chart
-    divergence for identical authoring intent.
+    the same plain-digit tick_label -- proving board-tier authorship reaches
+    the raw winner the same way chart-tier authorship does (name-vs-literal,
+    never which tier or whether any tier wrote it), so there is no
+    board-vs-chart divergence for identical authoring intent.
     """
     from dbt_charts.core.compile.models.style.authored import StylePatch
 
@@ -1060,12 +1017,11 @@ def test_end_to_end_no_ladder_root_causes_bake_the_sub_unit_guard(
       ladder under the default ``shared`` scale) with
       ``multiples.scale: independent``.
 
-    Exercises the real ``plan_cartesian``/``_bake_cartesian_axes`` provenance
-    plumbing, not a hand-passed ``format_authored``/``format_is_alias`` pair
-    -- a caller elsewhere in that plumbing hardcoding the wrong pair (as
-    histogram's does, deliberately, in ``bar.py``) would leave the isolated
-    ``build_resolved_axis`` tests green while stark's real pipeline silently
-    stopped reaching this branch.
+    Exercises the real ``plan_cartesian``/``_bake_cartesian_axes`` raw-format
+    plumbing, not a hand-passed ``format_raw`` -- a caller elsewhere in that
+    plumbing hardcoding the wrong value (as histogram's does, deliberately,
+    in ``bar.py``) would leave the isolated ``build_resolved_axis`` tests
+    green while stark's real pipeline silently stopped reaching this branch.
     """
     board = resolve_chart_style_context(get_theme_style(theme_name))
     data = [
@@ -1111,8 +1067,7 @@ def test_non_compacting_currency_bakes_anchor_at_start():
     ay = build_resolved_axis(
         ay_currency,
         tick_values=ticks,
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         column_forming=True,
         edge="right",
         chart_id="test",
@@ -1139,8 +1094,7 @@ def test_non_compacting_currency_mixed_sign_anchors_on_largest_positive():
     ay = build_resolved_axis(
         ay_currency,
         tick_values=ticks,
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         column_forming=True,
         edge="right",
         chart_id="test",
@@ -1168,8 +1122,7 @@ def test_non_compacting_currency_all_negative_anchors_on_most_negative():
     ay = build_resolved_axis(
         ay_currency,
         tick_values=ticks,
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         column_forming=True,
         edge="right",
         chart_id="test",
@@ -1198,8 +1151,7 @@ def test_non_compacting_ladder_no_stray_decimals_on_an_integer_step():
     ay = build_resolved_axis(
         ay_merged,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.labels.format == ".3~s"
@@ -1219,8 +1171,7 @@ def test_non_compacting_sub_unit_ladder_writes_its_digits_out():
     ay = build_resolved_axis(
         ay_merged,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label.format == ",.3~f"
@@ -1241,8 +1192,7 @@ def test_non_compacting_sub_one_ladder_never_paints_a_milli_suffix():
     ay = build_resolved_axis(
         ay_merged,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label.format == ",.1~f"
@@ -1287,8 +1237,7 @@ def test_every_non_compacting_ladder_leaves_the_cascade_with_a_chosen_spec(ticks
     ay = build_resolved_axis(
         _merged_axis_y(),
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label is not None
@@ -1313,8 +1262,7 @@ def test_a_sub_cent_step_on_a_millions_ladder_keeps_its_ticks_distinct():
     ay = build_resolved_axis(
         _merged_axis_y(),
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label is not None
@@ -1332,8 +1280,7 @@ def test_a_ladder_below_fixed_point_reach_takes_scientific_not_a_false_zero():
     ay = build_resolved_axis(
         _merged_axis_y(),
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label.decimal_pad_table == ()
@@ -1357,8 +1304,7 @@ def test_a_ladder_less_axis_bakes_a_per_tick_guard_instead_of_a_fixed_spec():
     ay = build_resolved_axis(
         _merged_axis_y(),
         tick_values=(),
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.ruler is None
@@ -1389,8 +1335,7 @@ def test_a_log_scale_ladder_less_axis_bakes_no_tick_label():
     ay = build_resolved_axis(
         ay_log,
         tick_values=(),
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label is None
@@ -1405,8 +1350,7 @@ def test_a_ladder_less_axis_with_an_authored_literal_format_keeps_it_untouched()
     ay = build_resolved_axis(
         _merged_axis_y(),
         tick_values=(),
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
         chart_id="test",
     )
     assert ay.tick_label is None
@@ -1426,8 +1370,7 @@ def test_a_ladder_less_axis_with_an_authored_label_expr_is_not_touched():
     ay = build_resolved_axis(
         ay_expr,
         tick_values=(),
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label is None
@@ -1448,8 +1391,7 @@ def test_a_ladder_whose_rungs_round_to_each_other_derives_no_spec():
     ay = build_resolved_axis(
         _merged_axis_y(),
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label is None
@@ -1464,8 +1406,7 @@ def test_non_compacting_half_step_ladder_keeps_its_half():
     ay = build_resolved_axis(
         ay_merged,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label.format == ",.1~f"
@@ -1482,8 +1423,7 @@ def test_non_compacting_negative_ladder_keeps_full_magnitude():
     ay = build_resolved_axis(
         ay_merged,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.tick_label.format == ",.0~f"
@@ -1503,8 +1443,7 @@ def test_non_compacting_bake_does_not_touch_an_authored_expr():
     ay = build_resolved_axis(
         ay_expr,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.labels.expr == "'x'"
@@ -1532,8 +1471,7 @@ def test_non_compacting_ladder_native_formatter_key_does_not_crash():
     ay = build_resolved_axis(
         ay_native,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.ruler is None
@@ -1557,8 +1495,7 @@ def test_non_compacting_ladder_strftime_format_does_not_crash():
     ay = build_resolved_axis(
         ay_strftime,
         tick_values=ticks,
-        format_authored=False,
-        format_is_alias=False,
+        format_raw="number",
         chart_id="test",
     )
     assert ay.ruler is None
@@ -1581,8 +1518,7 @@ def test_compacting_ladder_native_formatter_key_does_not_crash():
         ay_native,
         tick_values=_ANCHOR_TICKS,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert ay.ruler is None
     assert ay.labels.format == "percent_number"
@@ -1650,8 +1586,7 @@ def test_ruler_and_tick_label_are_mutually_exclusive():
         ay_merged,
         tick_values=_ANCHOR_TICKS,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     assert compacting.ruler is not None
     assert compacting.tick_label is None
@@ -1693,8 +1628,7 @@ def test_non_compacting_end_anchored_currency_splits_prefix():
     ay = build_resolved_axis(
         ay_currency,
         tick_values=ticks,
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         column_forming=True,
         edge="left",
         chart_id="test",
@@ -1726,8 +1660,7 @@ def test_currency_prefix_is_bare_no_configured_gap():
         ay = build_resolved_axis(
             ay_currency,
             tick_values=ticks,
-            format_authored=True,
-            format_is_alias=True,
+            format_raw="number",
             column_forming=True,
             edge=edge,
             chart_id="test",
@@ -1807,3 +1740,73 @@ def test_end_to_end_inline_si_spec_builds_ruler_on_an_end_anchored_edge() -> Non
         "inline SI spec '.2s' on an end-anchored edge must build a ruler; "
         "the ruler is gated on the SI-shape verdict, not on format provenance"
     )
+
+
+def test_end_to_end_theme_literal_format_is_not_baked_and_not_forced_right():
+    """A literal axis format authored at the THEME tier itself (simulating a
+    custom theme that hand-writes a d3 spec instead of a predefined name at
+    ``axis_quantitative.labels.format``, layers 1-3 of the cascade -- not a
+    board/chart-authored override) is honored verbatim: house-vs-literal is
+    the only distinction that matters, never which tier wrote it or whether
+    any tier did. Proves both consequences of "literal" at once: no
+    plain-digit tick-label bake (the non-compacting ladder guard), and no
+    forced right-align (_force_right) -- on the same non-compacting
+    axis/data shape a predefined name gets both for (see
+    ``test_end_to_end_bare_axis_default_format_bakes_and_forces_right_align``
+    below).
+    """
+    import dataclasses
+
+    from dbt_charts.core.compile.models.chart.normalized import LineChart
+    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+
+    board = resolve_chart_style_context(get_theme_style())
+    board = dataclasses.replace(
+        board,
+        axis_quantitative=board.axis_quantitative.model_copy(
+            update={
+                "labels": board.axis_quantitative.labels.model_copy(
+                    update={"format": ".3~s"}
+                )
+            }
+        ),
+    )
+    patch = LineChartStylePatch(axis_y=AxisYStylePatch(position="right"))
+    data = [
+        {"m": 1, "revenue": 20_000},
+        {"m": 2, "revenue": 40_000},
+        {"m": 3, "revenue": 60_000},
+    ]
+    chart = LineChart(id="t", type="line", x="m", y="revenue", style=patch)
+    resolved = resolve(chart, data, chart_style_context=board)
+    ay = resolved.style.axis_y
+    assert ay.labels.format == ".3~s"
+    assert ay.ruler is None
+    assert ay.tick_label is None
+    assert ay.labels.align is None
+
+
+def test_end_to_end_bare_axis_default_format_bakes_and_forces_right_align():
+    """Sibling of the literal test above: the built-in "number" default (a
+    predefined name, authored nowhere at all) still bakes plain-digit ticks
+    and forces right-align, on the identical axis/data shape -- proving the
+    two cases diverge only on name-vs-literal, never on which tier (or
+    whether any tier) wrote the value.
+    """
+    from dbt_charts.core.compile.models.chart.normalized import LineChart
+    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+
+    board = resolve_chart_style_context(get_theme_style())
+    patch = LineChartStylePatch(axis_y=AxisYStylePatch(position="right"))
+    data = [
+        {"m": 1, "revenue": 20_000},
+        {"m": 2, "revenue": 40_000},
+        {"m": 3, "revenue": 60_000},
+    ]
+    chart = LineChart(id="t", type="line", x="m", y="revenue", style=patch)
+    resolved = resolve(chart, data, chart_style_context=board)
+    ay = resolved.style.axis_y
+    assert ay.labels.format == ".3~s"
+    assert ay.ruler is None
+    assert ay.tick_label is not None
+    assert ay.labels.align == "right"

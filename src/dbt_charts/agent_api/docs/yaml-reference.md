@@ -29,7 +29,7 @@ AuthoredBoard definition from YAML.
 | `chart_focus` | str | Render only this named chart with its dependent variables (useful for embedding or SVG export). |
 | `details` | [BoardDetails](#boarddetails) | Collapsible section metadata. String shorthand: details: 'text' → BoardDetails(summary='text'). Block form: details: {summary: ..., expanded_title: ..., expanded: false}. |
 | `id` | str | Explicit ID for this board. Auto-generated from filename if omitted. |
-| `style` | [Style](#style) | Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (footer, timestamp): a nested board never draws its own footer or timestamp line, so these never reach it either. |
+| `style` | [Style](#style) | Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (footer, timestamp): a nested board never draws its own footer or timestamp line, so these never reach it either. background is the one appearance field that never cascades: unset means transparent, not an ancestor's color. |
 | `width` | str \| int | Width when nested (e.g., '50%', '400px', or an integer in pixels). On the root board there is no parent to place it into, so it instead sets the board's own width (equivalent to 'style.frame.width'); percentages are rejected there since there's nothing to size relative to. |
 | `height` | str \| int | Height when nested (e.g., '300px' or an integer in pixels). |
 | `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. Accepts a bool, variable name, Jinja expression, or {query, column} probe. |
@@ -1820,7 +1820,7 @@ Table pagination configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `enabled` | bool | Enable client-side pagination for table charts. |
-| `page_rows` | int | Rows per page. When enabled and None, the renderer auto-fits page size to the cell; set explicitly to pin the page size. |
+| `page_rows` | int | Rows per page, a ceiling bounded by the tile height. The theme defaults it to 20; null means unlimited (the tile height alone sizes the page). |
 
 <a id="tablecolumndefaultsconfig"></a>
 ## TableColumnDefaultsConfig

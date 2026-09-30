@@ -137,13 +137,13 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 334): (
+    ("agent_api/_paths.py", 367): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 389): (
+    ("agent_api/_paths.py", 422): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 533): (
+    ("agent_api/_paths.py", 566): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
     ("agent_api/project_session.py", 323): (

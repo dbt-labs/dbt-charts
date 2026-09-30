@@ -1542,6 +1542,63 @@ def test_outline_only_layer_with_transparent_chart_background_does_not_crash(
     assert wcag_contrast(header_fill, board_canvas) >= 4.5 - 1e-6
 
 
+def test_outline_only_layer_with_opaque_chart_local_background_floors_against_it(
+    monkeypatch,
+):
+    """HIGH regression: the readability floor read charts_style.ink_canvas --
+    the BOARD's own canvas -- ignoring a chart-local style.background
+    override entirely. A chart painted on its own opaque, differently-toned
+    canvas must floor header contrast against THAT canvas, not the board's.
+    """
+    data = [
+        {"region": "A", "revenue": 30.0, "target": 10.0},
+        {"region": "B", "revenue": 20.0, "target": 30.0},
+    ]
+    chart_canvas = "#001133"
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "region",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {
+                "entries": [
+                    {"source": "revenue", "label": "Revenue"},
+                    {"source": "target", "label": "Target"},
+                ]
+            },
+            "layers": [
+                {
+                    "type": "bar",
+                    "y": "target",
+                    "label": "Target",
+                    "style": {
+                        "marks": {
+                            "bar": {
+                                "opacity": 0,
+                                "border": {"width": 4, "color": "#888888"},
+                            }
+                        }
+                    },
+                }
+            ],
+            "style": {
+                "orientation": "horizontal",
+                "legend": {"visible": False},
+                "background": chart_canvas,
+            },
+        }
+    )
+    spec = _render_v2_spec(chart, data, width=400, height=200, monkeypatch=monkeypatch)
+
+    from dbt_charts.core.colors import wcag_contrast
+
+    header_fill = _header_fill(spec, "Target")
+    assert wcag_contrast(header_fill, chart_canvas) >= 4.5 - 1e-6
+
+
 def test_light_fill_series_header_gets_readability_floor(monkeypatch):
     """A series whose fill has no registered dark companion (a custom
     categorical palette override, e.g. a light sequential-gray slot) must

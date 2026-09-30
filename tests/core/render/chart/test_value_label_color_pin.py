@@ -27,9 +27,9 @@ _DATA = [
     {"category": "Decrease", "arr": -500_000},
 ]
 _AUTHORED = "#F7B068"
-# No chart here authors a background, so every one resolves to the board's
-# — which is what an inside-bar label pins for contrast.
-_BACKGROUND = _BOARD_CONTEXT.background
+# No chart here authors a background, so every one's opaque canvas is the
+# board's — which is what an inside-bar label pins for contrast.
+_CANVAS = _BOARD_CONTEXT.ink_canvas
 
 
 def _spec(
@@ -102,17 +102,17 @@ def test_an_unauthored_outside_label_still_inherits_the_series_color():
     """No authored color is no claim — the label keeps inheriting, as before.
 
     ``above`` is the one position that sits clear of the fill; the theme's own
-    default is ``top``, which is inside it and pins the background.
+    default is ``top``, which is inside it and pins the canvas.
     """
     assert _label_color(_spec(color="category", position="above")) is None
 
 
 @pytest.mark.parametrize("position", ["top", "middle", "bottom", "middle_aligned"])
 def test_an_inside_position_pins_its_legibility_color(position):
-    """Inside-bar labels take the background for contrast; that must be pinned."""
+    """Inside-bar labels take the canvas for contrast; that must be pinned."""
     color = _label_color(_spec(color="category", position=position))
-    assert color == {"value": _BACKGROUND}, (
-        f"position {position!r} sits inside the fill and needs the background "
+    assert color == {"value": _CANVAS}, (
+        f"position {position!r} sits inside the fill and needs the canvas "
         f"pinned as its own color, else an authored color channel paints it in "
         f"that fill"
     )
@@ -121,4 +121,4 @@ def test_an_inside_position_pins_its_legibility_color(position):
 def test_a_stacked_label_still_pins_a_color_with_none_authored():
     """The stacked branch's existing unconditional pin is unaffected."""
     color = _label_color(_spec(stack="zero", position="middle"))
-    assert color == {"value": _BACKGROUND}
+    assert color == {"value": _CANVAS}

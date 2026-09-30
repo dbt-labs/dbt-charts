@@ -31,30 +31,26 @@ def _bake_test_axes(chart_type: str):
     from ..conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            chart_style_context,
-            fixture_chart_for_type(chart_type),
-            chart_type,
-            "temporal",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        chart_style_context,
+        fixture_chart_for_type(chart_type),
+        chart_type,
+        "temporal",
+        "quantitative",
+        AxisOverrides(),
     )
     return (
         build_resolved_axis(
             ax_merged,
             band_position=ax_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
         build_resolved_axis(
             ay_merged,
             band_position=ay_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
     )
 

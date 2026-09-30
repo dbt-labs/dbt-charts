@@ -9,7 +9,9 @@ import json
 import re
 import types
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Generator, Iterable, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, timedelta
 from functools import cache
 from typing import TYPE_CHECKING, Annotated, TypeAlias, cast, get_args, get_origin
@@ -72,6 +74,52 @@ class SchemaVersionTooOldError(MigrationError):
 
 class SchemaMigrationWarning(UserWarning):
     """A board was migrated in memory and should be rewritten with ``dct migrate``."""
+
+
+@dataclasses.dataclass(frozen=True)
+class MigrationNotice:
+    message: str
+    file: str | None
+
+
+# ContextVars, not `warnings.catch_warnings`: the latter swaps process-global
+# state and races across Cloud's request threads.
+_NOTICE_SINK: ContextVar[list[MigrationNotice] | None] = ContextVar(
+    "migration_notice_sink", default=None
+)
+_NOTICE_FILE: ContextVar[str | None] = ContextVar("migration_notice_file", default=None)
+
+
+@contextmanager
+def collect_migration_notices() -> Generator[list[MigrationNotice]]:
+    """Route migration notices raised in this context into the yielded list.
+
+    Outside a collector a notice is a ``SchemaMigrationWarning``.
+    """
+    sink: list[MigrationNotice] = []
+    token = _NOTICE_SINK.set(sink)
+    try:
+        yield sink
+    finally:
+        _NOTICE_SINK.reset(token)
+
+
+@contextmanager
+def migration_notice_file(file: str | None) -> Generator[None]:
+    """Attribute notices raised in this context to *file*, the YAML being migrated."""
+    token = _NOTICE_FILE.set(file)
+    try:
+        yield
+    finally:
+        _NOTICE_FILE.reset(token)
+
+
+def warn_migration(message: str, *, stacklevel: int) -> None:
+    sink = _NOTICE_SINK.get()
+    if sink is None:
+        warnings.warn(message, SchemaMigrationWarning, stacklevel=stacklevel + 1)
+    else:
+        sink.append(MigrationNotice(message=message, file=_NOTICE_FILE.get()))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -385,10 +433,9 @@ def _apply_identity_moves(
     result = copy.deepcopy(mapping_dict)
     for move in firing:
         _apply_move(result, move, catalog)
-    warnings.warn(
+    warn_migration(
         "dbt charts migrated this YAML in memory; `dct migrate` may be able "
         "to update the file.",
-        SchemaMigrationWarning,
         stacklevel=3,
     )
     return result
@@ -482,14 +529,13 @@ def _apply_map_key_deletions_eagerly(
     messages, struck = _apply_map_key_deletions(result, deletions, catalog)
     if not struck:
         return mapping
-    warnings.warn(
+    warn_migration(
         "dbt charts migrated this YAML in memory; `dct migrate` may be able "
         "to update the file.",
-        SchemaMigrationWarning,
         stacklevel=3,
     )
     for msg in messages:
-        warnings.warn(msg, SchemaMigrationWarning, stacklevel=3)
+        warn_migration(msg, stacklevel=3)
     return result
 
 
@@ -584,11 +630,10 @@ def prepare_board_mapping(
     except SchemaVersionTooOldError as error:
         # Old enough that transparent migration is not offered at all — no
         # migration was attempted, so "could not finish" would misdescribe it.
-        warnings.warn(
+        warn_migration(
             f"dbt charts did not migrate this YAML. {error} Reporting it against "
             "the current schema instead — errors below may name retired syntax "
             "rather than anything you just changed.",
-            SchemaMigrationWarning,
             stacklevel=2,
         )
         return dict(mapping)
@@ -605,11 +650,10 @@ def prepare_board_mapping(
         # who is mid-migration, which is precisely who this machinery serves.
         # Nor may it be silent: an unannounced skip is why a face that had
         # merely gone stale failed with errors naming fields nobody touched.
-        warnings.warn(
+        warn_migration(
             f"dbt charts could not finish migrating this YAML. {error} "
             "Reporting it against the current schema instead — errors below may "
             "name retired syntax rather than anything you just changed.",
-            SchemaMigrationWarning,
             stacklevel=2,
         )
         return dict(mapping)
@@ -858,13 +902,12 @@ def migrate_mapping(
         # Emitted regardless of allow_expired: a dropped value is data loss, not
         # a routine "file needs rewriting" notice. Authors running dct migrate
         # especially need to see this.
-        warnings.warn(msg, SchemaMigrationWarning, stacklevel=2)
+        warn_migration(msg, stacklevel=2)
 
     if not allow_expired:
-        warnings.warn(
+        warn_migration(
             "dbt charts migrated this YAML in memory; `dct migrate` may be able "
             "to update the file.",
-            SchemaMigrationWarning,
             stacklevel=2,
         )
     return result
@@ -1011,11 +1054,7 @@ def migrate_yaml_text(
     completable path without requiring it to already look current-shaped --
     exactly the state a capped, mid-migration file is expected to be in.
 
-    Emits a ``SchemaMigrationWarning`` per ``Deletion.reason`` whose tail
-    actually fired -- the same mechanism ``migrate_mapping`` uses for its
-    drop/deletion notices, but without the generic "migrated in memory"
-    notice, which does not apply here: this function is the file rewrite
-    itself, not a stand-in for one.
+    Reports a migration notice per ``Deletion.reason`` whose tail fired.
     """
     from dbt_charts.core.compile.authoring.yaml_patch import (
         rename_key_at_path,
@@ -1167,7 +1206,7 @@ def migrate_yaml_text(
     # so a reason attached to a rewrite that raised above would describe
     # damage that was never committed to disk.
     for msg in deletion_reasons:
-        warnings.warn(msg, SchemaMigrationWarning, stacklevel=2)
+        warn_migration(msg, stacklevel=2)
     return final_text
 
 
@@ -1325,18 +1364,22 @@ def _deletion_would_fire(
     grammar that retired the board-level one.
     """
     if isinstance(node, dict):
-        matching = _matching_positions(schema, positions, live, live_positions, node)
-        for deletion in deletions:
+        # `_matching_positions` validates the whole subtree: only call it for a tail.
+        present = [d for d in deletions if _tail_present(node, d.path)]
+        matching = (
+            _matching_positions(schema, positions, live, live_positions, node)
+            if present
+            else []
+        )
+        for deletion in present:
             if deletion.chart_type is not None and (
                 node.get("type") != deletion.chart_type
                 or not _declares_chart_type(schema, matching, deletion.chart_type)
             ):
                 continue
-            if (
-                _declares_tail(schema, matching, deletion.path)
-                and not _live_declares_tail(live, live_positions, node, deletion.path)
-                and _tail_present(node, deletion.path)
-            ):
+            if _declares_tail(
+                schema, matching, deletion.path
+            ) and not _live_declares_tail(live, live_positions, node, deletion.path):
                 return True
         return any(
             _deletion_would_fire(
@@ -1772,8 +1815,14 @@ def _delete_tails_recursive(
     document).
     """
     if isinstance(node, dict):
-        matching = _matching_positions(schema, positions, live, live_positions, node)
-        for deletion in deletions:
+        # `_matching_positions` validates the whole subtree: only call it for a tail.
+        present = [d for d in deletions if _tail_present(node, d.path)]
+        matching = (
+            _matching_positions(schema, positions, live, live_positions, node)
+            if present
+            else []
+        )
+        for deletion in present:
             if deletion.chart_type is not None and (
                 node.get("type") != deletion.chart_type
                 or not _declares_chart_type(schema, matching, deletion.chart_type)

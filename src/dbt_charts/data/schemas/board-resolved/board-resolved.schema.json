@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.8.1.dev354",
+  "version": "0.8.1.dev469",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -7907,7 +7907,7 @@
             }
           ],
           "default": null,
-          "description": "Rows per page. When enabled and None, the renderer auto-fits page size to the cell; set explicitly to pin the page size.",
+          "description": "Rows per page, a ceiling bounded by the tile height. The theme defaults it to 20; null means unlimited (the tile height alone sizes the page).",
           "title": "Page Rows"
         }
       },
@@ -9012,6 +9012,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -9268,6 +9273,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "id",
         "layout_padding",
@@ -10076,7 +10082,7 @@
           "title": "Zero Anchored",
           "type": "boolean"
         },
-        "format_authored_raw": {
+        "format_raw": {
           "anyOf": [
             {
               "type": "null"
@@ -10086,7 +10092,7 @@
             }
           ],
           "default": null,
-          "title": "Format Authored Raw"
+          "title": "Format Raw"
         }
       },
       "required": [
@@ -10408,6 +10414,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -10720,6 +10731,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "id",
         "layout_padding",
@@ -12012,6 +12024,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -12160,6 +12177,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "id",
         "layout_padding",
@@ -12592,6 +12610,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -12804,6 +12827,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "id",
         "layout_padding",
@@ -13859,6 +13883,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -14096,6 +14125,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "id",
         "layout_padding",
@@ -14860,6 +14890,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -15035,6 +15070,7 @@
       "required": [
         "attached_table_gap",
         "background",
+        "canvas",
         "chart_type",
         "dark_companion_stops",
         "hybrid_heading_gap",
@@ -15307,6 +15343,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -15470,6 +15511,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "collapse",
         "id",
@@ -16345,6 +16387,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -16608,6 +16655,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "id",
         "layout_padding",
@@ -17030,6 +17078,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -17098,6 +17151,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "id",
         "layout_padding",
@@ -17680,6 +17734,11 @@
           "title": "Background",
           "type": "string"
         },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
         "title_style": {
           "$ref": "#/$defs/TitleStyle",
           "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
@@ -17818,6 +17877,7 @@
       },
       "required": [
         "background",
+        "canvas",
         "chart_type",
         "id",
         "layout_padding",

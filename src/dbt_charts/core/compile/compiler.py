@@ -111,6 +111,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_EMPTY_YAML_DOCUMENT,
     ERR_UNKNOWN_QUERY,
     WARN_HTML_POLICY_CAPPED,
+    WARN_SCHEMA_MIGRATED,
 )
 from dbt_charts.core.diagnostics.codes_query import WARN_PARSE_ERROR
 from dbt_charts.core.diagnostics.diagnostic import SourceRange
@@ -119,6 +120,7 @@ from dbt_charts.core.diagnostics.from_query_diagnostic import from_query_diagnos
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.migrations import MigrationNotice
     from dbt_charts.core.inspect.query_validator import (
         QueryDiagnostic,
         RelationshipContext,
@@ -521,36 +523,65 @@ def compile(
         ...     board = result.board
         ...     print(board.title)  # "My dbt charts"
     """
-    options = options or {}
-
-    # ════════════════════════════════════════════════════════════════════
-    # STEP 1: Parse YAML
-    # ════════════════════════════════════════════════════════════════════
-    # Convert YAML string to AuthoredBoard object. Handles syntax errors.
-    try:
-        board = parse_yaml(yaml_content)
-    except ParseError as e:
-        return _stamp_compile_result(
-            CompileResult(
-                errors=_parse_error_to_diagnostics(e, yaml_content, file=file)
-            ),
-            yaml_content,
-            file,
-        )
-
-    # ════════════════════════════════════════════════════════════════════
-    # STEPS 2–6: Delegate to shared pipeline
-    # ════════════════════════════════════════════════════════════════════
-    return _compile_with_text(
-        board,
-        yaml_content,
-        base_dir=base_dir,
-        project_sources=project_sources,
-        project_cache=project_cache,
-        meta_lint=options.get("meta_lint"),
-        host_default_source=host_default_source,
-        file=file,
+    from dbt_charts.core.compile.migrations import (
+        collect_migration_notices,
+        migration_notice_file,
     )
+
+    options = options or {}
+    with collect_migration_notices() as notices, migration_notice_file(file):
+        # ════════════════════════════════════════════════════════════════
+        # STEP 1: Parse YAML
+        # ════════════════════════════════════════════════════════════════
+        # Convert YAML string to AuthoredBoard object. Handles syntax errors.
+        try:
+            board = parse_yaml(yaml_content)
+        except ParseError as e:
+            result = _stamp_compile_result(
+                CompileResult(
+                    errors=_parse_error_to_diagnostics(e, yaml_content, file=file)
+                ),
+                yaml_content,
+                file,
+            )
+        else:
+            # ════════════════════════════════════════════════════════════
+            # STEPS 2–6: Delegate to shared pipeline
+            # ════════════════════════════════════════════════════════════
+            result = _compile_with_text(
+                board,
+                yaml_content,
+                base_dir=base_dir,
+                project_sources=project_sources,
+                project_cache=project_cache,
+                meta_lint=options.get("meta_lint"),
+                host_default_source=host_default_source,
+                file=file,
+            )
+    return _with_migration_warnings(result, notices)
+
+
+def _with_migration_warnings(
+    result: CompileResult, notices: list[MigrationNotice]
+) -> CompileResult:
+    """Prepend one WARN-SCHEMA-MIGRATED per notice, naming its stale file.
+
+    The file goes in the message, not ``path`` (a YAML path): a meta.yml or
+    `extends:` file can be the stale one, and editors show only the message.
+    """
+    result.warnings[:0] = [
+        Diagnostic.from_code(
+            WARN_SCHEMA_MIGRATED,
+            message=(
+                notice.message
+                if notice.file is None
+                else f"{notice.file}: {notice.message}"
+            ),
+            fix=WARN_SCHEMA_MIGRATED.fix_template,
+        )
+        for notice in notices
+    ]
+    return result
 
 
 def _parse_error_to_diagnostics(
@@ -809,9 +840,34 @@ def compile_file(
         >>> if result.success:
         ...     print(result.board.title)
     """
+    from dbt_charts.core.compile.migrations import (
+        collect_migration_notices,
+        migration_notice_file,
+    )
+
     board_path = board.path
     if board_path is None:
         raise ValueError("compile_file requires a located board")
+    with (
+        collect_migration_notices() as notices,
+        migration_notice_file(board_path.relpath),
+    ):
+        result = _compile_file(
+            board,
+            board_path,
+            apply_meta,
+            markdown_metadata_table=markdown_metadata_table,
+        )
+    return _with_migration_warnings(result, notices)
+
+
+def _compile_file(
+    board: BoardFile,
+    board_path: ProjectPath,
+    apply_meta: bool,
+    *,
+    markdown_metadata_table: bool,
+) -> CompileResult:
     project = board_path.project
     relpath = board_path.relpath
 

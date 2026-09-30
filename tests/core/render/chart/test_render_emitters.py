@@ -59,6 +59,7 @@ _B: dict[str, Any] = {
     "resolved_channels": {},
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": _ZERO_PADDING,
 }
@@ -135,30 +136,26 @@ def _make_resolved_axes(
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            chart_style_context,
-            fixture_chart_for_type(chart_type),
-            chart_type,
-            x_type,
-            y_type,
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        chart_style_context,
+        fixture_chart_for_type(chart_type),
+        chart_type,
+        x_type,
+        y_type,
+        AxisOverrides(),
     )
     return (
         build_resolved_axis(
             ax_merged,
             band_position=ax_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
         build_resolved_axis(
             ay_merged,
             band_position=ay_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
     )
 
@@ -673,7 +670,9 @@ def test_line_emit_point_overlay_layers_when_point_size_set() -> None:
         x="date",
         y="value",
         style=style,
-        **{**_C, "background": bg},
+        # canvas overridden alongside background: it is opaque, so
+        # composited-over-canvas equals itself (see ink_canvas's docstring).
+        **{**_C, "background": bg, "canvas": bg},
     )
     spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), []))
     vl = translate_to_vl(spec)
@@ -1868,6 +1867,7 @@ def test_emitter_sets_palette_in_config(bar_style: ResolvedBarStyle) -> None:
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -1908,6 +1908,7 @@ def test_heatmap_color_scheme_in_color_encoding_not_config(
         palette=(),
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -1961,6 +1962,7 @@ def test_heatmap_color_gradient_domain_min_max_reaches_scale(
         palette=(),
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -2004,6 +2006,7 @@ def test_heatmap_hinge_domain_matches_legend_endpoint_labels(
         palette=(),
         legend=_default_legend().model_copy(update={"visible": True}),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -2047,6 +2050,7 @@ def test_heatmap_emits_visible_color_legend_by_default(
         palette=(),
         legend=_default_legend().model_copy(update={"visible": True}),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         layout_padding=_ZERO_PADDING,
         title_style=_DEFAULT_CHARTS.title,
     )
@@ -2082,6 +2086,7 @@ def test_heatmap_legend_visible_false_suppresses_color_legend(
         palette=(),
         legend=_default_legend().model_copy(update={"visible": False}),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         layout_padding=_ZERO_PADDING,
         title_style=_DEFAULT_CHARTS.title,
     )
@@ -2505,6 +2510,7 @@ def test_heatmap_emitter_string_series_color_is_nominal(
         palette=(),
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -2574,6 +2580,7 @@ def test_point_map_emitter_series_color_is_quantitative(
         palette=(),
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )

@@ -15,12 +15,15 @@ from copy import deepcopy
 from typing import cast
 
 import pytest
+import yaml
 
 from dbt_charts.core.compile.migrations import (
     IncompleteMigrationError,
     MigrationRegistry,
     Move,
     SchemaMigrationWarning,
+    UnsupportedSchemaError,
+    migrate_board_yaml_text,
     migrate_mapping,
     migrate_yaml_text,
     prepare_board_mapping,
@@ -979,3 +982,76 @@ def test_migrate_yaml_text_stop_target_still_raises_for_a_genuinely_incomplete_m
 
     with pytest.raises(IncompleteMigrationError):
         migrate_yaml_text(yaml_text, catalog=catalog, registry=registry, stop_target=V2)
+
+
+_BAR_BOARD = (
+    _PREAMBLE + "charts:\n  c:\n    type: bar\n    query: q1\n    x: a\n    y: b\n"
+)
+
+
+@pytest.mark.parametrize("position", ["rows", "cols"])
+@pytest.mark.parametrize(
+    ("chart_id", "bad_key"),
+    [
+        ("style", "page: {background: red}"),
+        ("style", "variables: {padding: 4}"),
+        ("grid", "row_height: 3"),
+        ("grid", "default_width: 3"),
+    ],
+)
+def test_a_bad_key_on_a_chart_named_like_a_board_field_is_not_stripped(
+    chart_id: str, bad_key: str, position: str
+) -> None:
+    """A chart the author *named* `style` or `grid` is not a nested board's block.
+
+    The layout slot accepts a nested board or a `dict[str, chart]` map; a retired
+    board-level tail (`style.page`, `grid.row_height`) must not strip the chart's
+    own bad key.
+    """
+    from dbt_charts.core.compile.compiler import compile as compile_board
+
+    fields = ["type: bar", "query: q1", "x: a", "y: b", bad_key]
+    body = "".join(f"      {field}\n" for field in fields)
+    layout = f"{position}:\n  - {chart_id}:\n{body}"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = compile_board(_PREAMBLE + layout)
+
+    assert not result.success
+    assert any(chart_id in error.path for error in result.errors)
+    assert [w for w in caught if "was removed" in str(w.message)] == []
+
+
+@pytest.mark.parametrize(
+    ("board_text", "error_path"),
+    [
+        (_BAR_BOARD + "rows:\n- c\nstyle:\n  color: true\n", "style"),
+        (
+            _BAR_BOARD + "    conditional_formatting:\n    - when: x\nrows:\n- c\n",
+            "conditional_formatting",
+        ),
+    ],
+    ids=["root-style-color", "bar-conditional-formatting"],
+)
+def test_a_retired_key_with_an_invalid_value_reaches_the_parser(
+    board_text: str, error_path: str
+) -> None:
+    """Migration translates a retired construct only if its own grammar accepted it.
+
+    Anything else is an authoring mistake, and deleting it would swap a compile
+    error for a silent success.
+    """
+    from dbt_charts.core.compile.compiler import compile as compile_board
+
+    board = yaml.safe_load(board_text)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        prepared = prepare_board_mapping(deepcopy(board), allow_expired=True)
+        result = compile_board(board_text)
+
+    assert prepared == board
+    assert [w for w in caught if "was removed" in str(w.message)] == []
+    assert not result.success
+    assert any(error_path in error.path for error in result.errors)
+    with pytest.raises(UnsupportedSchemaError):
+        migrate_board_yaml_text(board_text)

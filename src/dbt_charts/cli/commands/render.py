@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING
 import typer
 
 from dbt_charts.agent_api import Diagnostic, RenderFormat
+from dbt_charts.agent_api._paths import (
+    invalid_ignore_code_diagnostics,
+    render_crash_diagnostic,
+)
 from dbt_charts.cli._error_format import emit_diagnostics_jsonl, print_diagnostics
 from dbt_charts.cli._parsing import cwd_first
 from dbt_charts.cli._project import with_project
@@ -50,34 +54,37 @@ class RenderFailed(Exception):
     belongs to the driver, not to a per-board render.
     """
 
-    def __init__(self, errors: list[Diagnostic]) -> None:
+    def __init__(self, errors: list[Diagnostic], warnings: list[Diagnostic]) -> None:
         super().__init__(f"{len(errors)} render error(s)")
         self.errors = errors
+        # A warning can explain the errors (a board that could not finish
+        # migrating fails with errors naming retired syntax).
+        self.warnings = warnings
 
 
-def _validate_ignore_codes(ignore_codes: set[str]) -> None:
-    """Exit 1 for any --ignore-warning code that isn't a registered WARN-* code.
+def _report_failure(
+    exc: RenderFailed, *, diagnostics_json: bool, no_warnings: bool
+) -> None:
+    if not exc.errors:
+        return
+    if diagnostics_json:
+        emit_diagnostics_jsonl(exc.warnings + exc.errors)
+        return
+    if not no_warnings:
+        _print_warnings(exc.warnings)
+    print_diagnostics(exc.errors)
 
-    Every valid suppression code is a registered warning code. Two distinct
-    failure cases get distinguishable messages: a code that is registered but
-    at error level (suppressing an error is never valid) versus a code that
-    isn't registered at all (a typo or stale suppression stub).
-    """
-    from dbt_charts.agent_api.diagnostics import REGISTRY as _diag_registry
 
-    warning_codes = _diag_registry.codes(level="warning")
-    error_codes = _diag_registry.codes(level="error")
-    for code in sorted(ignore_codes):
-        if code in warning_codes:
-            continue
-        if code in error_codes:
-            print(
-                f"cannot ignore {code!r}: it is an error code, not a warning code",
-                file=sys.stderr,
-            )
-        else:
-            print(f"unknown warning code: {code!r}", file=sys.stderr)
-        sys.exit(1)
+def _validate_ignore_codes(ignore_codes: set[str], *, diagnostics_json: bool) -> None:
+    invalid = invalid_ignore_code_diagnostics(ignore_codes)
+    if not invalid:
+        return
+    if diagnostics_json:
+        emit_diagnostics_jsonl(invalid)
+    else:
+        for diag in invalid:
+            print(diag.message, file=sys.stderr)
+    sys.exit(1)
 
 
 def _print_warnings(warnings: list[Diagnostic]) -> None:
@@ -133,10 +140,10 @@ def _emit_result(
         errors = result.validation_errors or (
             [result.board_error] if result.board_error else []
         )
-        raise RenderFailed(errors)
+        raise RenderFailed(errors, result.warnings)
 
     if fail_on_chart_errors and result.chart_errors:
-        raise RenderFailed(result.chart_errors)
+        raise RenderFailed(result.chart_errors, result.warnings)
 
     if diagnostics_json:
         all_diags = list(result.warnings) + list(result.chart_errors)
@@ -220,7 +227,7 @@ def render_command(
     from dbt_charts.agent_api.cache import project_cache_ctx
 
     if ignore_codes:
-        _validate_ignore_codes(ignore_codes)
+        _validate_ignore_codes(ignore_codes, diagnostics_json=diagnostics_json)
 
     # Resolved here rather than on the argument: `--output` templates and the
     # "Rendered …" line both read the board path as typed.
@@ -244,7 +251,7 @@ def render_command(
         # --json callers already expect.
         resolved = resolve_board_or_error(ctx.scoped_path, project_session.project)
         if isinstance(resolved, Diagnostic):
-            raise RenderFailed([resolved])
+            raise RenderFailed([resolved], [])
         result = project_session.render_board(
             board=resolved,
             chart=chart,
@@ -325,7 +332,7 @@ def render_command_from_yaml(
     from dbt_charts.agent_api.cache import project_cache_ctx
 
     if ignore_codes:
-        _validate_ignore_codes(ignore_codes)
+        _validate_ignore_codes(ignore_codes, diagnostics_json=diagnostics_json)
 
     ctx = build_yaml_render_context(project.root)
     output_dir = ctx.output_dir
@@ -372,11 +379,7 @@ def render_command_from_yaml(
             diagnostics_json=diagnostics_json,
         )
     except RenderFailed as exc:
-        if exc.errors:
-            if diagnostics_json:
-                emit_diagnostics_jsonl(exc.errors)
-            else:
-                print_diagnostics(exc.errors)
+        _report_failure(exc, diagnostics_json=diagnostics_json, no_warnings=no_warnings)
         raise typer.Exit(1) from exc
 
 
@@ -478,7 +481,7 @@ def render_commands(
     # ignore_codes is the same for every board — a driver-level precondition, not
     # a per-board outcome, so validate it once here before the loop.
     if ignore_codes:
-        _validate_ignore_codes(ignore_codes)
+        _validate_ignore_codes(ignore_codes, diagnostics_json=diagnostics_json)
 
     # Fail early when two inputs expand to the same output path — later renders
     # would silently overwrite earlier ones.
@@ -517,11 +520,9 @@ def render_commands(
                 diagnostics_json=diagnostics_json,
             )
         except RenderFailed as exc:
-            if exc.errors:
-                if diagnostics_json:
-                    emit_diagnostics_jsonl(exc.errors)
-                else:
-                    print_diagnostics(exc.errors)
+            _report_failure(
+                exc, diagnostics_json=diagnostics_json, no_warnings=no_warnings
+            )
             has_failure = True
             if fail_fast:
                 raise typer.Exit(1) from exc
@@ -532,7 +533,11 @@ def render_commands(
             # so it isn't mis-reported as "Error rendering <board>: 1" per board.
             raise
         except Exception as exc:  # noqa: BLE001 — unexpected per-board crash
-            print(f"Error rendering {board_path}: {exc}", file=sys.stderr)
+            crash = render_crash_diagnostic(board_path, exc)
+            if diagnostics_json:
+                emit_diagnostics_jsonl([crash])
+            else:
+                print(crash.message, file=sys.stderr)
             has_failure = True
             if fail_fast:
                 raise typer.Exit(1) from exc

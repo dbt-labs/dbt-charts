@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Axis number formats follow one rule regardless of which style tier sets them: a predefined name such as `number` or `currency` gets dbt Charts'' tick formatting and right alignment, and a literal d3 spec is passed to Vega-Lite verbatim. Previously a literal spec set in a custom theme was rewritten like a predefined name. The text render now shows a bare quantitative axis''s range in its default format. A time predefined name (e.g. `date_short`) on a right-edge y axis is no longer forced right-aligned and no longer raises `WARN_AXIS_ALIGN_DISCARDED`.'
+time: 2026-09-29T12:00:00.000000-07:00

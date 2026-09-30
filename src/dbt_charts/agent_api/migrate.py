@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -78,7 +77,7 @@ def migrate_paths(
     notes: list[MigrateNote] = []
     from dbt_charts.core.compile.errors import ParseError
     from dbt_charts.core.compile.migrations import (
-        SchemaMigrationWarning,
+        collect_migration_notices,
         migrate_board_yaml_text,
     )
     from dbt_charts.core.compile.parse.parser import parse_yaml
@@ -87,18 +86,9 @@ def migrate_paths(
         path = PurePosixPath(board_path.relpath)
         try:
             original = board_path.read_text()
-            # migrate_board_yaml_text reports why a field was dropped (when its
-            # Deletion carries a reason) as a SchemaMigrationWarning -- the same
-            # mechanism the in-memory migration path uses -- caught here so it
-            # reaches MigrateSummary instead of leaking to stderr.
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always", SchemaMigrationWarning)
+            with collect_migration_notices() as dropped:
                 migrated = migrate_board_yaml_text(original)
-            notes.extend(
-                MigrateNote(path=path, message=str(w.message))
-                for w in caught
-                if issubclass(w.category, SchemaMigrationWarning)
-            )
+            notes.extend(MigrateNote(path=path, message=n.message) for n in dropped)
             if migrated == original:
                 current.append(path)
                 continue
@@ -112,8 +102,7 @@ def migrate_paths(
             # describe fields it deliberately left untouched, and reporting
             # them as removed would be a straight lie about the file just
             # written.
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SchemaMigrationWarning)
+            with collect_migration_notices():
                 parse_yaml(migrated)
             if not dry_run:
                 project.write_text(board_path.relpath, migrated)

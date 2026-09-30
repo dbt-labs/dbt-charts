@@ -888,7 +888,7 @@ def test_shared_scale_overlay_axis_matches_base_when_base_cannot_measure() -> No
     drops labelAlign via _fallback_reversed_label_align. Before the fix,
     render_cartesian_overlay rebuilt the layer's axis template from a raw
     axis_to_vl(axis_y) call that never ran that safety net, so a
-    theme-default house-format axis (format_is_alias, force_right) still
+    theme-default house-format axis (a predefined name, force_right) still
     carried labelAlign="right" into the overlay's own axis dict with only
     the flat, unmeasured labels.padding reserved -- right-anchoring the
     layer's tick labels with no gutter, so the mark drew over them.
@@ -917,10 +917,10 @@ def test_shared_scale_overlay_axis_matches_base_when_base_cannot_measure() -> No
         query=_sql(),
         query_name="q",
         variable_dependencies=set(),
-        # No format authored -> theme default is a house alias -> Fix A's
-        # format_is_alias broadening makes _force_right fire. An authored
-        # labels.expr makes the axis unmeasurable, exactly like
-        # measure_axis_to_vl's own "labelExpr present" gate.
+        # No format authored -> the theme default ("number") is a predefined
+        # name -> _force_right fires. An authored labels.expr makes the axis
+        # unmeasurable, exactly like measure_axis_to_vl's own "labelExpr
+        # present" gate.
         style=BarChartStylePatch(
             axis_y=AxisYStylePatch(
                 position="right",

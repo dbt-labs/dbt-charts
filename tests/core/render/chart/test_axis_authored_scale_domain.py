@@ -59,6 +59,7 @@ _C: dict[str, Any] = {
     "resolved_channels": {},
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": _ZERO_PADDING,
 }
@@ -86,7 +87,7 @@ def _axis_y_with_domain(chart_type: str, domain: list[float]) -> Any:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -98,8 +99,7 @@ def _axis_y_with_domain(chart_type: str, domain: list[float]) -> Any:
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     scale = ResolvedScaleStyle(continuous=ResolvedScaleContinuousStyle(domain=domain))
     ay = dataclasses.replace(ay, scale=scale)
@@ -158,7 +158,7 @@ def test_v2_bar_authored_domain_drives_tick_span(bar_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("bar"),
         "bar",
@@ -170,8 +170,7 @@ def test_v2_bar_authored_domain_drives_tick_span(bar_style) -> None:
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     # D-03: set ticks.count, authored domain, AND pre-baked tick_values (as resolve() does).
     ay = dataclasses.replace(
@@ -290,7 +289,7 @@ def test_v2_area_authored_domain_drives_tick_span(area_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("area"),
         "area",
@@ -302,8 +301,7 @@ def test_v2_area_authored_domain_drives_tick_span(area_style) -> None:
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     ay = dataclasses.replace(
         ay_base,
@@ -364,7 +362,7 @@ def test_v2_scatter_authored_domain_emitted_in_vl_scale(scatter_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("scatter"),
         "scatter",
@@ -376,8 +374,7 @@ def test_v2_scatter_authored_domain_emitted_in_vl_scale(scatter_style) -> None:
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
         is_quantitative=True,
         zero_anchored=True,
     )
@@ -425,7 +422,7 @@ def test_v2_scatter_authored_domain_drives_tick_span(scatter_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _, _, _ = _bake_cartesian_axes(
+    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("scatter"),
         "scatter",
@@ -437,8 +434,7 @@ def test_v2_scatter_authored_domain_drives_tick_span(scatter_style) -> None:
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
         is_quantitative=True,
         zero_anchored=True,
     )

@@ -133,7 +133,9 @@ class TestTextFormat:
         assert "5 rows" in result
 
     def test_numeric_range(self, make_chart):
-        """Numeric columns show min-max range."""
+        """Numeric columns show min-max range, formatted by the y-axis's own
+        (theme-default "number") format, like a KPI or table cell would.
+        """
         data = [
             {"month": "Jan", "revenue": 100},
             {"month": "Feb", "revenue": 500},
@@ -145,8 +147,7 @@ class TestTextFormat:
 
         result = render(board, executor, format="text").output
 
-        assert "100" in result
-        assert "1200" in result
+        assert "revenue: 100–1.2 K" in result
 
     def test_numeric_x_shows_range(self, make_chart):
         """A numeric x column shows its min-max range, like y does."""
@@ -431,11 +432,14 @@ class TestTextFormat:
         assert "$80" in result
         assert "$120" in result
 
-    def test_cartesian_numeric_range_unformatted_by_default(self, make_chart):
-        """No number_format configured keeps today's plain range output."""
+    def test_cartesian_numeric_range_uses_theme_default_format(self, make_chart):
+        """No format authored anywhere still formats the range with the
+        theme's own axis_quantitative default (a predefined name, "number"),
+        the same as a KPI or table cell would.
+        """
         data = [
-            {"month": "Jan", "revenue": 80},
-            {"month": "Feb", "revenue": 120},
+            {"month": "Jan", "revenue": 80_000},
+            {"month": "Feb", "revenue": 120_000},
         ]
         chart = make_chart("bar", x="month", y="revenue")
         board = _make_board([chart])
@@ -443,8 +447,66 @@ class TestTextFormat:
 
         result = render(board, executor, format="text").output
 
-        assert "revenue: 80–120" in result
-        assert "$" not in result
+        assert "revenue: 80 K–120 K" in result
+
+    def test_cartesian_numeric_range_line_chart_matches_bar_chart(self, make_chart):
+        """The range formatter has no axis-ladder awareness, so a line
+        chart's range matches a bar chart's for the same data and format.
+        """
+        data = [
+            {"month": "Jan", "revenue": 80},
+            {"month": "Feb", "revenue": 120},
+        ]
+        chart = make_chart(
+            "line", x="month", y="revenue", style={"number_format": "currency"}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "revenue: $80–$120" in result
+
+    def test_cartesian_numeric_range_sub_1_number_keeps_milli_reading(self, make_chart):
+        """A bare sub-1 "number" range is formatted the same way a KPI or
+        table cell reads the same value -- ``format_value(0.2, "number")``
+        is "200m" (see ``TestSiSubUnitFloor.test_plain_quantity_fraction_
+        keeps_milli_reading`` in test_format_utils.py: the non-money
+        sub-unit floor is a deliberate, separately-pinned decision this
+        function does not override).
+        """
+        data = [
+            {"month": "Jan", "revenue": 0.2},
+            {"month": "Feb", "revenue": 0.8},
+        ]
+        chart = make_chart("bar", x="month", y="revenue")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "revenue: 200m–800m" in result
+
+    def test_cartesian_numeric_range_negative_currency_sign_before_symbol(
+        self, make_chart
+    ):
+        """A range crossing zero on a currency axis composes the sign before
+        the symbol: "−$40", not "$−40".
+        """
+        data = [
+            {"month": "Jan", "revenue": -40},
+            {"month": "Feb", "revenue": 20},
+        ]
+        chart = make_chart(
+            "bar", x="month", y="revenue", style={"number_format": "currency"}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "revenue: −$40–$20" in result
+        assert "$−40" not in result
 
     def test_table_columns_show_resolved_labels_and_formats(self, make_chart):
         """Table columns line lists each column's resolved label and format.

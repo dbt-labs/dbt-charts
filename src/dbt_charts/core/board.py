@@ -75,6 +75,7 @@ _SUPER_SCHEMA_AVAILABLE = (
 )
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.board.normalized import Board
     from dbt_charts.core.inspect.query_validator import RelationshipContext
 
 
@@ -252,6 +253,44 @@ def _with_template_output_budget(
     return wrapper
 
 
+def _partition_compile_warnings(
+    result: CompileResult,
+    board: Board | None,
+    ignore_codes: set[str] | None,
+    project_codes: frozenset[str],
+) -> tuple[list[Diagnostic], list[Diagnostic]]:
+    """Apply the render-time ignore layers (--ignore-warning, dbt_charts.yml,
+    per-chart codes) to compile warnings; a failed compile has no *board*."""
+    return _partition_warnings(
+        list(result.warnings),
+        cli_codes=ignore_codes or set(),
+        project_codes=set(project_codes),
+        per_chart_codes=(
+            {
+                chart_id: set(chart.warnings_ignore)
+                for chart_id, chart in board.charts.items()
+                if chart.warnings_ignore
+            }
+            if board is not None
+            else {}
+        ),
+    )
+
+
+def _compile_failed(
+    result: CompileResult, ignore_codes: set[str] | None, project_codes: frozenset[str]
+) -> BoardRenderResult:
+    active, suppressed = _partition_compile_warnings(
+        result, result.board, ignore_codes, project_codes
+    )
+    return BoardRenderResult(
+        status="failed",
+        validation_errors=list(result.errors),
+        warnings=active,
+        suppressed_warnings=[*result.suppressed_warnings, *suppressed],
+    )
+
+
 @_with_template_output_budget
 def render_dashboard(
     board: BoardFile | None = None,
@@ -315,12 +354,7 @@ def render_dashboard(
             return _input_error("as_link=True requires a located board")
         result = compile_file(board)
         if not result.success:
-            return BoardRenderResult(
-                status="failed",
-                validation_errors=list(result.errors),
-                warnings=list(result.warnings),
-                suppressed_warnings=list(result.suppressed_warnings),
-            )
+            return _compile_failed(result, ignore_codes, _warnings_ignore)
         validate_compiled_queries(
             result, relationship_context=_relationship_context(project)
         )
@@ -331,16 +365,14 @@ def render_dashboard(
             # come back "ok" with a preview URL. (Checked on `errors` rather
             # than `success` — mypy narrows the property from the guard above
             # and calls the branch unreachable.)
-            return BoardRenderResult(
-                status="failed",
-                validation_errors=list(result.errors),
-                warnings=list(result.warnings),
-                suppressed_warnings=list(result.suppressed_warnings),
-            )
+            return _compile_failed(result, ignore_codes, _warnings_ignore)
+        active, suppressed = _partition_compile_warnings(
+            result, result.board, ignore_codes, _warnings_ignore
+        )
         return BoardRenderResult(
             status="ok",
-            warnings=list(result.warnings),
-            suppressed_warnings=list(result.suppressed_warnings),
+            warnings=active,
+            suppressed_warnings=[*result.suppressed_warnings, *suppressed],
             url=_view_url(board.path, variables, port=server_port),
         )
 
@@ -398,12 +430,7 @@ def render_dashboard(
     _t_compile = time.perf_counter()
 
     if not result.success:
-        return BoardRenderResult(
-            status="failed",
-            validation_errors=list(result.errors),
-            warnings=list(result.warnings),
-            suppressed_warnings=list(result.suppressed_warnings),
-        )
+        return _compile_failed(result, ignore_codes, _warnings_ignore)
 
     validate_compiled_queries(
         result, relationship_context=_relationship_context(project)
@@ -429,6 +456,13 @@ def render_dashboard(
                 message="Compilation did not produce a board",
             ).to_diagnostic(file=file_path.relpath if file_path is not None else None),
         )
+
+    # `result.suppressed_warnings` matched a compile-time layer (query-level
+    # `ignore:` or meta.yml lint config); `compile_suppressed` matched a
+    # render-time layer. Both belong in the result.
+    compile_active, compile_suppressed = _partition_compile_warnings(
+        result, compiled_board, ignore_codes, _warnings_ignore
+    )
 
     from dbt_charts.core.render.render_result import RenderResult as _RenderResult
 
@@ -513,26 +547,6 @@ def render_dashboard(
             (_t_done - _t_start) * 1000,
             "on" if result_cache is not None else "off",
         )
-        # Compile-side warnings haven't passed through the render-time partition,
-        # so --ignore-warning / dbt_charts.yml / per-chart codes have no effect on
-        # them yet. Apply the same three-layer partition here for symmetry.
-        #
-        # This yields two suppressed sets that both belong in the result and
-        # must not be collapsed. They differ by which layer silenced them:
-        # `result.suppressed_warnings` matched a compile-time layer (query-level
-        # `ignore:` or meta.yml lint config), while `compile_suppressed`
-        # matched the render-time layers applied just above (--ignore-warning,
-        # dbt_charts.yml, per-chart codes).
-        compile_active, compile_suppressed = _partition_warnings(
-            list(result.warnings),
-            cli_codes=ignore_codes or set(),
-            project_codes=set(_warnings_ignore),
-            per_chart_codes={
-                chart_id: set(chart.warnings_ignore)
-                for chart_id, chart in compiled_board.charts.items()
-                if chart.warnings_ignore
-            },
-        )
         if render_result.board_error is not None:
             return BoardRenderResult(
                 status="failed",
@@ -583,6 +597,8 @@ def render_dashboard(
         return BoardRenderResult(
             status="failed",
             board_error=fatal_diagnostic,
+            warnings=compile_active,
+            suppressed_warnings=[*result.suppressed_warnings, *compile_suppressed],
         )
 
     url = (

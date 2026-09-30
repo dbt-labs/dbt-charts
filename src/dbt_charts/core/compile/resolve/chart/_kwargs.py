@@ -319,6 +319,7 @@ def _shared_kwargs(
         "title": _resolve_text(normalized.title, variables),
         "subtitle": _resolve_text(normalized.subtitle, variables),
         "background": chart_style_context.background,
+        "canvas": chart_style_context.ink_canvas,
         "title_style": chart_style_context.title,
     }
 

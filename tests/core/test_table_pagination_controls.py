@@ -794,10 +794,10 @@ class TestPaginationControlsInSvg:
 
 
 class TestAntiDangleSqueeze:
-    """Anti-dangle: collapse a 1-2 row trailing page via a small row_height squeeze."""
+    """A 1-2 row trailing page: unbounded it grows; in a slot, rows squeeze."""
 
-    def test_unbounded_single_row_dangler_collapses_to_one_page(self) -> None:
-        """8 rows with page_rows=7: 1-row dangler should collapse to single page."""
+    def test_unbounded_single_row_dangler_grows_to_one_page(self) -> None:
+        """8 rows with page_rows=7: unbounded, the dangler grows the table."""
         from dbt_charts.core.compile.models.style.authored import PaginationConfig
         from dbt_charts.core.render.chart.table import _resolve_visible_rows
 
@@ -815,10 +815,7 @@ class TestAntiDangleSqueeze:
         )
         assert total_pages == 1, f"expected 1 page, got {total_pages}"
         assert len(visible) == 8, f"expected all 8 rows, got {len(visible)}"
-        assert out_row_height < row_height, "row_height should be squeezed"
-        assert out_row_height >= 20, (
-            "squeezed row_height must not fall below 20px floor"
-        )
+        assert out_row_height == row_height, "nothing bounds the height to squeeze"
 
     def test_unbounded_large_overflow_does_not_collapse(self) -> None:
         """20 rows with page_rows=7: 6-row overflow exceeds max_overflow=2, no collapse."""
@@ -881,20 +878,10 @@ class TestAntiDangleSqueeze:
             "row_height must be unchanged when floor blocks squeeze"
         )
 
-    def test_two_row_overflow_collapses_at_boundary(self) -> None:
-        """14 rows with page_rows=12: 2-row overflow at the exact _ANTI_DANGLE_MAX_OVERFLOW boundary.
-
-        The worksheet advertises 'up to 2-row overflow collapses'. This test pins that
-        boundary from the collapsing side. Parameters satisfy both gates:
-          overflow = 14 - 12 = 2 == _ANTI_DANGLE_MAX_OVERFLOW
-          squeeze_ratio = 12/14 ≈ 0.857 >= (1 - _ANTI_DANGLE_MAX_SQUEEZE = 0.85)
-        """
+    def test_two_row_overflow_grows_at_boundary(self) -> None:
+        """14 rows with page_rows=12: a 2-row overflow (_PAGINATION_GROW_CAP) grows."""
         from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import (
-            _ANTI_DANGLE_MAX_SQUEEZE,
-            _ANTI_DANGLE_MIN_ROW_H,
-            _resolve_visible_rows,
-        )
+        from dbt_charts.core.render.chart.table import _resolve_visible_rows
 
         data = _make_data(14)
         row_height = 28
@@ -908,16 +895,9 @@ class TestAntiDangleSqueeze:
             bottom_padding=10,
             pagination=PaginationConfig(enabled=True, page_rows=12),
         )
-        assert total_pages == 1, "2-row overflow must collapse to a single page"
+        assert total_pages == 1, "a 2-row overflow grows to a single page"
         assert len(visible) == 14, f"all 14 rows must be visible, got {len(visible)}"
-        # Squeeze must be within the 15% budget and above the 20px floor.
-        assert out_row_height < row_height, "row_height must be squeezed"
-        assert out_row_height >= _ANTI_DANGLE_MIN_ROW_H, (
-            "squeezed value must not fall below 20px"
-        )
-        assert out_row_height >= int(row_height * (1.0 - _ANTI_DANGLE_MAX_SQUEEZE)), (
-            "squeeze must not exceed 15%"
-        )
+        assert out_row_height == row_height, "nothing bounds the height to squeeze"
 
 
 class TestPaginationViewBoxContainment:

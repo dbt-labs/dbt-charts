@@ -55,6 +55,7 @@ _B: dict[str, Any] = {
     "resolved_channels": {},
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": _ZERO_PADDING,
 }
@@ -77,30 +78,26 @@ def _baked_bar_axes() -> tuple[Any, Any]:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            chart_style_context,
-            fixture_chart_for_type("bar"),
-            "bar",
-            "ordinal",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        chart_style_context,
+        fixture_chart_for_type("bar"),
+        "bar",
+        "ordinal",
+        "quantitative",
+        AxisOverrides(),
     )
     return (
         build_resolved_axis(
             ax_merged,
             band_position=ax_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
         build_resolved_axis(
             ay_merged,
             band_position=ay_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
     )
 
@@ -128,6 +125,7 @@ def _bar(
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )
@@ -284,6 +282,7 @@ _C_WITH_COLOR: dict[str, Any] = {
     },
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": _ZERO_PADDING,
 }
@@ -315,7 +314,7 @@ def test_area_fg_layer_omits_fill_when_color_channel_present(
     fg_area_layers = [
         layer
         for layer in spec.layers
-        if layer.mark == "area" and layer.mark_props.get("fill") != chart.background
+        if layer.mark == "area" and layer.mark_props.get("fill") != chart.canvas
     ]
     for layer in fg_area_layers:
         assert "fill" not in layer.mark_props, (
@@ -345,7 +344,7 @@ def test_area_fg_line_omits_stroke_when_color_channel_present(
     fg_line_layers = [
         layer
         for layer in spec.layers
-        if layer.mark == "line" and layer.mark_props.get("stroke") != chart.background
+        if layer.mark == "line" and layer.mark_props.get("stroke") != chart.canvas
     ]
     for layer in fg_line_layers:
         assert "stroke" not in layer.mark_props, (

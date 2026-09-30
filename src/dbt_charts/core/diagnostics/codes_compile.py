@@ -852,6 +852,39 @@ ERR_NOTHING_TO_RENDER = REGISTRY.register(
     )
 )
 
+ERR_UNKNOWN_WARNING_CODE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-UNKNOWN-WARNING-CODE",
+        domain="compile",
+        title="--ignore-warning names an unregistered code",
+        message_template="unknown warning code: {code!r}",
+        doc=(
+            "Fired when `dct render --ignore-warning` names a code that is not "
+            "a registered warning code: usually a typo or a stale suppression. "
+            "Check the code against the warning reference."
+        ),
+        summary="Fired when --ignore-warning names a code that isn't registered.",
+        docs_topic="errors",
+    )
+)
+
+ERR_IGNORE_ERROR_CODE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-IGNORE-ERROR-CODE",
+        domain="compile",
+        title="--ignore-warning names an error code",
+        message_template=(
+            "cannot ignore {code!r}: it is an error code, not a warning code"
+        ),
+        doc=(
+            "Fired when `dct render --ignore-warning` names an error code. Only "
+            "warnings can be suppressed; fix the board to clear an error."
+        ),
+        summary="Fired when --ignore-warning names an error code.",
+        docs_topic="errors",
+    )
+)
+
 ERR_TICKS_INTERVAL_MEASURE_AXIS = REGISTRY.register(
     ErrorCode(
         code="ERR-TICKS-INTERVAL-MEASURE-AXIS",
@@ -1083,6 +1116,28 @@ WARN_DEFAULTS_FILE_GIVEN_AS_BOARD = REGISTRY.register(
             "skipped and the boards render."
         ),
         summary="Fired when a meta.yml defaults file is given to dct render.",
+        docs_topic="board",
+    )
+)
+
+WARN_SCHEMA_MIGRATED = REGISTRY.register(
+    WarningCode(
+        code="WARN-SCHEMA-MIGRATED",
+        domain="compile",
+        title="Board YAML uses retired syntax",
+        message_template="{message}",
+        fix_template=(
+            "Run `dct migrate` to rewrite the file, or update the YAML by hand "
+            "where the message says `dct migrate` cannot."
+        ),
+        doc=(
+            "Fired when a board, meta.yml, or `extends:` file uses syntax from "
+            "an older dbt charts release. The board is migrated in memory and "
+            "still renders, but the file on disk is stale. When migration could "
+            "not finish, the message says so, and errors reported alongside it "
+            "may name retired syntax."
+        ),
+        summary="Fired when a board uses retired syntax that was migrated in memory.",
         docs_topic="board",
     )
 )

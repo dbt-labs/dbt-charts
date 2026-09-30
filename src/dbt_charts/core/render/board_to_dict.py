@@ -208,16 +208,18 @@ def kept_rows_phrase(truncated: dict[str, int]) -> str:
 def _cartesian_y_range_display(
     chart: _CartesianValueAxisChart,
     data: list[dict[str, Any]],  # type-state: explicit_any — query row
-    value_axis_format: FormatState,
+    format_raw: FormatState,
     formats: dict[str, str] | None,
 ) -> str | None:
-    """Format the y column's min-max range the way the value axis draws it.
+    """Format the y column's min-max range as a standalone value, the same
+    way a KPI headline or a table cell would.
 
-    ``value_axis_format`` is passed through unresolved (the authored
-    name/spec, not a pre-resolved d3 spec) so ``format_value`` can apply
-    house notation and the sub-unit fallback internally.
+    ``format_raw`` is passed through unresolved (the cascade's raw winner —
+    theme default included, not just an authored value — never a
+    pre-resolved d3 spec) so ``format_value`` can apply house notation and
+    the sub-unit fallback internally.
     """
-    if value_axis_format is None or not isinstance(chart.y, str):
+    if format_raw is None or not isinstance(chart.y, str):
         return None
     from dbt_charts.core.render.format_utils import format_value
 
@@ -226,8 +228,8 @@ def _cartesian_y_range_display(
         return None
     lo, hi = min(values), max(values)
     return (
-        f"{format_value(lo, value_axis_format, formats)}"
-        f"–{format_value(hi, value_axis_format, formats)}"
+        f"{format_value(lo, format_raw, formats)}"
+        f"–{format_value(hi, format_raw, formats)}"
     )
 
 
@@ -362,9 +364,11 @@ def _render_chart_item(
             if isinstance(chart, _CARTESIAN_VALUE_AXIS_CLASSES) and isinstance(
                 resolved, _RESOLVED_CARTESIAN_VALUE_AXIS_CLASSES
             ):
-                value_axis_format = resolved.style.axis_y.format_authored_raw
                 y_range_display = _cartesian_y_range_display(
-                    chart, data, value_axis_format, chart_style_context.formats
+                    chart,
+                    data,
+                    resolved.style.axis_y.format_raw,
+                    chart_style_context.formats,
                 )
                 if y_range_display:
                     item["y_range_display"] = y_range_display

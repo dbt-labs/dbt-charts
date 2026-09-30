@@ -480,6 +480,7 @@ def test_resolved_table_has_no_x_y_color_sort() -> None:
         resolved_channels={},
         legend=legend,
         background=board_charts.background,
+        canvas=board_charts.ink_canvas,
         title_style=board_charts.title,
         layout_padding=PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0),
         rows=["region"],

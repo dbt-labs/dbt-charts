@@ -50,7 +50,7 @@ def _merged_ay(chart_type: str = "line", y_channel_type: str = "quantitative"):
     """Return a merged AxisYStyle from the default theme for the given chart type."""
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     chart = fixture_chart_for_type(chart_type)
-    _, ay, _, ay_band_pos, _, _, _ = _bake_cartesian_axes(
+    _, ay, _, ay_band_pos, _ = _bake_cartesian_axes(
         ctx,
         chart,
         chart_type,
@@ -62,14 +62,13 @@ def _merged_ay(chart_type: str = "line", y_channel_type: str = "quantitative"):
 
 
 def test_quantitative_alias_format_forces_right_align_on_right_edge():
-    """format_is_alias=True + is_quantitative=True + edge='right' -> label.align == 'right'."""
+    """A predefined-name format + is_quantitative=True + edge='right' -> label.align == 'right'."""
     ay, ay_band_pos = _merged_ay()
     resolved = build_resolved_axis(
         ay,
         band_position=ay_band_pos,
         edge="right",
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         is_quantitative=True,
         chart_id="test",
     )
@@ -83,8 +82,7 @@ def test_quantitative_alias_format_no_force_on_left_edge():
         ay,
         band_position=ay_band_pos,
         edge="left",
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         is_quantitative=True,
         chart_id="test_left",
     )
@@ -99,8 +97,7 @@ def test_quantitative_alias_format_no_force_on_no_edge():
         ay,
         band_position=ay_band_pos,
         edge=None,
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         is_quantitative=True,
         chart_id="test_none",
     )
@@ -108,7 +105,7 @@ def test_quantitative_alias_format_no_force_on_no_edge():
 
 
 def test_raw_d3_format_does_not_force_right_align():
-    """format_is_alias=False (raw d3 spec) does not force right-align."""
+    """A literal d3 spec (not a predefined name) does not force right-align."""
     ay, ay_band_pos = _merged_ay()
     ay_with_align = ay.model_copy(
         update={"labels": ay.labels.model_copy(update={"align": "center"})}
@@ -117,8 +114,7 @@ def test_raw_d3_format_does_not_force_right_align():
         ay_with_align,
         band_position=ay_band_pos,
         edge="right",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=",.0f",
         is_quantitative=True,
         chart_id="test_raw",
     )
@@ -127,7 +123,7 @@ def test_raw_d3_format_does_not_force_right_align():
 
 
 def test_non_quantitative_axis_alias_format_does_not_force_right_align():
-    """A non-quantitative axis with format_is_alias=True is NOT forced to right."""
+    """A non-quantitative axis with a predefined-name format is NOT forced to right."""
     ay, ay_band_pos = _merged_ay(y_channel_type="ordinal")
     ay_with_align = ay.model_copy(
         update={"labels": ay.labels.model_copy(update={"align": "center"})}
@@ -136,8 +132,7 @@ def test_non_quantitative_axis_alias_format_does_not_force_right_align():
         ay_with_align,
         band_position=ay_band_pos,
         edge="right",
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         is_quantitative=False,
         chart_id="test_ordinal",
     )
@@ -183,13 +178,14 @@ def test_right_edge_theme_default_format_wired_through_full_resolve():
     theme's own baseline (``axis_quantitative.labels.format: number``,
     itself a predefined name) -- must still force label.align == 'right'.
 
-    ``format_is_alias`` used to only ever become True when an author
-    explicitly wrote ``format: <alias>`` at an authored layer (board 6-9,
-    fallback 10, or chart-local 11-13); the theme-default
-    layer (1-3) was invisible to it. Since `number` is the format
-    every unformatted quantitative axis actually gets, that gap meant the
-    overwhelming common case -- a plain axis with no format authored -- never
-    got the auto-right-align guarantee at all.
+    The old provenance flags only ever recognized an explicitly authored
+    ``format: <alias>`` (board 6-9, fallback 10, or chart-local 11-13); the
+    theme-default layer (1-3) was invisible to them. Since `number` is the
+    format every unformatted quantitative axis actually gets, that gap meant
+    the overwhelming common case -- a plain axis with no format authored --
+    never got the auto-right-align guarantee at all. The settled rule
+    (#7391) reads the final raw winner regardless of which tier wrote it, so
+    this case needs no special handling any more.
     """
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     patch = LineChartStylePatch(axis_y=AxisYStylePatch(position="right"))
@@ -211,6 +207,39 @@ def test_right_edge_theme_default_format_wired_through_full_resolve():
     ay = resolved.style.axis_y
     assert ay.labels.format == ".3~s"
     assert ay.labels.align == "right"
+
+
+def test_time_predefined_name_does_not_force_right_align_on_right_edge():
+    """A time predefined name (``date_short``) is not a member of
+    ``PREDEFINED_NUMBER_NAMES``, so it does not earn house treatment: a
+    right-edge y-axis authoring it is not forced to right-align, unlike a
+    number name (``currency``, ``percent``, the bare ``number`` default, …).
+    """
+    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
+    patch = LineChartStylePatch(
+        axis_y=AxisYStylePatch(
+            position="right",
+            labels=AxisLabelStylePatch(format="date_short"),
+        )
+    )
+    data = [
+        {"m": 1, "v": 25000},
+        {"m": 2, "v": 50000},
+        {"m": 3, "v": 75000},
+    ]
+    chart = LineChart(id="time_name_test", type="line", x="m", y="v", style=patch)
+    resolved = _resolve_line(
+        chart,
+        partition(None, data),
+        chart_style_context=ctx,
+        width=800.0,
+        datasets={},
+        automatic_link_candidate=None,
+        variables={},
+    )
+    ay = resolved.style.axis_y
+    assert ay.format_raw == "date_short"
+    assert ay.labels.align != "right"
 
 
 def test_vertical_bar_house_alias_forces_align_right():
@@ -374,6 +403,45 @@ rows:
     codes = {w.code for w in result.warnings}
     assert WARN_AXIS_ALIGN_DISCARDED.code in codes, (
         f"Expected WARN-AXIS-ALIGN-DISCARDED in compile warnings; got: {codes}"
+    )
+
+
+def test_compile_time_diagnostic_does_not_fire_for_time_predefined_name():
+    """WARN_AXIS_ALIGN_DISCARDED does not fire for a time predefined name
+    (``date_short``) on a right-edge axis with an authored align -- it is not
+    a member of ``PREDEFINED_NUMBER_NAMES``, so the force never applies and
+    the authored align is honored, same as a literal spec.
+    """
+    from dbt_charts.core.compile.compiler import compile as _compile
+    from dbt_charts.core.diagnostics import WARN_AXIS_ALIGN_DISCARDED
+
+    board_yaml = """
+queries:
+  q:
+    type: values
+    rows:
+      - {month: 1, value: 25000}
+      - {month: 2, value: 50000}
+charts:
+  rev:
+    type: line
+    x: month
+    y: value
+    query: q
+    style:
+      axis_y:
+        position: right
+        labels:
+          align: left
+          format: date_short
+rows:
+  - rev
+"""
+    result = _compile(board_yaml)
+    assert result.errors == [], f"Unexpected compile errors: {result.errors}"
+    codes = {w.code for w in result.warnings}
+    assert WARN_AXIS_ALIGN_DISCARDED.code not in codes, (
+        f"WARN-AXIS-ALIGN-DISCARDED must not fire for a time predefined name; got: {codes}"
     )
 
 
@@ -568,8 +636,7 @@ def test_column_forming_axis_with_non_tabular_font_does_not_force_align_right():
         ay_nontabular,
         band_position=ay_band_pos,
         edge="right",
-        format_authored=True,
-        format_is_alias=True,
+        format_raw="number",
         is_quantitative=True,
         column_forming=True,
         chart_id="nontabular_test",

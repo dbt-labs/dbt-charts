@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Auto-sized tables reserve the height the renderer actually draws, including wrapped rows, so their page is never cut short; a 1-2 row overflow grows the table instead of squeezing rows. `WARN-TABLE-PAGE-SQUEEZED` now fires only for pinned slots and prescribes `style.pagination.page_rows: N` with N the rows the slot fits. `page_rows: null` means unlimited and never warns.'
+time: 2026-09-28T15:32:17.000000-07:00

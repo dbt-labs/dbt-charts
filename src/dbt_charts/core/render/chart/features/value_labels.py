@@ -456,7 +456,7 @@ def _build_bar_text_layer(
     y_field: str,
     is_horizontal: bool,
     is_stacked: bool,
-    background: str,
+    canvas: str,
     is_house: bool,
     label_is_text: bool,
     category_field: str | None,
@@ -491,9 +491,9 @@ def _build_bar_text_layer(
         mark_dict["dy"] = labels.dy
     apply_label_font(mark_dict, labels)
 
-    # Inside-bar positions need the background color for legibility.
+    # Inside-bar positions need the opaque canvas color for legibility.
     if effective_position in _INSIDE_BAR_POSITIONS and "color" not in mark_dict:
-        mark_dict["color"] = background
+        mark_dict["color"] = canvas
 
     label_field = labels.field if labels.field is not None else y_field
     text_enc, house_transforms = _house_register_text_encoding(
@@ -517,7 +517,7 @@ def _build_bar_text_layer(
     # own encoding value so nothing upstream can claim it. A stacked label
     # always sits in a segment and so always needs one; elsewhere no color
     # means no claim, and the label goes on inheriting the series color.
-    label_color = mark_dict.pop("color", background if is_stacked else None)
+    label_color = mark_dict.pop("color", canvas if is_stacked else None)
     if label_color is not None:
         layer_enc["color"] = {"value": label_color}
 
@@ -680,7 +680,7 @@ def _build_bar_span_text_layer(
     y_field: str,
     start_field: str,
     is_horizontal: bool,
-    background: str,
+    canvas: str,
     is_house: bool,
     label_is_text: bool,
     duration_unit: str | None,
@@ -774,7 +774,7 @@ def _build_bar_span_text_layer(
     if size is not None:
         layer_enc["size"] = size
     if effective_position in _INSIDE_BAR_POSITIONS:
-        layer_enc["color"] = {"value": background}
+        layer_enc["color"] = {"value": canvas}
     return {"mark": mark_dict, "transform": transforms, "encoding": layer_enc}
 
 
@@ -1536,7 +1536,7 @@ class ValueLabelFeature:
                 y,
                 chart.y_start,
                 is_horiz,
-                chart.background,
+                chart.canvas,
                 chart.style.label_is_house,
                 label_is_text,
                 span_duration_unit(data, y, chart.y_start)
@@ -1549,7 +1549,7 @@ class ValueLabelFeature:
                 y,
                 is_horiz,
                 is_stacked,
-                chart.background,
+                chart.canvas,
                 is_house=chart.style.label_is_house,
                 label_is_text=label_is_text,
                 category_field=chart.x if isinstance(chart.x, str) else None,

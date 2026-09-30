@@ -35,7 +35,6 @@ from __future__ import annotations
 import dataclasses
 import types
 import typing
-import warnings
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from functools import cache
@@ -673,15 +672,12 @@ def _resolve_entry(
     if not is_path_ref(entry):
         redirect = _retired_theme_redirect(entry, ctx)
         if redirect is not None:
-            from dbt_charts.core.compile.migrations.migrations import (
-                SchemaMigrationWarning,
-            )
+            from dbt_charts.core.compile.migrations.migrations import warn_migration
 
-            warnings.warn(
+            warn_migration(
                 f"dbt charts resolved retired `extends:` theme name {entry!r} "
                 f"to {redirect!r} in memory. `dct migrate` does not rewrite "
                 "this position — update the YAML by hand.",
-                SchemaMigrationWarning,
                 stacklevel=2,
             )
             return _resolve_entry(redirect, ctx, seen, theme_sink)
@@ -719,15 +715,18 @@ def _resolve_entry(
         raise CompilationError(
             f"Circular extends: {fragment_relpath} is already in the extends chain"
         )
-    fragment = _load_fragment(fragment_path)
-    fragment_ctx = _ExtendCtx(
-        board_dir=fragment_path.parent,
-        boards_root=ctx.boards_root,
-        theme_names=ctx.theme_names,
-    )
-    extends_patch = _merge_extends_inner(
-        fragment, fragment_ctx, seen | {fragment_relpath}, theme_sink
-    )
+    from dbt_charts.core.compile.migrations import migration_notice_file
+
+    with migration_notice_file(fragment_relpath):
+        fragment = _load_fragment(fragment_path)
+        fragment_ctx = _ExtendCtx(
+            board_dir=fragment_path.parent,
+            boards_root=ctx.boards_root,
+            theme_names=ctx.theme_names,
+        )
+        extends_patch = _merge_extends_inner(
+            fragment, fragment_ctx, seen | {fragment_relpath}, theme_sink
+        )
     own_patch = _fragment_own_patch(fragment)
     return merge_patches(extends_patch, own_patch, nested=False)
 
@@ -866,40 +865,46 @@ def merge_metas(
         # load_meta_file strips the lint: key and returns only board-content data.
         # This prevents BoardPatch (extra="forbid") from rejecting the lint field.
         meta_data, _ = load_meta_file(meta_path)
-        try:
-            from dbt_charts.core.compile.migrations import prepare_board_mapping
-
-            fragment = BOARD_PATCH_ADAPTER.validate_python(
-                prepare_board_mapping(meta_data, model=BoardPatch)
-            )
-        except PydanticValidationError as e:
-            from dbt_charts.core.compile.parse.source_map import (
-                build_source_index,
-                stamp_diagnostics,
-            )
-            from dbt_charts.core.compile.parse.yaml_error_formatter import (
-                format_validation_errors_structured,
-            )
-
-            meta_content = meta_path.read_text()
-            diags = format_validation_errors_structured(e, meta_content)
-            stamp_diagnostics(
-                diags, *build_source_index(meta_content, meta_path.relpath)
-            )
-            raise MergeValidationError(
-                f"meta schema error in {meta_path.relpath}",
-                diags,
-            ) from e
-        meta_ctx = _ExtendCtx(
-            board_dir=meta_path.parent,
-            boards_root=boards_root,
-            theme_names=get_theme_names(),
+        from dbt_charts.core.compile.migrations import (
+            migration_notice_file,
+            prepare_board_mapping,
         )
-        extends_patch = _merge_extends_inner(
-            fragment, meta_ctx, frozenset(), theme_sink
-        )
-        own_patch = _fragment_own_patch(fragment)
-        meta_patch: BaseModel = merge_patches(extends_patch, own_patch, nested=False)
+
+        with migration_notice_file(meta_path.relpath):
+            try:
+                fragment = BOARD_PATCH_ADAPTER.validate_python(
+                    prepare_board_mapping(meta_data, model=BoardPatch)
+                )
+            except PydanticValidationError as e:
+                from dbt_charts.core.compile.parse.source_map import (
+                    build_source_index,
+                    stamp_diagnostics,
+                )
+                from dbt_charts.core.compile.parse.yaml_error_formatter import (
+                    format_validation_errors_structured,
+                )
+
+                meta_content = meta_path.read_text()
+                diags = format_validation_errors_structured(e, meta_content)
+                stamp_diagnostics(
+                    diags, *build_source_index(meta_content, meta_path.relpath)
+                )
+                raise MergeValidationError(
+                    f"meta schema error in {meta_path.relpath}",
+                    diags,
+                ) from e
+            meta_ctx = _ExtendCtx(
+                board_dir=meta_path.parent,
+                boards_root=boards_root,
+                theme_names=get_theme_names(),
+            )
+            extends_patch = _merge_extends_inner(
+                fragment, meta_ctx, frozenset(), theme_sink
+            )
+            own_patch = _fragment_own_patch(fragment)
+            meta_patch: BaseModel = merge_patches(
+                extends_patch, own_patch, nested=False
+            )
         acc = merge_patches(acc, meta_patch, nested=False)
     return acc
 

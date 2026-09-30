@@ -195,6 +195,10 @@ _OMITTED_FROM_PROJECTION = {
     "defined_in_other_file": "internal: ChartRef provenance, not chart content",
     # Resolved/derived internals with no authored counterpart.
     "aspect_ratio": "derived at resolve time",
+    "canvas": (
+        "internal: the chart's opaque composited canvas for undercoat/halo "
+        "rendering, never authorable or user-facing"
+    ),
     "layout_padding": "internal layout info",
     "legend": "resolved legend",
     "max_height": "derived sizing",

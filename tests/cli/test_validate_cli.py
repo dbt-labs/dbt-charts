@@ -153,6 +153,37 @@ class TestDftValidateStrictExits1OnWarnings:
         )
         assert result_strict.exit_code == 1
 
+    def test_strict_fails_a_board_migrated_in_memory(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        board = tmp_path / "board.yml"
+        board.write_text(
+            "title: t\n"
+            "theme: solid\n"
+            "queries:\n"
+            "  q:\n"
+            "    type: values\n"
+            "    columns: [n]\n"
+            "    values:\n"
+            "      - [1]\n"
+            "charts:\n"
+            "  k:\n"
+            "    type: kpi\n"
+            "    query: q\n"
+            "    value: n\n"
+            "rows:\n"
+            "  - k\n"
+        )
+        project_dir_args = ["--project-dir", str(tmp_path)]
+
+        result_normal = runner.invoke(app, ["validate", str(board), *project_dir_args])
+        assert result_normal.exit_code == 0, result_normal.stderr
+
+        result_strict = runner.invoke(
+            app, ["validate", str(board), "--strict", *project_dir_args]
+        )
+        assert result_strict.exit_code == 1
+        assert "WARN-SCHEMA-MIGRATED" in result_strict.stderr
+
 
 class TestDftValidatePrettyOutputHasNoTraceback:
     """dct validate pretty output shows message text, not a Python traceback."""

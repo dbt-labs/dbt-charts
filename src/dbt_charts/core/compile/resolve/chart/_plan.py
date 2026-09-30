@@ -129,8 +129,6 @@ class CartesianPlan:
     ay_merged: AxisYStyle
     ax_band_position: float | None
     ay_band_position: float | None
-    ay_format_authored: bool
-    ay_format_is_alias: bool
     ay_format_raw: str | None
 
 
@@ -174,8 +172,6 @@ def plan_cartesian(
         ay_merged,
         ax_band_position,
         ay_band_position,
-        ay_format_authored,
-        ay_format_is_alias,
         ay_format_raw,
     ) = _bake_cartesian_axes(
         chart_style_context,
@@ -194,8 +190,6 @@ def plan_cartesian(
         ay_merged=ay_merged,
         ax_band_position=ax_band_position,
         ay_band_position=ay_band_position,
-        ay_format_authored=ay_format_authored,
-        ay_format_is_alias=ay_format_is_alias,
         ay_format_raw=ay_format_raw,
     )
 
@@ -208,8 +202,6 @@ def build_cartesian_axes(
     ax_band_position: float | None,
     ay_band_position: float | None,
     ax_edge: Literal["left", "right"] | None,
-    ay_format_authored: bool,
-    ay_format_is_alias: bool,
     ticks: _CartesianTickResolution,
     column_forming: bool,
     measure_tooltip_format: str | None,
@@ -218,8 +210,8 @@ def build_cartesian_axes(
     endpoint_rail_may_discard_domain: bool,
     ax_is_quantitative: bool,
     ay_is_quantitative: bool,
+    ay_format_raw: str | None,
     ay_quantitative_for_alignment: bool | None = None,
-    ay_format_raw: str | None = None,
     *,
     ay_floors_tick_step: bool,
 ) -> tuple[ResolvedAxisStyle, _StyleTail]:
@@ -243,12 +235,6 @@ def build_cartesian_axes(
     ``CartesianPlan`` at every call site: no family mutates them after the
     bake, so there is no local variable guarding a stale read the way
     ``ax_merged``/``ay_merged`` need one.
-
-    ``ay_format_authored``/``ay_format_is_alias`` are parameters rather than
-    read off a shared struct directly: heatmap and histogram discard the
-    cascade's real answer and hardcode ``True``/``False`` (neither axis
-    carries a real format), while bar/line/area/scatter pass the cascade's
-    own values through.
 
     ``measure_tooltip_format`` folds the two spellings every family used to
     apply separately (a conditional override in bar/line/area, an
@@ -307,16 +293,16 @@ def build_cartesian_axes(
 
     ``ay_format_raw`` is the cascade's raw pre-resolve value-axis format
     (``CartesianPlan.ay_format_raw``, see ``_bake_cartesian_axes``), passed
-    straight to ``build_resolved_axis``. Heatmap/histogram leave it at the
-    default ``None`` along with their hardcoded ``ay_format_authored`` —
-    neither axis carries a real cascade-authored format for this to describe.
+    straight to ``build_resolved_axis`` to decide house-vs-literal (and
+    stored verbatim on the resolved axis). Heatmap, histogram, and ``ax``
+    pass ``None`` explicitly: none of those axes carry a real
+    cascade-authored format to offer.
     """
     ax = build_resolved_axis(
         ax_merged,
         band_position=ax_band_position,
         edge=ax_edge,
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
         is_quantitative=ax_is_quantitative,
         chart_id=chart_id,
         y_gridline_caps_bottom=_y_gridline_caps_bottom(
@@ -328,9 +314,7 @@ def build_cartesian_axes(
         band_position=ay_band_position,
         edge=_edge_or_none(ay_merged.position),
         tick_values=ticks.ticks,
-        format_authored=ay_format_authored,
-        format_is_alias=ay_format_is_alias,
-        format_authored_raw=ay_format_raw,
+        format_raw=ay_format_raw,
         is_quantitative=ay_is_quantitative,
         quantitative_for_alignment=ay_quantitative_for_alignment,
         zero_anchored=zero_anchor,

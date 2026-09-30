@@ -93,6 +93,7 @@ _B: dict[str, Any] = {
     "resolved_channels": {},
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": _ZERO_PADDING,
 }
@@ -169,7 +170,11 @@ def test_get_emitter_raises_for_kpi() -> None:
         chart_type="kpi",
         value="total",
         style=ResolvedKpiStyle(title=_default_title()),
-        **{k: v for k, v in _B.items() if k not in ("background", "title_style")},
+        **{
+            k: v
+            for k, v in _B.items()
+            if k not in ("background", "canvas", "title_style")
+        },
     )
     with pytest.raises(RenderError, match="ResolvedKpiChart"):
         get_emitter(kpi)
@@ -192,6 +197,7 @@ def test_get_emitter_raises_for_table() -> None:
         resolved_channels={},
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
+        canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
     )

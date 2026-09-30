@@ -729,7 +729,7 @@ class BarEmitter:
                 base_orientation="horizontal" if is_horiz else "vertical",
                 base_x_authored_temporal=base_x_authored_temporal,
                 tooltip_format=chart.style.tooltip_format,
-                background=chart.background,
+                canvas=chart.canvas,
                 single_series_fill=chart.style.single_series_fill,
                 legend=chart.legend,
                 config=config,

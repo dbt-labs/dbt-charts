@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.format import resolve_label_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     LineChart,
@@ -90,7 +91,6 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LINE_Y_NOT_NUMERIC,
 )
-from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.utils import (
     layered_endpoint_rail_fires,
     layered_endpoint_rail_shape,
@@ -310,7 +310,7 @@ def _resolve_line(
     )
     # Line's x is always a bottom-orient temporal/ordinal axis — no left/right edge.
     # No tick_values on the categorical axis -- the non-compacting bake
-    # can't fire regardless, but format_authored is required, not defaulted
+    # can't fire regardless, but format_raw is required, not defaulted
     # (see build_resolved_axis's docstring).
     tooltip_format_values = quantitative_channel_values(data, normalized.y)
     ay, style_tail = build_cartesian_axes(
@@ -321,8 +321,6 @@ def _resolve_line(
         ax_band_position=plan.ax_band_position,
         ay_band_position=plan.ay_band_position,
         ax_edge=None,
-        ay_format_authored=plan.ay_format_authored,
-        ay_format_is_alias=plan.ay_format_is_alias,
         ay_format_raw=plan.ay_format_raw,
         ticks=line_ticks,
         column_forming=True,
@@ -354,15 +352,13 @@ def _resolve_line(
             )
         ),
     )
-    axis_is_house = (
-        ay.labels.format is not None
-        and is_d3_si_spec(ay.labels.format)
-        and (not plan.ay_format_authored or plan.ay_format_is_alias)
+    _, axis_house_default = resolve_label_format(
+        plan.ay_format_raw, chart_style_context.formats
     )
     resolved_line_labels, line_label_is_house = _label_format_fallback(
         line.marks.line.labels,
         ay.labels.format,
-        axis_is_house,
+        axis_house_default,
         chart_style_context.formats,
     )
     line_mark_with_labels = line.marks.line.model_copy(
@@ -397,7 +393,7 @@ def _resolve_line(
     resolved_point_labels, point_label_is_house = _label_format_fallback(
         line.marks.point.labels,
         ay.labels.format,
-        axis_is_house,
+        axis_house_default,
         chart_style_context.formats,
     )
     line_point_mark = line.marks.point.model_copy(

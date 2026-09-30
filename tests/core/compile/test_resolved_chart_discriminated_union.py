@@ -98,13 +98,16 @@ _B: dict = {
     "resolved_channels": {},
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": _ZERO_PADDING,
 }
 _C: dict = dict(_B)
 # ResolvedKpiChart inherits _BaseResolvedChartFields directly (extra="forbid"),
 # not _SharedResolvedChartFields — it has neither background nor title_style.
-_KPI_B: dict = {k: v for k, v in _B.items() if k not in ("background", "title_style")}
+_KPI_B: dict = {
+    k: v for k, v in _B.items() if k not in ("background", "canvas", "title_style")
+}
 
 
 # ---------------------------------------------------------------------------
@@ -251,29 +254,25 @@ def _default_axis_d(chart_type: str, x_type: str, y_type: str) -> tuple[dict, di
     from ..conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            chart_style_context,
-            fixture_chart_for_type(chart_type),
-            chart_type,
-            x_type,
-            y_type,
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        chart_style_context,
+        fixture_chart_for_type(chart_type),
+        chart_type,
+        x_type,
+        y_type,
+        AxisOverrides(),
     )
     ax = build_resolved_axis(
         ax_merged,
         band_position=ax_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     ay = build_resolved_axis(
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     return dataclasses.asdict(ax), dataclasses.asdict(ay)
 
@@ -304,11 +303,14 @@ _BD: dict = {
     "resolved_channels": {},
     "legend": _default_legend().model_dump(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title.model_dump(),
     "layout_padding": _ZERO_PADDING_D,
 }
 _CD: dict = {**_BD, "panel_axes": []}
-_KPI_BD: dict = {k: v for k, v in _BD.items() if k not in ("background", "title_style")}
+_KPI_BD: dict = {
+    k: v for k, v in _BD.items() if k not in ("background", "canvas", "title_style")
+}
 # Resolved mark dicts.
 _LINE_MARK_D = {"stroke": {"width": 2.0}, "halo_multiplier": 2.0, "labels": {}}
 _AREA_MARK_D = {"opacity": 0.15, "backdrop": True}

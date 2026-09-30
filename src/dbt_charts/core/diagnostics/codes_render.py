@@ -2111,20 +2111,18 @@ WARN_TABLE_PAGE_SQUEEZED = REGISTRY.register(
         ),
         fix_template=(
             "Give the tile more height (layout height:, a taller row, or fewer "
-            "siblings sharing the row), or set style.pagination.page_rows to the "
-            "page size you actually want so the sizer reserves room for it."
+            "siblings sharing the row), or set `style.pagination.page_rows: "
+            "{drawn_rows}` to page at what the slot fits. page_rows is a "
+            "ceiling: raising it does not make the slot taller."
         ),
         doc=(
-            "Fires when a table's layout slot is shorter than the height the "
-            "sizer reserved for it, so the paginator draws fewer rows per page "
-            "than the table's own pagination settled on. The two estimates are "
-            "computed independently: layout_sizing._get_table_height_from_data "
-            "reserves the slot, table._largest_safe_page_rows decides what fits, "
-            "and when they disagree the paginator wins in silence: the render "
-            "exits 0 and the export photographs as a faithful table while "
-            "showing a fraction of its rows. Paginating because the data is "
-            "genuinely longer than the page is not this warning; only a page "
-            "cut down by the slot is."
+            "Fires when a pinned layout slot (explicit height, grid row, "
+            "equalized siblings) fits fewer rows than the table's page_rows, "
+            "so the paginator draws fewer rows per page and the export "
+            "photographs as a faithful table showing a fraction of its rows. "
+            "An auto-sized tile is measured by the renderer and always fits "
+            "its page; page_rows: null never warns. Paginating because the "
+            "data is longer than the page is not this warning."
         ),
         docs_topic="charts",
     )

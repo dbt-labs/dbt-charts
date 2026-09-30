@@ -1300,16 +1300,8 @@ _WRAP_OVERFLOW_MODES: frozenset[str] = frozenset({"wrap-two", "wrap"})
 
 
 def reserve_header_band(table_config: TableChartStyle, body_font_size: int) -> int:
-    """Height to reserve for the header row before column widths are known.
-
-    ``resolve_wrapped_headers`` returns the exact height, but it needs the
-    resolved column widths — which only the renderer computes. The sizer runs
-    before layout, so it reserves the two-line worst case whenever a wrap mode
-    is in play. Erring high costs dead space at the bottom of the slot; erring
-    low drops rows or paginates early, so the estimate deliberately rounds up.
-
-    ``wrap`` can exceed two lines and is still under-reserved here — unchanged
-    from before ``wrap-two`` became the effective default, and opt-in.
+    """Header height to reserve without column widths: the two-line worst case
+    whenever a wrap mode is in play (``resolve_wrapped_headers`` is exact).
     """
     if not table_config.header.visible:
         return 0

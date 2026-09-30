@@ -108,7 +108,8 @@ def _resolve_heatmap(
     # no left/right edge to resolve inward/outward align against.
     # Neither axis carries tick_values on a heatmap (both channels are
     # nominal), so the non-compacting bake can't fire on either --
-    # format_authored=True is inert here, not a real provenance read.
+    # ay_format_raw is passed None explicitly below, which is inert here,
+    # not a real provenance read.
     # A heatmap's tooltip formats its color channel, not y (nominal) --
     # emitters/heatmap.py sets encoding.color.format = tooltip_format for
     # every quantitative color encoding, and structured_tooltip.py's
@@ -128,8 +129,6 @@ def _resolve_heatmap(
         ax_band_position=plan.ax_band_position,
         ay_band_position=plan.ay_band_position,
         ax_edge=None,
-        ay_format_authored=True,
-        ay_format_is_alias=False,
         ticks=_CartesianTickResolution((), None, None),
         column_forming=True,
         measure_tooltip_format=None,
@@ -138,6 +137,7 @@ def _resolve_heatmap(
         # own "nominal", "nominal" call above.
         ax_is_quantitative=False,
         ay_is_quantitative=False,
+        ay_format_raw=None,
         ay_floors_tick_step=False,
         # Inert: ticks is always the empty _CartesianTickResolution above, so
         # _y_gridline_caps_bottom returns before this bool is ever read.

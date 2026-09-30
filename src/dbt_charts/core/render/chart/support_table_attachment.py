@@ -3424,8 +3424,10 @@ def _mark_series_header_fills(
     Each field's effective color (``_effective_mark_color``) is run through
     ``companion_color_for_fill`` -- see the two branches below for the
     palette-member/passthrough split. ``canvas`` reads
-    ``charts_style.ink_canvas`` (see that field's own docstring), never
-    ``resolved_chart.background``, which can be ``transparent``, a CSS
+    ``resolved_chart.canvas`` -- the chart's OWN opaque composited canvas,
+    which already accounts for a chart-local ``style.background`` override
+    (``charts_style.ink_canvas`` is the board's default and ignores one) --
+    never ``resolved_chart.background``, which can be ``transparent``, a CSS
     name, or ``rgba(...)``, none of which ``ensure_readable_ink`` can read.
     """
     # Scatter is deliberately excluded: ResolvedScatterStyle carries no
@@ -3456,7 +3458,7 @@ def _mark_series_header_fills(
         fill_by_field[y_field] = effective
     palette = list(resolved_chart.palette)
     dark_companions = resolved_chart.style.series_label.dark_companion_palette
-    canvas = charts_style.ink_canvas
+    canvas = resolved_chart.canvas
     result = {}
     for entry_idx, entry in enumerate(support_table.entries):
         if not (

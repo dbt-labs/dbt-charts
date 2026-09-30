@@ -19,6 +19,7 @@ from dbt_charts._render_tz import pin_vl_convert_tz_utc
 from dbt_charts.agent_api import RenderFormat, set_surface
 from dbt_charts.agent_api._paths import (
     defaults_file_skip_diagnostics,
+    empty_stdin_diagnostic,
     nothing_to_render_diagnostic,
     partition_defaults_files,
 )
@@ -1007,7 +1008,11 @@ def render(
     if has_stdin:
         yaml_content = sys.stdin.read()
         if not yaml_content.strip():
-            print("Error: No YAML input received from stdin", file=sys.stderr)
+            empty = empty_stdin_diagnostic()
+            if diagnostics_json:
+                emit_diagnostics_jsonl([empty])
+            else:
+                print_diagnostics([empty])
             raise typer.Exit(1)
         render_cmd.render_command_from_yaml(
             yaml_content=yaml_content,

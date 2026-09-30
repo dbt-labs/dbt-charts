@@ -63,30 +63,26 @@ def _baked_bar_axes() -> tuple[Any, Any]:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            chart_style_context,
-            fixture_chart_for_type("bar"),
-            "bar",
-            "ordinal",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        chart_style_context,
+        fixture_chart_for_type("bar"),
+        "bar",
+        "ordinal",
+        "quantitative",
+        AxisOverrides(),
     )
     return (
         build_resolved_axis(
             ax_merged,
             band_position=ax_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
         build_resolved_axis(
             ay_merged,
             band_position=ay_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
     )
 
@@ -112,6 +108,7 @@ def _bar_with_color(
         resolved_channels={"color": color_ch},
         legend=legend,
         background=_default_charts().background,
+        canvas=_default_charts().ink_canvas,
         title_style=_default_charts().title,
         layout_padding=_ZERO_PADDING,
     )
@@ -146,6 +143,7 @@ def _pie_with_color(
         resolved_channels={"color": color_ch},
         legend=legend,
         background=_default_charts().background,
+        canvas=_default_charts().ink_canvas,
         title_style=_default_charts().title,
         layout_padding=_ZERO_PADDING,
     )

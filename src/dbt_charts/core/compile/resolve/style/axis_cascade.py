@@ -62,7 +62,7 @@ from dbt_charts.core.text.numeral_scale import (
     sub_unit_digit_format,
     sub_unit_scientific_format,
 )
-from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
+from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 
 # Fields on AxisLabelStyle (base) that are optional VL passthroughs.
 # "overlap" is handled explicitly (AxisLabelOverlapConfig → ResolvedAxisLabelOverlapConfig).
@@ -258,9 +258,7 @@ def build_resolved_axis(
     domain_max: float | EllipsisType = ...,
     domain_min: float | EllipsisType = ...,
     column_forming: bool = True,
-    format_authored: bool,
-    format_is_alias: bool,
-    format_authored_raw: str | None = None,
+    format_raw: str | None,
     is_quantitative: bool = False,
     quantitative_for_alignment: bool | None = None,
     zero_anchored: bool = False,
@@ -291,46 +289,26 @@ def build_resolved_axis(
     from measured space characters, ``font_measure.compose_suffix_reservation``),
     so only one is required to resolve a tabular label font.
 
-    ``format_authored`` says whether ``axis.labels.format`` was set by an
-    authored cascade layer (board layers 6-9, chart-format fallback Layer 10,
-    or chart-local layers 11-13 in ``_merge_axis_cascade``) rather than by
-    the theme default. It governs only ``tick_label.format`` below (a ladder that
-    doesn't compact still writes its ticks in full unless the author asked
-    for that exact SI format themselves); the compacting ``ruler`` branch
-    reads it not at all — an author-written SI format still gets full ruler
-    treatment there. Required, not defaulted: this is the one flag deciding
-    whether the non-compacting bake fires at all, and a caller that forgets
-    to thread it should get a type error, not a silent "no bake". A caller
-    with no real ``tick_values`` to offer (the categorical ``ax`` axis, or
-    any axis where the branch structurally can't fire) still must pass an
-    explicit value — ``True`` reads as "nothing to authorize a rewrite of".
-
-    ``format_is_alias`` says whether the *raw*, pre-resolution string the
-    authoring layer set was a key in the format-alias table (e.g.
-    ``currency`` resolving to ``"$.3~s"``), rather than a literal d3
-    spec the author typed directly. It only ever relaxes
-    ``format_authored``'s gate below — an authored alias still qualifies for
-    the plain-digit bake, since picking a named alias for its prefix/suffix
-    is not the same intent as hand-writing an SI spec to force permanent
-    compaction. Required, not defaulted, for the same reason as
-    ``format_authored``: a caller that forgets to thread it should get a
-    type error, not a silent wrong answer. A caller passing
-    ``format_authored=False`` may pass ``False`` here too — the value is
-    inert whenever the format was never authored at all.
+    ``format_raw`` is the axis's raw, pre-resolution ``labels.format``
+    string — never the resolved d3 spec — baked straight onto
+    ``ResolvedAxisStyle.format_raw``; see that field's docstring for the
+    house-vs-literal rule it decides. Computed once below as
+    ``format_is_house`` and read by ``_force_right`` and both
+    non-compacting-ladder branches — a ladder that doesn't compact still
+    writes its ticks in full unless the format is a predefined name; the
+    compacting ``ruler`` branch reads it not at all — a house-named SI
+    format still gets full ruler treatment there. Required, not defaulted: a
+    caller that forgets to thread it should get a type error, not a
+    silently-wrong verdict either way. A caller with no real raw to offer (a
+    synthetic axis with no genuine cascade-authored format at all —
+    histogram/heatmap's VL-computed axes) passes ``None`` explicitly, which
+    is never a predefined name and so never earns house treatment.
 
     ``floor_tick_step`` opts the measure axis (``AxisYStyle``) into deriving
     ``ticks.step`` from its fixed-decimal format when no ladder was baked
     (``tick_values`` empty): Vega-Lite picks the ticks and the step reaches it
     as ``tickMinStep``. Off unless the cartesian plan says the axis's format is
     the one that paints.
-
-    ``format_authored_raw`` is baked straight onto
-    ``ResolvedAxisStyle.format_authored_raw`` — see that field's docstring.
-    Optional and unrelated to ``format_authored``/``format_is_alias``
-    above: only the cartesian resolve path (``_bake_cartesian_axes`` via
-    ``build_cartesian_axes``) has a pre-resolve raw string left to offer by
-    this point, since it is the only caller whose own ``axis.labels.format``
-    already got overwritten with the resolved d3 spec before reaching here.
 
     ``is_quantitative`` is a channel-type fact: is this axis's field numeric
     rather than categorical. It is baked straight onto
@@ -431,6 +409,8 @@ def build_resolved_axis(
     # configs.  non-column-forming axes (horizontal bar measure) are exempt:
     # their reserve is always False regardless of start_anchored.
     _resolved_font = resolve_cascaded_font(axis.labels.font, "charts.axis.labels.font")
+    # See ResolvedAxisStyle.format_raw's docstring for the house-vs-literal rule.
+    format_is_house = format_raw in PREDEFINED_NUMBER_NAMES
     _quantitative_for_alignment = (
         is_quantitative
         if quantitative_for_alignment is None
@@ -438,7 +418,7 @@ def build_resolved_axis(
     )
     _force_right = (
         _quantitative_for_alignment
-        and format_is_alias
+        and format_is_house
         and edge == "right"
         and (not column_forming or _resolved_font.tabular_figures)
     )
@@ -501,8 +481,8 @@ def build_resolved_axis(
 
     # tick_label.format is ruler's non-compacting sibling: a ladder that
     # does NOT compact (raw_scale is None) gets its ticks rewritten by
-    # `non_compacting_tick_format`, unless the author wrote the SI format
-    # themselves (format_authored) or the ladder has too little to derive
+    # `non_compacting_tick_format`, unless the format is a literal d3 spec
+    # (not house, per format_is_house) or the ladder has too little to derive
     # a step from. Recomputed here rather than read off `ruler is None`
     # because `ruler` can also be None for reasons (non-SI format,
     # authored label.expr) this branch independently re-checks.
@@ -516,7 +496,7 @@ def build_resolved_axis(
     tick_label: ResolvedTickLabel | None = None
     if (
         raw_scale is None
-        and (not format_authored or format_is_alias)
+        and format_is_house
         and len(tick_values) >= 2
         # `nice_tick_values` rounds each rung to 10 places, so a near-degenerate
         # span (1.0 to 1.0000000001) can hand back a ladder whose adjacent rungs
@@ -583,7 +563,7 @@ def build_resolved_axis(
         )
     elif (
         not tick_values
-        and (not format_authored or format_is_alias)
+        and format_is_house
         and _si_format is not None
         and label.expr is None
         # Excludes a log-scale axis, which also reaches here with empty
@@ -748,7 +728,7 @@ def build_resolved_axis(
         domain_min=None if domain_min is ... else domain_min,
         is_quantitative=is_quantitative,
         zero_anchored=zero_anchored,
-        format_authored_raw=format_authored_raw,
+        format_raw=format_raw,
     )
 
 
@@ -805,61 +785,6 @@ def _full_model_as_overlay(model: BaseModel, patch_cls: type[P]) -> P:
     return patch_cls.model_validate(model.model_dump(exclude_none=True))
 
 
-def _patch_authors_format(patch: BaseModel) -> bool:
-    """True when an axis patch explicitly sets labels.format.
-
-    Generic over all axis-variant patch types in the cascade (board layers
-    6-9 and chart-local layers 11-13 — all carry a ``labels`` field). Reads
-    through
-    ``model_dump()`` rather than ``patch.labels.format`` directly: every
-    ``*Patch`` class's TYPE_CHECKING stub declares itself a bare subclass of
-    the theme model it patches (``class BaseAxisStylePatch(BaseAxisStyle):
-    pass``), so mypy sees ``.labels`` as the theme's always-populated field,
-    not the real, genuinely-Optional patch field — a direct ``patch.labels is
-    not None`` reads as statically-always-true and mypy rejects it as a
-    redundant check. ``model_dump()`` sidesteps the wrong stub instead of
-    lying to the type checker via a new ``Any``, a new ``| None``, or an
-    ignore-pragma comment — the type-state counter
-    (``scripts/type_state_counter.py``) tracks all three; ``Any`` and the
-    ignore-pragma block the gate, ``| None`` is report-only. Callers guard the
-    ``patch is None`` case themselves.
-    """
-    labels = patch.model_dump().get("labels")
-    return isinstance(labels, dict) and labels.get("format") is not None
-
-
-def _patch_format_is_alias(patch: BaseModel) -> bool:
-    """True when a patch's authored ``labels.format`` raw string is an
-    engine-predefined name (house rules apply). Returns False for user
-    ``style.formats`` aliases and inline d3 specs (native d3, no notation).
-
-    Callers only call this once ``_patch_authors_format(patch)`` has already
-    confirmed the patch sets ``labels.format`` at all — this function assumes
-    that and just re-reads the same raw value through the same ``model_dump()``
-    detour (see that docstring for why). ``labels.format`` is ``str | None``
-    on every one of the five axis-variant patch types (never a ``FormatConfig``
-    or dict shape — that's KPI's ``format`` field, a different model), so no
-    ``isinstance(..., dict)`` branch or ``None``-coalesce is needed here: the
-    precondition already rules both out.
-    """
-    labels = patch.model_dump().get("labels")
-    raw_spec = labels.get("format") if isinstance(labels, dict) else None
-    if raw_spec is None:
-        return False
-    return raw_spec in ALL_PREDEFINED_NAMES
-
-
-def _patch_format_raw(patch: BaseModel) -> str | None:
-    """Return a patch's authored ``labels.format`` raw string, pre-resolution.
-
-    Same precondition and ``model_dump()`` detour as ``_patch_format_is_alias``
-    (call only once ``_patch_authors_format(patch)`` is True) — this is the
-    same read, returning the string itself instead of collapsing it to a bool.
-    """
-    labels = patch.model_dump().get("labels")
-    return labels.get("format") if isinstance(labels, dict) else None
-
-
 @overload
 def _merge_axis_cascade(
     chart_style_context: ChartStyleContext,
@@ -871,7 +796,7 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
-) -> tuple[AxisXStyle, float | None, bool, bool, str | None]: ...
+) -> tuple[AxisXStyle, float | None]: ...
 
 
 @overload
@@ -885,7 +810,7 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
-) -> tuple[AxisYStyle, float | None, bool, bool, str | None]: ...
+) -> tuple[AxisYStyle, float | None]: ...
 
 
 def _merge_axis_cascade(
@@ -898,11 +823,16 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
-) -> tuple[AxisXStyle | AxisYStyle, float | None, bool, bool, str | None]:
+) -> tuple[AxisXStyle | AxisYStyle, float | None]:
     """Walk the 13-layer axis cascade and return the merged, channel-typed axis,
-    any band_position found along the way, whether an authored layer set
-    ``labels.format``, and whether that authored value's raw string was a
-    format-alias key.
+    plus any band_position found along the way.
+
+    ``base.labels.format`` on the returned axis is the *raw*, pre-resolution
+    format string (a predefined name like ``"number"``, a ``style.formats``
+    alias key, or a literal d3 spec) — whichever layer (theme default or an
+    authored one) won the merge last. This function does not resolve it and
+    tracks no provenance about which tier wrote it — see
+    ``ResolvedAxisStyle.format_raw`` for what that raw winner decides.
 
     Extracted from ``resolved_axis_style`` so a caller that needs a field off
     the merge (e.g. ``position``/``categorical_orient``/``time_unit`` — all
@@ -925,26 +855,6 @@ def _merge_axis_cascade(
     — structurally absent from ``AxisXStyle``/``AxisYStyle`` so it cannot
     survive the merge chain above. Extracted separately from the band
     override patch and returned alongside the merged axis.
-
-    The returned bool ("format_authored") is True when any board layer
-    (global/channel/quantitative/family), the chart-level format fallback
-    (``chart_fallback_format``), or a chart-local override (axis_overrides)
-    sets ``labels.format`` — never Layers 1-3 (theme defaults) or Layer 4
-    (the commingled theme+board chart-type patch passed via
-    ``chart_type_axis_patch``). It feeds ``build_resolved_axis``'s
-    ``format_authored`` keyword, which governs whether a non-compacting ladder
-    may bake ``tick_label.format``.
-
-    The second returned bool ("format_is_alias") says whether the *raw*
-    string the authoring layer set (before ``resolve_format()`` runs) is an
-    engine-predefined name (member of ``ALL_PREDEFINED_NAMES``) — never
-    re-derived from the resolved d3 spec, since a predefined name and a
-    hand-typed literal can resolve to the exact same string. It feeds
-    ``build_resolved_axis``'s ``format_is_alias`` keyword, which relaxes the
-    ``format_authored`` gate for a predefined name (e.g. ``currency``)
-    so it still qualifies for the plain-digit bake — only a genuine literal
-    spec opts out. A ``style.formats`` alias returns False (native d3, no
-    house rules) even though it resolves through the alias map.
 
     ``label_authored`` (Layer 5) is the caller's own ``bool(chart.x_label)``/
     ``bool(chart.y_label)`` for the axis this call is merging — truthy, not
@@ -1026,10 +936,6 @@ def _merge_axis_cascade(
     #
     # axis_band has no board-level authoring surface (extra_forbidden on
     # ChartsStyle), so there is no board-level band slot here.
-    format_authored = False
-    format_is_alias = False
-    format_raw: str | None = None
-
     # model_dump values are dynamic; each is re-validated into a typed patch below.
     _cbo_data: dict[str, Any]  # type-state: explicit_any — Pydantic model_dump result
     _cbo_data = chart_style_context.charts_board_overrides.model_dump(exclude_none=True)
@@ -1047,111 +953,55 @@ def _merge_axis_cascade(
         for _cls, _raw in _slots:
             if _raw is None:
                 continue
-            _patch = _cls.model_validate(_raw)
-            base = merge_onto_base(base, _patch)
-            if _patch_authors_format(_patch):
-                format_authored = True
-                format_is_alias = _patch_format_is_alias(_patch)
-                format_raw = _patch_format_raw(_patch)
+            base = merge_onto_base(base, _cls.model_validate(_raw))
 
     # Layer 10: chart-level format fallback (chart.format / style.number_format /
     # style.time_format).  Sits after all board layers so chart-authored format
     # beats the board, but before chart-local style.axis_* so those still win.
+    # Merges the RAW spec/name, same as every other layer -- resolution
+    # happens once, at the end of the whole cascade, from whichever layer's
+    # raw string is left standing.
     if chart_fallback_format is not None:
-        format_authored = True
+        # A FormatConfig with no spec (e.g. prefix/suffix only) means "no
+        # number formatting, just decorate" -- "" forces a clean override of
+        # any inherited format.
         _fallback_spec = (
             chart_fallback_format.spec
             if isinstance(chart_fallback_format, FormatConfig)
             else chart_fallback_format
-        )
-        if _fallback_spec is None:
-            _fallback_spec = ""
-        format_is_alias = _fallback_spec in ALL_PREDEFINED_NAMES
-        format_raw = _fallback_spec or None
-        _resolved_fallback_fmt = resolve_format(
-            chart_fallback_format, chart_style_context.formats
-        )
+        ) or ""  # type-state: silent_fallback — spec-less clears the field
         base = merge_onto_base(
             base,
-            BaseAxisStylePatch.model_validate(
-                {"labels": {"format": _resolved_fallback_fmt}}
-            ),
+            BaseAxisStylePatch.model_validate({"labels": {"format": _fallback_spec}}),
         )
 
-    # format_is_alias tracks only the *most recently authored* layer's raw
-    # string, not a blind OR across every layer that ever set the field --
-    # mirroring merge_onto_base's last-write-wins semantics for the field
-    # itself. If an earlier layer authors an alias and a later layer
-    # overrides it with a literal spec, the final labels.format is that
-    # literal, so format_is_alias must become False again here too, not stay
-    # stuck True from the overridden layer. format_authored, by contrast,
-    # accumulates -- any authored layer counts, matching the pre-existing
-    # OR-chain.
     band_position: float | None = None
     if axis_overrides is not None:
         # v2 path: chart-local patches passed explicitly.
         base = merge_onto_base(base, axis_overrides.global_)
-        if axis_overrides.global_ is not None and _patch_authors_format(
-            axis_overrides.global_
-        ):
-            format_authored = True
-            format_is_alias = _patch_format_is_alias(axis_overrides.global_)
-            format_raw = _patch_format_raw(axis_overrides.global_)
         if channel_type == "quantitative":
             base = merge_onto_base(base, axis_overrides.quantitative)
-            if axis_overrides.quantitative is not None and _patch_authors_format(
-                axis_overrides.quantitative
-            ):
-                format_authored = True
-                format_is_alias = _patch_format_is_alias(axis_overrides.quantitative)
-                format_raw = _patch_format_raw(axis_overrides.quantitative)
         elif channel_type in ("ordinal", "nominal", "band"):
             band_patch = axis_overrides.band
             if band_patch is not None:
                 band_position = band_patch.band_position
             base = merge_onto_base(base, band_patch)
-            if band_patch is not None and _patch_authors_format(band_patch):
-                format_authored = True
-                format_is_alias = _patch_format_is_alias(band_patch)
-                format_raw = _patch_format_raw(band_patch)
         _channel_patch = axis_overrides.x if axis_name == "axis_x" else axis_overrides.y
         base = merge_onto_base(base, _channel_patch)
-        if _channel_patch is not None and _patch_authors_format(_channel_patch):
-            format_authored = True
-            format_is_alias = _patch_format_is_alias(_channel_patch)
-            format_raw = _patch_format_raw(_channel_patch)
     else:
         # v1 path: read chart-local patches from effective (set by build_chart_style_context).
         base = merge_onto_base(base, chart_style_context.axis_overrides_global)
-        _global_patch = chart_style_context.axis_overrides_global
-        if _global_patch is not None and _patch_authors_format(_global_patch):
-            format_authored = True
-            format_is_alias = _patch_format_is_alias(_global_patch)
-            format_raw = _patch_format_raw(_global_patch)
         if channel_type == "quantitative":
             base = merge_onto_base(
                 base, chart_style_context.axis_overrides_quantitative
             )
-            _quant_patch = chart_style_context.axis_overrides_quantitative
-            if _quant_patch is not None and _patch_authors_format(_quant_patch):
-                format_authored = True
-                format_is_alias = _patch_format_is_alias(_quant_patch)
-                format_raw = _patch_format_raw(_quant_patch)
         elif channel_type in ("ordinal", "nominal", "band"):
             band_patch = chart_style_context.axis_overrides_band
             if band_patch is not None:
                 band_position = band_patch.band_position
             base = merge_onto_base(base, band_patch)
-            if band_patch is not None and _patch_authors_format(band_patch):
-                format_authored = True
-                format_is_alias = _patch_format_is_alias(band_patch)
-                format_raw = _patch_format_raw(band_patch)
         _channel_patch = getattr(chart_style_context, f"axis_overrides_{axis_name[-1]}")
         base = merge_onto_base(base, _channel_patch)
-        if _channel_patch is not None and _patch_authors_format(_channel_patch):
-            format_authored = True
-            format_is_alias = _patch_format_is_alias(_channel_patch)
-            format_raw = _patch_format_raw(_channel_patch)
 
     # mirror.format is an authored per-edge relabel (AxisMirrorStyle, y-axis
     # only) that never passes through the labels.format cascade above — it
@@ -1177,7 +1027,7 @@ def _merge_axis_cascade(
             }
         )
 
-    return base, band_position, format_authored, format_is_alias, format_raw
+    return base, band_position
 
 
 def resolved_axis_style(
@@ -1258,7 +1108,7 @@ def resolved_axis_style(
     position is known) call ``_merge_axis_cascade`` + ``build_resolved_axis``
     directly instead of this wrapper.
     """
-    base, band_position, format_authored, format_is_alias, _ = _merge_axis_cascade(
+    base, band_position = _merge_axis_cascade(
         chart_style_context,
         axis_name,
         channel_type,
@@ -1273,18 +1123,16 @@ def resolved_axis_style(
     # needs only for the tabular-guarantee error message, unreachable on
     # this no-ladder path). No caller of this wrapper has a real chart id to
     # offer, so "" is passed inline rather than threading a dead parameter
-    # through resolved_axis_style's public signature. format_authored and
-    # format_is_alias are threaded through regardless -- cheap and correct,
-    # and not inert: the ladder-less sub-unit bake's own entry condition is
-    # empty tick_values, which this wrapper always has. What keeps it from
-    # firing on this path is that `labels.format` here is still an
-    # unresolved alias name (e.g. "number"), not the literal d3 spec
-    # `is_d3_si_spec` requires.
+    # through resolved_axis_style's public signature. base.labels.format is
+    # threaded through as format_raw regardless -- cheap and correct, and not
+    # inert: the ladder-less sub-unit bake's own entry condition is empty
+    # tick_values, which this wrapper always has. What keeps it from firing
+    # on this path is that `labels.format` here is still an unresolved raw
+    # name (e.g. "number"), not the literal d3 spec `is_d3_si_spec` requires.
     return build_resolved_axis(
         base,
         band_position=band_position,
-        format_authored=format_authored,
-        format_is_alias=format_is_alias,
+        format_raw=base.labels.format,
         is_quantitative=channel_type == "quantitative",
         chart_id="",
         # This wrapper resolves one axis in isolation, with no paired y-axis

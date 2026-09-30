@@ -174,29 +174,25 @@ def _v2_axes(
             ),
         )
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            chart_style_context,
-            fixture_chart_for_type(chart_type),
-            chart_type,
-            "ordinal",
-            "quantitative",
-            overrides,
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        chart_style_context,
+        fixture_chart_for_type(chart_type),
+        chart_type,
+        "ordinal",
+        "quantitative",
+        overrides,
     )
     ax = build_resolved_axis(
         ax_merged,
         band_position=ax_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     ay = build_resolved_axis(
         ay_merged,
         band_position=ay_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     # D-03: tick_values are baked by resolve(); pre-populate here so emitter tests
     # that construct charts directly (bypassing resolve()) still exercise the path.
@@ -217,6 +213,7 @@ def _v2_base_kwargs() -> dict[str, Any]:
         "resolved_channels": {},
         "legend": charts.legend,
         "background": charts.background,
+        "canvas": charts.ink_canvas,
         "title_style": charts.title,
         "layout_padding": PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0),
     }

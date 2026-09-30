@@ -94,7 +94,7 @@ _TITLE_TEXT_Y_RE = re.compile(r'<text[^>]*transform="translate\([^,]+,(-?[0-9.]+
 RenderCache = dict[tuple[str, float, float], tuple[str, float]]
 ResolvedChartVariantKey = tuple[str, float, int]
 ResolvedChartVariants = dict[ResolvedChartVariantKey, ResolvedChart]
-ResolvedChartCanonicalKey = tuple[str, int]
+ResolvedChartCanonicalKey = tuple[str, str, str]
 
 
 def _support_table_of(chart: Chart | ResolvedChart) -> ChartSupportTable | None:
@@ -115,13 +115,45 @@ def resolved_chart_variant_key(
     """Identify one final chart placement by chart, slot width, and board scope.
 
     The style enters by identity, not by value: ``id(resolved_style)`` is what
-    separates one board's placements from another's, here and in the
-    ``(chart_id, id(resolved_style))`` canonical key below. Two boards whose
-    styles are equal must therefore still hold two objects — hand them one and
-    a chart resolved for the first board is served to the second, at the first
-    board's width (the canonical key carries no width of its own).
+    separates one board's placements from another's. Two boards whose styles
+    are equal must therefore still hold two objects — hand them one and a
+    chart resolved for the first board is served to the second, at the
+    first board's width. Unlike ``canonical_resolved_key`` below (title
+    typography, which two value-equal board scopes SHOULD share), a
+    variant resolve bakes board-specific data beyond style (chart-local
+    query results, auto-links) that two boards must never share just
+    because their style cascades happen to match.
     """
     return chart_id, width, id(resolved_style)
+
+
+def canonical_resolved_key(
+    chart_id: str, resolved_style: ResolvedStyle, board_canvas: str
+) -> ResolvedChartCanonicalKey:
+    """Identify "the same placement" for title-typography pinning across widths.
+
+    Keyed by value, not ``id(resolved_style)``: nested boards no longer ever
+    share one resolved_style object (``compile_board_resolved_style`` in
+    normalize/dispatch.py gives every board scope its own, even an unstyled
+    one), so an identity key would treat repeated placements of the same
+    chart under equal-but-distinct board scopes -- e.g. the same donut
+    repeated in three unstyled ``cols:`` wrappers -- as different
+    placements, and each would pick its own width-dependent title
+    typography instead of sharing the first one's, as intended.
+    ``repr()`` is a value key: it can only collide when every field of
+    ``resolved_style`` matches, which is "the same placement" by definition.
+
+    ``board_canvas`` is a separate argument, not read off ``resolved_style``:
+    ``ResolvedStyle`` exposes only ``chart_defaults.ink_canvas`` (the CHART
+    canvas), never the board canvas beneath it. Two scopes can share that
+    chart canvas -- an opaque ``charts.background`` occludes whatever is
+    underneath -- while their board canvases genuinely differ, and a chart's
+    own translucent ``style.background`` composites over the board canvas
+    (``chart_context.py``), not the chart canvas. Without this in the key,
+    ``_require_resolved``'s canonical-reuse path would serve one scope's
+    cached ``.canvas`` to the other.
+    """
+    return chart_id, repr(resolved_style), board_canvas
 
 
 def _canonical_pie_title_font(
@@ -262,7 +294,9 @@ def _require_resolved(
     if chart_id in render_ctx.resolve_errors:
         return None
     variant_key = resolved_chart_variant_key(chart_id, width, resolved_style)
-    canonical_key = chart_id, id(resolved_style)
+    canonical_key = canonical_resolved_key(
+        chart_id, resolved_style, chart_style_context.board_canvas
+    )
     if variant_key in render_ctx.resolved_variants:
         return render_ctx.resolved_variants[variant_key]
     if chart_id in render_ctx.pre_resolved:
@@ -348,54 +382,49 @@ def _require_resolved(
     return resolved
 
 
-# Grow cap for the sizer-side branch below is the same constant the renderer
-# uses in its corresponding short-circuit — single-source from
-# ``dbt_charts.core.render.chart.table._PAGINATION_GROW_CAP`` so the two sides
-# stay in lockstep (mismatch would reintroduce broken-chrome-over-hidden-rows).
-# Same deferred-import pattern as ``_PAGINATION_CONTROL_HEIGHT`` below to keep
-# this module free of an unconditional dependency on the chart-render layer.
-
-
 def _get_table_height_from_data(
     chart: TableChart,
     resolved: ResolvedTableChart,
     executor: Executor,
     variables: dict[str, Any] | None,
     card_padding: float,
+    board_style: ResolvedStyle,
     width: float | None = None,
 ) -> float:
-    """Calculate table height from actual row count.
+    """Slot height for a table: the height the renderer draws it at, unbounded.
 
-    ``resolved`` is this exact chart placement's already-resolved table (the
-    same value the renderer uses), so row heights, padding, header dimensions,
-    and pagination all come from its ``style`` — no separate cascade re-run.
+    ``width`` is the outer slot width (``None``: the table-family preferred
+    width); the table is measured inside the same padding the main pass
+    renders it in. A failure sizes for a one-row error card.
 
-    ``width`` drives the title font size and must match what the renderer will
-    see at layout time. When ``None``, uses the resolved table-family width
-    preference so both stay in lockstep.
-
-    If the query fails, sizes for an error message display.
+    Measurement runs the table layout only, never the paint. A paint-only
+    failure (bad swatch or spark cell, invalid color) is not seen here, so
+    the main pass draws its error card in the full-height slot.
     """
+    from dbt_charts.core.render.chart.spec_builders import additive_padding
     from dbt_charts.core.render.chart.table import (
         compute_table_title_block_layout,
-        pivot_table_data,
+        measure_table_height,
     )
     from dbt_charts.core.render.chart.table_support import reserve_header_band
 
-    tc = resolved.style.table  # TableChartStyle — board-merged, all with defaults
-    title_font = resolved.style.title_font
-
+    tc = resolved.style.table
     effective_width = width if width is not None else tc.preferred_width
-
-    row_height = int(tc.row.height)
-    # Hidden header contributes no vertical extent; a visible one may wrap to a
-    # second line, which reserve_header_band accounts for (the renderer's exact
-    # line count needs column widths this stage does not have).
-    # Cascade-guaranteed, same as the renderer asserts at table.py.
+    padding = additive_padding(card_padding, resolved.layout_padding)
+    try:
+        data = executor.execute_chart(chart, variables)
+        return measure_table_height(
+            resolved,
+            data,
+            max(effective_width - padding["left"] - padding["right"], 0.0),
+            board_style=board_style,
+        )
+    except Exception as exc:  # noqa: BLE001 — the main pass draws any table failure as an error card
+        _log.warning("Table height estimation failed for chart %r: %s", chart.id, exc)
     assert tc.font.size is not None, (
         "TableChartStyle.font.size must be set after cascade"
     )
-    header_height = reserve_header_band(tc, int(tc.font.size))
+    row_height = int(tc.row.height)
     padding_y = int(tc.outer_padding)
     title_height = compute_table_title_block_layout(
         chart_title=chart.title,
@@ -405,121 +434,17 @@ def _get_table_height_from_data(
         padding=padding_y,
         title_style=resolved.style.title,
         card_padding=card_padding,
-        title_font=title_font,
+        title_font=resolved.style.title_font,
     ).height
-    bottom_padding = int(tc.bottom_padding)
-
-    # Chart-local pagination is pre-merged into resolved.style.pagination at
-    # resolve time — read the resolved page_rows off the baked value.
-    pagination = resolved.style.pagination
-    resolved_page_rows = (
-        pagination.page_rows if pagination is not None and pagination.enabled else None
-    )
-
-    # Header-body gap also vanishes when header is hidden — the renderer
-    # uses the same zero-out so sizer + renderer agree on total height.
     header_body_gap = int(row_height * 0.25) if tc.header.visible else 0
-
-    try:
-        data = executor.execute_chart(chart, variables)
-        # Match the renderer: a pivot collapses long-form rows into one wide row
-        # per row-dim key. Counting raw rows here would over-reserve height by
-        # the pivot's fan-out factor (e.g. a 32x32 board = 1024 rows → 32 after
-        # pivot). Call pivot_table_data exactly as the renderer does — it owns
-        # the not-a-pivot pass-through, so the two can't disagree about which
-        # shapes reshape. row_role_spec must be threaded through too, or a query
-        # whose total partition varies its rows-dim label is counted as N rows
-        # where the renderer draws 1.
-        wide_rows, pivot_levels, __ = pivot_table_data(
-            data,
-            rows=chart.rows or [],
-            columns=chart.columns,
-            values=chart.values,
-            row_role_spec=tc.row.role,
-        )
-        row_count = len(wide_rows)
-        # A multi-dim or multi-measure pivot draws one group-header row per
-        # descriptor level ABOVE the leaf header, each the height of the leaf
-        # header row — the renderer's same formula. Reserving only the leaf band
-        # leaves the slot short and the renderer paginates rows away.
-        # A hidden header reserves 0 and stays 0.
-        if pivot_levels is not None:
-            header_height *= 1 + len(pivot_levels)
-    except (ExecutionError, ChartDataError) as exc:
-        # Migrate-or-fail: a failed query (ExecutionError) or a bad pivot/data
-        # contract (ChartDataError — e.g. a typo'd pivot field, absent role
-        # column) warrants a static height fallback here. render then draws the
-        # per-chart error card for the SAME ChartDataError, so suppressing it at
-        # sizing time reserves a sane slot instead of crashing the whole board's
-        # layout before that card can render. ValueError/OSError/RuntimeError/
-        # LookupError are bug-class — let them surface loudly, not masked.
-        _log.warning("Table height estimation failed for chart %r: %s", chart.id, exc)
-        return (
-            title_height
-            + header_height
-            + header_body_gap
-            + row_height
-            + padding_y
-            + bottom_padding
-        )
-
-    # Grow-by-2 rule for unconstrained-layout table sizing: don't paginate
-    # small overflows. If total_rows is within ``_PAGINATION_GROW_CAP`` rows
-    # of the resolved page_rows, report height for every row (no chrome).
-    # Otherwise cap at page_rows and reserve pagination chrome. The cap
-    # keeps a 100-row table from asking for 100 rows worth of slot —
-    # pagination still fires when the overflow is genuinely large. The
-    # narrowing pattern keeps pyright happy: inside the branch
-    # ``resolved_page_rows`` is known non-None, so the assignment to the
-    # int-typed ``row_count`` is type-safe without a suppression.
-    from dbt_charts.core.render.chart.table import _PAGINATION_GROW_CAP
-
-    if (
-        resolved_page_rows is not None
-        and row_count > resolved_page_rows + _PAGINATION_GROW_CAP
-    ):
-        multi_page = True
-        # Ceil division: the real page count this row_count/resolved_page_rows
-        # split will produce, before row_count is overwritten below. Needed
-        # only to decide whether the static-export cap note reservation
-        # below applies -- not otherwise used for sizing.
-        estimated_total_pages = -(-row_count // resolved_page_rows)
-        row_count = resolved_page_rows
-    else:
-        multi_page = False
-        estimated_total_pages = 1
-    height = (
+    return (
         title_height
-        + header_height
+        + reserve_header_band(tc, int(tc.font.size))
         + header_body_gap
-        + (row_count * row_height)
+        + row_height
         + padding_y
-        + bottom_padding
+        + int(tc.bottom_padding)
     )
-    if multi_page:
-        from dbt_charts.core.render.chart.table import (
-            _PAGINATION_CAP_NOTE_HEIGHT,
-            _PAGINATION_CONTROL_HEIGHT,
-            _STATIC_MULTI_PAGE_MAX_PAGES,
-        )
-
-        height += _PAGINATION_CONTROL_HEIGHT
-        # A static export whose real page count exceeds the pre-render cap
-        # draws a "Showing pages 1-N of M" note on its own line below the
-        # pager (see static_multi_page in table.py) -- unlike the pager
-        # itself, which _PAGINATION_CONTROL_HEIGHT above reserves for and
-        # draws in BOTH modes, this note is static-export-only. Reserved
-        # unconditionally anyway: this pass has no way to know whether the
-        # eventual render is interactive (dct serve/Cloud, never emits the
-        # note) or static (dct render, might) -- controls_are_interactive()
-        # only becomes meaningful once renderer.py opens that scope around
-        # the MAIN pass, after sizing has finished. The cost is an unused
-        # 20px band on an interactive table past the cap; the alternative
-        # (never reserving it) is the explicit-slot invariant break this
-        # code exists to fix.
-        if estimated_total_pages > _STATIC_MULTI_PAGE_MAX_PAGES:
-            height += _PAGINATION_CAP_NOTE_HEIGHT
-    return height
 
 
 def build_chart_datasets(
@@ -825,6 +750,7 @@ def _make_data_aware_height_provider(
                     executor,
                     variables,
                     card_padding=card_pad,
+                    board_style=resolved_style,
                     width=width,
                 ) + _vertical_inset(resolved_table)
 
@@ -1117,7 +1043,11 @@ def _make_data_aware_height_provider(
                                 shrunk_width = max(would_be_width, 1.0)
                                 # Resolve at the corrected spec width so title
                                 # typography matches the emitted chart.
-                                canonical_key = item.chart.id, id(resolved_style)
+                                canonical_key = canonical_resolved_key(
+                                    item.chart.id,
+                                    resolved_style,
+                                    style_contexts[id(resolved_style)].board_canvas,
+                                )
                                 render_ctx.canonical_resolved.pop(canonical_key, None)
                                 corrected_resolved = _require_resolved(
                                     render_ctx,

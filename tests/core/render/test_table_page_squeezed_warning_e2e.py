@@ -81,3 +81,71 @@ def test_a_slot_that_fits_the_page_is_silent() -> None:
     warnings = _warnings(_board("900px"), 40)
 
     assert "WARN-TABLE-PAGE-SQUEEZED" not in {w.code for w in warnings}
+
+
+_AUTO_HEIGHT_WRAPPING = """
+title: Auto-sized table
+style:
+  frame:
+    width: 400
+charts:
+  orgs:
+    query: q
+    type: table
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - orgs
+"""
+
+
+def _wrapping_rows(n: int) -> list[dict[str, object]]:
+    """Notes of every length, so some wrap differently if the widths disagree."""
+    return [
+        {"name": f"row_{i}", "note": " ".join(["word"] * (i + 1)), "value": i}
+        for i in range(n)
+    ]
+
+
+def test_an_auto_sized_table_with_wrapping_rows_is_silent() -> None:
+    """The sizer reserves the renderer's wrapped row heights, so nothing squeezes."""
+    result = compile(_AUTO_HEIGHT_WRAPPING)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, _wrapping_rows(30))
+    warnings = render(result.board, executor, format="svg").warnings
+
+    assert "WARN-TABLE-PAGE-SQUEEZED" not in {w.code for w in warnings}
+
+
+def test_a_render_only_table_failure_leaves_the_board_rendering() -> None:
+    """Sizing runs the renderer; its failures must become the chart's error card."""
+    board = """
+title: One bad table
+charts:
+  bad:
+    query: q
+    type: table
+    link: /x/{{ name | upper }}
+  good:
+    query: q
+    type: table
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - bad
+  - good
+"""
+    result = compile(board)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, _rows(3))
+    rendered = render(result.board, executor, format="svg")
+
+    assert rendered.output is not None
+    assert "row_3" in rendered.output
+    assert any(e.fields.get("chart_id") == "bad" for e in rendered.chart_errors), (
+        rendered.chart_errors
+    )

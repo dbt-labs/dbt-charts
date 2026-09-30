@@ -496,7 +496,9 @@ def test_standalone_field_colored_point_keeps_explicit_color(base_type: str) -> 
         and sub["mark"].get("tooltip") is False
     )
     paint_channel = "stroke" if base_type == "line" else "fill"
-    assert synthetic["encoding"][paint_channel] == {"value": _board_style().background}
+    # Synthetic knockout marks paint the composited canvas (ink_canvas),
+    # not the raw background field -- see test_single_series_color.py.
+    assert synthetic["encoding"][paint_channel] == {"value": _board_style().ink_canvas}
     assert synthetic["encoding"]["detail"]["field"] == "cat"
     foreground_point = next(
         sub
@@ -551,13 +553,17 @@ def test_standalone_field_color_keeps_composite_paths_partitioned(
     foreground_paths = re.findall(r'<path\b[^>]*stroke="#dea628"[^>]*>', svg)
     assert len(foreground_paths) == 2
     if base_type == "line":
-        halo_paths = re.findall(r'<path\b[^>]*stroke="#FFFFFF"[^>]*>', svg)
+        halo_paths = re.findall(
+            r'<path\b[^>]*stroke="#ffffff"[^>]*>', svg, re.IGNORECASE
+        )
         assert len(halo_paths) == 2
         assert all(re.search(r'\bd="[^"]*L[^"]*"', path) for path in foreground_paths)
         assert all(path.count("L") == 1 for path in foreground_paths)
         assert all(path.count("L") == 1 for path in halo_paths)
     else:
-        backdrop_paths = re.findall(r'<path\b[^>]*fill="#FFFFFF"[^>]*>', svg)
+        backdrop_paths = re.findall(
+            r'<path\b[^>]*fill="#ffffff"[^>]*>', svg, re.IGNORECASE
+        )
         assert len(backdrop_paths) == 2
         assert all(path.count("L") == 1 for path in foreground_paths)
 
@@ -593,7 +599,9 @@ def test_shared_emitter_pins_synthetic_paint_but_inherits_field_color(
         and sub["mark"].get("tooltip") is False
     )
     paint_channel = "stroke" if base_type == "line" else "fill"
-    assert synthetic["encoding"][paint_channel] == {"value": _board_style().background}
+    # Synthetic knockout marks paint the composited canvas (ink_canvas),
+    # not the raw background field -- see test_single_series_color.py.
+    assert synthetic["encoding"][paint_channel] == {"value": _board_style().ink_canvas}
     assert synthetic["encoding"]["detail"]["field"] == "cat"
     hover = next(
         sub

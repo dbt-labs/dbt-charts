@@ -1442,6 +1442,76 @@ rows:
 
         assert captured.get("use_cache") is False
 
+    def test_execution_failure_keeps_compile_warnings(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        board_yaml = (
+            "theme: solid\n"
+            "variables:\n"
+            "  region:\n"
+            "    input: select\n"
+            "    required: true\n"
+            "queries:\n"
+            "  q:\n"
+            "    columns: [v]\n"
+            "    values:\n"
+            "      - [1]\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: q\n"
+            "    type: kpi\n"
+            "    value: v\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        project = local_project(tmp_path)
+        result = render_dashboard(
+            board=InMemoryBoard(board_yaml, path=project.path("charts/_t.yml")),
+            adapter_registry=build_adapter_registry(project, read_only=False),
+            project=project,
+            result_cache=None,
+        )
+
+        assert result.status == "failed"
+        assert result.board_error is not None
+        assert "WARN-SCHEMA-MIGRATED" in {w.code for w in result.warnings}
+
+    @pytest.mark.parametrize("ignored", [False, True])
+    def test_compile_failure_partitions_warnings(
+        self,
+        ignored: bool,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        board_yaml = (
+            "theme: solid\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: nope\n"
+            "    type: kpi\n"
+            "    value: v\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        project = local_project(tmp_path)
+        result = render_dashboard(
+            board=InMemoryBoard(board_yaml, path=project.path("charts/_t.yml")),
+            adapter_registry=build_adapter_registry(project, read_only=False),
+            project=project,
+            result_cache=None,
+            ignore_codes={"WARN-SCHEMA-MIGRATED"} if ignored else None,
+        )
+
+        assert result.status == "failed"
+        active = {w.code for w in result.warnings}
+        suppressed = {w.code for w in result.suppressed_warnings}
+        assert ("WARN-SCHEMA-MIGRATED" in active) is not ignored
+        assert ("WARN-SCHEMA-MIGRATED" in suppressed) is ignored
+
     def test_missing_required_variables_preserves_label_in_structured_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:

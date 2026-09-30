@@ -137,8 +137,12 @@ charts:
     total: {label: "Sessions", format: "$,.0f"}
 rows: [donut]
 """
-    with pytest.warns(SchemaMigrationWarning, match="migrated this YAML"):
-        result = compile(yaml_content)
+    result = compile(yaml_content)
+    assert any(
+        "migrated this YAML" in d.message
+        for d in result.warnings
+        if d.code == "WARN-SCHEMA-MIGRATED"
+    ), result.warnings
 
     assert result.success, [f"{e.code}: {e.message}" for e in result.errors]
     assert result.board is not None

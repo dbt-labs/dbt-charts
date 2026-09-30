@@ -410,12 +410,9 @@ def build_chart_style_context(
     _background = getattr(primary, "background", None)
     if _background is not None:
         overrides["background"] = _background
-        # The chart-local background composites over the board's own
-        # (already-opaque) canvas -- ink_canvas must be recomputed alongside
-        # background, or it silently keeps describing the board's canvas
-        # after the chart just painted a different one. _palette.py/pie.py
-        # read this field directly instead of hand-compositing themselves.
-        overrides["ink_canvas"] = ink_canvas(_background, base_charts.ink_canvas)
+        # Composite over board_canvas, not ink_canvas (the CHART canvas) --
+        # see ChartStyleContext.board_canvas's own comment for why.
+        overrides["ink_canvas"] = ink_canvas(_background, base_charts.board_canvas)
 
     # --- Chart-local axis overrides ---
     # Stored as typed axis-variant patch sentinels on resolved_chart_style
@@ -460,15 +457,14 @@ def build_chart_style_context(
     # --- Pagination (table charts expose this via TableChartStyle.pagination) ---
     # Chart-local pagination layers on top of the board default. ``enabled``
     # is required on the authored Patch so it always sets; ``page_rows`` is
-    # optional — when unset the cascade falls back to the board-level
-    # page_rows so the renderer reads a single resolved value off
-    # ``effective.pagination`` without re-running the merge.
+    # optional — when omitted the cascade falls back to the board-level
+    # page_rows. An explicit ``page_rows: null`` means unlimited and is kept.
     _pagination = getattr(primary, "pagination", None)
     if _pagination is not None:
         board = base_charts.pagination
         merged_pagination = _pagination
         if (
-            merged_pagination.page_rows is None
+            "page_rows" not in merged_pagination.model_fields_set
             and board is not None
             and board.page_rows is not None
         ):

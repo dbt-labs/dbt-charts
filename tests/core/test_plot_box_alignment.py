@@ -151,7 +151,11 @@ def test_every_layer_that_paints_nothing_is_clipped(chart_type: str):
     ``_data_lines`` above uses, so the background-color match only catches
     the genuinely invisible halo/backdrop sub-layers.
     """
-    background = resolve_style(get_theme_style()).background
+    # Halos knock out against the chart's opaque composited canvas
+    # (ink_canvas), not the raw background field -- the two can differ in
+    # hex case (ink_canvas always lowercases; background preserves
+    # authoring), so compare case-insensitively.
+    canvas = resolve_style(get_theme_style()).chart_defaults.ink_canvas.lower()
     marks = _marks(_spec(chart_type, {"marks": {"point": {"size": 400}}}))
 
     paints_nothing = [
@@ -159,12 +163,12 @@ def test_every_layer_that_paints_nothing_is_clipped(chart_type: str):
         for m in marks
         if m.get("opacity") == 0
         or (
-            m.get("stroke") == background
+            str(m.get("stroke")).lower() == canvas
             and m["type"] == "line"
             and m.get("tooltip") is not True
         )
         or (
-            m.get("fill") == background
+            str(m.get("fill")).lower() == canvas
             and m["type"] == "area"
             and m.get("tooltip") is not True
         )

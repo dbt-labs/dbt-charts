@@ -225,6 +225,58 @@ rows:
             assert hex_to_oklch(ink)[0] > hex_to_oklch(mark)[0], (mark, ink)
 
 
+class TestChartLocalTranslucentBackgroundCompositesOverTheBoardCanvas:
+    """A chart's own ``style.background`` REPLACES the card fill
+    (``style.charts.background``); it does not paint on top of it. When
+    that chart-local override is translucent, its opaque ``canvas`` must
+    composite over the board's own canvas, not over the chart canvas that
+    ``charts.background`` would otherwise have produced -- painting over
+    the chart canvas double-counts a fill the chart never actually shows.
+    """
+
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        reset_config()
+
+    _YAML = """
+style:
+  background: "#ffffff"
+  charts:
+    background: "#000000"
+queries:
+  q:
+    columns: [cat, val]
+    values:
+      - [A, 10]
+charts:
+  translucent:
+    query: q
+    type: bar
+    x: cat
+    y: val
+    style:
+      background: "rgba(255,255,255,0.5)"
+rows:
+  - translucent
+"""
+
+    def test_translucent_chart_background_composites_over_board_canvas(self):
+        result = df_compile(self._YAML)
+        assert result.errors == []
+        assert result.board is not None
+        board = result.board
+        assert board.chart_style_context.board_canvas == "#ffffff"
+        assert board.chart_style_context.ink_canvas == "#000000"
+
+        chart = board.charts["translucent"]
+        data = [{"cat": "A", "val": 10}]
+        resolved = resolve(chart, data, chart_style_context=board.chart_style_context)
+        assert resolved.background == "rgba(255,255,255,0.5)"
+        assert resolved.canvas == "#ffffff"
+
+
 class TestNamedCssBackgroundResolvesToItsHex:
     """A board- or chart-level style.background naming a CSS keyword (`white`,
     not a hex) must ink labels against that keyword's real color -- the old
@@ -655,12 +707,17 @@ rows:
             assert hex_to_oklch(ink)[0] > hex_to_oklch(mark)[0], (mark, ink)
 
 
-class TestNestedSectionChartsBackgroundAuthoredVsInherited:
-    """`background_authored`'s explicit `style.charts.background:` arm,
-    at nested scope: a section authoring one composites once more; a
-    section authoring `style.charts.background: null` -- the key present,
-    the value None -- is not authored, and inherits the parent's canvas
-    unchanged."""
+class TestNestedSectionChartsBackgroundIsCardFillNotBoardCanvas:
+    """``style.charts.background:`` is the per-chart card-fill DEFAULT, a
+    separate concern from ``style.background:`` (the board's own, non-
+    inherited box fill). Two canvases: BOARD canvas (own fill over parent
+    board canvas) never moves when only ``charts.background:`` is set --
+    neither section here authors its own top-level ``background:``, so both
+    keep the root's board canvas. CHART canvas (``charts.background`` over
+    the board canvas) DOES move for the section that authors a real color,
+    exactly once; ``charts.background: null`` is not a color (explicit null
+    is not authored), so that section's chart canvas is its board canvas,
+    same as authoring nothing."""
 
     def setup_method(self):
         reset_config()
@@ -676,47 +733,50 @@ rows:
   - style:
       charts:
         background: "rgba(255, 255, 255, 0.08)"
-    text: composited-again
+    text: charts-background-only
   - style:
       charts:
         background: null
     text: inherits
 """
 
-    def test_authored_charts_background_composites_null_inherits_unchanged(self):
+    def test_charts_background_moves_chart_canvas_not_board_canvas(self):
         result = df_compile(self._YAML)
         assert result.errors == []
         assert result.board is not None
         board = result.board
-        root_canvas = board.chart_style_context.ink_canvas
+        root_board_canvas = board.chart_style_context.board_canvas
         # Hand-composited: rgba(255, 255, 255, 0.08) over neon's own raw canvas.
-        assert root_canvas == "#292929"
+        assert root_board_canvas == "#292929"
 
-        composited_again, inherits = (
-            item.board.chart_style_context.ink_canvas for item in board.layout.items
+        charts_background_only, inherits = (
+            item.board.chart_style_context for item in board.layout.items
         )
-        # One more composite on top of the root's already-composited canvas.
-        assert composited_again == "#3a3a3a"
-        assert composited_again != root_canvas
-        # `background: null` sets the key but not a color -- not authored,
-        # so this section inherits the root's canvas verbatim, not a third
-        # composite of the same tint over it.
-        assert inherits == root_canvas
+        # Neither section authored its own style.background:, so both keep
+        # the root's board canvas unchanged.
+        assert charts_background_only.board_canvas == root_board_canvas
+        assert inherits.board_canvas == root_board_canvas
+
+        # The section with a real color composites it once more, over the
+        # board canvas -- hand-composited: rgba(255, 255, 255, 0.08) over
+        # #292929.
+        assert charts_background_only.ink_canvas == "#3a3a3a"
+        # null is not an authored color; this section's chart canvas is its
+        # board canvas, same as a section authoring nothing.
+        assert inherits.ink_canvas == root_board_canvas
 
 
 class TestNestedSectionOwnThemeStillComposesOverTheParentsRealCanvas:
-    """render always paints a nested board's background over the pixels its
-    parent actually composited -- own `theme:` or not; the fact that a
-    scope's own theme differs from its parent's only forces a fresh
-    composite (nothing to reuse verbatim across a theme switch), it never
-    changes WHAT is composited against. A stark root that authors its own
-    translucent tint, and a nested `theme: neon` section, in three authoring
-    variants: (a) and (b) inherit the root's tint like any other cascading
-    style field (a theme switch doesn't wall off ordinary inheritance) and
-    that inherited tint gets its own, fresh composite over the root's real
-    canvas since the theme switch means nothing can be reused verbatim; (c)
-    authors its own background outright, which replaces the inherited value
-    rather than stacking with it, then composites that instead."""
+    """A nested board's own fill is not inherited -- a switched `theme:` is
+    itself a declaration on that exact scope (like a CSS rule naming a new
+    class), never a value threaded in from a parent. A stark root that
+    authors its own translucent tint, and a nested `theme: neon` section, in
+    three authoring variants: (a) and (b) author no background of their own,
+    so the ancestor's tint is DROPPED rather than inherited and the
+    section's own theme (neon) supplies its canvas instead -- an opaque
+    color that fully determines the result regardless of what's beneath it;
+    (c) authors its own background outright, which composites over the
+    root's real canvas same as any other own-authored nested background."""
 
     def setup_method(self):
         reset_config()
@@ -756,25 +816,26 @@ rows:
         ):
             assert wcag_contrast(ink, section_canvas) >= 4.5 - 1e-6, (mark, ink)
 
-    def test_section_authoring_nothing_inherits_the_tint_and_composites_fresh(self):
+    def test_section_authoring_nothing_gets_its_own_themes_canvas(self):
         board = self._compile("theme: neon\n    text: hello")
-        # Hand-composited: the tint this section inherits from the root
-        # (rgba(0, 0, 0, 0.10), the same value neon's own charts.background
-        # falls back to since it authors none itself) over the root's own
-        # already-composited canvas (#e6e6e6) -- a fresh paint event since
-        # the theme switch means nothing here can be reused verbatim.
-        self._assert_canvas_and_contrast(board, "#cfcfcf")
+        # Not stark's tint composited again -- neon's own raw canvas, opaque,
+        # so it fully determines the result regardless of the root beneath it.
+        self._assert_canvas_and_contrast(
+            board, get_theme_style("neon").background.lower()
+        )
 
-    def test_section_authoring_only_an_unrelated_field_composites_the_same_way(self):
+    def test_section_authoring_only_an_unrelated_field_resolves_the_same_way(self):
         """Authoring an unrelated field (`layout.rows.gap:`) still forces
-        `board_style` to not be `None` -- the compositing math is identical
-        to authoring nothing, exercised here to pin the *other* code
-        branch (`own_patch`, not the `board_style is None` fast path)."""
+        `board_style` to not be `None` -- the same own-theme canvas applies,
+        exercised here to pin the *other* code branch (`own_patch`, not the
+        `board_style is None` fast path)."""
         board = self._compile(
             "theme: neon\n    style:\n      layout:\n        rows:\n"
             "          gap: 12\n    text: hello"
         )
-        self._assert_canvas_and_contrast(board, "#cfcfcf")
+        self._assert_canvas_and_contrast(
+            board, get_theme_style("neon").background.lower()
+        )
 
     def test_section_authoring_its_own_background_replaces_the_inherited_tint(self):
         board = self._compile(

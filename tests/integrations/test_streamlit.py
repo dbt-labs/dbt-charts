@@ -93,7 +93,7 @@ class _FrameRecorder:
         self.calls: list[dict[str, Any]] = []
         self.session_state: dict[str, Any] = {}
 
-    def __call__(self, *, key: str, data: dict[str, Any], **callbacks: Any) -> None:
+    def __call__(self, *, key: str, data: dict[str, Any], **_callbacks: Any) -> None:
         self.calls.append({"key": key, **data})
 
 

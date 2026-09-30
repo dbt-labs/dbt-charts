@@ -634,3 +634,57 @@ cols: [c1, c2]
     assert "Second message" in replay_svg
     charts_svg = replay_svg.split('id="chart-c1"', 1)[1]
     assert charts_svg.count("<style>") == 1
+
+
+_NESTED_BACKGROUND_YAML = """
+title: Root
+style:
+  background: "rgba(255, 0, 0, 0.5)"
+rows:
+  - title: Child
+    text: hello
+"""
+
+
+def test_artifact_replay_does_not_double_paint_an_unstyled_nested_boards_tint(
+    tmp_path: Path,
+) -> None:
+    """An unstyled nested board's own fill must be decided once, at compile
+    time -- not inferred at render time by comparing a board's resolved
+    style against its live parent's object. dump_board_artifact/
+    load_board_artifact always rebuild a fresh ResolvedStyle per board (no
+    two boards share an object across the round trip), so any render-side
+    signal keyed on object identity sees every reloaded board as "authored
+    its own fill" and repaints the parent's tint on top of it."""
+    result = compile_board(_NESTED_BACKGROUND_YAML)
+    assert result.success, result.errors
+    assert result.board is not None
+
+    executor = Executor(
+        result.board,
+        build_adapter_registry(FilesystemProject(tmp_path)),
+        query_registry=result.query_registry,
+    )
+    variables: dict[str, object] = {}
+    resolved, render_cache = build_resolved_board(result.board, executor, variables)
+    background = resolved.style.background
+    live_svg = render_board_svg(
+        resolved,
+        executor,
+        variables,
+        background=None if background == "transparent" else background,
+        render_cache=render_cache,
+    )
+    recording = record_board(resolved, executor, variables)
+    artifact_bytes = dump_board_artifact(resolved)
+
+    reloaded = load_board_artifact(artifact_bytes)
+    replay_svg = render_board_from_artifact(reloaded, recording, variables)
+
+    # The root paints its own tint twice legitimately (the page rect and its
+    # layout's own "under items" card, both the root's own authored value) --
+    # what must not happen is the reload adding a THIRD, from the unstyled
+    # nested board repainting a tint that isn't its own.
+    tint = 'fill="rgba(255, 0, 0, 0.5)"'
+    assert live_svg.count(tint) == 2
+    assert replay_svg.count(tint) == live_svg.count(tint)

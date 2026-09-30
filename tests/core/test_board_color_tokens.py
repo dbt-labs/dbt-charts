@@ -5,14 +5,20 @@ They live at root level (1d) and cascade to sub-fields within a board
 (_apply_token_cascade). Board-to-board cascade via compile_board_resolved_style()
 (1c) is per-field, driven by each Style field's own Merge marker (see
 compile/models/markers.py and style/theme/style.py): most fields a parent
-board explicitly authors — muted, accent, background, font, or anything
-else without a nested=Strategy.CHILD marker — reach a nested board, falling
-back to that nested board's own theme for anything no ancestor authored.
-A field marked nested=Strategy.CHILD (a per-board structural or root-only
-concern, not thematic identity) never crosses a board boundary; the
-published AuthoredBoard.style description enumerates the current set, and
+board explicitly authors — muted, accent, font, or anything else without a
+nested=Strategy.CHILD marker — reach a nested board, falling back to that
+nested board's own theme for anything no ancestor authored. A field marked
+nested=Strategy.CHILD (a per-board structural or root-only concern, not
+thematic identity) never crosses a board boundary; the published
+AuthoredBoard.style description enumerates the current set, and
 test_authored_board_style_description_names_every_child_marked_field below
 keeps that enumeration honest.
+
+`background` is the one exception with no marker at all: CSS
+`background-color` is not inherited, so a nested board's unset background is
+pinned to transparent at compile_board_resolved_style's own call site
+(_pin_unauthored_nested_background in normalize/dispatch.py) rather than
+crossing in from an ancestor's patch like every field above.
 """
 
 from dbt_charts.core.compile.config import (
@@ -162,14 +168,16 @@ def test_child_accent_overrides_parent():
     assert child_rs.accent == "#ff0000"
 
 
-def test_background_cascades_to_child_with_unrelated_style_patch():
-    """background is an ordinary style field: it cascades from an ancestor's
-    authored style the same way any other field does."""
+def test_background_does_not_cascade_to_child_with_unrelated_style_patch():
+    """Unlike every other style field, background does NOT cascade from an
+    ancestor's authored style -- CSS background-color is not inherited. A
+    nested board authoring an unrelated key still gets its own default
+    (transparent), never the parent's color threaded in."""
     child_rs = _compile_and_get_child_resolved(
         parent_style={"background": "#ff0000"},
         child_style={"frame": {"card_padding": 20}},
     )
-    assert child_rs.background == "#ff0000"
+    assert child_rs.background == "transparent"
 
 
 def test_muted_cascades_through_two_levels():

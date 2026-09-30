@@ -309,8 +309,10 @@ class TestLineStylePromotion:
         # Halo is wider than foreground by exactly halo_multiplier
         assert halo["strokeWidth"] == pytest.approx(2.0 * 3.0)
         assert fg["strokeWidth"] == pytest.approx(2.0)
-        # Halo is knockout-colored to the chart background
-        assert halo["stroke"] == spec["background"]
+        # Halo is knockout-colored to the chart's opaque composited canvas
+        # (ink_canvas), which can differ from spec["background"] in hex case
+        # -- ink_canvas always lowercases, background preserves authoring.
+        assert halo["stroke"].lower() == spec["background"].lower()
 
     def test_halo_with_points_emits_four_layers(self, make_chart):
         compiled = get_theme_style()
@@ -363,7 +365,7 @@ class TestLineStylePromotion:
         halo_point, fg_point = layer[1]["mark"], layer[3]["mark"]
         assert halo_point["size"] == pytest.approx(40.0 * 2.0)
         assert fg_point["size"] == pytest.approx(40.0)
-        assert halo_point["fill"] == spec["background"]
+        assert halo_point["fill"].lower() == spec["background"].lower()
 
 
 class TestAreaStylePromotion:

@@ -201,8 +201,12 @@ charts:
   rev: {type: bar, query: q1, x: month, y: revenue, style: {axis_y: {grid: {zero: {color: "#ff0000", width: 3.0}}}}}
 rows: [rev]
 """
-    with pytest.warns(SchemaMigrationWarning, match="migrated this YAML"):
-        result = compile(yaml_content)
+    result = compile(yaml_content)
+    assert any(
+        "migrated this YAML" in d.message
+        for d in result.warnings
+        if d.code == "WARN-SCHEMA-MIGRATED"
+    ), result.warnings
 
     assert result.success, [f"{e.code}: {e.message}" for e in result.errors]
     assert result.board is not None

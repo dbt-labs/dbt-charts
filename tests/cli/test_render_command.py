@@ -1320,6 +1320,136 @@ class TestDftRenderDiagnosticsJson:
             assert "message" in d
 
 
+# `style.axis_y.format` is the 0.3.1 spelling of `axis_y.labels.format`.
+_MIGRATED_BOARD = """\
+title: Old
+queries:
+  q:
+    type: values
+    columns: [n]
+    values:
+      - [1]
+charts:
+  c:
+    type: bar
+    query: q
+    x: n
+    y: n
+    style:
+      axis_y:
+        format: currency_whole
+rows:
+  - c
+"""
+_FAILING_MIGRATED_BOARD = _MIGRATED_BOARD.replace("query: q", "query: nope")
+
+
+def _migrated_board(project_dir: Path, text: str) -> Path:
+    (project_dir / "dbt_charts.yml").write_text("# project marker\n")
+    board = project_dir / "old.yml"
+    board.write_text(text)
+    return board
+
+
+class TestDiagnosticsJsonStderrIsOnlyJsonl:
+    """Under --diagnostics-json every stderr line is a JSON diagnostic.
+
+    The VS Code preview parses stderr line by line; one plain-text line drops
+    the failed render's error summary.
+    """
+
+    @staticmethod
+    def _render(args: list[str], stdin: str | None = None) -> list[dict[str, Any]]:
+        result = runner.invoke(
+            app, ["render", *args, "--diagnostics-json"], input=stdin
+        )
+        lines = [ln for ln in (result.stderr or "").splitlines() if ln.strip()]
+        assert lines, "expected JSONL diagnostics on stderr"
+        return [json.loads(ln) for ln in lines]
+
+    @pytest.mark.filterwarnings(
+        "error::dbt_charts.core.compile.migrations.SchemaMigrationWarning"
+    )
+    def test_in_memory_migration_is_a_diagnostic(self, tmp_path: Path) -> None:
+        board = _migrated_board(tmp_path, _MIGRATED_BOARD)
+        diags = self._render(
+            [str(board), "--format", "html", "--output", "-"]
+            + ["--project-dir", str(tmp_path)]
+        )
+        assert "WARN-SCHEMA-MIGRATED" in {d["code"] for d in diags}
+
+    def test_failed_render_keeps_migration_notice(self, tmp_path: Path) -> None:
+        board = _migrated_board(tmp_path, _FAILING_MIGRATED_BOARD)
+        diags = self._render([str(board), "--project-dir", str(tmp_path)])
+        assert {"WARN-SCHEMA-MIGRATED", "ERR-UNKNOWN-QUERY"} <= {
+            d["code"] for d in diags
+        }
+
+    def test_failed_render_keeps_migration_notice_in_human_mode(
+        self, tmp_path: Path
+    ) -> None:
+        board = _migrated_board(tmp_path, _FAILING_MIGRATED_BOARD)
+        result = runner.invoke(
+            app, ["render", str(board), "--project-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 1
+        assert "WARN-SCHEMA-MIGRATED" in result.stderr
+
+    def test_failed_render_honors_ignore_warning(self, tmp_path: Path) -> None:
+        board = _migrated_board(tmp_path, _FAILING_MIGRATED_BOARD)
+        diags = self._render(
+            [str(board), "--ignore-warning", "WARN-SCHEMA-MIGRATED"]
+            + ["--project-dir", str(tmp_path)]
+        )
+        assert "WARN-SCHEMA-MIGRATED" not in {d["code"] for d in diags}
+
+    def test_failed_render_honors_no_warnings(self, tmp_path: Path) -> None:
+        board = _migrated_board(tmp_path, _FAILING_MIGRATED_BOARD)
+        result = runner.invoke(
+            app,
+            ["render", str(board), "--no-warnings", "--project-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        assert "ERR-UNKNOWN-QUERY" in result.stderr
+        assert "WARN-SCHEMA-MIGRATED" not in result.stderr
+
+    def test_empty_stdin(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        diags = self._render(["-", "--project-dir", str(tmp_path)], stdin="")
+        assert [d["code"] for d in diags] == ["ERR-EMPTY-YAML-DOCUMENT"]
+
+    @pytest.mark.parametrize(
+        ("ignored", "expected"),
+        [
+            ("NOT-A-CODE", "ERR-UNKNOWN-WARNING-CODE"),
+            ("ERR-INTERNAL", "ERR-IGNORE-ERROR-CODE"),
+        ],
+    )
+    def test_invalid_ignore_code(
+        self, ignored: str, expected: str, tmp_path: Path
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        (tmp_path / "b.yml").write_text("title: B\n")
+        diags = self._render(
+            [str(tmp_path / "b.yml"), "--ignore-warning", ignored]
+            + ["--project-dir", str(tmp_path)]
+        )
+        assert [d["code"] for d in diags] == [expected]
+
+    def test_per_board_crash(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        (tmp_path / "b.yml").write_text("title: B\n")
+        with patch(
+            "dbt_charts.cli.commands.render.render_command",
+            side_effect=RuntimeError("boom"),
+        ):
+            diags = self._render(
+                [str(tmp_path / "b.yml"), "--project-dir", str(tmp_path)]
+            )
+        assert [d["code"] for d in diags] == ["ERR-INTERNAL"]
+        assert "boom" in diags[0]["message"]
+
+
 class TestRenderCommandInlinesFonts:
     """`dct render --format html` writes a file nobody serves, so it carries its fonts.
 

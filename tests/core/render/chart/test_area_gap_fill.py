@@ -48,6 +48,7 @@ _C: dict[str, Any] = {
     "resolved_channels": {},
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
+    "canvas": _DEFAULT_CHARTS.ink_canvas,
     "title_style": _DEFAULT_CHARTS.title,
     "layout_padding": PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0),
 }
@@ -66,7 +67,7 @@ def _area_axis(fill: str = "null", time_unit: str = "yearweek") -> Any:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, _, ax_band_position, _, _, _, _ = _bake_cartesian_axes(
+    ax_merged, _, ax_band_position, _, _ = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("area"),
         "area",
@@ -78,8 +79,7 @@ def _area_axis(fill: str = "null", time_unit: str = "yearweek") -> Any:
         ax_merged,
         band_position=ax_band_position,
         chart_id="test",
-        format_authored=True,
-        format_is_alias=False,
+        format_raw=None,
     )
     return dataclasses.replace(ax, fill=fill, time_unit=time_unit, type=None)
 

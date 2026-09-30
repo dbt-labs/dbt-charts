@@ -1,12 +1,11 @@
 """Render-time capture of tables whose slot fits fewer rows than the page holds.
 
-``layout_sizing._get_table_height_from_data`` reserves slot height for the row
-count it expects the table to draw; ``_largest_safe_page_rows`` then decides how
-many rows the slot actually fits. When the slot is shorter than the sizer
-assumed, the paginator quietly wins — a 6-row summary renders 3 rows, the export
-photographs as a faithful table, and nothing says half the data moved to page 2.
+An auto-sized tile is measured by the renderer and always fits its page, but a
+pinned slot (explicit height, grid row, equalized siblings) can be shorter:
+``_largest_safe_page_rows`` then cuts the page, and the export photographs as a
+faithful table while half the data moved to page 2.
 
-This module is the seam that lets a warning detector see that disagreement,
+This module is the seam that lets a warning detector see that cut,
 mirroring ``table_overflow.py`` and ``table_static_pagination.py``: the renderer
 records it at the exact point it settles on a page smaller than the one the
 table's own pagination asked for, into a sink that ``TABLE_PAGE_SQUEEZED`` reads

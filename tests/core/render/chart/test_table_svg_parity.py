@@ -114,8 +114,8 @@ def test_v2_table_svg_header_overflow() -> None:
 def test_v2_table_svg_pagination_override() -> None:
     """Chart-local style.pagination override drives visible-row slicing.
 
-    The chart authors page_rows=1 over 3 rows — only the first row's value
-    may appear on page one. Wrapped in the interactive-host contract (a
+    The chart authors page_rows=1 over 5 rows (past the grow cap) — only the
+    first row's value may appear on page one. Wrapped in the interactive-host contract (a
     single page rendered, onclick=updateVariable) so this stays a pure
     page_rows-slicing check; the static-export contract pre-renders every
     page into a toggled group and is covered separately in
@@ -123,7 +123,7 @@ def test_v2_table_svg_pagination_override() -> None:
     """
     from dbt_charts.core.render.controls import interactive_controls
 
-    data = [{"v": "AAA"}, {"v": "BBB"}, {"v": "CCC"}]
+    data = [{"v": v} for v in ("AAA", "BBB", "CCC", "DDD", "EEE")]
     style = {"pagination": {"enabled": True, "page_rows": 1}}
     with interactive_controls(True):
         svg = _render(style=style, data=data, width=200)

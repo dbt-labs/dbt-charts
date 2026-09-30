@@ -83,12 +83,12 @@ class TestRetiredThemeNamesMigrateInMemory:
         a different code path). A full valid board (not a bare `theme:`
         mapping) so the rename alone satisfies the currency check and
         `migrate_mapping` is never reached -- exactly one warning fires."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = compile(_board("title: t\ntheme: solid"))
+        result = compile(_board("title: t\ntheme: solid"))
 
         assert result.success, result.errors
-        messages = [str(w.message) for w in caught]
+        messages = [
+            d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
+        ]
         assert messages == [
             "dbt charts migrated this YAML in memory; `dct migrate` may be "
             "able to update the file."
@@ -182,14 +182,14 @@ def test_stark_theme_name_is_not_retired() -> None:
     `editorial`/`cream`, it is a live `ThemeName` value, not an entry in
     `THEME_VALUE_MAP`'s retired half, so `theme: stark` never engages the
     Move and never warns."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = compile(_board("title: t\ntheme: stark"))
+    result = compile(_board("title: t\ntheme: stark"))
 
     assert result.success, result.errors
     assert result.board is not None
     assert result.board.theme == "stark"
-    assert [str(w.message) for w in caught] == []
+    assert [
+        d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
+    ] == []
 
 
 def test_unmapped_theme_value_is_left_untouched_by_the_move() -> None:
@@ -272,7 +272,7 @@ def test_extends_path_fragment_still_compiles(
     and raises -- catchable in more than one place along
     ``compile_file``'s parse path, several of which would still report
     success with the fragment silently unresolved. Asserting no
-    ``SchemaMigrationWarning`` fired, the same check
+    ``WARN-SCHEMA-MIGRATED`` fired, the same check
     ``test_theme_path_ref_does_not_misfire_the_move`` makes at the
     ``prepare_board_mapping`` level, closes that gap here at the full
     ``compile_file`` level -- a real project, real fragment file, real
@@ -286,12 +286,12 @@ def test_extends_path_fragment_still_compiles(
     )
 
     project = local_project(tmp_path)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = compile_file(project.path("charts/board.yaml").read_board())
+    result = compile_file(project.path("charts/board.yaml").read_board())
 
     assert result.success, result.errors
-    assert [str(w.message) for w in caught] == []
+    assert [
+        d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
+    ] == []
 
 
 class TestRetiredExtendsNamesResolveInAProject:
@@ -333,6 +333,11 @@ class TestRetiredExtendsNamesResolveInAProject:
         assert result.success, result.errors
         assert result.board is not None
         assert result.board.theme == expected_theme
+        [notice] = [d for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"]
+        assert notice.message.startswith(
+            f"charts/board.yaml: dbt charts resolved retired `extends:` theme name "
+            f"{retired_name!r}"
+        )
 
     def test_stark_extends_is_not_retired(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -348,14 +353,14 @@ class TestRetiredExtendsNamesResolveInAProject:
         )
 
         project = local_project(tmp_path)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = compile_file(project.path("charts/board.yaml").read_board())
+        result = compile_file(project.path("charts/board.yaml").read_board())
 
         assert result.success, result.errors
         assert result.board is not None
         assert result.board.theme == "stark"
-        assert [str(w.message) for w in caught] == []
+        assert [
+            d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
+        ] == []
 
     def test_a_real_project_board_of_the_same_name_wins(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -468,10 +473,10 @@ def test_retired_theme_name_in_a_nested_sub_board_fails_loud() -> None:
         """
     )
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = compile(yaml_content)
+    result = compile(yaml_content)
 
     assert not result.success
     assert any(e.code == "ERR-UNKNOWN-THEME" for e in result.errors)
-    assert [str(w.message) for w in caught] == []
+    assert [
+        d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
+    ] == []

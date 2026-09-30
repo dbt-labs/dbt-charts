@@ -378,9 +378,9 @@ class TestBarValueLabels:
         layers = self._text_layers(spec)
         assert layers, "Expected a text layer"
         lyr = layers[0]
-        expected_bg = resolved.background
+        expected_bg = resolved.canvas
         assert lyr["encoding"].get("color") == {"value": expected_bg}, (
-            f"bottom must pin the background color {expected_bg!r}: {lyr['encoding']}"
+            f"bottom must pin the canvas color {expected_bg!r}: {lyr['encoding']}"
         )
         # V2 hoists sub-layer transforms to the outer spec to preserve y.sort.
         transforms = spec.get("transform", [])
@@ -434,8 +434,8 @@ class TestBarValueLabels:
         assert enc.get("y", {}).get("field") == mid_field, (
             f"middle_aligned text layer y must use '{mid_field}': {enc}"
         )
-        assert enc.get("color") == {"value": resolved.background}, (
-            f"middle_aligned is inside bar fill, must pin the background color: {enc}"
+        assert enc.get("color") == {"value": resolved.canvas}, (
+            f"middle_aligned is inside bar fill, must pin the canvas color: {enc}"
         )
 
     def test_stacked_bar_label_pins_constant_color(self, make_chart):
@@ -468,7 +468,7 @@ class TestBarValueLabels:
         layers = self._text_layers(spec)
         assert layers, "Expected a text layer on a stacked bar with labels visible"
         enc = layers[0].get("encoding", {})
-        assert enc.get("color") == {"value": resolved.background}, (
+        assert enc.get("color") == {"value": resolved.canvas}, (
             "stacked label must pin a constant color so it does not inherit the "
             f"series-color field: {enc.get('color')!r}"
         )
@@ -763,10 +763,13 @@ class TestFormatNullInherit:
         """When labels.format is None, it inherits from axis_quantitative.format (not axis_y).
 
         axis_y.format is None in all shipped themes; the measure format lives on
-        axis_quantitative (the number alias → ".3~s" in editorial). The
-        inherited format is SI-shaped, so the label takes the narrative
-        house register (a calculate transform) rather than a literal
-        text.format — see _house_register_text_encoding.
+        axis_quantitative. Here it is set to a literal d3 spec ("~s", not a
+        predefined name) at the theme tier -- #7391's settled rule (name-vs-
+        literal, never which tier wrote it) means a literal is honored
+        verbatim: the label's text.format carries it straight to Vega, with
+        no narrative-register calculate transform. See
+        test_null_format_inherits_real_editorial_theme for the predefined-name
+        sibling, which does take the house register.
         """
         compiled = get_theme_style("clarity")
         # Set axis_quantitative format explicitly (mirrors how shipped themes work)
@@ -796,14 +799,14 @@ class TestFormatNullInherit:
         lyr = _get_text_layer(spec)
         assert lyr is not None
         text_field = lyr["encoding"]["text"]["field"]
-        assert lyr["encoding"]["text"].get("format") is None, (
-            "an SI-shaped format must not be handed to Vega verbatim"
+        assert lyr["encoding"]["text"].get("format") == "~s", (
+            "a literal d3 spec must be handed to Vega verbatim, not wrapped in "
+            "the house narrative register"
         )
-        expected = _house_register_expr("datum['revenue']", "~s")
         calc = next(
             (t for t in spec.get("transform", []) if t.get("as") == text_field), None
         )
-        assert calc is not None and calc["calculate"] == expected
+        assert calc is None
 
     def test_null_format_inherits_real_editorial_theme(self, make_chart):
         """With the real editorial theme, labels.format=None takes the resolved
@@ -1044,9 +1047,9 @@ class TestFontApplication:
         assert lyr is not None, (
             "Grouped bar with middle position must emit a text layer"
         )
-        expected_bg = resolved.background
+        expected_bg = resolved.canvas
         assert lyr["encoding"].get("color") == {"value": expected_bg}, (
-            f"middle-position label must pin background {expected_bg!r}, "
+            f"middle-position label must pin canvas {expected_bg!r}, "
             f"got: {lyr['encoding']}"
         )
 
@@ -1524,7 +1527,7 @@ class TestStackedBarLabelPositioning:
         )
         lyr = _get_text_layer(spec)
         assert lyr is not None, "Stacked bar must emit a text layer"
-        expected_bg = resolved.background
+        expected_bg = resolved.canvas
         assert lyr["encoding"].get("color") == {"value": expected_bg}, (
             f"stacked top label must pin constant color {expected_bg!r} on the "
             f"encoding, got: {lyr['encoding'].get('color')!r}"
@@ -1544,9 +1547,9 @@ class TestStackedBarLabelPositioning:
         )
         lyr = _get_text_layer(spec)
         assert lyr is not None, "Grouped bar with top must emit a text layer"
-        expected_bg = resolved.background
+        expected_bg = resolved.canvas
         assert lyr["encoding"].get("color") == {"value": expected_bg}, (
-            f"top non-stacked bar must pin chart background {expected_bg!r}, "
+            f"top non-stacked bar must pin chart canvas {expected_bg!r}, "
             f"got: {lyr['encoding']}"
         )
 

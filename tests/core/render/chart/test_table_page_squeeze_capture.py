@@ -43,10 +43,11 @@ def _render(
     height: float,
     *,
     page_rows: int | None = None,
+    explicit_null: bool = False,
     sink_open: bool = True,
 ) -> dict[str, TablePageSqueeze]:
     pagination: dict[str, Any] = {"enabled": True}
-    if page_rows is not None:
+    if page_rows is not None or explicit_null:
         pagination["page_rows"] = page_rows
     data = _data(n_rows)
     chart = resolve(
@@ -98,3 +99,40 @@ def test_no_sink_is_noop() -> None:
     """Rendering without an open sink must not raise, and must open none."""
     _render(4, _SQUEEZING_HEIGHT, sink_open=False)
     assert _sinks.get() == ()
+
+
+def test_setting_page_rows_to_drawn_rows_clears_the_squeeze() -> None:
+    """The Fix line prescribes ``page_rows: <drawn_rows>``; following it clears it."""
+    drawn = _render(30, 300.0, page_rows=25)["svc"].drawn_rows
+    assert 1 < drawn < 25
+    assert _render(30, 300.0, page_rows=drawn) == {}
+
+
+def test_unlimited_page_rows_records_nothing() -> None:
+    """``page_rows: null`` is unlimited: the slot sizes the page, nothing to warn."""
+    assert _render(30, 300.0, page_rows=None, explicit_null=True) == {}
+
+
+def _resolved_page_rows(pagination: dict[str, Any]) -> int | None:
+    chart = resolve(
+        TableChart(
+            id="svc",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="table",
+            style=TableChartStylePatch(pagination=pagination),
+        ),
+        _data(50),
+        chart_style_context=_BOARD_CTX,
+    )
+    assert chart.style.pagination is not None
+    return chart.style.pagination.page_rows
+
+
+def test_omitted_page_rows_inherits_the_theme_default() -> None:
+    assert _resolved_page_rows({"enabled": True}) == 20
+
+
+def test_explicit_null_page_rows_stays_unlimited_for_the_sizer() -> None:
+    """The sizer reads this slot; backfilling 20 would paginate an unlimited table."""
+    assert _resolved_page_rows({"enabled": True, "page_rows": None}) is None

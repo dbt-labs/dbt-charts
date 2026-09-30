@@ -417,15 +417,14 @@ def test_alpha_container_still_warns_with_the_full_composite_depth(
     local_project: Callable[..., FilesystemProject],
     container_key: str,
 ) -> None:
-    """Black ink on this container is unreadable only once every ``_bg_rect``
-    the SVG actually stacks (the container's own nested-board-level paint,
-    plus its layout-level paint, plus the inherited-background leaf board
-    wrapping the bare ``text:``) is composited -- a shallower count reads as
-    readable and misses a real problem."""
+    """White ink on this container warns against the composite of every
+    ``_bg_rect`` the SVG actually stacks (the container's own nested-board-level
+    paint plus its layout-level paint; the leaf board wrapping the bare
+    ``text:`` paints nothing) -- any other count reports the wrong canvas."""
     from dbt_charts.core.diagnostics import WARN_LOW_TEXT_CONTRAST
     from dbt_charts.core.render.contrast_warning import composite_over_canvas
 
-    result = _render_alpha_container(container_key, "#000000", tmp_path, local_project)
+    result = _render_alpha_container(container_key, "#FFFFFF", tmp_path, local_project)
     svg = result.data
     assert isinstance(svg, str)
     layer_count = svg.lower().count('fill="#0b1f3a50"')
@@ -438,7 +437,7 @@ def test_alpha_container_still_warns_with_the_full_composite_depth(
 
     matches = [w for w in result.warnings if w.code == WARN_LOW_TEXT_CONTRAST.code]
     assert len(matches) == 1, (
-        f"expected black ink on the {layer_count}-layer composite "
+        f"expected white ink on the {layer_count}-layer composite "
         f"{expected_canvas} to warn; got: {result.warnings}"
     )
     assert expected_canvas in matches[0].message, (
@@ -454,16 +453,15 @@ def test_alpha_container_silent_once_the_full_composite_passes(
     local_project: Callable[..., FilesystemProject],
     container_key: str,
 ) -> None:
-    """White ink on this same container is readable once every ``_bg_rect``
-    the SVG stacks is composited (three layers of the alpha navy darken the
-    canvas enough for white to clear 4.5:1) -- undercounting the layers
-    reports a lighter canvas and falsely warns."""
+    """Black ink on this same container is readable against the two stacked
+    layers of alpha navy; counting a phantom third layer reports a darker
+    canvas and falsely warns."""
     from dbt_charts.core.diagnostics import WARN_LOW_TEXT_CONTRAST
 
-    result = _render_alpha_container(container_key, "#FFFFFF", tmp_path, local_project)
+    result = _render_alpha_container(container_key, "#000000", tmp_path, local_project)
     codes = {w.code for w in result.warnings}
     assert WARN_LOW_TEXT_CONTRAST.code not in codes, (
-        f"white ink on the fully-composited three-layer canvas is readable: "
+        f"black ink on the fully-composited two-layer canvas is readable: "
         f"{result.warnings}"
     )
 

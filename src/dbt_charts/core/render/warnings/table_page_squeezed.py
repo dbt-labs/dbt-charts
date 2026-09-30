@@ -28,7 +28,9 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 page_rows=squeeze.page_rows,
                 total_rows=squeeze.total_rows,
             ),
-            fix=WARN_TABLE_PAGE_SQUEEZED.fix_template,
+            fix=WARN_TABLE_PAGE_SQUEEZED.fix_template.format(
+                drawn_rows=squeeze.drawn_rows
+            ),
         )
         for chart_id, squeeze in ctx.table_page_squeezes.items()
     ]

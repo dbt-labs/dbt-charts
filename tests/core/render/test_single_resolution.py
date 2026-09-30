@@ -62,9 +62,9 @@ def _make_executor(
 _EXPECTED_HEIGHTS: dict[str, float] = {
     "kpi1": 338.6666666666667,
     "bar1": 338.6666666666667,  # col-aligned to match kpi1 (and/or bar aspect)
-    # 3 data rows at row_height + the header band. The band reserves the
-    # two-line worst case now that wrap-two is the effective header default.
-    "table1": 140.00,
+    # 3 data rows at row_height + the header as the renderer measures it
+    # (one line: the headers fit).
+    "table1": 138.00,
 }
 
 

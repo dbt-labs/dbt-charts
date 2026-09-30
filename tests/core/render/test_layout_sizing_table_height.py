@@ -82,6 +82,7 @@ def _call_provider(
         executor,
         variables={},
         card_padding=float(resolved_style.frame.card_padding),
+        board_style=resolved_style,
     )
 
 
@@ -285,40 +286,19 @@ class TestHeaderHeightOverride:
     """Board-level header.height override must be used in the chrome calculation."""
 
     def test_header_height_override(self):
-        """header.height=60 must produce a taller allocation than the default.
+        """header.height=60 adds its excess over the default header, exactly.
 
-        The delta is not ``60 - header.height``: ``reserve_header_band`` floors
-        the band at the two-line height whenever a wrap overflow mode is active,
-        and the shipped default is ``wrap-two``. An override only adds width
-        above that floor, so the expectation is derived from the helper both
-        the sizer and this test read rather than from the raw height field.
+        The single-column header fits one line, so the renderer draws it at the
+        authored height and the sizer reserves what the renderer draws.
         """
-        from dbt_charts.core.compile.resolve.style.chart_context import (
-            build_chart_style_context,
-        )
-        from dbt_charts.core.render.chart.table_support import reserve_header_band
-
         patch = ChartStylePatch.model_validate({"table": {"header": {"height": 60}}})
         chart = _make_table_chart(patch)
-        executor = _make_executor(10)
 
-        resolved = resolve_style(get_theme_style())
-        height_h60 = _call_provider(chart, executor, resolved_style=resolved)
+        height_h60 = _call_provider(chart, _make_executor(10))
         height_default = _call_provider(_make_table_chart(), _make_executor(10))
 
-        default_tc = build_chart_style_context(
-            _DEFAULT_CONTEXT, _make_table_chart()
-        ).table
-        override_tc = build_chart_style_context(_DEFAULT_CONTEXT, chart).table
-        body = int(default_tc.font.size)
-        extra = reserve_header_band(override_tc, body) - reserve_header_band(
-            default_tc, body
-        )
-        assert extra > 0, "header.height=60 must exceed the wrapped-header floor"
-        assert height_h60 == height_default + extra, (
-            f"header.height=60 should add exactly {extra}px over the default "
-            f"band: got {height_h60} vs {height_default}"
-        )
+        default_header = int(_DEFAULT_RESOLVED.chart_defaults.table.header.height)
+        assert height_h60 == height_default + 60 - default_header
 
 
 # ---------------------------------------------------------------------------

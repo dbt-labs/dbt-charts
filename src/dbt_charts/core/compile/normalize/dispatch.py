@@ -44,7 +44,7 @@ import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -151,7 +151,7 @@ def _theme_from_extends(extends: str | list[str] | None) -> str | None:
 # `repr` of the dumped fields, not `model_dump_json`: JSON writes inf and nan as
 # null, so `gap: .inf` would key the same as `gap: null` and silently take the
 # wrong style off the memo. A repr the other way round can only miss.
-_BoardCascadeKey = tuple[str, str, str | None, bool]
+_BoardCascadeKey = tuple[str, str, str | None]
 _CascadeProducts = tuple[ResolvedStyle, ChartStyleContext]
 
 # Board style cascades already resolved, innermost compile last. Every cascade
@@ -192,6 +192,70 @@ def _current_board_style_cache() -> dict[_BoardCascadeKey, _CascadeProducts]:
     return caches[-1] if caches else {}
 
 
+@overload
+def _pin_unauthored_nested_background(
+    patch: StylePatch,
+    board_style: StylePatch | None,
+    *,
+    is_nested: bool,
+    replacement: str,
+) -> StylePatch: ...
+@overload
+def _pin_unauthored_nested_background(
+    patch: StylePatch | None,
+    board_style: StylePatch | None,
+    *,
+    is_nested: bool,
+    replacement: str,
+) -> StylePatch | None: ...
+def _pin_unauthored_nested_background(
+    patch: StylePatch | None,
+    board_style: StylePatch | None,
+    *,
+    is_nested: bool,
+    replacement: str,
+) -> StylePatch | None:
+    """Force ``background`` to ``replacement`` unless THIS scope's own raw
+    style set it -- CSS ``background-color`` is not inherited, so a nested
+    scope's unset background must never be an ancestor's color crossing in
+    through ``parent_patch``/``scope_patch``'s ordinary cascade.
+
+    ``replacement`` is ``"transparent"`` for a scope on the same theme as
+    its parent, or that theme's own canvas when the scope declares its own
+    ``theme:``/``extends:`` -- a switched theme is a declaration on this
+    exact scope (like a CSS rule naming a new class), so its own canvas
+    applies instead of the CSS initial value.
+
+    Checked on ``board_style``, THIS scope's own raw, unmerged patch --
+    never the already-merged ``patch``, which echoes an ancestor's value
+    regardless of whether this scope authored anything. Only the top-level
+    ``style.background:`` spelling counts: ``style.charts.background:`` is
+    a different field (the per-chart card-fill default), unaffected here.
+
+    ``model_dump(exclude_unset=True)``, not `board_style.background is not
+    None` directly: a patch model's TYPE_CHECKING stub inherits the
+    resolved model's required `str` type, so pyright reads a bare `is not
+    None` as statically impossible even though it is meaningful at runtime.
+
+    A single-field ``model_copy(update=...)``, not ``scope_patch``/
+    ``merge_patches``: several Style fields (``layout``, ``frame``, ...)
+    carry ``Merge(nested=Strategy.CHILD)``, "take the whole field from the
+    child's own patch, even when unset" -- merging a second, background-only
+    patch via that machinery would re-trigger CHILD's whole-field
+    replacement and wipe out every CHILD field ``patch`` already resolved.
+    """
+    if not is_nested:
+        return patch
+    own_fields = (
+        board_style.model_dump(exclude_unset=True) if board_style is not None else {}
+    )
+    if own_fields.get("background") is not None:
+        return patch
+    if patch is None:
+        return StylePatch.model_construct(background=replacement)
+    return patch.model_copy(update={"background": replacement})
+
+
 def compile_board_resolved_style(
     board_style: StylePatch | None,
     parent_resolved: ResolvedStyle | None,
@@ -215,9 +279,16 @@ def compile_board_resolved_style(
     2. Theme defaults (theme_name → compiled theme → resolve_style) fill
        whatever the merged patch left unset.
 
-    When this board authors no ``style:`` of its own, it reuses
-    ``parent_resolved``/``parent_context`` verbatim (or a bare theme resolve
-    at the root) — see the fast path below.
+    ``background`` is the one field this cascade excludes from step 1's
+    ordinary inheritance (``_pin_unauthored_nested_background`` below): CSS
+    ``background-color`` is not inherited, so a nested board's unset
+    background is pinned to transparent (or its own theme's canvas, on a
+    theme switch) rather than crossing in from ``parent_patch`` like every
+    other field -- this holds even for a board that resolves fresh only
+    because its own theme differs, so it always earns its own patch build;
+    there is no "reuse the parent's object verbatim" shortcut here, ever
+    (see ``layout_sizing.py``'s ``canonical_resolved_key`` for why one
+    isn't needed: "same placement" no longer means "same object").
 
     Returns the resolved style, its chart context, and this board's own
     merged patch — ``None`` when nothing was authored anywhere in this
@@ -250,76 +321,40 @@ def compile_board_resolved_style(
     # This scope's own theme differs from its immediate parent's -- the
     # cascade already falls through to the parent's theme when this board
     # authors none (see the docstring above), so a difference here can only
-    # come from this scope's own `theme:`/`extends:`. render always paints
-    # a nested board's background over the PARENT's real, already-composited
-    # pixels (`bottom_layer` below), own theme or not -- an opaque own-theme
-    # canvas just composites to itself over anything beneath it, so this
-    # doesn't change what the bottom layer is. What it does change: this
-    # scope's own resolve can never be reused verbatim from the parent (the
-    # parent's entire resolved style is for the wrong theme), so it always
-    # earns a fresh composite -- folded into `background_authored` below,
-    # and it rules out the `board_style is None` branch's "reuse the parent
-    # verbatim" shortcut.
+    # come from this scope's own `theme:`/`extends:`.
     own_theme_declared = (
         parent_theme_name is not None and effective_theme != parent_theme_name
     )
+    is_nested = parent_context is not None
     # A nested board paints on top of what its PARENT scope actually
     # composited, never the theme's raw canvas underneath that -- see
     # resolve_style_and_context's own docstring. The root has no parent
     # context, so it keeps the theme canvas (base_background=None).
-    bottom_layer = parent_context.ink_canvas if parent_context is not None else None
+    bottom_layer = parent_context.board_canvas if parent_context is not None else None
+    # What an unauthored nested scope's own fill becomes: this theme's own
+    # canvas on a theme switch (a declaration on this exact scope), else
+    # transparent (see _pin_unauthored_nested_background's own docstring).
+    replacement = base.background if own_theme_declared else "transparent"
 
     if board_style is None:
-        if (
-            not own_theme_declared
-            and parent_resolved is not None
-            and parent_context is not None
-        ):
-            return parent_resolved, parent_context, parent_patch
-        # No style: of its own to merge, but either there is no parent to
-        # reuse from (the root) or this scope's own theme rules out the
-        # shortcut above -- a fresh resolve against `base`, still folding
-        # whatever an ancestor authored (`parent_patch`).
-        patches = (parent_patch,) if parent_patch is not None else ()
+        # No style: of its own to merge -- still folds whatever an ancestor
+        # authored (`parent_patch`), background pinned to `replacement` when
+        # this scope is nested and authored no style at all. Always a fresh
+        # resolve: an unstyled nested board never reuses its parent's object
+        # (layout_sizing.py's canonical_resolved_key keys "same placement"
+        # on a value, not identity, precisely so this can be true).
+        merged_patch = _pin_unauthored_nested_background(
+            parent_patch, None, is_nested=is_nested, replacement=replacement
+        )
+        patches = (merged_patch,) if merged_patch is not None else ()
         return (
-            *resolve_style_and_context(
-                base,
-                *patches,
-                base_background=bottom_layer,
-                background_authored=own_theme_declared or parent_context is None,
-            ),
+            *resolve_style_and_context(base, *patches, base_background=bottom_layer),
             parent_patch,
         )
 
     own_patch = scope_patch(parent_patch, board_style)
-    # An authored background composites exactly once over the canvas
-    # beneath it; a scope that only inherits one (this board's own raw
-    # style: authors no background:) adds nothing (resolve_style_and_context's
-    # own docstring has the full rule). Checked on `board_style`, the raw,
-    # unmerged patch -- `own_patch.charts.background` would echo the
-    # inherited value regardless of whether THIS board authored anything,
-    # since it folds the parent's own patch forward. Both authoring
-    # spellings count (the common `style.background:`, and the rarer
-    # explicit `style.charts.background:` override). Authored means the
-    # key is present AND the value is not None -- an explicit
-    # `background: null` is not an authored color, so it must not force a
-    # second composite either. `model_dump(exclude_unset=True)` (a plain
-    # dict, so `.get(...)` types as `Any`), not `board_style.background is
-    # not None` directly: a patch model's generated runtime class makes
-    # every field truly optional, but its TYPE_CHECKING stub inherits the
-    # field's type from the non-patch base (`Style.background: str`,
-    # required on the resolved model), so a bare `is not None` on the
-    # attribute itself reads as statically-impossible to pyright even
-    # though it is meaningful at runtime.
-    _own_fields = board_style.model_dump(exclude_unset=True)
-    background_authored = (
-        own_theme_declared
-        or parent_context is None
-        or _own_fields.get("background") is not None
-        or (
-            isinstance(_own_fields.get("charts"), dict)
-            and _own_fields["charts"].get("background") is not None
-        )
+    own_patch = _pin_unauthored_nested_background(
+        own_patch, board_style, is_nested=is_nested, replacement=replacement
     )
 
     cache = _current_board_style_cache()
@@ -327,24 +362,19 @@ def compile_board_resolved_style(
         effective_theme,
         repr(own_patch.model_dump(exclude_unset=True)),
         bottom_layer,
-        background_authored,
     )
     cached = cache.get(key)
     if cached is not None:
-        # A shallow copy, not the cached object: the sizing pass keys its
-        # per-chart resolve caches on ``id(resolved_style)`` to tell one board's
-        # scope from another's (``resolved_chart_variant_key``), so two boards
-        # that merge to the same style must still hold two objects. The copy
-        # shares the whole resolved tree — what the memo skips is the cascade,
-        # not the allocation.
+        # A shallow copy, not the cached object: two boards that merge to
+        # the same style must still hold two objects for
+        # resolved_chart_variant_key/_style_contexts_by_resolved_style_id
+        # (layout_sizing.py), which tell one board's per-chart resolve
+        # cache from another's by identity. The copy shares the whole
+        # resolved tree -- what the memo skips is the cascade, not the
+        # allocation.
         return copy.copy(cached[0]), cached[1], own_patch
 
-    resolved = resolve_style_and_context(
-        base,
-        own_patch,
-        base_background=bottom_layer,
-        background_authored=background_authored,
-    )
+    resolved = resolve_style_and_context(base, own_patch, base_background=bottom_layer)
     cache[key] = resolved
     return (*resolved, own_patch)
 

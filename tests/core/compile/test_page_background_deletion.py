@@ -103,12 +103,8 @@ def test_board_authoring_page_compiles_after_migration(page_yaml: str) -> None:
     whole-document gate that `compile()` applies — pin all three legal shapes
     at `compile()` too, not just at the lower-level migration helper. Also
     pins the Deletion's `reason` actually reaches the author as a warning."""
-    with pytest.warns(
-        SchemaMigrationWarning,
-        match="page canvas this board explicitly requested is gone",
-    ):
-        result = compile(
-            f"""title: Test
+    result = compile(
+        f"""title: Test
 queries:
   q: {{type: values, rows: [{{n: 1}}]}}
 style:
@@ -117,6 +113,11 @@ style:
 rows:
 - t
 """
-        )
+    )
+    assert any(
+        "page canvas this board explicitly requested is gone" in d.message
+        for d in result.warnings
+        if d.code == "WARN-SCHEMA-MIGRATED"
+    ), result.warnings
 
     assert result.success

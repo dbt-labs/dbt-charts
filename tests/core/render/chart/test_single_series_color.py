@@ -146,7 +146,10 @@ def test_single_series_line_uses_theme_single_series_palette(
     monkeypatch.setenv("DCT_DEFAULT_THEME", theme_name)
     charts = resolve_style(get_theme_style(theme_name)).chart_defaults
     expected = charts.single_series_palette[0]
-    background = resolve_style(get_theme_style(theme_name)).background
+    # Halo layers now stroke with the composited canvas (ink_canvas), not the
+    # raw background field -- the two can differ in hex case (ink_canvas
+    # always lowercases; background preserves authored casing).
+    canvas = charts.ink_canvas
 
     chart = LineChart(
         id="t",
@@ -159,7 +162,7 @@ def test_single_series_line_uses_theme_single_series_palette(
     spec = generate_vega_lite_spec(
         chart, [{"month": "Jan", "orders": 100}, {"month": "Feb", "orders": 200}]
     )
-    fg = _find_layer_with_stroke(spec, exclude_strokes={background})
+    fg = _find_layer_with_stroke(spec, exclude_strokes={canvas})
     assert fg.get("stroke") == expected, (
         f"expected fg stroke {expected!r} for {theme_name}, got {fg.get('stroke')!r}"
     )
@@ -174,7 +177,9 @@ def test_single_series_area_uses_theme_single_series_palette(
     monkeypatch.setenv("DCT_DEFAULT_THEME", theme_name)
     charts = resolve_style(get_theme_style(theme_name)).chart_defaults
     expected = charts.single_series_palette[0]
-    background = resolve_style(get_theme_style(theme_name)).background
+    # Halo layers now fill with the composited canvas (ink_canvas), not the
+    # raw background field -- see the line-chart test above for why.
+    canvas = charts.ink_canvas
 
     chart = AreaChart(
         id="t",
@@ -193,7 +198,7 @@ def test_single_series_area_uses_theme_single_series_palette(
         if not isinstance(layer, dict):
             continue
         m = layer.get("mark", {})
-        if m.get("type") == "area" and m.get("fill") not in (None, background):
+        if m.get("type") == "area" and m.get("fill") not in (None, canvas):
             fg_area_fill = m
             break
     assert fg_area_fill is not None, (

@@ -50,30 +50,26 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
     chart_style_context = resolve_chart_style_context(
         get_theme_style(get_default_theme_name())
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _, _, _ = (
-        _bake_cartesian_axes(
-            chart_style_context,
-            fixture_chart_for_type("line"),
-            "line",
-            "temporal",
-            "quantitative",
-            AxisOverrides(),
-        )
+    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+        chart_style_context,
+        fixture_chart_for_type("line"),
+        "line",
+        "temporal",
+        "quantitative",
+        AxisOverrides(),
     )
     return (
         build_resolved_axis(
             ax_merged,
             band_position=ax_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
         build_resolved_axis(
             ay_merged,
             band_position=ay_band_position,
             chart_id="test",
-            format_authored=True,
-            format_is_alias=False,
+            format_raw=None,
         ),
     )
 
@@ -349,22 +345,19 @@ class TestPinNormalizeAxisFormat:
         chart_style_context = resolve_chart_style_context(
             get_theme_style(get_default_theme_name())
         )
-        _, ay_merged, _, ay_band_position, ay_format_authored, ay_format_is_alias, _ = (
-            _bake_cartesian_axes(
-                chart_style_context,
-                fixture_chart_for_type("line"),
-                "line",
-                "temporal",
-                "quantitative",
-                AxisOverrides(),
-            )
+        _, ay_merged, _, ay_band_position, ay_format_raw = _bake_cartesian_axes(
+            chart_style_context,
+            fixture_chart_for_type("line"),
+            "line",
+            "temporal",
+            "quantitative",
+            AxisOverrides(),
         )
         return build_resolved_axis(
             ay_merged,
             band_position=ay_band_position,
             chart_id="test",
-            format_authored=ay_format_authored,
-            format_is_alias=ay_format_is_alias,
+            format_raw=ay_format_raw,
         )
 
     def test_clears_a_composed_label_expr(self) -> None:

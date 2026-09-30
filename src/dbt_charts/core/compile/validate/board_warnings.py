@@ -29,7 +29,7 @@ from dbt_charts.core.diagnostics import (
     RelatedLocation,
 )
 from dbt_charts.core.fonts import font_is_tabular
-from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
+from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 
 
 def detect_board_warnings(board: Board) -> list[Diagnostic]:
@@ -409,7 +409,8 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
     - The chart is LineChart, AreaChart, or ScatterChart — BarChart is excluded because
       its orientation is data-dependent (horizontal vs. vertical can only be determined
       at resolve time from the x column type, not at compile time). HeatmapChart is also
-      excluded: its resolve path hardcodes format_is_alias=False.
+      excluded: its resolve path never threads a real format into build_resolved_axis
+      (see heatmap.py's build_cartesian_axes call), so the force never applies.
     - axis_y.position is explicitly "right" (auto/unset may resolve to left, where
       the force never fires and the authored align is honored).
     - axis_y.labels.align is authored.
@@ -430,11 +431,10 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
     # can get the forced align — no warning is a true positive.
     ctx = board.chart_style_context
     # Theme baseline: what axis_quantitative.labels.format resolves to when a
-    # chart authors no per-chart format at all (e.g. "number", itself
-    # a predefined name). Mirrors _bake_cartesian_axes's own
-    # ay_format_is_alias fix -- a bare axis inheriting this default still
-    # gets forced right-aligned, so the diagnostic must check it too, not
-    # just a chart-local override.
+    # chart authors no per-chart format at all (e.g. "number", itself a
+    # predefined name -- see ResolvedAxisStyle.format_raw) -- a bare axis
+    # inheriting this default still gets forced right-aligned, so the
+    # diagnostic must check it too, not just a chart-local override.
     default_format = ctx.axis_quantitative.labels.format
     board_quant_font = (
         ctx.axis_quantitative.labels.font.family
@@ -476,7 +476,7 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
         fmt = labels.get("format")
         if fmt is None:
             fmt = default_format
-        if fmt is None or fmt not in ALL_PREDEFINED_NAMES:
+        if fmt is None or fmt not in PREDEFINED_NUMBER_NAMES:
             continue
         warnings.append(
             Diagnostic.from_code(

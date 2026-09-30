@@ -62,8 +62,9 @@ class PaginationConfig(BaseModel):
     page_rows: int | None = Field(
         default=None,
         description=(
-            "Rows per page. When enabled and None, the renderer auto-fits page size "
-            "to the cell; set explicitly to pin the page size."
+            "Rows per page, a ceiling bounded by the tile height. The theme "
+            "defaults it to 20; null means unlimited (the tile height alone "
+            "sizes the page)."
         ),
     )
 

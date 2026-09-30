@@ -162,13 +162,11 @@ rows:
     rows: [c1]
 """
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = compile(yaml_content)
+    result = compile(yaml_content)
 
-    assert not any(issubclass(w.category, SchemaMigrationWarning) for w in caught), (
-        "an unreachable move should not claim to have migrated anything"
-    )
+    assert not any(
+        d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
+    ), "an unreachable move should not claim to have migrated anything"
     label_errors = [
         e
         for e in result.errors

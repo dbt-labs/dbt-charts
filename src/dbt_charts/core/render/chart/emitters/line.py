@@ -527,7 +527,7 @@ def _emit_folded_line(
     sub_layers = emit_line_layer(
         style.line_mark,
         style.point_mark,
-        chart.background,
+        chart.canvas,
         style.single_series_fill,
         True,
         wide.color,
@@ -602,7 +602,7 @@ class LineEmitter:
         sub_layers = emit_line_layer(
             style.line_mark,
             style.point_mark,
-            chart.background,
+            chart.canvas,
             style.single_series_fill,
             has_color_enc,
             top_encoding["color"] if has_color_enc else {},
@@ -641,7 +641,7 @@ class LineEmitter:
                 base_orientation="vertical",
                 base_x_authored_temporal=base_x_authored_temporal,
                 tooltip_format=style.tooltip_format,
-                background=chart.background,
+                canvas=chart.canvas,
                 single_series_fill=style.single_series_fill,
                 legend=chart.legend,
                 config=build_palette_config(chart.palette),

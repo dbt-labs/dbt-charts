@@ -71,9 +71,7 @@ def _resolved_axis_y_for_format(format_spec: str) -> object:
         ay_merged,
         _ax_band,
         ay_band,
-        ay_format_authored,
-        ay_format_is_alias,
-        _ay_format_raw,
+        ay_format_raw,
     ) = _bake_cartesian_axes(
         chart_style_context, chart, "bar", "ordinal", "quantitative", AxisOverrides()
     )
@@ -81,8 +79,7 @@ def _resolved_axis_y_for_format(format_spec: str) -> object:
         ay_merged,
         band_position=ay_band,
         chart_id="t",
-        format_authored=ay_format_authored,
-        format_is_alias=ay_format_is_alias,
+        format_raw=ay_format_raw,
     )
 
 
@@ -117,7 +114,7 @@ def test_mark_value_label_inline_si_passes_through() -> None:
     Python-side format_d3 and Vega render the same digit count."""
     labels = BarLabelsStyle(format=".3s")
     resolved_labels, _ = _label_format_fallback(
-        labels, axis_format=None, axis_is_house=False, formats={}
+        labels, axis_format=None, axis_house_default=False, formats={}
     )
     assert resolved_labels.format == ".3s"
 

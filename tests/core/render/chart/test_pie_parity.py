@@ -63,6 +63,7 @@ def _base() -> dict[str, Any]:
         "resolved_channels": {},
         "legend": _default_legend(),
         "background": charts.background,
+        "canvas": charts.ink_canvas,
         "title_style": charts.title,
         "layout_padding": PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0),
     }

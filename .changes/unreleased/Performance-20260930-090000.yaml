@@ -1,0 +1,3 @@
+kind: Performance
+body: Board sizing measures a table's height from its layout instead of rendering the whole table, so tables with many rows or pages size faster.
+time: 2026-09-30T09:00:00.000000-07:00

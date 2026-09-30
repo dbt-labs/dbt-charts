@@ -329,6 +329,7 @@ class TestSizerAgreesWithRenderer:
             executor,
             {},
             card_padding=float(_BOARD_STYLE.frame.card_padding),
+            board_style=_BOARD_STYLE,
             width=_WIDTH,
         )
         svg = render_table_svg(

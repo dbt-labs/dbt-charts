@@ -155,6 +155,16 @@ def test_validate_suppression_codes_rejects_unknown_code() -> None:
         validate_suppression_codes(["WARN-PIE-TOO-MANY-SEGMENT"], source="chart 'c'")
 
 
+def test_validate_suppression_codes_keeps_a_retired_code_loading_with_a_warning() -> (
+    None
+):
+    """A code a release removed still loads, and says it no longer exists."""
+    from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
+
+    with pytest.warns(UserWarning, match="WARN-ADJACENT-TEXT-ROWS.*no longer"):
+        validate_suppression_codes(["WARN-ADJACENT-TEXT-ROWS"], source="dbt_charts.yml")
+
+
 def test_validate_suppression_codes_error_names_the_source() -> None:
     from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 

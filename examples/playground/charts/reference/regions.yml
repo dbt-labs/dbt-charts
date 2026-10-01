@@ -1,0 +1,85 @@
+title: Region Detail
+notes: |
+  Revenue trend and top products for one region, or all of them.
+  Linked from link-examples.yml's dynamic URL example.
+
+source: examples_db
+
+style:
+  variables:
+    position: title-inline
+
+variables:
+  region:
+    placeholder: "All regions"
+    options:
+      query: region_options
+      column: region
+
+queries:
+  region_options:
+    sql: |
+      SELECT region
+      FROM ecommerce_orders
+      GROUP BY 1
+      ORDER BY SUM(revenue) DESC
+
+  revenue_summary:
+    sql: |
+      SELECT SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      WHERE {{ filter('region', region) }}
+
+  revenue_by_month:
+    sql: |
+      SELECT
+        date_trunc('month', date) AS month,
+        SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      WHERE {{ filter('region', region) }}
+      GROUP BY 1
+      ORDER BY 1
+
+  top_products:
+    sql: |
+      SELECT
+        product,
+        SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      WHERE {{ filter('region', region) }}
+      GROUP BY 1
+      ORDER BY 2 DESC
+      LIMIT 5
+
+charts:
+  revenue_total:
+    query: revenue_summary
+    type: kpi
+    value: revenue
+    label: Total revenue
+  revenue_trend:
+    query: revenue_by_month
+    type: line
+    x: month
+    y: revenue
+    title: Revenue by month
+    style:
+      axis_y:
+        labels:
+          format: "$,.0f"
+  top_products_chart:
+    query: top_products
+    type: bar
+    x: product
+    y: revenue
+    title: Top products by revenue
+    style:
+      axis_y:
+        labels:
+          format: "$,.0f"
+rows:
+  - cols:
+      - revenue_total
+      - revenue_trend
+  - cols:
+      - top_products_chart

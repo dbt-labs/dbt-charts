@@ -50,11 +50,19 @@
     },
     {
       "version": "0.9.0",
+      "status": "RELEASED",
+      "released_at": "2026-10-01",
+      "file": "0.9.0.json",
+      "sha256": "23ae5d1d1370f468d23d0785f522ec8334ce946ceb626a2880077cbe71270080",
+      "predecessor": "0.7.0"
+    },
+    {
+      "version": "0.10.0",
       "status": "DEV",
       "released_at": null,
       "file": null,
       "sha256": null,
-      "predecessor": "0.7.0"
+      "predecessor": "0.9.0"
     }
   ]
 }

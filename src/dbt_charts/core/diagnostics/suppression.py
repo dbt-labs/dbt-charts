@@ -10,8 +10,10 @@ Three ignore layers form a union — a warning is dropped if its code appears in
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable
 
+from dbt_charts.core.diagnostics.codes_retired import RETIRED_WARNING_CODES
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.diagnostics.registry import REGISTRY
 
@@ -54,6 +56,13 @@ def validate_suppression_codes(
     warning_codes = REGISTRY.codes(level="warning")
     error_codes = REGISTRY.codes(level="error")
     for code in codes:
+        if code in RETIRED_WARNING_CODES:
+            warnings.warn(
+                f"{source}: {code} no longer exists and suppresses nothing; "
+                "remove it from the ignore list.",
+                stacklevel=2,
+            )
+            continue
         if code in warning_codes:
             domain = REGISTRY.get(code).domain
             if domain in forbid_domains:

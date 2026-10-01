@@ -5,7 +5,12 @@
 
 from dataclasses import dataclass
 
-from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.board.normalized import (
+    NO_TITLE_SHIFT,
+    ProsePlan,
+    TitleShift,
+    VariableValues,
+)
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
@@ -139,6 +144,8 @@ class ResolvedLayoutItem:
     # draws an error tile from it; `chart` stays None exactly as it is for any
     # non-chart item.
     chart_error: ChartResolveFailure | None = None
+    # Title and body offsets from the item's cols row; zero outside one.
+    title_shift: TitleShift = NO_TITLE_SHIFT
 
 
 @dataclass(frozen=True)
@@ -209,6 +216,8 @@ class ResolvedBoard:
     variables: dict[str, Variable]
     queries: dict[str, AnyQuery]
     variable_defaults: VariableValues
+    # Card grid this board's own text sits on; None on a board with no text.
+    prose_plan: ProsePlan | None = None
 
     @property
     def visible_variables(self) -> "dict[str, Variable]":

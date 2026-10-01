@@ -27,6 +27,7 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
+from dbt_charts.core.render.prose import plan_board_prose
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Layout, LayoutItem
@@ -194,6 +195,7 @@ def build_resolved_nested_board_static(board: Board) -> ResolvedBoard:
         variables=board.variables,
         queries=board.queries,
         variable_defaults=board.variable_defaults,
+        prose_plan=board.prose_plan,
     )
 
 
@@ -223,6 +225,7 @@ def build_resolved_board_static(board: Board) -> ResolvedBoard:
     layout_gap = get_board_gap(board)
     width = float(board.layout.width or board_container_width(board))
     height = float(board.layout.height)
+    plan_board_prose(board, board.variable_defaults, width - 2 * page_padding)
 
     return ResolvedBoard(
         id=board.id,
@@ -248,6 +251,7 @@ def build_resolved_board_static(board: Board) -> ResolvedBoard:
         variables=board.variables,
         queries=board.queries,
         variable_defaults=board.variable_defaults,
+        prose_plan=board.prose_plan,
     )
 
 
@@ -373,6 +377,7 @@ def build_resolved_board(
             variables=board.variables,
             queries=board.queries,
             variable_defaults=board.variable_defaults,
+            prose_plan=board.prose_plan,
         ),
         render_cache,
     )
@@ -521,6 +526,7 @@ def _resolve_layout_item(
         details_expanded_summary=item.details_expanded_summary,
         notes=item.notes,
         visible=item.visible,
+        title_shift=item.title_shift,
     )
 
 
@@ -574,4 +580,5 @@ def _resolve_nested(
         variables=board.variables,
         queries=board.queries,
         variable_defaults=board.variable_defaults,
+        prose_plan=board.prose_plan,
     )

@@ -1576,3 +1576,127 @@ rows:
 """
     result = compile_board(board)
     assert result.success, f"Compile failed: {result.errors}"
+
+
+# ── Time directive vocabulary: only directives Vega paints identically ───────
+# time_format is Vega-painted (baked onto axis.labels.format) — the x-axis
+# overlap resolver also measures it with portable_strftime. A directive Vega
+# renders differently than portable_strftime computes (or doesn't recognize
+# at all) must fail compile, not silently mismeasure a live label.
+
+
+def test_quarter_directive_on_time_format_compiles_clean() -> None:
+    """%q is now a Vega-safe directive (quarter number)."""
+    result = compile_board(_board_with_time_format('"%q"'))
+    assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_milliseconds_and_epoch_directives_on_time_format_compile_clean() -> None:
+    """%L (ms) and %Q (epoch ms) are now Vega-safe directives."""
+    result = compile_board(_board_with_time_format('"%L %Q"'))
+    assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_locale_offset_directive_on_time_format_fails_compile() -> None:
+    """%Z is real d3 grammar, but portable_strftime renders it differently
+    (empty on a naive datetime, a named zone rather than d3's "+0000"-style
+    offset on an aware one) -- must fail compile rather than mismeasure.
+    """
+    result = compile_board(_board_with_time_format('"%Z"'))
+    assert not result.success, "%Z diverges from Vega's paint -- must fail compile"
+    assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"
+    assert "%Z" in result.errors[0].message
+
+
+def test_locale_composite_directives_on_time_format_fail_compile() -> None:
+    """%c/%x/%X are real d3 grammar (locale composites) portable_strftime
+    renders via the host's C-locale strftime, not d3's en-US "%x, %X" style
+    -- must fail compile rather than mismeasure.
+    """
+    for directive in ("%c", "%x", "%X"):
+        result = compile_board(_board_with_time_format(f'"{directive}"'))
+        assert not result.success, f"{directive} diverges from Vega -- must fail"
+        assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"
+        assert directive in result.errors[0].message
+
+
+def test_directive_d3_does_not_define_fails_compile() -> None:
+    """%C is not d3-time-format grammar at all -- Vega paints the literal
+    letter "C" while portable_strftime computes the century.
+    """
+    result = compile_board(_board_with_time_format('"%C"'))
+    assert not result.success, "%C is not a d3 directive -- must fail compile"
+    assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"
+
+
+def test_style_formats_alias_on_time_format_cannot_bypass_the_directive_gate() -> None:
+    """A `style.formats` alias targeting a Vega-unsafe directive must fail
+    compile the same as authoring the directive inline -- the alias is just
+    another spelling of the same Vega-painted `time_format` slot, and
+    `%C` is not d3-time-format grammar at all (Vega paints the literal
+    letter while portable_strftime computes an unrelated value).
+    """
+    result = compile_board(
+        _board_with_time_format("myfmt", formats='  formats:\n    myfmt: "%C"\n')
+    )
+    assert not result.success, "an alias must not smuggle %C past the directive gate"
+    assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"
+    assert "%C" in result.errors[0].message
+
+
+def test_style_formats_alias_on_a_non_vega_slot_is_unaffected_by_the_directive_gate() -> (
+    None
+):
+    """The same alias is legitimate in a Python-painted slot (a table column)
+    -- the directive gate is keyed to the *use* site being Vega-painted, not
+    to the alias definition.
+    """
+    board = """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::DATE AS month, 100 AS revenue
+style:
+  formats:
+    myfmt: "%C"
+charts:
+  detail:
+    query: q
+    type: table
+    style:
+      columns:
+        month:
+          format: myfmt
+rows:
+  - detail
+"""
+    result = compile_board(board)
+    assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_table_column_format_is_not_narrowed_by_the_vega_directive_check() -> None:
+    """style.columns.<col>.format renders in Python, not Vega -- no measure-vs-
+    paint divergence is possible there, so the Vega-only directive vocabulary
+    must not narrow it. %C (century) is real, CRT-portable Python output with
+    no Vega equivalent at all.
+    """
+    board = """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::DATE AS month, 100 AS revenue
+charts:
+  detail:
+    query: q
+    type: table
+    style:
+      columns:
+        month:
+          format: "%C"
+rows:
+  - detail
+"""
+    result = compile_board(board)
+    assert result.success, f"Compile failed: {result.errors}"

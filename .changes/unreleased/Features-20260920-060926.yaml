@@ -1,3 +1,0 @@
-kind: Features
-body: 'Boards can now render inside a Streamlit app: `st_board(board, project_dir=...)` from the new `dbt-charts[streamlit]` extra (`dbt_charts.integrations.streamlit`) mounts a board in a Streamlit app with its variable controls live. Pass a live Snowpark session and `snowflake`-sourced queries run through it instead of a dbt profile.'
-time: 2026-09-20T06:09:26.000000-07:00

@@ -1,5 +1,0 @@
-kind: Fixes
-body: "`style.charts.marks.line.stroke.width` and `style.charts.line.marks.line.stroke.width` (and the matching area top-edge and stacked-perimeter paths) had no effect unless pinned on an individual chart's own `style:` block. A board-level `style:`, an `extends:`-ed custom theme, or a project-level `charts/meta.yml` override was silently replaced by the automatic density-based stroke width. A width pinned at any of those levels is now honored, including by an overlay layer that inherits the pin from its base chart; an overlay layer with no pin of its own still computes its own density-based width rather than falling back to a flat default."
-time: 2026-09-21T16:11:01.589973-00:00
-custom:
-  DbtChartsIssue: 37

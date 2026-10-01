@@ -1,0 +1,3 @@
+kind: Features
+body: 'dbt Charts now warns (`WARN-DUAL-AXIS-COMPETING-SCALES`) when a layered chart pins a layer to its own y-axis with `axis_y.position`, because the two independent scales make crossings and relative height artifacts of the axis ranges. To show one quantity in two units, drop the layer and relabel the opposite edge with `style.axis_y.mirror` and a converting `expr`. The layered-scale-mismatch warning no longer suggests adding a second axis.'
+time: 2026-09-30T23:15:00.000000-07:00

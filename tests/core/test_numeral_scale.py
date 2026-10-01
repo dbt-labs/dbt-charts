@@ -472,11 +472,39 @@ def test_non_compacting_tick_format_keeps_a_half_step_decimal():
 
 
 def test_non_compacting_tick_format_no_symbol_empty_prefix():
-    prefix, digit_spec, precision = non_compacting_tick_format(",.0f", 2_000)
+    prefix, digit_spec, precision = non_compacting_tick_format(",.3~s", 2_000)
     assert prefix == ""
     # trim=True appends "~" to the type indicator.
     assert digit_spec == ",.0~f"
     assert precision == 0
+
+
+def test_non_compacting_tick_format_percent_keeps_type_and_drops_noise_decimals():
+    """A 10%-step ladder derives precision from step*100, not the preset's
+    own .1% data precision -- 10% needs zero decimals to write out in full.
+    """
+    prefix, digit_spec, precision = non_compacting_tick_format(".1%", 0.1)
+    assert prefix == ""
+    assert digit_spec == ".0%"
+    assert precision == 0
+    assert _d3_format(digit_spec, 0.1) == "10%"
+
+
+def test_non_compacting_tick_format_percent_keeps_a_needed_decimal():
+    """A 2.5%-step ladder keeps one decimal -- the step itself needs it."""
+    prefix, digit_spec, precision = non_compacting_tick_format(".1%", 0.025)
+    assert prefix == ""
+    assert digit_spec == ".1%"
+    assert precision == 1
+    assert _d3_format(digit_spec, 0.025) == "2.5%"
+
+
+def test_non_compacting_tick_format_percent_delta_keeps_the_sign_flag():
+    prefix, digit_spec, precision = non_compacting_tick_format("+.1%", 0.1)
+    assert prefix == ""
+    assert digit_spec == "+.0%"
+    assert precision == 0
+    assert _d3_format(digit_spec, 0.1) == "+10%"
 
 
 def test_sub_unit_digit_format_swaps_si_type_for_significant_digits():

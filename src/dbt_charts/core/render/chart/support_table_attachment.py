@@ -102,11 +102,13 @@ from dbt_charts.core.render.chart.spec_builders import (
 )
 from dbt_charts.core.render.chart.table import _table_numeric_cell_font
 from dbt_charts.core.render.chart.time_unit_detect import (
+    BUCKETED_CALENDAR_UNITS,
     detect_time_unit,
+    enumerated_axis_values,
+    is_label_opener,
     normalize_labeled_temporal,
     opens_label_period,
     resolve_label_time_unit,
-    resolve_temporal_label_visibility,
 )
 from dbt_charts.core.render.chart.type_inference import (
     is_lex_sortable_date_like,
@@ -2493,9 +2495,7 @@ def _label_period_filter_expr(
 
     Both the temporal path (timeUnit in spec x encoding) and the ordinal
     bucketed-time path build the same kind of filter: opens_label_period's
-    UTC-month/date predicate on the raw x field. Ordinal axes carry no VL
-    timeUnit marker, so that path uses the same visibility resolver as the
-    overlap path. Axis values may use a coarser resolved label-format cadence;
+    UTC-month/date predicate on the raw x field. Axis values may use a coarser resolved label-format cadence;
     width-driven visibility thinning does not change them.
 
     ``axis_x_width`` is the plot's real x-axis-bearing width — ``spec``'s own
@@ -2526,9 +2526,8 @@ def _label_period_filter_expr(
         # Same density guard as the ordinal branch below: only thin via the
         # label-period-opener gate when bands are too dense to show every
         # data point without overlap (< ~45px/band). Sparser data (e.g. 5
-        # weekly points) must show every cell. A continuous temporal x scale
-        # has no per-bucket axis.values list to reuse, so recompute distinct
-        # count straight from the data.
+        # weekly points) must show every cell. The strip draws one cell per
+        # row, so count rows, not the calendar span the axis measures.
         x_distinct = {
             row.get(x_field)
             for row in data
@@ -2540,35 +2539,43 @@ def _label_period_filter_expr(
         if not x_distinct or spec_width / len(x_distinct) >= _LABEL_STRIP_MIN_BAND_PX:
             return None
         safe_field = x_field.replace("'", "\\'")
-        font = axis_st.labels.font
-        measurer = get_font_measurer(font.family)
-        dates = sorted(datetime.date.fromisoformat(str(v)[:10]) for v in x_distinct)
-        band = (spec_width * resolved_chart_style.label_usable_ratio) / len(dates)
         from dbt_charts.core.render.chart.emitters._label_overlap import (
-            authored_time_format,
+            resolve_axis_x_overlap,
         )
 
-        visibility_tu, _ = resolve_temporal_label_visibility(
-            dates,
-            base_time_unit,
-            format_tu,
-            measurer,
-            font.size,
-            band,
-            axis_st.fiscal_year_start_month,
-            allow_skip=(
-                axis_st.labels.overlap.skip
-                if axis_st.labels.overlap is not None
-                else False
-            ),
+        # Same call the line/area emitter makes for a continuous temporal axis,
+        # so the strip and the axis resolve the same cadence.
+        layout = resolve_axis_x_overlap(
+            axis_st,
+            x_field,
+            data,
+            resolved_chart_style.label_usable_ratio,
+            bucket_aligned_temporal=False,
             edge_labels_flushed=temporal_edge_labels_flushed("temporal", axis_st),
-            # Same strings the axis itself measures — an authored time format
-            # is what Vega paints on every tick, and this filter must agree
-            # with the cadence that measurement picks.
-            authored_format=authored_time_format(axis_st),
+            continuous_temporal=True,
+            chart_width=spec_width,
         )
+        visibility_tu = layout.visibility_time_unit or layout.format_time_unit
         if visibility_tu == base_time_unit:
             return None
+        # The gate is a date match, and the axis picks its openers from the
+        # calendar span. If any opener has no row, the gate would drop cells
+        # under labels (or every cell), so leave thinning to row sampling.
+        # Sound only while `is_label_opener` selects a superset of what
+        # `opens_label_period` gates on.
+        if base_time_unit in BUCKETED_CALENDAR_UNITS:
+            row_dates = {datetime.date.fromisoformat(str(v)[:10]) for v in x_distinct}
+            span = enumerated_axis_values(
+                row_dates, base_time_unit, axis_st.fiscal_year_start_month
+            )
+            if any(
+                date not in row_dates
+                for date in (datetime.date.fromisoformat(str(v)[:10]) for v in span)
+                if is_label_opener(
+                    date, base_time_unit, visibility_tu, axis_st.fiscal_year_start_month
+                )
+            ):
+                return None
         gate = opens_label_period(
             base_time_unit,
             visibility_tu,
@@ -2629,6 +2636,7 @@ def _label_period_filter_expr(
             resolved_chart_style.label_usable_ratio,
             bucket_aligned_temporal=True,
             edge_labels_flushed=False,
+            continuous_temporal=False,
             chart_width=spec_width,
         )
         visibility_tu = layout.visibility_time_unit or layout.format_time_unit

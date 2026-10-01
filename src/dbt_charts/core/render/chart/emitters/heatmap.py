@@ -188,6 +188,7 @@ class HeatmapEmitter:
                 data,
                 chart.style.label_usable_ratio,
                 edge_labels_flushed=False,
+                continuous_temporal=False,
                 chart_width=box.width,
             )
             x_axis_base = axis_to_vl(

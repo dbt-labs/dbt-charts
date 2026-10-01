@@ -1539,14 +1539,53 @@ WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH = REGISTRY.register(
             "will be visually crushed to a flat line."
         ),
         fix_template=(
-            "Split into two y-axes by adding `axis_y:` on one of the layers, "
-            "or normalize the series to a common scale in the query."
+            "Index the series to a common scale in the query (e.g. percent "
+            "change, or 100 = first period), or show them as two charts "
+            "stacked so they share the x-axis."
         ),
         doc=(
             "Fires on a layered chart where the base chart's own y series and/or "
             "its layers share the y-axis but their value ranges differ by ≥100×: "
             "the smaller series is visually crushed to a flat line. Classic example: "
             "revenue (millions) overlaid with conversion rate ([0, 1])."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_DUAL_AXIS_COMPETING_SCALES = REGISTRY.register(
+    WarningCode(
+        code="WARN-DUAL-AXIS-COMPETING-SCALES",
+        domain="render",
+        title="Dual-axis chart plots two measures on independent scales",
+        message_template=(
+            "Chart {chart_id!r}: {layer_col!r} is drawn against its own y-axis, "
+            "separate from {base_col}. The two scales are set independently, "
+            "so where the marks cross, which one sits higher, and how closely "
+            "they track are artifacts of the axis ranges, not the data: readers "
+            "will see a relationship that may not exist."
+        ),
+        fix_template=(
+            "Show each measure in its own chart, stacked so they share the "
+            "x-axis. To compare trends in one chart, index both series to a "
+            "common start (e.g. 100) in the query so they share one axis; to "
+            "show how one measure moves with the other, plot them as a scatter. "
+            "If the second series is the same quantity in another unit (°F/°C, "
+            "$/€), remove the layer and relabel the chart's opposite edge with "
+            "`style.axis_y.mirror` and an `expr` that converts the value (for "
+            "example `format(datum.value * 1.8 + 32, '.0f')`): one scale, two "
+            "unit labels. Where the audience expects this form, list the code in the "
+            "chart's `warnings_ignore:`."
+        ),
+        doc=(
+            "Fires on a layered chart where a layer is pinned to its own y-axis "
+            "side, which gives it an independent y scale. A layer opts in by "
+            "setting `axis_y.position`. The marks on the two scales are not "
+            "comparable: crossings, relative height, and apparent correlation "
+            "come from the axis ranges, not the data. "
+            "Classic example: revenue bars with a headcount line on the right "
+            "axis. A layer that sets only `axis_y.title` shares the base scale and "
+            "never fires."
         ),
         docs_topic="charts",
     )

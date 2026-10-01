@@ -121,6 +121,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_Y_NOT_NUMERIC,
 )
 from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.text.category_label import category_label_text
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
     bar_sort_op,
@@ -380,6 +381,11 @@ def _categorical_axis_gutter_px(
     labels = sorted({str(row[x_field]) for row in data if row.get(x_field) is not None})
     if not labels:
         return 0.0
+    if ax.labels.expr is None:
+        # No case: a horizontal bar's category axis never gets the case expr.
+        labels = [
+            category_label_text(label, ax.labels.format, None) for label in labels
+        ]
     padding = measured_label_padding(labels, font.family, font.size)
     label_limit = (
         ax.labels.max_width
@@ -768,8 +774,23 @@ def _resolve_bar(
         if orientation == "horizontal"
         else None
     )
+    # An authored labels.expr paints text we can't compute; Vega-Lite's
+    # labelLimit truncation bounds it (see estimate_left_axis_reserve_px).
+    unmeasurable_label_limit_px = (
+        (
+            ax_merged.labels.max_width
+            if ax_merged.labels.max_width is not None
+            else DEFAULT_VL_LABEL_LIMIT
+        )
+        if orientation == "horizontal"
+        and ax_merged.labels.expr is not None
+        and ax_merged.labels.visible is not False
+        else None
+    )
     left_axis_reserve_px = estimate_left_axis_reserve_px(
-        dimension_values, merged_legend
+        dimension_values,
+        merged_legend,
+        unmeasurable_label_limit_px=unmeasurable_label_limit_px,
     )
     # Only the axis title on the horizontal rail costs the plot height; the
     # other one is rotated and costs width. `orientation` picks which

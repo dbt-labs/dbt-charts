@@ -1742,6 +1742,224 @@ def test_end_to_end_inline_si_spec_builds_ruler_on_an_end_anchored_edge() -> Non
     )
 
 
+# ── Non-compacting branch, decimal-carrying fixed-point house aliases
+# (percent, percent_delta, currency_full, number_full). The preset's data
+# precision (percent's ".1%") is right for a value label and wrong for a
+# ruler whose step needs no decimal (10%).
+
+
+def test_non_compacting_percent_bakes_tick_label_when_format_is_an_authored_alias():
+    """A 10%-step ladder authored via the ``percent`` alias bakes ticks
+    ``0%, 10%, ..., 40%`` -- the preset's own ``.1%`` data precision must not
+    leak onto a step that needs no decimals.
+    """
+    ay_merged = _merged_axis_y()
+    ay_percent = ay_merged.model_copy(
+        update={"labels": ay_merged.labels.model_copy(update={"format": ".1%"})}
+    )
+    ticks = (0.0, 0.1, 0.2, 0.3, 0.4)
+    ay = build_resolved_axis(
+        ay_percent,
+        tick_values=ticks,
+        format_raw="percent",
+        chart_id="test",
+    )
+    assert ay.ruler is None
+    # label.format is untouched -- value labels/tooltips keep the preset's
+    # own data precision.
+    assert ay.labels.format == ".1%"
+    assert ay.tick_label.format == ".0%"
+    assert ay.tick_label.prefix == ""
+    assert d3_format_apply(ay.tick_label.format, 0.1) == "10%"
+    assert d3_format_apply(ay.tick_label.format, 0.4) == "40%"
+
+
+def test_non_compacting_percent_keeps_a_needed_decimal():
+    """A 2.5%-step ladder keeps one decimal on every tick -- the step itself
+    needs it, unlike the 10%-step case above.
+    """
+    ay_merged = _merged_axis_y()
+    ay_percent = ay_merged.model_copy(
+        update={"labels": ay_merged.labels.model_copy(update={"format": ".1%"})}
+    )
+    ticks = (0.0, 0.025, 0.05, 0.075)
+    ay = build_resolved_axis(
+        ay_percent,
+        tick_values=ticks,
+        format_raw="percent",
+        chart_id="test",
+    )
+    assert ay.tick_label.format == ".1%"
+    assert d3_format_apply(ay.tick_label.format, 0.025) == "2.5%"
+
+
+def test_non_compacting_percent_delta_keeps_the_sign_flag():
+    ay_merged = _merged_axis_y()
+    ay_percent_delta = ay_merged.model_copy(
+        update={"labels": ay_merged.labels.model_copy(update={"format": "+.1%"})}
+    )
+    ticks = (-0.1, 0.0, 0.1, 0.2)
+    ay = build_resolved_axis(
+        ay_percent_delta,
+        tick_values=ticks,
+        format_raw="percent_delta",
+        chart_id="test",
+    )
+    assert ay.tick_label.format == "+.0%"
+    assert d3_format_apply(ay.tick_label.format, 0.1) == "+10%"
+
+
+def test_non_compacting_currency_full_bakes_dollar_anchor_convention():
+    """``currency_full`` (``$,.2f``) is fixed-point, not SI -- it must anchor
+    the ``$`` prefix the same way the ``currency`` (SI) alias does, and drop
+    the preset's own ``.2f`` data precision when the step needs less.
+    """
+    ay_merged = _merged_axis_y()
+    ay_currency_full = ay_merged.model_copy(
+        update={"labels": ay_merged.labels.model_copy(update={"format": "$,.2f"})}
+    )
+    ticks = (0.0, 10.0, 20.0, 30.0, 40.0)
+    ay = build_resolved_axis(
+        ay_currency_full,
+        tick_values=ticks,
+        format_raw="currency_full",
+        edge="right",
+        chart_id="test",
+    )
+    assert ay.tick_label.format == ",.0f"
+    assert ay.tick_label.prefix == "$"
+    assert d3_format_apply(ay.tick_label.format, 40.0) == "40"
+
+
+def test_non_compacting_percent_inline_literal_stays_unchanged():
+    """The mirror negative case: a hand-typed ``.1%`` (not resolved through
+    the ``percent`` alias) must not get the tick-derived bake -- only house
+    aliases get this rule, matching the SI branch's literal/alias split.
+    """
+    ay_merged = _merged_axis_y()
+    ay_percent = ay_merged.model_copy(
+        update={"labels": ay_merged.labels.model_copy(update={"format": ".1%"})}
+    )
+    ticks = (0.0, 0.1, 0.2, 0.3, 0.4)
+    ay = build_resolved_axis(
+        ay_percent,
+        tick_values=ticks,
+        format_raw=".1%",
+        chart_id="test",
+    )
+    assert ay.labels.format == ".1%"
+    assert ay.tick_label is None
+
+
+def test_end_to_end_percent_alias_bakes_plain_percent_ticks_through_real_resolve():
+    """Reproduces the bug report: axis_y.labels.format: percent on a 0-0.4
+    domain must paint ticks 0%, 10%, ..., 40% -- not 0.0%, 10.0%, ....
+    """
+    board = resolve_chart_style_context(get_theme_style())
+    patch = BarChartStylePatch(
+        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="percent"))
+    )
+    data = [
+        {"month": "Jan", "revenue": 0.1},
+        {"month": "Feb", "revenue": 0.2},
+        {"month": "Mar", "revenue": 0.4},
+    ]
+    chart = BarChart(id="t", type="bar", x="month", y="revenue", style=patch)
+    resolved = resolve(chart, data, chart_style_context=board)
+    ay = resolved.style.axis_y
+    assert ay.labels.format == ".1%"
+    assert ay.ruler is None
+    assert ay.tick_label is not None
+    assert ay.tick_label.format == ".0%"
+    assert d3_format_apply(ay.tick_label.format, 0.1) == "10%"
+    # Value labels/tooltips inherit label.format, still at the preset's own
+    # one-decimal data precision.
+    assert d3_format_apply(ay.labels.format, 0.123) == "12.3%"
+
+
+def test_end_to_end_chart_level_number_format_percent_bakes_plain_percent_ticks():
+    """The chart-level fallback (``style.number_format``) reaches the axis
+    through axis_cascade's Layer 10 (``chart_authored_axis_format`` /
+    ``chart_fallback_format``), with no ``axis_y.labels.format`` authored at
+    all. The name still reaches the axis as a house format, so the same
+    tick-derivation rule applies.
+    """
+    board = resolve_chart_style_context(get_theme_style())
+    patch = BarChartStylePatch.model_validate({"number_format": "percent"})
+    data = [
+        {"month": "Jan", "revenue": 0.1},
+        {"month": "Feb", "revenue": 0.2},
+        {"month": "Mar", "revenue": 0.4},
+    ]
+    chart = BarChart(id="t", type="bar", x="month", y="revenue", style=patch)
+    resolved = resolve(chart, data, chart_style_context=board)
+    ay = resolved.style.axis_y
+    assert ay.labels.format == ".1%"
+    assert ay.tick_label is not None
+    assert ay.tick_label.format == ".0%"
+    assert d3_format_apply(ay.tick_label.format, 0.1) == "10%"
+
+
+_HOUSE_SPECS = {
+    "percent": ".1%",
+    "currency_full": "$,.2f",
+    "number_full": ",.2f",
+    "integer": ",.0f",
+    "percent_whole": ".0%",
+    "currency_whole": "$,.0f",
+}
+
+
+def _house_axis(name: str, ticks: tuple[float, ...]):
+    spec = _HOUSE_SPECS[name]
+    ay_merged = _merged_axis_y()
+    ay = ay_merged.model_copy(
+        update={"labels": ay_merged.labels.model_copy(update={"format": spec})}
+    )
+    return build_resolved_axis(
+        ay,
+        tick_values=ticks,
+        format_raw=name,
+        edge="right",
+        column_forming=True,
+        chart_id="test",
+    )
+
+
+def test_non_compacting_percent_step_needing_a_decimal_keeps_it_on_every_tick():
+    """A 0.2pp step paints 0.0% ... 1.0% at one depth, not a ragged 0% 0.2% 1%."""
+    ticks = (0.0, 0.002, 0.004, 0.006, 0.008, 0.01)
+    ay = _house_axis("percent", ticks)
+    assert ay.tick_label is not None
+    painted = [d3_format_apply(ay.tick_label.format, v) for v in ticks]
+    assert painted == ["0.0%", "0.2%", "0.4%", "0.6%", "0.8%", "1.0%"]
+    assert ay.tick_label.decimal_pad_table == ()
+
+
+def test_currency_full_at_million_magnitude_drops_cents():
+    """A ladder big enough for SI compaction still derives its precision: the
+    ruler never handles a fixed-point preset, so nothing else would."""
+    ticks = (0.0, 500_000.0, 1_000_000.0, 1_500_000.0, 2_000_000.0)
+    for name in ("currency_full", "number_full"):
+        ay = _house_axis(name, ticks)
+        assert ay.ruler is None
+        assert ay.tick_label is not None
+        assert d3_format_apply(ay.tick_label.format, 500_000.0) == "500,000"
+
+
+def test_zero_decimal_fixed_aliases_are_left_alone():
+    """integer, percent_whole, and currency_whole print no decimals, so there
+    is nothing to derive; they paint their own spec unchanged."""
+    for name, ticks in (
+        ("integer", (0.0, 0.5, 1.0, 1.5)),
+        ("percent_whole", (0.0, 0.005, 0.01)),
+        ("currency_whole", (0.0, 1_000.0, 2_000.0, 3_000.0)),
+    ):
+        ay = _house_axis(name, ticks)
+        assert ay.tick_label is None
+        assert ay.labels.format == _HOUSE_SPECS[name]
+
+
 def test_end_to_end_theme_literal_format_is_not_baked_and_not_forced_right():
     """A literal axis format authored at the THEME tier itself (simulating a
     custom theme that hand-writes a d3 spec instead of a predefined name at

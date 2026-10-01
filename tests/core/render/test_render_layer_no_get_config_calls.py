@@ -31,6 +31,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from mdsvg.fonts import FontFaces
 
+from .._prose_plan import full_width_plan
+
 # =============================================================================
 # B — chart_interactivity
 # =============================================================================
@@ -134,7 +136,13 @@ def test_e_render_text_svg_uses_text_font_family_param() -> None:
     style = resolve_style(seed)
 
     svg, _height = _render_text_svg(
-        "# Hello", {}, 400.0, style, text_style=style.text, painted_canvas=None
+        "# Hello",
+        {},
+        400.0,
+        style,
+        text_style=style.text,
+        painted_canvas=None,
+        plan=full_width_plan(style, 400.0),
     )
     assert "SentinelFontE" in svg
 

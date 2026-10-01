@@ -1,3 +1,0 @@
-kind: Fixes
-body: A `time_format` (or other date/time format slot) with no `%` directive, like `MMM YYYY` or `YYYY-MM-DD`, raised `ERR-FORMAT-INVALID` saying "Unknown number format", even though the slot's own kind was already known to be a date/time format; the message now says so and suggests a d3 time pattern (e.g. `%b %Y`). Separately, a `%` directive neither d3-time-format nor the engine's Python painter implements, like `%K`, used to compile clean and only fail as an uncoded `ERR-INTERNAL` at render time in the table and KPI paths; it now fails `ERR-FORMAT-INVALID` at compile time and lists the directives accepted.
-time: '2026-09-28T12:05:00.000000-07:00'

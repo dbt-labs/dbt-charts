@@ -18,6 +18,8 @@ disagree with render, which draws every image at image_fallback_aspect_ratio.
 
 from unittest.mock import patch
 
+from .._prose_plan import full_width_plan
+
 
 def _render_text_with_http_image(text: str, width: float = 800.0) -> None:
     """Call the internal render-text helper with a markdown string."""
@@ -32,6 +34,7 @@ def _render_text_with_http_image(text: str, width: float = 800.0) -> None:
         resolved_style=resolve_style(get_theme_style()),
         text_style=resolve_style(get_theme_style()).text,
         painted_canvas=None,
+        plan=full_width_plan(resolve_style(get_theme_style()), width),
     )
 
 
@@ -72,6 +75,7 @@ def test_http_image_in_columned_text_does_not_call_urlopen() -> None:
             text_style=text_style,
             resolved_style=resolve_style(get_theme_style()),
             painted_canvas=None,
+            plan=full_width_plan(resolve_style(get_theme_style()), 800.0),
         )
 
     mock_urlopen.assert_not_called()
@@ -106,6 +110,7 @@ def test_markdown_text_height_does_not_call_urlopen() -> None:
             800.0,
             resolved_style=resolve_style(get_theme_style()),
             text_style=resolve_style(get_theme_style()).text,
+            plan=full_width_plan(resolve_style(get_theme_style()), 800.0),
         )
 
     mock_urlopen.assert_not_called()
@@ -127,6 +132,7 @@ def test_columned_text_height_single_column_does_not_call_urlopen() -> None:
             400.0,
             text_style=_columned_text_style(max_chars=1000),
             resolved_style=resolve_style(get_theme_style()),
+            plan=full_width_plan(resolve_style(get_theme_style()), 400.0),
         )
 
     mock_urlopen.assert_not_called()
@@ -157,6 +163,7 @@ def test_markdown_text_height_does_not_probe_image_dimensions() -> None:
             400.0,
             resolved_style=resolve_style(get_theme_style()),
             text_style=resolve_style(get_theme_style()).text,
+            plan=full_width_plan(resolve_style(get_theme_style()), 400.0),
         )
 
     mock_probe.assert_not_called()
@@ -178,6 +185,7 @@ def test_columned_text_height_multi_column_does_not_call_urlopen() -> None:
             800.0,
             text_style=_columned_text_style(max_number=2),
             resolved_style=resolve_style(get_theme_style()),
+            plan=full_width_plan(resolve_style(get_theme_style()), 800.0),
         )
 
     mock_urlopen.assert_not_called()

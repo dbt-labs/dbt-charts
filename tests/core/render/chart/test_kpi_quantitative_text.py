@@ -590,7 +590,7 @@ class TestKpiTemporalFormat:
 
         with pytest.raises(ChartDataError, match="unknown directive"):
             _format_value_parts(
-                "2026-11-15", "bad_date", "t", formats={"bad_date": "%Q"}
+                "2026-11-15", "bad_date", "t", formats={"bad_date": "%v"}
             )
 
     def test_d3_fill_char_percent_spec_falls_back_to_date_short(self):

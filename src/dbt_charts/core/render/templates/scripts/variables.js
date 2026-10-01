@@ -414,6 +414,15 @@
             ) {
                 return;
             }
+            /*{# A relative link can't navigate an iframed document at all #}*/
+            /*{# (the browser refuses, regardless of the destination), and a #}*/
+            /*{# function reference on window here is this frame's own -- #}*/
+            /*{# only postMessage reaches a listening host. #}*/
+            if (href.charAt(0) === '/' && window.parent !== window) {
+                event.preventDefault();
+                window.parent.postMessage({ type: 'dbt-board-navigate', href: href }, '*');
+                return;
+            }
             /*{# `board_links.py`'s passthrough prefixes (mailto:, #, an editor #}*/
             /*{# deeplink, ...) reach the browser unrewritten, and none of them #}*/
             /*{# unload the document -- only an http(s) navigation to a #}*/

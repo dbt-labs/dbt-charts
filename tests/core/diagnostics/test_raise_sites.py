@@ -262,7 +262,7 @@ class TestRenderKpiTemporalFormatInvalidCarriesCode:
 
         with pytest.raises(ChartDataError) as exc_info:
             _format_value_parts(
-                "2026-11-15", "bad_date", "t", formats={"bad_date": "%Q"}
+                "2026-11-15", "bad_date", "t", formats={"bad_date": "%v"}
             )
 
         assert exc_info.value.code is ERR_KPI_TEMPORAL_FORMAT_INVALID

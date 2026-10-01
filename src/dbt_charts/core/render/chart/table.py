@@ -20,7 +20,11 @@ from dbt_charts.core.colors import (
     is_sanitizable_color,
     sanitize_color,
 )
-from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.board.normalized import (
+    NO_TITLE_SHIFT,
+    TitleShift,
+    VariableValues,
+)
 from dbt_charts.core.compile.models.chart.authored import (
     TableColumnConfig,
 )
@@ -187,6 +191,11 @@ _ROW_NUMBER_COL = "\u0001__row_number__"
 _TITLE_ASCENT_RATIO = 0.8
 
 
+def title_ascent(font_size: float) -> float:
+    """First-baseline distance below a Vega-Lite title's top at ``font_size``."""
+    return float(round(font_size * _TITLE_ASCENT_RATIO))
+
+
 def _format_svg_numeric(value: float) -> str:
     numeric = float(value)
     return str(int(numeric)) if numeric.is_integer() else str(numeric)
@@ -295,7 +304,7 @@ def compute_table_title_block_layout(
     # Derived from the title's own font size (_TITLE_ASCENT_RATIO), not a flat
     # theme constant — reproduces Vega-Lite's title baseline (measured from
     # the tile top) at every width-tiered title size, not just one.
-    title_baseline = padding + float(round(title_font_size * _TITLE_ASCENT_RATIO))
+    title_baseline = padding + title_ascent(title_font_size)
     last_title_baseline = title_baseline + ((len(title_lines) - 1) * title_line_height)
     title_bottom = last_title_baseline + (title_font_size * 0.5)
     # Natural title-only height — no floor yet. The floor (tc.title_row.height)
@@ -3213,7 +3222,8 @@ class TableLayout:
     title_lines: list[str]
     subtitle_lines: list[str]
     subtitle_font_size: float
-    title_height: int
+    title_height: float
+    title_dy: float
     table_width: float
     slot_width: float
     table_height: float
@@ -3239,8 +3249,13 @@ def _layout_table(
     *,
     board_style: ResolvedStyle,
     variables: VariableValues | None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> TableLayout:
     """Resolve every table dimension without painting.
+
+    ``title_shift`` adds its title band to the table: ``height`` is the slot
+    before the band, so the caller passes the slot it already grew by
+    ``body_dy``.
 
     Sizing calls this alone; ``_paint_table`` draws from the result. Side
     effects into the warning sinks (overflow, cramping, page squeeze, static
@@ -3354,7 +3369,7 @@ def _layout_table(
         card_padding=float(board_style.frame.card_padding),
         title_font=title_font,
     )
-    title_height = title_block.height
+    title_height = title_block.height + title_shift.body_dy
     rendered_title = title_block.rendered_title
     title_lines = list(title_block.title_lines)
     subtitle_lines = list(title_block.subtitle_lines)
@@ -4051,6 +4066,7 @@ def _layout_table(
         subtitle_lines=subtitle_lines,
         subtitle_font_size=subtitle_font_size,
         title_height=title_height,
+        title_dy=title_shift.title_dy,
         table_width=table_width,
         slot_width=slot_width,
         table_height=table_height,
@@ -4188,13 +4204,13 @@ def _paint_table(
             f'fill="{escape_attr(colors["background"])}" rx="4"/>',
         )
 
-    current_y = layout.padding
+    current_y: float = layout.padding
 
     # Title
     if title_text:
         # Derived from the title's own font size (_TITLE_ASCENT_RATIO), not a
         # flat theme constant — matches compute_table_title_block_layout().
-        title_baseline = current_y + float(round(title_font_size * _TITLE_ASCENT_RATIO))
+        title_baseline = current_y + title_ascent(title_font_size) + layout.title_dy
         # Emit inner <title> when the rendered text differs from the authored —
         # catches all overflow modes (clip, truncate, wrap-two). The old "…" sniff
         # missed clip mode which shortens without an ellipsis. Compare against the
@@ -4584,6 +4600,7 @@ def render_table_svg(
     is_placeholder: bool = False,
     variables: VariableValues | None = None,
     inset: dict[str, float] | None = None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> str:
     """Render a ResolvedTableChart as SVG.
 
@@ -4597,14 +4614,23 @@ def render_table_svg(
     caller cannot forget to wire up, unlike a parameter each call site has to
     remember to pass. See ``board_variables.py``.
     """
+    # The band is added to the table: the slot grows with it so no row is
+    # squeezed out to make room.
+    slot_height = height + title_shift.body_dy if height else height
     layout = _layout_table(
-        chart, data, width, height, board_style=board_style, variables=variables
+        chart,
+        data,
+        width,
+        slot_height,
+        board_style=board_style,
+        variables=variables,
+        title_shift=title_shift,
     )
     return _paint_table(
         layout,
         chart,
         board_style=board_style,
-        height=height,
+        height=slot_height,
         is_placeholder=is_placeholder,
         inset=inset,
     )

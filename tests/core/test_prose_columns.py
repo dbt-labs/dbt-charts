@@ -1,9 +1,9 @@
-"""The measure a reader actually gets, through the real render path.
+"""The columns a reader actually gets, through the real render path.
 
-Column count and column width are decided together: the count that lands
-nearest the target measure wins, and where no integer count is readable the
-measure wins and the slot keeps the remainder as white space. These assert the
-delivered line length rather than the arithmetic that chose it.
+A prose column is an invisible card on the board's card grid: the span decides
+where a column starts, the measure caps the text inside it, and the amount of
+text decides how many spans are worth filling. These assert the delivered line
+length and column positions rather than the arithmetic that chose them.
 """
 
 from __future__ import annotations
@@ -11,14 +11,19 @@ from __future__ import annotations
 import dataclasses
 import html
 import re
+from typing import Any, Literal
 
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.models.board.normalized import ProsePlan
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.font_measure import markdown_font_faces, measurer_for_face
+from dbt_charts.core.render.column_packer import span_boxes
 from dbt_charts.core.render.prose import render_prose_svg
 from dbt_charts.core.render.sizing import body_text_font_family, get_compact_style
+
+from ._prose_plan import full_width_plan, text_nodes
 
 LONG = (
     "North America's primary issue is insufficient MQL supply, not a regional "
@@ -35,12 +40,22 @@ SHORT = "Revenue grew 12% against a plan of 9%, carried almost entirely by renew
 WCAG_MAX_LINE_LENGTH = 80
 
 
-def render(markdown: str, width: float, **column: object) -> str:
+def plan_for(width: float, grid: Literal[1, 2, 3] | None = 3) -> ProsePlan:
+    """A full-width block; ``grid=None`` takes the grid ``choose_grid`` would."""
+    resolved = resolve_style(get_theme_style("clarity"))
+    return full_width_plan(resolved, width, grid)
+
+
+def render(
+    markdown: str, width: float, grid: Literal[1, 2, 3] | None = 3, **column: object
+) -> str:
     resolved = resolve_style(get_theme_style("clarity"))
     text_style = resolved.text.model_copy(
         update={"column": resolved.text.column.model_copy(update=column)}
     )
-    svg, _ = render_prose_svg(markdown, width, text_style, resolved)
+    svg, _ = render_prose_svg(
+        markdown, width, text_style, resolved, plan_for(width, grid)
+    )
     return svg
 
 
@@ -91,31 +106,29 @@ def test_a_short_passage_is_held_to_a_narrow_column() -> None:
 
 
 def test_an_author_measure_overrides_the_shipped_one() -> None:
-    narrow = render(LONG, 1096.0, max_number=3, max_chars=40)
-    wide = render(LONG, 1096.0, max_number=3, max_chars=70)
+    narrow = render(LONG, 1096.0, grid=2, max_number=3, max_chars=40)
+    wide = render(LONG, 1096.0, grid=2, max_number=3, max_chars=70)
     assert longest_line(narrow) <= 42
     assert 60 <= longest_line(wide) <= 72
 
 
-def test_max_number_caps_the_count_an_author_measure_would_derive() -> None:
-    """A narrow max_chars would fit four columns; max_number holds it to two."""
-    svg = render(LONG, 1096.0, max_number=2, max_chars=40)
-    assert column_count(svg) == 2
-    assert longest_line(svg) <= 42
+def test_max_number_caps_the_count_the_text_earns() -> None:
+    """Twice LONG earns three thirds; max_number holds it to two."""
+    assert column_count(render(LONG * 2, 1096.0)) == 3
+    assert column_count(render(LONG * 2, 1096.0, max_number=2)) == 2
 
 
-def test_authored_gap_is_pixels_not_line_boxes() -> None:
-    """An authored column.gap is used as pixels, exactly, not scaled by the line box.
-
-    Doubling an authored gap from 24 to 48 must move the second column by
-    exactly 24px -- not by ``24 * line_box`` pixels, which is what
-    reinterpreting the field as a line-box multiple would produce.
-    """
-    narrow_gap_svg = render(LONG, 1096.0, max_number=2, max_chars=40, gap=24.0)
-    wide_gap_svg = render(LONG, 1096.0, max_number=2, max_chars=40, gap=48.0)
-
-    delta = second_column_offset(wide_gap_svg) - second_column_offset(narrow_gap_svg)
-    assert delta == pytest.approx(24.0, abs=1.0)
+@pytest.mark.parametrize("grid", [2, 3])
+def test_columns_start_on_the_card_content_edges_of_the_grid(
+    grid: Literal[2, 3],
+) -> None:
+    """Column i begins where card i of an N-up row begins its content."""
+    width = 1096.0
+    svg = render(LONG * 2, width, grid=grid)
+    boxes = span_boxes(width + 32.0, width + 32.0, grid, 20.0)
+    assert sorted(_column_x_offsets(svg)) == pytest.approx(
+        [x for x, _ in boxes], abs=0.5
+    )
 
 
 class TestAuthoredMeasureFitsTheSlot:
@@ -133,19 +146,16 @@ class TestAuthoredMeasureFitsTheSlot:
     def test_an_oversized_max_chars_is_held_to_the_slot(
         self, width: float, max_chars: int
     ) -> None:
-        svg = render(LONG, width, max_chars=max_chars)
+        svg = render(LONG, width, grid=None, max_chars=max_chars)
         # unescape: the SVG carries &#x27; where one glyph is painted, and
         # measuring the entity instead of the character overstates the line.
-        runs = [
-            html.unescape(re.sub(r"<[^>]+>", "", t)).strip()
-            for t in re.findall(r"<text[^>]*>(.*?)</text>", svg, re.S)
-        ]
+        runs = [(x, html.unescape(t).strip()) for x, t in text_nodes(svg)]
         resolved = resolve_style(get_theme_style("clarity"))
         style = get_compact_style(resolved)
         face = markdown_font_faces(body_text_font_family(resolved), style).regular
         measurer = measurer_for_face(face)
         widest = max(
-            measurer.measure(r, float(style.base_font_size)) for r in runs if r
+            x + measurer.measure(r, float(style.base_font_size)) for x, r in runs if r
         )
         assert widest <= width + 0.5, (
             f"max_chars={max_chars} in a {width:.0f}px slot painted {widest:.0f}px "
@@ -153,32 +163,39 @@ class TestAuthoredMeasureFitsTheSlot:
         )
 
 
-class TestAlignmentIsRelativeToTheCard:
-    """`align` positions the text within its card, not within its measure.
+class TestAlignmentIsRelativeToTheSpan:
+    """`align` positions the text within its span, not within its measure.
 
-    Capping the measure introduced a second box between the text and the card.
+    Capping the measure puts a second box between the text and the span.
     Alignment belongs to the outer one: an author writing `align: center` is
-    centering the block on the card they can see, and would have no way to
+    centering the block on the span they can see, and would have no way to
     reason about a measure the renderer chose for them.
     """
 
     def _anchor(self, width: float, align: str) -> float:
         resolved = resolve_style(get_theme_style("clarity"))
         text_style = resolved.text.model_copy(update={"align": align})
-        svg, _ = render_prose_svg(SHORT, width, text_style, resolved)
+        svg, _ = render_prose_svg(SHORT, width, text_style, resolved, plan_for(width))
         xs = [float(x) for x in re.findall(r'<text[^>]*\bx="([\d.]+)"', svg)]
         offsets = [
             float(m) for m in re.findall(r'<g transform="translate\(([\d.]+),', svg)
         ]
         return max(xs) + (max(offsets) if offsets else 0.0)
 
-    @pytest.mark.parametrize("width", [600.0, 900.0, 1128.0])
-    def test_centered_prose_centers_on_the_card(self, width: float) -> None:
-        assert self._anchor(width, "center") == pytest.approx(width / 2, abs=2.0)
+    def _span_text(self, width: float) -> float:
+        return span_boxes(width + 32.0, width + 32.0, 3, 20.0)[0][1] - 32.0
 
     @pytest.mark.parametrize("width", [600.0, 900.0, 1128.0])
-    def test_right_aligned_prose_meets_the_card_edge(self, width: float) -> None:
-        assert self._anchor(width, "right") == pytest.approx(width, abs=2.0)
+    def test_centered_prose_centers_on_its_span(self, width: float) -> None:
+        assert self._anchor(width, "center") == pytest.approx(
+            self._span_text(width) / 2, abs=2.0
+        )
+
+    @pytest.mark.parametrize("width", [600.0, 900.0, 1128.0])
+    def test_right_aligned_prose_meets_the_span_edge(self, width: float) -> None:
+        assert self._anchor(width, "right") == pytest.approx(
+            self._span_text(width), abs=2.0
+        )
 
 
 class TestEveryWordSurvivesTheWeight:
@@ -201,7 +218,7 @@ class TestEveryWordSurvivesTheWeight:
             }
         )
         styled = dataclasses.replace(resolved, text=text_style)
-        svg, _ = render_prose_svg(LONG, 1096.0, styled.text, styled)
+        svg, _ = render_prose_svg(LONG, 1096.0, styled.text, styled, plan_for(1096.0))
         painted = " ".join(
             " ".join(
                 html.unescape(re.sub(r"<[^>]+>", "", t))
@@ -212,3 +229,67 @@ class TestEveryWordSurvivesTheWeight:
             f"body weight {weight} painted {len(painted.split())} of "
             f"{len(LONG.split())} words -- the tail was measured but never drawn"
         )
+
+
+class TestATableKeepsItsNaturalWidth:
+    """A markdown table cannot reflow, so its block takes the spans it needs.
+
+    The run's grid is unchanged; the block takes the fewest whole spans of it
+    whose text width holds the table unwrapped, and never squeezes a table into
+    a narrower column.
+    """
+
+    TABLE = (
+        "A short sentence introducing the table.\n\n"
+        "| Layout | Purpose | Notes |\n|---|---|---|\n"
+        "| Arrange components | side-by-side cards | wraps in a third |\n"
+    )
+
+    def _span_text(self, width: float, spans: int) -> float:
+        boxes = span_boxes(width + 32.0, width + 32.0, 3, 20.0)
+        return boxes[spans - 1][0] + boxes[spans - 1][1] - 32.0
+
+    def test_cells_are_not_wrapped_and_the_fewest_spans_are_taken(self) -> None:
+        width = 1096.0
+        svg = render(self.TABLE, width)
+        assert "Arrange components" in svg
+        assert "side-by-side cards" in svg
+        border = max(
+            float(w)
+            for w in re.findall(r'<rect[^>]*width="([\d.]+)"[^>]*fill="none"', svg)
+        )
+        assert self._span_text(width, 1) < border <= self._span_text(width, 2)
+
+    def test_the_sentence_stays_capped_and_left_aligned(self) -> None:
+        svg = render(self.TABLE, 1096.0)
+        assert "A short sentence introducing the table." in svg
+        assert column_count(svg) == 1
+
+    def test_a_table_wider_than_the_slot_takes_the_whole_slot(self) -> None:
+        wide = (
+            "| " + " | ".join(f"Column heading number {i}" for i in range(8)) + " |\n"
+        )
+        wide += "|" + "---|" * 8 + "\n| " + " | ".join("x" for _ in range(8)) + " |\n"
+        svg = render(wide, 600.0)
+        border = max(
+            float(w)
+            for w in re.findall(r'<rect[^>]*width="([\d.]+)"[^>]*fill="none"', svg)
+        )
+        assert border <= 600.0 + 0.5
+
+    def test_fitting_a_table_measures_only_the_span_candidates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mdsvg.renderer import SVGRenderer
+
+        calls: list[int] = []
+        real = SVGRenderer.measure_blocks
+
+        def counting(self: SVGRenderer, *args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(SVGRenderer, "measure_blocks", counting)
+        render(self.TABLE, 1096.0)
+        # the natural probe, at most three span candidates, and the block itself
+        assert len(calls) <= 5

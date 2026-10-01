@@ -31,13 +31,9 @@ rows:
       Discrete hues for unordered categories. `vivid-10` is the chroma-pushed
       default the `vivid` and `neon` themes cycle through; `editorial-10` is
       the muted, cycling-discipline counterpart used by `clarity` and `paper`.
-      Every categorical palette derives four literal tiers live --
-      `dark`/`light`/`pale`/`deep` -- computed from its own stops (`variant()`,
-      no companion file to author or keep in sync); address one with a
-      trailing token segment (`vivid-10.dark`, `category.blue.pale`). A board
-      can still pin the same fixed dark `dbt-grays.heading` single-series mark
-      via `single_series_palette: [dbt-grays.heading]` (see
-      `labs/gray-single-series`). The `category-6-tonal-*` palettes stay
+      A board can pin a fixed dark `dbt-grays.heading` single-series
+      mark via `single_series_palette: [dbt-grays.heading]`
+      (see `labs/gray-single-series`). The `category-6-tonal-*` palettes stay
       within a single hue family for editorial restraint.
 
   - cols:
@@ -79,154 +75,6 @@ rows:
 
   - cols:
       - width: "180px"
-        text: "**vivid-10.dark**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.1.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.2.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.3.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.4.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.5.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.6.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.7.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.8.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.9.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.10.dark"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
-        text: "**vivid-10.light**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.1.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.2.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.3.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.4.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.5.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.6.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.7.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.8.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.9.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.10.light"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
-        text: "**vivid-10.pale**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.1.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.2.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.3.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.4.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.5.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.6.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.7.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.8.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.9.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.10.pale"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
-        text: "**vivid-10.deep**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.1.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.2.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.3.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.4.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.5.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.6.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.7.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.8.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.9.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "vivid-10.10.deep"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
         text: "**editorial-10**"
       - cols:
           - text: " "
@@ -259,154 +107,6 @@ rows:
           - text: " "
             width: "28px"
             style: {background: "editorial-10.10"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
-        text: "**editorial-10.dark**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.1.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.2.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.3.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.4.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.5.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.6.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.7.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.8.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.9.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.10.dark"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
-        text: "**editorial-10.light**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.1.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.2.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.3.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.4.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.5.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.6.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.7.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.8.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.9.light"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.10.light"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
-        text: "**editorial-10.pale**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.1.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.2.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.3.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.4.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.5.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.6.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.7.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.8.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.9.pale"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.10.pale"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
-        text: "**editorial-10.deep**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.1.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.2.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.3.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.4.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.5.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.6.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.7.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.8.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.9.deep"}
-          - text: " "
-            width: "28px"
-            style: {background: "editorial-10.10.deep"}
         style: {gap: "4px"}
     height: "28px"
 
@@ -469,43 +169,6 @@ rows:
           - text: " "
             width: "28px"
             style: {background: "tableau.10"}
-        style: {gap: "4px"}
-    height: "28px"
-
-  - cols:
-      - width: "180px"
-        text: "**tableau.dark**"
-      - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.1.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.2.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.3.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.4.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.5.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.6.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.7.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.8.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.9.dark"}
-          - text: " "
-            width: "28px"
-            style: {background: "tableau.10.dark"}
         style: {gap: "4px"}
     height: "28px"
 
@@ -631,6 +294,203 @@ rows:
           - text: " "
             width: "28px"
             style: {background: "category-6-tonal-brown.6"}
+        style: {gap: "4px"}
+    height: "28px"
+
+
+  # ── Color variants ────────────────────────────────────────────────────
+  - text: |
+      ## Color variants
+
+      Every categorical palette comes with four variants, worked out from its
+      own colors. Each keeps the hue: `pale` and `light` are lighter and
+      softer, `dark` and `deep` are darker. `pale` sets every color to the same
+      light level, for backgrounds and de-emphasis. Add the variant to any
+      categorical palette or color: `vivid-10.dark`, `vivid-10.3.pale`,
+      `category.blue.light`.
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10.pale**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.1.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.2.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.3.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.4.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.5.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.6.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.7.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.8.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.9.pale"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.10.pale"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10.light**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.1.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.2.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.3.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.4.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.5.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.6.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.7.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.8.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.9.light"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.10.light"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10.dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.1.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.2.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.3.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.4.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.5.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.6.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.7.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.8.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.9.dark"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.10.dark"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10.deep**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.1.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.2.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.3.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.4.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.5.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.6.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.7.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.8.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.9.deep"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.10.deep"}
         style: {gap: "4px"}
     height: "28px"
 

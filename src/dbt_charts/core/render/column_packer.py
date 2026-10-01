@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 # Not a tunable: infinity is how the DP spells "this break is illegal".
 _FORBIDDEN = math.inf
@@ -29,25 +30,16 @@ _FORBIDDEN = math.inf
 # constants-belong-in-config guidance -- that guidance is overridden here.
 
 # A column must earn this many lines to exist -- two columns of one line each
-# is not a two-column layout.
-MIN_LINES_PER_COLUMN = 6
+# is not a two-column layout. It gates only the columns after the first: one
+# column is always available.
+MIN_LINES_PER_COLUMN = 5
 
-# Most columns the search will consider. The measure caps the count long
-# before this on any real board -- a bound on the search, not a design choice.
-MAX_COLUMN_COUNT = 6
-
-# Characters per line for flowed body prose. Bringhurst gives 66 as the ideal
-# measure and 45-75 as satisfactory; WCAG 1.4.8 caps line length at 80. A
-# single column aims higher than several: the cost of a long measure is the
-# return sweep, and that cost accumulates with the depth of the passage, so a
-# short passage held to one column can afford the ceiling.
-_MULTI_COLUMN_AIM_CHARS = 66
-_SINGLE_COLUMN_CHARS = 80
-_MIN_CHARS = 45
-# Ceiling for the multi-column readable band. Distinct from the authored
-# TextColumnStyle.max_chars field, which means "the measure, used exactly" --
-# this is the band this search will accept when picking a count on its own.
-_MULTI_COLUMN_CEILING_CHARS = 75
+# Readable band, in characters per line (Bringhurst: 45-75 satisfactory). A
+# grid span narrower than MIN_CHARS is not a readable column; MAX_CHARS caps
+# the text inside a span that is wider, so the excess lands at the span's right
+# and a column's left edge never leaves its card content edge.
+MIN_CHARS = 45
+MAX_CHARS = 75
 
 # What each candidate column break costs the packer. Only the ratios carry
 # meaning: a stranded line has to outrank the imbalance that avoiding it
@@ -71,81 +63,61 @@ _BALANCE_SCALE = 100.0
 _BALANCE_UNDERSHOOT = 0.35
 
 
-def viable_column_count(line_count: int, requested: int) -> int:
-    """Largest column count up to ``requested`` that keeps columns worth having.
+def grid_span(board_width: float, grid: int, gap: float) -> float:
+    """Width of one span of the ``grid``-up card row across ``board_width``."""
+    return (board_width - (grid - 1) * gap) / grid
 
-    Width alone decides how many columns *fit*; this decides how many are worth
-    using given how much text there actually is. Two columns of one line each
-    is not a two-column layout, and a short passage does not need columns
-    anyway -- a long measure only punishes the reader once there are enough
-    return sweeps for the cost to accumulate.
+
+def choose_grid(
+    board_width: float, gap: float, card_padding: float, char_px: float
+) -> Literal[1, 2, 3]:
+    """Spans of the grid a block of prose needs: 3 (thirds), 2 (halves) or 1.
+
+    Thirds is the default. Halves wins when a third's text would be narrower
+    than ``MIN_CHARS`` -- there is no readable third. When even a half is
+    unreadable the grid is one whole-board span: a one-card row. A list-heavy
+    run narrows this further, which only the whole run can tell.
     """
-    if requested <= 1 or line_count <= 0:
+
+    def readable(grid: int) -> bool:
+        return (
+            grid_span(board_width, grid, gap) - 2 * card_padding
+        ) / char_px >= MIN_CHARS
+
+    if not readable(2):
         return 1
-    return max(1, min(requested, line_count // MIN_LINES_PER_COLUMN))
+    return 3 if readable(3) else 2
 
 
-@dataclass(frozen=True)
-class MeasurePlan:
-    """How a slot divides into columns of readable width.
+def span_boxes(
+    container: float, board_width: float, grid: int, gap: float
+) -> tuple[tuple[float, float], ...]:
+    """The ``(x, width)`` boxes a container ``container`` wide offers prose.
 
-    ``columns * column_width + (columns - 1) * gutter`` may fall short of the
-    slot. Some widths admit no integer count with a readable measure -- 533px
-    gives 87 characters at one column and 41 at two -- and there the measure
-    wins and the remainder stays white space, because unreadable type is a
-    worse outcome than an unused strip.
+    A full-width container offers every span of the grid. A card offers the
+    spans it contains (a 2/3 card on thirds offers 2), each on the board grid's
+    own offsets from the card's left edge, so the second column of a 2/3 card
+    meets the second card of the 3-up row below. A card narrower than two spans
+    offers itself whole: its left edge is already a card content edge. A card
+    contains a span when it is within half a gap (and never less than a pixel)
+    of holding it, because an authored ``66.67%`` is a few pixels short of two
+    thirds and a row with no gap still divides unevenly; a last box never
+    passes the container's right edge.
     """
-
-    columns: int
-    column_width: float
-
-
-def plan_measure(
-    available: float,
-    char_width: float,
-    gutter: float,
-    ceiling: int,
-) -> MeasurePlan:
-    """Divide ``available`` into columns whose measure reads well.
-
-    Picks the count landing nearest the target, preferring to fill the slot.
-    ``ceil(available / target_width)`` -- an earlier rule -- rounds up, so an
-    840px slot became three columns of 42 characters when two of 66 were
-    available.
-
-    ``ceiling`` holds the count down when there is not enough text to fill
-    more; it never raises it. Width is recomputed at the held count, so fewer
-    columns means a capped measure and white space, not a wider line.
-    """
-    readable: list[tuple[float, int, float]] = []
-    for count in range(1, ceiling + 1):
-        width = (available - (count - 1) * gutter) / count
-        if width <= 0.0:
-            break
-        single = count == 1
-        aim = _SINGLE_COLUMN_CHARS if single else _MULTI_COLUMN_AIM_CHARS
-        band_ceiling = _SINGLE_COLUMN_CHARS if single else _MULTI_COLUMN_CEILING_CHARS
-        chars = width / char_width
-        if _MIN_CHARS <= chars <= band_ceiling:
-            readable.append((abs(chars - aim), count, width))
-    if readable:
-        _, count, width = min(readable)
-        return MeasurePlan(columns=count, column_width=width)
-
-    # Nothing fit the band. The measure wins over the slot: set columns at the
-    # target width and leave the remainder as white space, because unreadable
-    # type is a worse outcome than an unused strip.
-    capped_width = _MULTI_COLUMN_AIM_CHARS * char_width
-    count = max(1, min(ceiling, int((available + gutter) // (capped_width + gutter))))
+    span = grid_span(board_width, grid, gap)
+    slack = max(gap / 2, 1.0)
+    count = max(1, min(grid, int((container + gap + slack) // (span + gap))))
     if count == 1:
-        capped_width = _SINGLE_COLUMN_CHARS * char_width
-    # Except it must never win past the slot's own edge. A slot narrower than
-    # the readable floor has no good answer, and the least-bad one is a cramped
-    # line: the containing SVG is a viewport, so a column wider than its slot is
-    # silently clipped mid-word rather than spilled. Losing the reader's text is
-    # worse than setting it tight.
-    fits = (available - (count - 1) * gutter) / count
-    return MeasurePlan(columns=count, column_width=min(capped_width, fits))
+        return ((0.0, container),)
+    return tuple(
+        (i * (span + gap), min(span, container - i * (span + gap)))
+        for i in range(count)
+    )
+
+
+def columns_earned(total_lines: int, spans: int) -> int:
+    """Most columns, up to ``spans``, that each earn ``MIN_LINES_PER_COLUMN``."""
+    return max(1, min(spans, total_lines // MIN_LINES_PER_COLUMN))
 
 
 @dataclass(frozen=True)

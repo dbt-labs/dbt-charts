@@ -11,10 +11,8 @@ is still a valid entry in the open map `style.palettes` -- see
 
 from __future__ import annotations
 
-import dataclasses
 import textwrap
 import warnings
-from datetime import date
 from typing import Any
 
 import pytest
@@ -33,10 +31,6 @@ from dbt_charts.core.compile.migrations.versions.v0_9_0 import (
     RETIRED_TOKEN_VALUE_MAP,
 )
 from dbt_charts.core.compile.models.board.patch import BoardPatch
-from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
-    YamlSchemaCatalog,
-    YamlSchemaEntry,
-)
 
 _QUERIES = textwrap.dedent(
     """\
@@ -50,41 +44,6 @@ _QUERIES = textwrap.dedent(
 
 def _board(body: str) -> str:
     return f"title: t\n{body}\n{_QUERIES}"
-
-
-def _released_0_9_0_catalog() -> tuple[YamlSchemaCatalog, Any]:
-    """A copy of the real catalog with 0.9.0 marked RELEASED and a fresh
-    0.10.0 DEV entry appended above it, the way the catalog looks the moment
-    after this boundary actually ships. `migrate_board_yaml_text`/`dct
-    migrate` cap at `catalog.latest_released.version`, so today -- with
-    0.9.0 still DEV -- this boundary's declarations never fire on disk; this
-    is what proves they *do* fire once released, without waiting for a real
-    release to test it (the same "fake a release" technique
-    `test_migrations.py` documents for the real catalog).
-    """
-    catalog, registry = _board_migration_context()
-    released = dataclasses.replace(
-        catalog.dev,
-        status="RELEASED",
-        released_at=date.today(),
-        filename="0.9.0.json",
-        sha256="test",
-    )
-    next_dev = YamlSchemaEntry(
-        "0.10.0",
-        status="DEV",
-        released_at=None,
-        filename=None,
-        sha256=None,
-        predecessor="0.9.0",
-    )
-    entries = (
-        next_dev,
-        released,
-        *(e for e in catalog.entries if e.version != "0.9.0"),
-    )
-    schemas = {**catalog._schemas, "0.10.0": catalog.current_schema}
-    return YamlSchemaCatalog(entries, schemas, catalog.current_schema), registry
 
 
 class TestRetiredTokensRespellInMemory:
@@ -381,10 +340,7 @@ class TestRetiredTokensRespellInMemory:
 class TestRetiredTokensRespellOnDisk:
     """`migrate_yaml_text`/`migrate_board_yaml_text` -- the `dct migrate` file rewrite."""
 
-    def test_a_current_dev_catalog_leaves_the_file_untouched(self) -> None:
-        """0.9.0 is unreleased today, so `dct migrate` (capped at
-        `catalog.latest_released.version`, 0.7.0) must never rewrite a
-        retired token -- the boundary that respells it has not shipped."""
+    def test_dct_migrate_respells_a_retired_token(self) -> None:
         text = _board(
             "charts:\n"
             "  c:\n"
@@ -397,10 +353,10 @@ class TestRetiredTokensRespellOnDisk:
             "        static: category_dark[2]\n"
         )
 
-        assert migrate_board_yaml_text(text) == text
+        assert 'static: "category[2].dark"' in migrate_board_yaml_text(text)
 
-    def test_a_released_0_9_0_catalog_respells_scalar_tokens(self) -> None:
-        catalog, registry = _released_0_9_0_catalog()
+    def test_dct_migrate_respells_scalar_tokens(self) -> None:
+        catalog, registry = _board_migration_context()
         text = _board(
             "style:\n"
             "  charts:\n"
@@ -436,10 +392,10 @@ class TestRetiredTokensRespellOnDisk:
             ("vivid-10-dark:4_r", "vivid-10:4_r.dark"),
         ],
     )
-    def test_a_released_0_9_0_catalog_respells_shorthand_family_forms(
+    def test_dct_migrate_respells_shorthand_family_forms(
         self, retired: str, replacement: str
     ) -> None:
-        catalog, registry = _released_0_9_0_catalog()
+        catalog, registry = _board_migration_context()
         text = _board(
             "charts:\n"
             "  c:\n"
@@ -462,8 +418,8 @@ class TestRetiredTokensRespellOnDisk:
 
         assert f'palette: "{replacement}"' in result
 
-    def test_a_released_0_9_0_catalog_strikes_the_retired_role_keys(self) -> None:
-        catalog, registry = _released_0_9_0_catalog()
+    def test_dct_migrate_strikes_the_retired_role_keys(self) -> None:
+        catalog, registry = _board_migration_context()
         text = _board(
             "style:\n"
             "  palettes:\n"
@@ -492,7 +448,7 @@ class TestRetiredTokensRespellOnDisk:
         """`set_board_values`' own CRLF contract: refuse loudly rather than
         silently mix line endings. Reached through the MapKeyDeletion/Move
         text rewrite the same as any other edit that file would need."""
-        catalog, registry = _released_0_9_0_catalog()
+        catalog, registry = _board_migration_context()
         text = _board(
             "charts:\n"
             "  c:\n"
@@ -595,8 +551,8 @@ class TestRetiredTokensInsideAList:
             "#abc",
         ]
 
-    def test_a_released_0_9_0_catalog_respells_a_block_style_list_item(self) -> None:
-        catalog, registry = _released_0_9_0_catalog()
+    def test_dct_migrate_respells_a_block_style_list_item(self) -> None:
+        catalog, registry = _board_migration_context()
         text = _board(
             "style:\n"
             "  charts:\n"
@@ -623,7 +579,7 @@ class TestRetiredTokensInsideAList:
         assert "category_dark" not in result
 
     def test_on_disk_flow_style_list_item_is_refused_not_corrupted(self) -> None:
-        catalog, registry = _released_0_9_0_catalog()
+        catalog, registry = _board_migration_context()
         text = _board(
             "style:\n"
             "  charts:\n"

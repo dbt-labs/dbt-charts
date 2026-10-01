@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER` no longer asks for a currency format on a percent-suffixed column like `revenue_share` that already has a `%` format.'
-time: 2026-09-28T13:17:42.000000-07:00

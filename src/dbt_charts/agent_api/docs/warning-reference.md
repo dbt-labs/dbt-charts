@@ -266,6 +266,22 @@ Chart {chart_id!r}: {authored_field!r} was truncated: the authored text {authore
 
 Fires when a chart title or subtitle is wrapped and the last line is cut with a Unicode ellipsis (…) because the authored text exceeds the available width. The message shows the full authored text before truncation.
 
+### WARN-DUAL-AXIS-COMPETING-SCALES: Dual-axis chart plots two measures on independent scales
+
+- **Level:** warning
+- **Domain:** render
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+Chart {chart_id!r}: {layer_col!r} is drawn against its own y-axis, separate from {base_col}. The two scales are set independently, so where the marks cross, which one sits higher, and how closely they track are artifacts of the axis ranges, not the data: readers will see a relationship that may not exist.
+```
+
+**Fix:** Show each measure in its own chart, stacked so they share the x-axis. To compare trends in one chart, index both series to a common start (e.g. 100) in the query so they share one axis; to show how one measure moves with the other, plot them as a scatter. If the second series is the same quantity in another unit (°F/°C, $/€), remove the layer and relabel the chart's opposite edge with `style.axis_y.mirror` and an `expr` that converts the value (for example `format(datum.value * 1.8 + 32, '.0f')`): one scale, two unit labels. Where the audience expects this form, list the code in the chart's `warnings_ignore:`.
+
+Fires on a layered chart where a layer is pinned to its own y-axis side, which gives it an independent y scale. A layer opts in by setting `axis_y.position`. The marks on the two scales are not comparable: crossings, relative height, and apparent correlation come from the axis ranges, not the data. Classic example: revenue bars with a headcount line on the right axis. A layer that sets only `axis_y.title` shares the base scale and never fires.
+
 ### WARN-ENDPOINT-LABEL-GAP-OVERFLOW: Endpoint-label rail is too cramped for its intended spacing
 
 - **Level:** warning
@@ -406,7 +422,7 @@ Fires on a layered chart whose typed layers contribute x categories the base que
 Chart {chart_id!r}: y columns {col_a!r} and {col_b!r} share a y-axis but their value ranges differ by {ratio:.0f}×: the smaller series will be visually crushed to a flat line.
 ```
 
-**Fix:** Split into two y-axes by adding `axis_y:` on one of the layers, or normalize the series to a common scale in the query.
+**Fix:** Index the series to a common scale in the query (e.g. percent change, or 100 = first period), or show them as two charts stacked so they share the x-axis.
 
 Fires on a layered chart where the base chart's own y series and/or its layers share the y-axis but their value ranges differ by ≥100×: the smaller series is visually crushed to a flat line. Classic example: revenue (millions) overlaid with conversion rate ([0, 1]).
 
@@ -908,22 +924,6 @@ Fires on any chart where the y-encoding field is more than 50% NULL in the query
 
 ## layout
 
-
-### WARN-ADJACENT-TEXT-ROWS: Consecutive text-only rows each flow into their own columns
-
-- **Level:** warning
-- **Domain:** compile
-- **Suppressible:** yes
-
-**Message template:**
-
-```
-{count} text-only rows in a row: each is measured and flowed on its own, so the column grid restarts at every one; the column edges do not line up, and whichever block half-fills its last column leaves a gap mid-page.
-```
-
-**Fix:** Merge them into one `- text:` block. Prose in a single block flows through one set of columns and fills them evenly; the headings that separated the rows still separate the sections inside it.
-
-Fires when two or more consecutive `rows:` items are body prose and nothing else. Every prose block picks its own column count from its own line count and balances its own lines, with no flow between blocks, so stacking them renders unrelated grids rather than one continuous passage. One diagnostic per run, marking the second row of it; a run of four rows is one authoring decision, not three. A `title:` on the row does not exempt it: `- title:` + `text:` is how a section of prose is written, and two of those fragment the same way, so the fix is to merge them and let the later titles become headings inside the merged block. Four shapes do not participate, and each of them also ends a run rather than being skipped over; a row between two passages is something the author put there. They are: a row holding a layout of its own (a section, not a block of prose); a row carrying anything only a slot can carry: `style:`, `visible:`, a `details:` disclosure, an authored height, since a merged block has one of each and merging would have to discard one; a row with no flowing prose in it, a markdown table or a code block on its own, because merging one of those into a prose column squeezes it to the measure; and prose too short to reach a second column, which is one column wide at any board width and so cannot misalign against anything; a caption rather than a passage. A `cols:` layout never fires: prose side by side is an authored spread. A row imported from another file or generated by a `foreach` is not reported either; it has no authored coordinates to mark, and the merge it would ask for is not the author's to make here. Emitted by `compile/validate/board_warnings.py`.
 
 ### WARN-FLAT-COLS-UNSIZED-OVERFLOW: Flat cols: row has too many unsized non-KPI cells
 

@@ -467,7 +467,7 @@ charts:
         company:
           label: Company
           width: 170
-          link: "/accounts/{{ company }}"
+          link: "/general/accounts?company={{ company }}"
         bookings:
           label: Bookings
           format: "$,.0f"

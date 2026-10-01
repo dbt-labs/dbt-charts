@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'dct serve''s file watcher no longer watches its own on-disk query-result cache writes, which was causing an infinite browser reload loop when a project configured a project-relative cache: {path: ...}.'
-time: 2026-09-25T14:54:35.507215-07:00

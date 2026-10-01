@@ -28,6 +28,8 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.fonts import NOTO_EMOJI_FONT_FAMILY
 from dbt_charts.core.project import Project
 
+from .._prose_plan import full_width_plan
+
 _QUOTED = f"'{NOTO_EMOJI_FONT_FAMILY}'"
 
 _EMOJI_YAML = """
@@ -125,6 +127,7 @@ class TestRenderedSVGContainsNotoEmoji:
             resolved_without_emoji_family,
             text_style=resolved_without_emoji_family.text,
             painted_canvas=None,
+            plan=full_width_plan(resolved_without_emoji_family, 400.0),
         )
 
         body_rule = re.search(

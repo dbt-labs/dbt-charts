@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.style.theme import ColumnRuleStyle, TextColumnStyle
 
+from ._prose_plan import full_width_plan
 from ._svg_render import render_board_file
 
 # ---------------------------------------------------------------------------
@@ -33,16 +34,14 @@ class TestTextColumnStyle:
     def test_defaults(self):
         col = TextColumnStyle()
         assert col.max_number is None
-        assert col.gap is None
         assert col.rule is None
         assert col.max_chars is None
 
     def test_explicit_values(self):
         col = TextColumnStyle(
-            max_number=3, gap=24.0, rule=ColumnRuleStyle(width=1, color="#e5e7eb")
+            max_number=3, rule=ColumnRuleStyle(width=1, color="#e5e7eb")
         )
         assert col.max_number == 3
-        assert col.gap == 24.0
         assert col.rule == ColumnRuleStyle(width=1, color="#e5e7eb")
 
     def test_extra_fields_forbidden(self):
@@ -75,14 +74,12 @@ class TestTextColumnStyle:
         with pytest.raises(ValidationError):
             TextColumnStyle(max_chars=-80)
 
-    def test_gap_and_rule_stand_alone(self):
+    def test_rule_stands_alone(self):
         """Columns are automatic, so decorating them needs no count.
 
-        These once required ``max_number > 1`` or ``max_chars``. Requiring a
-        count to set a gutter would mean pinning a ceiling the author does not
-        want just to decorate a layout the renderer chose.
+        Requiring a count to draw a rule would mean pinning a ceiling the author
+        does not want just to decorate a layout the renderer chose.
         """
-        assert TextColumnStyle(gap=24.0).gap == 24.0
         rule = ColumnRuleStyle(width=1, color="#ccc")
         assert TextColumnStyle(rule=rule).rule == rule
 
@@ -135,7 +132,7 @@ class TestStylePatchTextParsing:
         assert patch.text is not None
         assert patch.text.column.max_number == 3
 
-    def test_text_column_gap_and_rule(self):
+    def test_text_column_rule(self):
         from dbt_charts.core.compile.models.style.authored import StylePatch
 
         patch = StylePatch.model_validate(
@@ -143,14 +140,12 @@ class TestStylePatchTextParsing:
                 "text": {
                     "column": {
                         "max_number": 2,
-                        "gap": 24,
                         "rule": {"width": 1, "color": "#ccc"},
                     }
                 }
             }
         )
         assert patch.text is not None
-        assert patch.text.column.gap == 24.0
         assert patch.text.column.rule.width == 1.0
         assert patch.text.column.rule.color == "#ccc"
 
@@ -277,7 +272,6 @@ style:
   text:
     column:
       max_number: 3
-      gap: 24
 """
         )
         svg = render_board_file(board)
@@ -433,6 +427,7 @@ style:
             900.0,
             text_style,
             resolve_style(get_theme_style()),
+            plan=full_width_plan(resolve_style(get_theme_style()), 900.0),
         )
         assert "<text" in svg
         assert len(_column_x_offsets(svg)) == 1, (
@@ -458,6 +453,7 @@ style:
             text_style=text_style,
             resolved_style=resolve_style(get_theme_style()),
             painted_canvas=None,
+            plan=full_width_plan(resolve_style(get_theme_style()), 400.0),
         )
         assert "<foreignObject" not in svg
         assert "<svg" in svg
@@ -480,6 +476,7 @@ style:
             text_style=resolved_style.text,
             resolved_style=resolved_style,
             painted_canvas=None,
+            plan=full_width_plan(resolved_style, container_width),
         )
 
         assert f'width="{container_width:g}"' in svg
@@ -508,40 +505,6 @@ style:
         assert "<foreignObject" not in svg
         # No unescaped script element that a browser could execute
         assert "<script>window.__xss" not in svg
-
-    def test_column_gap_alone_renders(self, tmp_path: Path):
-        """A gutter needs no count now that the renderer picks one."""
-        board = tmp_path / "charts" / "gap.yml"
-        board.parent.mkdir(parents=True)
-        board.write_text(
-            _BODY_TEXT
-            + """\
-style:
-  text:
-    column:
-      gap: 40
-"""
-        )
-        assert "<text" in render_board_file(board)
-
-    def test_column_gap_with_max_number_uses_svg_path(self, tmp_path: Path):
-        """column.gap + column.max_number > 1 renders as SVG columns."""
-        board = tmp_path / "charts" / "gap.yml"
-        board.parent.mkdir(parents=True)
-        board.write_text(
-            _BODY_TEXT
-            + """\
-style:
-  text:
-    column:
-      max_number: 2
-      gap: 40
-"""
-        )
-        svg = render_board_file(board)
-        assert "<foreignObject" not in svg
-        x_offsets = _column_x_offsets(svg)
-        assert len(x_offsets) >= 1, "Expected at least one non-zero column x offset"
 
 
 # ---------------------------------------------------------------------------
@@ -577,13 +540,18 @@ class TestTextSizing:
 
         resolved = resolve_style(get_theme_style(None))
         sized_height = get_markdown_text_height(
-            long_text, width, text_style=text_style, resolved_style=resolved
+            long_text,
+            width,
+            text_style=text_style,
+            resolved_style=resolved,
+            plan=full_width_plan(resolved, width),
         )
         _, render_height = render_prose_svg(
             long_text,
             width,
             text_style,
             resolve_style(get_theme_style()),
+            plan=full_width_plan(resolve_style(get_theme_style()), width),
         )
 
         assert abs(sized_height - render_height) < 2.0, (
@@ -622,10 +590,18 @@ class TestTextSizing:
         resolved = dataclasses.replace(resolved, text=text_style)
 
         h_narrow = get_markdown_text_height(
-            text, narrow_width, text_style=text_style, resolved_style=resolved
+            text,
+            narrow_width,
+            text_style=text_style,
+            resolved_style=resolved,
+            plan=full_width_plan(resolved, narrow_width),
         )
         h_wide = get_markdown_text_height(
-            text, wide_width, text_style=text_style, resolved_style=resolved
+            text,
+            wide_width,
+            text_style=text_style,
+            resolved_style=resolved,
+            plan=full_width_plan(resolved, wide_width),
         )
 
         # Wider container yields more columns → each column shorter → total height smaller

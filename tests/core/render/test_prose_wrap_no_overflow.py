@@ -27,6 +27,8 @@ from dbt_charts.core.render.boards import _render_text_svg
 from dbt_charts.core.render.sizing import body_text_font_family, get_compact_style
 from mdsvg.fonts import FontMeasurer
 
+from .._prose_plan import full_width_plan, text_nodes
+
 _PROSE = (
     "The quick brown fox jumps over the lazy dog and keeps on running well past the "
     "point where a sentence would ordinarily stop, so it may run to eighty characters "
@@ -41,8 +43,6 @@ _THEMES = ("clarity", "paper", "stark")
 _WIDTHS = tuple(float(w) for w in range(240, 1300, 53))
 
 _SVG_WIDTH = re.compile(r'<svg[^>]*\swidth="([\d.]+)"')
-_TEXT_NODE = re.compile(r'<text[^>]*\sx="([-\d.]+)"[^>]*>(.*?)</text>', re.DOTALL)
-_TAG = re.compile(r"<[^>]+>")
 
 
 def _painted_measurer(font_family: str) -> FontMeasurer:
@@ -79,18 +79,24 @@ def test_prose_never_paints_past_the_viewport_that_clips_it(theme: str) -> None:
     lines_checked = 0
     for width in _WIDTHS:
         svg, _height = _render_text_svg(
-            _PROSE, {}, width, resolved, text_style=resolved.text, painted_canvas=None
+            _PROSE,
+            {},
+            width,
+            resolved,
+            text_style=resolved.text,
+            painted_canvas=None,
+            plan=full_width_plan(resolved, width),
         )
         width_match = _SVG_WIDTH.search(svg)
         assert width_match, f"rendered block at width {width} has no nested <svg width>"
         viewport = float(width_match.group(1))
 
-        for x_attr, inner in _TEXT_NODE.findall(svg):
-            text = _TAG.sub("", inner).replace("&amp;", "&").replace("&#39;", "'")
+        for x_abs, raw in text_nodes(svg):
+            text = raw.replace("&amp;", "&").replace("&#39;", "'")
             if not text.strip():
                 continue
             lines_checked += 1
-            right_edge = float(x_attr) + measurer.measure(text, font_size)
+            right_edge = x_abs + measurer.measure(text, font_size)
             if right_edge > viewport:
                 overflowing.append(
                     f"{width:.0f}px slot: {text[-45:]!r} reaches "

@@ -231,6 +231,12 @@ uv tool install "dbt-charts[bigquery]"  # or: pip install "dbt-charts[bigquery]"
                                          # trino. DuckDB is built in.
 ```
 
+Unreleased `main` ships as an unsupported dev build on every export:
+
+```bash
+uv tool install --prerelease=allow dbt-charts   # or: pip install --pre dbt-charts
+```
+
 ```bash
 dct init                        # bootstrap a project (creates charts/guide.yml)
 dct validate charts/guide.yml   # check board YAML for errors, no warehouse needed

@@ -20,6 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.execute.adapters import build_adapter_registry
@@ -222,7 +223,9 @@ def test_align_cols_heights_uses_corrected_width_for_support_table_chart():
     # After alignment, dt_bar's cached SVG must not overflow item.width.
     assert widths_called, "_render_chart_to_svg must be called for the shorter item"
     width_used = widths_called[0]
-    _cached_svg_after, _ = render_ctx.render_cache[("dt_bar", ITEM_WIDTH, 600.0)]
+    _cached_svg_after, _ = render_ctx.render_cache[
+        ("dt_bar", ITEM_WIDTH, 600.0, NO_TITLE_SHIFT)
+    ]
 
     # The width passed to render must be the corrected width, not item.width.
     # Pre-fix: width_used == ITEM_WIDTH (566), causing overflow.
@@ -325,7 +328,9 @@ def test_fix_slot_heights_does_not_inflate_support_table_chart_cached_height():
         _fix_slot_heights_in_tree(layout, render_ctx)
 
     # The cache entry must exist for this slot
-    cache_entry = render_ctx.render_cache.get(("dt_bar", 566.0, ITEM_HEIGHT))
+    cache_entry = render_ctx.render_cache.get(
+        ("dt_bar", 566.0, ITEM_HEIGHT, NO_TITLE_SHIFT)
+    )
     assert cache_entry is not None, "_fix_slot_heights_in_tree must update cache"
     _, cached_height = cache_entry
 

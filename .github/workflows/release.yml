@@ -19,27 +19,35 @@ name: Release to PyPI
 # The monorepo it's exported from does not publish dbt-charts to PyPI at
 # all — cutting a tag there only gets a commit exported and tagged here;
 # this repo's own `release: published` event is what actually ships it.
+#
+# Each export push to main publishes its hatch-vcs `X.Y.Z.devN` wheel via
+# `pypi-dev`. A commit already carrying its release tag builds the stable
+# version, which only the GitHub Release publishes.
 on:
   release:
     types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: "release-${{ github.event.release.tag_name || 'manual' }}"
+  group: "release-${{ github.event.release.tag_name || github.ref }}"
   cancel-in-progress: false
 
 jobs:
   build:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'dbt-charts-v')
     runs-on: ubuntu-latest
+    outputs:
+      is_dev: ${{ steps.version.outputs.is_dev }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0  # needed for the "tag is on main" branch --contains check below
+          fetch-depth: 0  # hatch-vcs and the "tag is on main" check need tags
 
       - name: Refuse non-semver release tags
         if: github.event_name == 'release'
@@ -96,6 +104,19 @@ jobs:
         # source relying on a 3.11+-only stdlib module isn't missed.
         run: uv run --no-project --python 3.10 --with tomli python .github/scripts/check_published_artifact.py --wheel dist/*.whl
 
+      - name: Detect dev version
+        id: version
+        run: |
+          version=$(basename dist/*.whl | cut -d- -f2)
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]+$ ]]; then
+            echo "is_dev=true" >> "$GITHUB_OUTPUT"
+          elif git tag --points-at HEAD | grep -qx "dbt-charts-v$version"; then
+            echo "is_dev=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Stable version $version but HEAD has no dbt-charts-v$version tag."
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: dist
@@ -106,6 +127,25 @@ jobs:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      id-token: write # OIDC token for PyPI Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: "0.12.18"
+
+      - run: uv publish --trusted-publishing always dist/*
+
+  publish-dev:
+    needs: [build]
+    if: github.event_name == 'push' && needs.build.outputs.is_dev == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi-dev
     permissions:
       id-token: write # OIDC token for PyPI Trusted Publishing
     steps:

@@ -472,6 +472,20 @@ Cannot define {spec!r} in style.formats at {field_path}: this name is engine-pre
 
 Fired when a `style.formats` key collides with an engine-owned predefined format name such as `number`, `currency`, or `date_short`. Predefined names resolve via engine rules and cannot be shadowed. Define your custom alias under a different name.
 
+### ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED: strftime directive in a Vega-rendered time_format cannot be measured
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Format {spec!r} at {field_path} uses {directives}, which dbt Charts cannot render identically to what Vega paints on the axis: either it is not part of d3-time-format's directive set at all (Vega paints the literal letter), or Python renders it through the host's C locale or local timezone rather than d3's UTC/en-US output. This slot is baked onto a Vega-painted axis, whose label width is also measured from this same spec -- a mismatch here is a wrong render that looks right until the label overlaps its neighbor. Supported directives: {available}.
+```
+
+Fired when an authored `time_format` (or another Vega-painted time slot: axis labels) uses a strftime directive dbt Charts cannot render byte-identical to what Vega's `utcFormat` paints. `%C`/`%k`/`%l`/`%z` and most other letters are not d3-time-format grammar at all -- Vega paints the literal letter, not a computed value. `%c`/`%x`/`%X` are real d3 directives whose Python rendering diverges (locale-composite output through the host's C locale, not d3's UTC/en-US output); use `%-m/%-d/%Y` for `%x`, `%-I:%M:%S %p` for `%X`, or `%-m/%-d/%Y, %-I:%M:%S %p` for `%c`. `%Z` is real d3 grammar too but empty on a naive datetime, unlike d3's `+0000`-style offset. `%s` is real d3 grammar but Python's value follows the host's local timezone rather than a true UTC epoch count; `%Q` (epoch milliseconds) is the supported equivalent. A format string outside a Vega-painted slot (a table column, the footer timestamp) is unaffected -- those render through Python directly, so no measure-vs-paint divergence is possible there.
+
 ### ERR-GAP-FILL-BUCKET-COLLISION: Two rows collapse to the same gap-fill bucket
 
 - **Level:** error

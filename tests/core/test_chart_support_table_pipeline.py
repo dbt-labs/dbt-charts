@@ -3634,6 +3634,119 @@ def test_v2_line_dense_monthly_support_table_matches_flushed_axis_thinning(
         )
 
 
+def test_v2_line_dense_daily_support_table_matches_axis_weekly_cadence(
+    monkeypatch: Any,
+) -> None:
+    """The axis steps to Monday day numbers; the strip must carry the Mondays."""
+    import datetime
+
+    start = datetime.date(2026, 7, 27)
+    data = [
+        {"date": (start + datetime.timedelta(days=i)).isoformat(), "revenue": float(i)}
+        for i in range(45)
+    ]
+    chart = _compiled_line_temporal_with_support_table([{"source": "revenue"}])
+    spec = _render_v2_spec(chart, data, width=560, height=300, monkeypatch=monkeypatch)
+
+    axis_values = spec["encoding"]["x"]["axis"]["values"]
+    assert {datetime.date.fromisoformat(v).weekday() for v in axis_values} == {0}
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    for layer in text_layers:
+        filters = _period_filter_exprs(layer)
+        assert filters
+        assert all("utcday" in expr for expr in filters), (
+            "strip cells must open on the axis's Monday labels, not month 1sts. "
+            f"Transforms: {layer.get('transform')}"
+        )
+
+
+def _line_with_support_table_and_axis(axis_x: dict[str, Any]) -> Chart:
+    return TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {"entries": [{"source": "revenue"}]},
+            "style": {"axis_x": axis_x},
+        }
+    )
+
+
+def test_v2_line_sparse_daily_support_table_keeps_every_cell(
+    monkeypatch: Any,
+) -> None:
+    """The strip has one cell per row, so a sparse series over a wide span
+    keeps every cell even though the axis draws many calendar buckets."""
+    import datetime
+
+    start = datetime.date(2024, 3, 12)
+    data = [
+        {
+            "date": (start + datetime.timedelta(days=95 * i)).isoformat(),
+            "revenue": float(i),
+        }
+        for i in range(8)
+    ]
+    chart = _line_with_support_table_and_axis({"time_unit": "yearmonthdate"})
+    spec = _render_v2_spec(chart, data, width=600, height=300, monkeypatch=monkeypatch)
+
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    for layer in text_layers:
+        assert not _period_filter_exprs(layer), (
+            "8 rows at 600px must keep all 8 strip cells. "
+            f"Transforms: {layer.get('transform')}"
+        )
+
+
+@pytest.mark.parametrize(("count", "spacing_days"), [(20, 30), (25, 7), (14, 30)])
+def test_v2_line_gapped_daily_support_table_never_filters_out_every_row(
+    monkeypatch: Any, count: int, spacing_days: int
+) -> None:
+    """A label-period filter only stands when every opener the axis labels
+    has a row; otherwise it would match no row and blank the whole strip."""
+    import datetime
+
+    start = datetime.date(2024, 3, 12)
+    data = [
+        {
+            "date": (start + datetime.timedelta(days=spacing_days * i)).isoformat(),
+            "revenue": float(i),
+        }
+        for i in range(count)
+    ]
+    chart = _line_with_support_table_and_axis({"time_unit": "yearmonthdate"})
+    spec = _render_v2_spec(chart, data, width=600, height=300, monkeypatch=monkeypatch)
+
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    for layer in text_layers:
+        assert not any(
+            "utcdate" in expr or "utcday" in expr
+            for expr in _period_filter_exprs(layer)
+        ), f"no row opens a label period here. Transforms: {layer.get('transform')}"
+
+
+def test_v2_line_time_part_support_table_renders(monkeypatch: Any) -> None:
+    """A time-part grain is not a calendar span; the strip must not try to
+    enumerate one. Dense enough to pass the strip's density check."""
+    import datetime
+
+    start = datetime.date(2024, 1, 1)
+    data = [
+        {"date": (start + datetime.timedelta(days=i)).isoformat(), "revenue": float(i)}
+        for i in range(60)
+    ]
+    chart = _line_with_support_table_and_axis({"time_unit": "monthofyear"})
+    spec = _render_v2_spec(chart, data, width=600, height=300, monkeypatch=monkeypatch)
+
+    assert _strip_text_layers(spec)
+
+
 def test_v2_line_support_table_respects_chart_local_flush_override(
     monkeypatch: Any,
 ) -> None:

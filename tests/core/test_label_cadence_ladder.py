@@ -97,7 +97,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=600,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearmonthdate"
@@ -121,7 +127,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=600,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearweek"
@@ -145,13 +157,31 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             daily = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=1200
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=1200,
+                continuous_temporal=False,
             )
             mondays = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=300
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=300,
+                continuous_temporal=False,
             )
             months = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=70
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=70,
+                continuous_temporal=False,
             )
 
         assert daily.format_time_unit == "yearmonthdate"
@@ -176,10 +206,22 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             weekly = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=240
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=240,
+                continuous_temporal=False,
             )
             monthly = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=70
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=70,
+                continuous_temporal=False,
             )
 
         assert weekly.format_time_unit == "yearweek"
@@ -203,13 +245,19 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=80
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=80,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearmonth"
         assert layout.anchor_index == 1
 
-    def test_continuous_temporal_axis_keeps_existing_submonth_resolution(self) -> None:
+    def test_ordinal_unaligned_daily_axis_keeps_month_resolution(self) -> None:
         from dbt_charts.core.render.chart.emitters._label_overlap import (
             resolve_axis_x_overlap,
         )
@@ -233,9 +281,71 @@ class TestTemporalOverlapResolution:
                 bucket_aligned_temporal=False,
                 edge_labels_flushed=False,
                 chart_width=300,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearmonth"
+
+    def test_continuous_daily_axis_steps_to_weekly_day_numbers(self) -> None:
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        start = datetime.date(2024, 1, 1)
+        data = [
+            {"x": (start + datetime.timedelta(days=offset)).isoformat()}
+            for offset in range(60)
+        ]
+        measurer = _make_mock_measurer(width_per_char=5.0)
+        with patch(
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            return_value=measurer,
+        ):
+            layout = resolve_axis_x_overlap(
+                axis,
+                "x",
+                data,
+                1.0,
+                bucket_aligned_temporal=False,
+                edge_labels_flushed=False,
+                chart_width=300,
+                continuous_temporal=True,
+            )
+
+        assert layout.visibility_time_unit == "yearweek"
+        assert layout.angle == 0.0
+
+    def test_gappy_continuous_weekly_axis_is_measured_over_its_span(self) -> None:
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        start = datetime.date(2024, 1, 1)
+        data = [
+            {"x": (start + datetime.timedelta(weeks=offset)).isoformat()}
+            for offset in range(30)
+            if offset % 3 != 1
+        ]
+        measurer = _make_mock_measurer(width_per_char=5.0)
+        with patch(
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            return_value=measurer,
+        ):
+            layout = resolve_axis_x_overlap(
+                axis,
+                "x",
+                data,
+                1.0,
+                bucket_aligned_temporal=False,
+                edge_labels_flushed=False,
+                chart_width=200,
+                continuous_temporal=True,
+            )
+
+        assert layout.format_time_unit == "yearmonth"
+        assert layout.angle == 0.0
 
     def test_authored_continuous_daily_labels_measure_the_two_row_shape(self) -> None:
         # Regression: with an authored `labels.time_unit: yearmonthdate` on a
@@ -266,6 +376,7 @@ class TestTemporalOverlapResolution:
                 bucket_aligned_temporal=False,
                 edge_labels_flushed=False,
                 chart_width=440,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearmonthdate"
@@ -289,7 +400,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=600,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearweek"
@@ -332,7 +449,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=600,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == expected_format
@@ -358,7 +481,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=564
+                axis,
+                "x",
+                data,
+                0.8,
+                edge_labels_flushed=True,
+                chart_width=564,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearmonth"
@@ -382,7 +511,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=300
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=300,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "allow"
@@ -403,7 +538,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=80
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=80,
+                continuous_temporal=False,
             )
 
         assert axis.labels.time_unit == "monthofyear"
@@ -424,7 +565,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=80
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=80,
+                continuous_temporal=False,
             )
 
         assert layout.visibility_time_unit is None
@@ -444,7 +591,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=600,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "parity"
@@ -463,10 +616,22 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             wide = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=10_000
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=10_000,
+                continuous_temporal=False,
             )
             narrow = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=300
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=300,
+                continuous_temporal=False,
             )
 
         assert axis.labels.time_unit == "yearmonth"
@@ -490,7 +655,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=150
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=150,
+                continuous_temporal=False,
             )
 
         _, ax_vl, _ = build_cartesian_x_encoding(
@@ -525,12 +696,24 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             thinned = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=500
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=500,
+                continuous_temporal=False,
             )
             # Narrow enough that even the looped ladder's terminal (year)
             # rung doesn't fit flat — still exercises thin-before-tilt.
             tilted = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=20
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=20,
+                continuous_temporal=False,
             )
 
         assert thinned.visibility_time_unit == "yearquarter"
@@ -558,7 +741,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=90
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=90,
+                continuous_temporal=False,
             )
 
         expr = default_label_expr_for(
@@ -585,7 +774,13 @@ class TestTemporalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=300
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=300,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "parity"
@@ -641,6 +836,7 @@ class TestTemporalOverlapResolution:
                 bucket_aligned_temporal=False,
                 edge_labels_flushed=True,
                 chart_width=60,
+                continuous_temporal=False,
             )
 
         assert layout.visibility_time_unit == "yearmonth"
@@ -718,7 +914,13 @@ class TestCategoricalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=500
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=500,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "allow"
@@ -737,7 +939,13 @@ class TestCategoricalOverlapResolution:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=200
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "allow"
@@ -1313,7 +1521,13 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in _monthly_dates(137, start=(2015, 4))]
 
         layout = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=1050
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=1050,
+            continuous_temporal=False,
         )
 
         assert layout.visibility_time_unit == "year"
@@ -1334,7 +1548,13 @@ class TestCadenceLadderReachesYear:
         for values in cases:
             data = [{"x": value} for value in values]
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=500
+                axis,
+                "x",
+                data,
+                0.8,
+                edge_labels_flushed=True,
+                chart_width=500,
+                continuous_temporal=False,
             )
             assert layout.visibility_time_unit == "year", values[0]
 
@@ -1351,10 +1571,22 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in _monthly_dates(60)]
 
         narrow = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=282
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=282,
+            continuous_temporal=False,
         )
         wide = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=1128
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=1128,
+            continuous_temporal=False,
         )
 
         assert narrow.visibility_time_unit == "year"
@@ -1375,7 +1607,13 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in _monthly_dates(60)]
 
         layout = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=658
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=658,
+            continuous_temporal=False,
         )
 
         assert layout.visibility_time_unit == "year"
@@ -1393,7 +1631,13 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in _weekly_dates(260)]
 
         layout = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=658
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=658,
+            continuous_temporal=False,
         )
 
         assert layout.visibility_time_unit == "year"
@@ -1412,7 +1656,13 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in _monthly_dates(24)]
 
         layout = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=1128
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=1128,
+            continuous_temporal=False,
         )
 
         assert layout.visibility_time_unit == "yearmonth"
@@ -1432,7 +1682,13 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in _monthly_dates(137, start=(2015, 4))]
 
         layout = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=282
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=282,
+            continuous_temporal=False,
         )
 
         assert layout.angle is not None
@@ -1460,10 +1716,22 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in _monthly_dates(24)]
 
         bar = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=False, chart_width=282
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=False,
+            chart_width=282,
+            continuous_temporal=False,
         )
         line = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=282
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=282,
+            continuous_temporal=False,
         )
 
         assert bar.visibility_time_unit == "yearquarter"
@@ -1491,7 +1759,13 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in month_values]
 
         layout = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=False, chart_width=200
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=False,
+            chart_width=200,
+            continuous_temporal=False,
         )
         assert layout.visibility_time_unit == "year"
 
@@ -1525,7 +1799,13 @@ class TestCadenceLadderReachesYear:
         data = [{"x": value} for value in _monthly_dates(137, start=(2015, 4))]
 
         layout = resolve_axis_x_overlap(
-            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=1050
+            axis,
+            "x",
+            data,
+            0.8,
+            edge_labels_flushed=True,
+            chart_width=1050,
+            continuous_temporal=False,
         )
         assert layout.visibility_time_unit == "year"
 

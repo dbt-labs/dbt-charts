@@ -40,6 +40,10 @@ def _trace_vl_spec(chart_id: str, renderer: str, spec: dict[str, Any]) -> None:
     _log.debug("VL spec trace → %s", out)
 
 
+from dbt_charts.core.compile.models.board.normalized import (
+    NO_TITLE_SHIFT,
+    TitleShift,
+)
 from dbt_charts.core.compile.models.chart.normalized import SVG_LAYOUT_PADDED_TYPES
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved._base import (
@@ -86,6 +90,7 @@ def _render_vl_artifact(
     is_placeholder: bool,
     datasets: dict[str | None, ChartRenderData] | None,
     padding: dict[str, int | float] | None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> RenderArtifact:
     """VL emit path without the arc attached-table dispatch.
 
@@ -112,6 +117,7 @@ def _render_vl_artifact(
         # The same gate rendering.py shrinks by: only the padded families were
         # rendered at the inner size, so only they have an inset to grow over.
         inset=padding if resolved.chart_type in SVG_LAYOUT_PADDED_TYPES else None,
+        title_shift=title_shift,
     )
     if svg is not None:
         return RenderArtifact(kind="svg", payload=svg)
@@ -577,6 +583,7 @@ def render_resolved_chart(
     is_placeholder: bool = False,
     datasets: dict[str | None, ChartRenderData] | None = None,
     padding: dict[str, int | float] | None = None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> RenderArtifact:
     """Render an already-resolved chart to a RenderArtifact.
 
@@ -586,6 +593,10 @@ def render_resolved_chart(
 
     Wave 1's render_svg_family dispatch + VL emit_chart→finalize_vl→
     hconcat/padding/title-overflow post-processing live here.
+
+    ``title_shift`` moves the hand-drawn families' titles (table, spark_bar). A
+    Vega-Lite spec is left for the caller to
+    shift with ``shift_artifact_title``, after any title-offset calibration.
 
     Resolved pies carry the width used to finalize their data-aware layout;
     omission reuses it and a conflicting explicit width is rejected. Other
@@ -625,6 +636,7 @@ def render_resolved_chart(
         is_placeholder=is_placeholder,
         datasets=datasets,
         padding=padding,
+        title_shift=title_shift,
     )
     if artifact.kind == "vega_spec" and isinstance(artifact.payload, dict):
         vl = _apply_support_table_strip(

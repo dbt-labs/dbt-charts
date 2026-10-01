@@ -77,15 +77,16 @@ class ColumnRuleStyle(BaseModel):
 class TextColumnStyle(BaseModel):
     """Author overrides for the column layout of board body text.
 
-    Body text is measured and flowed whether or not any of these are set: the
-    renderer picks a column count whose measure reads well, and how much text
-    there is decides how many of those columns are worth using. These narrow
-    that choice rather than switching it on.
+    Body text is measured and flowed whether or not any of these are set. A
+    prose column is an invisible card sitting on the board's card grid, so
+    where columns start and how far apart they are follows from the board,
+    not from text settings. These narrow the renderer's choice rather than
+    switching it on.
 
     - ``max_number``: ceiling on the count. The renderer may still choose
       fewer, when the text is too short to fill them.
-    - ``max_chars``: the measure itself, overriding the shipped default. The
-      width is used exactly and the count follows from it.
+    - ``max_chars``: the measure, overriding the shipped default. It caps the
+      text inside a column; it never moves the column.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -98,13 +99,6 @@ class TextColumnStyle(BaseModel):
             "is not enough text to fill them. None = no ceiling."
         ),
     )
-    gap: float | None = Field(
-        default=None,
-        description=(
-            "Gap between columns in pixels. None = 1.5 line boxes, so the gutter "
-            "scales with the type it separates."
-        ),
-    )
     rule: ColumnRuleStyle | None = Field(
         default=None,
         description="Vertical rule drawn between columns. None = no rule.",
@@ -113,8 +107,9 @@ class TextColumnStyle(BaseModel):
         default=None,
         gt=0,
         description=(
-            "Column width as a character count, overriding the shipped measure. "
-            "The width is used exactly and the column count follows from it."
+            "Column text width as a character count, overriding the shipped "
+            "measure. It caps the text inside a column; a column narrower "
+            "than this limits the text first."
         ),
     )
 

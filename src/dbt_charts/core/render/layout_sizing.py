@@ -26,9 +26,11 @@ from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.board.normalized import (
+    NO_TITLE_SHIFT,
     Board,
     Layout,
     LayoutItem,
+    TitleShift,
     VariableValues,
 )
 from dbt_charts.core.compile.models.board.resolved import (
@@ -47,6 +49,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedTableChart,
 )
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
+from dbt_charts.core.compile.models.style.resolved import effective_padding
 from dbt_charts.core.compile.sizing import board_container_width, get_board_gap
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -54,9 +57,14 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_LINK_SCHEME_UNSAFE_AT_RENDER
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
-from dbt_charts.core.render.chart.spec_builders import additive_padding
+from dbt_charts.core.render.chart.spec_builders import (
+    additive_padding,
+    shift_artifact_title,
+)
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
+from dbt_charts.core.render.conditions import evaluate_visible
 from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.render.prose import plan_board_prose
 from dbt_charts.core.render.sizing import (
     HeightProvider,
     active_layout_items,
@@ -65,6 +73,13 @@ from dbt_charts.core.render.sizing import (
     get_chart_content_height,
     get_item_content_height,
     get_title_height,
+    should_use_title_inline_band,
+)
+from dbt_charts.core.render.title_band import (
+    TitleMetrics,
+    board_title_metrics,
+    chart_title_metrics,
+    row_title_shifts,
 )
 
 if TYPE_CHECKING:
@@ -88,10 +103,13 @@ _ROLE_TITLE_GROUP_Y_RE = re.compile(
 # Title text element baseline y (relative to role-title group): <text ... transform="translate(x, y)">
 _TITLE_TEXT_Y_RE = re.compile(r'<text[^>]*transform="translate\([^,]+,(-?[0-9.]+)\)"')
 
-# Sizing-pass render cache: (chart_id, width, height) → (svg_string, actual_height).
+# Sizing-pass render cache: (chart_id, width, height, title_shift) → (svg_string, actual_height).
+# The shift is part of the key because one chart renders differently in rows whose
+# titles differ, and a cell the alignment pass never re-renders keeps the entry
+# the height provider wrote.
 # Populated during the sizing pass; consumed by the render pass to avoid re-calling
 # vl-convert for charts already rendered at the correct dimensions.
-RenderCache = dict[tuple[str, float, float], tuple[str, float]]
+RenderCache = dict[tuple[str, float, float, TitleShift], tuple[str, float]]
 ResolvedChartVariantKey = tuple[str, float, int]
 ResolvedChartVariants = dict[ResolvedChartVariantKey, ResolvedChart]
 ResolvedChartCanonicalKey = tuple[str, str, str]
@@ -587,6 +605,7 @@ def _render_chart_to_svg(
     resolved_style: ResolvedStyle,
     padding: dict[str, int | float] | None = None,
     title_offset_override: float | None = None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> tuple[str, float, float, float | None]:
     """Render a pre-resolved chart to SVG, returning (svg, width, height, probe_title_offset).
 
@@ -617,10 +636,18 @@ def _render_chart_to_svg(
         height=height,
         padding=padding,
         datasets=datasets,
+        title_shift=title_shift,
     )
+    # The shift goes on first so the probe offset and the returned SVG describe
+    # the same spec; an override is an absolute offset and already accounts for it.
+    shift_artifact_title(artifact, title_shift)
     # Read the probe title.offset BEFORE any override (set by apply_chart_support_table_post_pass).
     probe_title_offset: float | None = None
-    if artifact.kind == "vega_spec" and isinstance(artifact.payload, dict):
+    if (
+        _support_table_of(resolved) is not None
+        and artifact.kind == "vega_spec"
+        and isinstance(artifact.payload, dict)
+    ):
         spec_root = artifact.payload
         spec_target = spec_root["hconcat"][0] if "hconcat" in spec_root else spec_root
         title_block = (
@@ -784,7 +811,9 @@ def _make_data_aware_height_provider(
                     height=None,
                     resolved_style=resolved_style,
                 )
-                render_ctx.render_cache[(item.chart.id, width, actual_height)] = (
+                render_ctx.render_cache[
+                    (item.chart.id, width, actual_height, NO_TITLE_SHIFT)
+                ] = (
                     _chart_svg,
                     actual_height,
                 )
@@ -1161,7 +1190,12 @@ def _make_data_aware_height_provider(
                                         )
 
                         render_ctx.render_cache[
-                            (item.chart.id, render_inner_width, actual_height)
+                            (
+                                item.chart.id,
+                                render_inner_width,
+                                actual_height,
+                                NO_TITLE_SHIFT,
+                            )
                         ] = (chart_svg, actual_height)
                         render_ctx.natural_heights[
                             (item.chart.id, render_inner_width)
@@ -1395,6 +1429,7 @@ def _correct_support_table_height(
             resolved_style=render_ctx.resolved_style,
             padding=additive_padding(card_pad, chart_padding),
             title_offset_override=title_offset_override,
+            title_shift=item.title_shift,
         )
     except caught as exc:
         _log.warning(log_msg, chart_id, exc)
@@ -1415,6 +1450,7 @@ def _correct_support_table_height(
                 resolved_style=render_ctx.resolved_style,
                 padding=additive_padding(card_pad, chart_padding),
                 title_offset_override=title_offset_override,
+                title_shift=item.title_shift,
             )
         except caught as exc:
             _log.warning(log_msg, chart_id, exc)
@@ -1452,7 +1488,9 @@ def _align_cols_heights(
             target_height,
             render_ctx,
         )
-        if natural_h is None or abs(natural_h - effective_target) < 1.0:
+        if natural_h is None or (
+            abs(natural_h - effective_target) < 1.0 and item.title_shift.is_zero
+        ):
             continue
 
         # Vega-family: render at item width (or the corrected shrunk width for
@@ -1486,6 +1524,7 @@ def _align_cols_heights(
                 height=effective_target,
                 resolved_style=render_ctx.resolved_style,
                 padding=additive_padding(card_pad, chart_padding),
+                title_shift=item.title_shift,
             )
         except ChartDataError as exc:
             # Migrate-or-fail: only ChartDataError (vega-lite rejected the spec)
@@ -1525,7 +1564,9 @@ def _align_cols_heights(
             title_offset_override,
         )
 
-        render_ctx.render_cache[(chart_id, item.width, effective_target)] = (
+        render_ctx.render_cache[
+            (chart_id, item.width, effective_target, item.title_shift)
+        ] = (
             chart_svg,
             actual_height,
         )
@@ -1648,7 +1689,9 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
             title_offset_override,
         )
 
-        render_ctx.render_cache[(chart_id, item.width, item.height)] = (
+        render_ctx.render_cache[
+            (chart_id, item.width, item.height, item.title_shift)
+        ] = (
             chart_svg,
             actual_height,
         )
@@ -1680,6 +1723,117 @@ def _ensure_resolved_variants_in_tree(
                 item.width,
                 render_ctx.resolved_style,
                 render_ctx.chart_style_context,
+            )
+
+
+def _title_band_target(
+    item: LayoutItem,
+    render_ctx: SizingRenderCtx,
+    executor: Executor,
+    variable_values: VariableValues,
+) -> tuple[LayoutItem, TitleMetrics] | None:
+    """The layout item that draws a cols cell's title, with its title geometry.
+
+    A cell that is a titled chart or a titled nested board draws its own title.
+    An untitled board that only wraps a stack (the way a ``width:`` is authored)
+    draws its first item's title, so that item is the one to shift. None means
+    the cell has no title this row can align.
+    """
+    # A details section draws its summary bar at its top edge, not a title.
+    if item.details_variable:
+        return None
+    if item.chart is not None:
+        resolved = _require_resolved(
+            render_ctx,
+            item.chart,
+            executor,
+            render_ctx.variables,
+            item.width,
+            render_ctx.resolved_style,
+            render_ctx.chart_style_context,
+        )
+        if resolved is None:
+            return None
+        card_pad = float(render_ctx.resolved_style.frame.card_padding)
+        padding = additive_padding(card_pad, resolved.layout_padding)
+        metrics = chart_title_metrics(
+            resolved, card_pad, item.width - padding["left"] - padding["right"]
+        )
+        return None if metrics is None else (item, metrics)
+    if item.board is None:
+        return None
+    board = item.board
+    style = board.resolved_style
+    card_pad = float(style.frame.card_padding)
+    if not board.title:
+        if board.text or board.visible_variables or board.layout.type != "rows":
+            return None
+        leading = [
+            child
+            for child in board.layout.items
+            if evaluate_visible(child.visible, variable_values, executor)
+        ][:1]
+        if not leading:
+            return None
+        inner = _title_band_target(
+            leading[0],
+            _nested_render_ctx(render_ctx, board),
+            executor,
+            variable_values,
+        )
+        if inner is None:
+            return None
+        target, metrics = inner
+        wrapper_top = (style.margin.top if style.margin else 0.0) + (
+            effective_padding(style).top
+        )
+        return target, TitleMetrics(metrics.ascent + wrapper_top, metrics.tail)
+    inline_band = should_use_title_inline_band(
+        board.title,
+        board.visible_variables,
+        board.layout.content_width,
+        style,
+        card_pad,
+        variable_values,
+        board.level,
+    )
+    metrics = board_title_metrics(
+        board,
+        variable_values=variable_values,
+        inline_band=inline_band,
+    )
+    return None if metrics is None else (item, metrics)
+
+
+def _assign_title_shifts_in_tree(
+    layout: Layout,
+    render_ctx: SizingRenderCtx,
+    executor: Executor,
+    variable_values: VariableValues,
+) -> None:
+    """Give every cols row's titled cells a shared first baseline and body top.
+
+    Runs whether or not the sizing pass rendered anything: the shifts come from
+    the resolved titles alone, and the render pass reads them off the layout items.
+    """
+    if layout.type == "cols":
+        cells = [
+            _title_band_target(item, render_ctx, executor, variable_values)
+            for item in layout.items
+            if evaluate_visible(item.visible, variable_values, executor)
+        ]
+        shifts = row_title_shifts([None if c is None else c[1] for c in cells])
+        for cell, shift in zip(cells, shifts, strict=True):
+            if cell is None:
+                continue
+            cell[0].title_shift = shift
+    for item in active_layout_items(layout, render_ctx.variables):
+        if item.board is not None:
+            _assign_title_shifts_in_tree(
+                item.board.layout,
+                _nested_render_ctx(render_ctx, item.board),
+                executor,
+                variable_values,
             )
 
 
@@ -1818,6 +1972,7 @@ def calculate_data_aware_layout(
     # overrides (e.g. `{}` for "no overrides") still gets the declared
     # defaults for everything else this pass measures.
     variable_values = {**board.variable_defaults, **effective_vars}
+    plan_board_prose(board, variable_values, content_width)
     render_ctx = SizingRenderCtx(
         resolved_style=board.resolved_style,
         chart_style_context=board.chart_style_context,
@@ -1892,6 +2047,8 @@ def calculate_data_aware_layout(
         authored_slot_heights if authored_slot_heights is not ... else {},
         variable_values,
     )
+
+    _assign_title_shifts_in_tree(board.layout, render_ctx, executor, variable_values)
 
     # Cols alignment: walk tree, re-render shorter Vega items at aligned height
     if render_ctx.render_cache:

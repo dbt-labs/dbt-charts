@@ -1070,6 +1070,48 @@ ERR_FORMAT_KIND_MISMATCH = REGISTRY.register(
     )
 )
 
+ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED",
+        domain="compile",
+        title="strftime directive in a Vega-rendered time_format cannot be measured",
+        message_template=(
+            "Format {spec!r} at {field_path} uses {directives}, which dbt "
+            "Charts cannot render identically to what Vega paints on the "
+            "axis: either it is not part of d3-time-format's directive set "
+            "at all (Vega paints the literal letter), or Python renders it "
+            "through the host's C locale or local timezone rather than "
+            "d3's UTC/en-US output. This slot is baked onto a Vega-painted "
+            "axis, whose label width is also measured from this same spec -- "
+            "a mismatch here is a wrong render that looks right until the "
+            "label overlaps its neighbor. Supported directives: {available}."
+        ),
+        doc=(
+            "Fired when an authored `time_format` (or another Vega-painted "
+            "time slot: axis labels) uses a strftime directive dbt Charts "
+            "cannot render byte-identical to what Vega's `utcFormat` "
+            "paints. `%C`/`%k`/`%l`/`%z` and most other letters are not "
+            "d3-time-format grammar at all -- Vega paints the literal "
+            "letter, not a computed value. `%c`/`%x`/`%X` are real d3 "
+            "directives whose Python rendering diverges (locale-composite "
+            "output through the host's C locale, not d3's UTC/en-US "
+            "output); use `%-m/%-d/%Y` for `%x`, `%-I:%M:%S %p` for `%X`, "
+            "or `%-m/%-d/%Y, %-I:%M:%S %p` for `%c`. `%Z` is real d3 grammar "
+            "too but empty on "
+            "a naive datetime, unlike d3's `+0000`-style offset. `%s` is "
+            "real d3 grammar but Python's value follows the host's local "
+            "timezone rather than a true UTC epoch count; `%Q` (epoch "
+            "milliseconds) is the supported equivalent. A format string "
+            "outside a Vega-painted slot (a table column, the footer "
+            "timestamp) is unaffected -- those render through Python "
+            "directly, so no measure-vs-paint divergence is possible "
+            "there."
+        ),
+        summary="A time_format directive Vega paints differently than dbt Charts measures.",
+        docs_topic="charts",
+    )
+)
+
 ERR_FORMAT_PREDEFINED_SHADOW = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-PREDEFINED-SHADOW",
@@ -1369,55 +1411,6 @@ WARN_SINGLE_CHART_REDUNDANT_TITLE = REGISTRY.register(
             "not on nested section boards. Emitted by `compile/validate/board_warnings.py`."
         ),
         docs_topic="board",
-    )
-)
-
-WARN_ADJACENT_TEXT_ROWS = REGISTRY.register(
-    WarningCode(
-        code="WARN-ADJACENT-TEXT-ROWS",
-        domain="compile",
-        title="Consecutive text-only rows each flow into their own columns",
-        message_template=(
-            "{count} text-only rows in a row: each is measured and flowed on its "
-            "own, so the column grid restarts at every one; the column edges do "
-            "not line up, and whichever block half-fills its last column leaves a "
-            "gap mid-page."
-        ),
-        fix_template=(
-            "Merge them into one `- text:` block. Prose in a single block flows "
-            "through one set of columns and fills them evenly; the headings that "
-            "separated the rows still separate the sections inside it."
-        ),
-        doc=(
-            "Fires when two or more consecutive `rows:` items are body prose and "
-            "nothing else. Every prose block picks its own column count from its "
-            "own line count and balances its own lines, with no flow between "
-            "blocks, so stacking them renders unrelated grids rather than one "
-            "continuous passage. One diagnostic per run, marking the second row "
-            "of it; a run of four rows is one authoring decision, not three. "
-            "A `title:` on the row does not exempt it: `- title:` + `text:` is "
-            "how a section of prose is written, and two of those fragment the "
-            "same way, so the fix is to merge them and let the later titles "
-            "become headings inside the merged block. Four shapes do not "
-            "participate, and each of them also ends a run rather than being "
-            "skipped over; a row between two passages is something the author "
-            "put there. They are: a row holding a layout of its own (a section, "
-            "not a block of prose); a row carrying anything only a slot can "
-            "carry: `style:`, `visible:`, a `details:` disclosure, an authored "
-            "height, since a merged block has one of each and merging would "
-            "have to discard one; a row with no flowing prose in it, a markdown "
-            "table or a code block on its own, because merging one of those "
-            "into a prose column squeezes it to the measure; and prose too "
-            "short to reach a second column, which is one column wide at any "
-            "board width and so cannot misalign against anything; a caption "
-            "rather than a passage. A `cols:` layout never fires: prose side by "
-            "side is an authored spread. A row imported from another file or "
-            "generated by a `foreach` is not reported either; it has no "
-            "authored coordinates to mark, and the merge it would ask for is "
-            "not the author's to make here. "
-            "Emitted by `compile/validate/board_warnings.py`."
-        ),
-        docs_topic="layout",
     )
 )
 

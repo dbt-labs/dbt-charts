@@ -1,5 +1,0 @@
-kind: Fixes
-body: 'The `ERR-FORMAT-NATIVE-IN-VEGA-SLOT` error no longer suggests a bare `.1%` spec for `percent_number`-style formats, which painted values 100 times too large; it now says to divide by 100 in the query first, or to move the format to a KPI value or table cell.'
-time: 2026-09-20T19:21:27.787017-07:00
-custom:
-  DbtChartsIssue: 0

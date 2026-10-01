@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct render charts/*.yml` no longer fails on the `meta.yml` that `dct init` scaffolds. A `meta.yml` holds defaults for the boards beside it, so `dct render` skips it with a warning and renders the boards. When none of the paths given is a board, that is an error.'
-time: 2026-09-26T23:33:09-07:00

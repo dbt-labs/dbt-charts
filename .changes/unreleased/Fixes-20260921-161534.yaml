@@ -1,5 +1,0 @@
-kind: Fixes
-body: A partial `style.charts.title` override (e.g. only `font.family`) raised a validation error demanding every other title field (`compact_weight`, `sizes`, `width_offsets`, `min_height`, `overflow`, `position`, `level`), unlike every other nested style block, which already merges as a partial overlay. `style.charts.title` now accepts a partial override the same way, including through `extends`/`meta.yml` theme files, and applies it to every chart's title. A per-family override (`style.charts.bar.title`, `style.charts.kpi.title`, etc.) also now reaches every chart of that family; it previously validated but was silently dropped, for every chart type.
-time: 2026-09-21T16:15:34.308470+00:00
-custom:
-  DbtChartsIssue: 35

@@ -1,5 +1,0 @@
-kind: Fixes
-body: A DuckDB source's `attach`, `extensions`, `settings`, and `secrets` now actually reach the connection instead of being silently ignored. Attached databases stay read-only while the source itself is read-only, even for an in-memory database. `plugins`, `filesystems`, `remote`, and `use_credential_provider` are not supported and now raise a clear error instead of being ignored; a `secrets` entry with no `type`, or an `extensions` entry with an unrecognized key, now also raises at parse time instead of loading silently inert.
-time: 2026-09-28T19:37:08.000000+00:00
-custom:
-  DbtChartsIssue: 50

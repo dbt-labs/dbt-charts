@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A SQL query that names a source in a dbt project with no `sources:` configured and no local DuckDB file under `data/` now raises `ERR-DBT-PROJECT-NO-LOCAL-WAREHOUSE` instead of silently running against an empty in-memory database.'
-time: 2026-09-28T13:00:00.000000-07:00

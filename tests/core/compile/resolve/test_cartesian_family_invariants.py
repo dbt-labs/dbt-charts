@@ -920,6 +920,42 @@ class TestTopLegendFitRule:
             "applied unconditionally"
         )
 
+    def test_horizontal_bar_left_axis_reserve_accounts_for_an_authored_label_expr(
+        self,
+    ) -> None:
+        """An authored ``axis_x.labels.expr`` paints text the reserve can't
+        measure, so the reserve takes the axis's label limit instead of the
+        raw one-character values. The same chart without the expr fits the
+        legend row at rung 1, which keeps this test from passing on metric
+        drift alone."""
+        regions = (
+            "North Central Region",
+            "Northeast Territory Region",
+            "Pacific Northwest Region",
+            "Southwest Territory Region",
+        )
+        cats = ("A", "B", "C", "D")
+        data = [
+            {"month": m, "region": r, "revenue": 100.0} for m in cats for r in regions
+        ]
+
+        def resolve_with(labels: dict[str, object], width: float) -> ResolvedChart:
+            style = BarChartStylePatch.model_validate(
+                {"orientation": "horizontal", "axis_x": {"labels": labels}}
+            )
+            return resolve(
+                _bar(color="region", style=style), data, _board(), width=width
+            )
+
+        long_expr = {"expr": "'Very Long Constant Category Label Text'"}
+        assert resolve_with({}, 700.0).legend.columns == 0
+        with_expr = resolve_with(long_expr, 700.0)
+        assert with_expr.legend.position == "top"
+        assert with_expr.legend.columns != 0
+        assert resolve_with({**long_expr, "visible": False}, 700.0).legend.columns == 0
+        assert resolve_with({"expr": "'x'", "max_width": 20}, 760.0).legend.columns == 0
+        assert resolve_with({"expr": "'x'"}, 760.0).legend.columns != 0
+
     @pytest.mark.parametrize("family", ["bar", "line", "area"])
     def test_gradient_colored_chart_never_routes_to_top(self, family: str) -> None:
         """A gradient color channel (chart.style.color.gradient, authorable

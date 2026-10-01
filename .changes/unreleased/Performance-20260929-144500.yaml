@@ -1,3 +1,0 @@
-kind: Performance
-body: 'Loading a board written against an older grammar is faster: the in-memory migration now validates only the parts of the board that carry a retired key. Migration results are unchanged.'
-time: 2026-09-29T14:45:00.000000-04:00

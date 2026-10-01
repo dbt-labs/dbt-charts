@@ -61,6 +61,7 @@ def _temporal_layout(skip: bool, tilt: bool, chart_width: float = 200.0) -> Any:
         label_usable_ratio=0.9,
         edge_labels_flushed=False,
         chart_width=chart_width,
+        continuous_temporal=False,
     )
 
 
@@ -105,6 +106,7 @@ def test_a_discrete_axis_forbids_thinning_even_when_it_collides() -> None:
         label_usable_ratio=0.9,
         edge_labels_flushed=False,
         chart_width=300.0,
+        continuous_temporal=False,
     )
     assert layout.collision_label_count is not None
     assert layout.label_overlap == "allow"

@@ -22,6 +22,7 @@ import pytest
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
+from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT
 from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
@@ -563,7 +564,9 @@ class TestAlignColsHeights:
         chart_padding = render_ctx.chart_style_context.padding
         assert kw_args["padding"] == additive_padding(card_pad, chart_padding)
         # Cache updated with new svg under (chart_id, width, target_height) key
-        assert render_ctx.render_cache[("chart_short", 600.0, 300.0)] == (
+        assert render_ctx.render_cache[
+            ("chart_short", 600.0, 300.0, NO_TITLE_SHIFT)
+        ] == (
             new_svg,
             300.0,
         )

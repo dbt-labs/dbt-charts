@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'Board titles, chart titles, table titles, and markdown headings now render in the same ink as body prose in every built-in theme. `clarity` and `paper` previously pinned title color one gray step lighter than prose, so headlines read lighter than the text beneath them. An authored `style.font.color` on a board or item now also colors its titles and headings, unless `style.title.font.color` is set.'
-time: 2026-09-28T09:59:49.659593-07:00

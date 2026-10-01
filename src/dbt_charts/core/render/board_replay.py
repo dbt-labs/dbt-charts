@@ -67,7 +67,7 @@ def load_board_artifact(data: bytes) -> ResolvedBoard:
     exception.
     """
     try:
-        return load_resolved_board_artifact(json.loads(data))
+        resolved = load_resolved_board_artifact(json.loads(data))
     except (
         ValidationError,
         DanglingStyleRefError,
@@ -77,6 +77,32 @@ def load_board_artifact(data: bytes) -> ResolvedBoard:
         raise DbtChartsError.from_code(
             ERR_BOARD_ARTIFACT_INVALID, detail=str(exc)
         ) from exc
+    _require_prose_plans(resolved)
+    return resolved
+
+
+def _require_prose_plans(resolved: ResolvedBoard) -> None:
+    """Reject an artifact whose text carries no prose plan.
+
+    The plan is decided over the whole board before sizing, so it cannot be
+    recomputed from a resolved tree, and an artifact emitted before text columns
+    sat on the card grid does not hold one. Drawing it without a plan would
+    either guess a grid or crash mid-render; naming the cause is the loader's
+    job.
+    """
+    boards = [resolved]
+    for board in boards:
+        if board.text and board.prose_plan is None:
+            raise DbtChartsError.from_code(
+                ERR_BOARD_ARTIFACT_INVALID,
+                detail=(
+                    f"board {board.id!r} has text but no prose plan; the artifact "
+                    "was emitted before board text columns sat on the card grid"
+                ),
+            )
+        boards.extend(  # noqa: B909 — queue growth: BFS over the board tree
+            item.board for item in board.layout.items if item.board is not None
+        )
 
 
 def render_board_from_artifact(

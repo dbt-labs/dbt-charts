@@ -44,6 +44,7 @@ import dbt_charts.core.render.warnings.bar_grouped_series_coincide as bar_groupe
 import dbt_charts.core.render.warnings.callout_text_truncated as callout_text_truncated
 import dbt_charts.core.render.warnings.category_color_pin_unseen as category_color_pin_unseen
 import dbt_charts.core.render.warnings.chart_title_truncated as chart_title_truncated
+import dbt_charts.core.render.warnings.dual_axis_competing_scales as dual_axis_competing_scales
 import dbt_charts.core.render.warnings.endpoint_label_gap_overflow as endpoint_label_gap_overflow
 import dbt_charts.core.render.warnings.facet_panel_width_below_minimum as facet_panel_width_below_minimum
 import dbt_charts.core.render.warnings.kpi_align_overflow as kpi_align_overflow
@@ -126,6 +127,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
 _DATA_DETECTORS: list[ModuleType] = [
     area_unstacked_reads_as_stacked,
     category_color_pin_unseen,
+    dual_axis_competing_scales,
     layered_chart_shared_y_axis_scale_mismatch,
     legend_values_unresolved,
     likely_currency_or_percent_missing_formatter,

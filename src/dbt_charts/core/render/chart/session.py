@@ -16,6 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from dbt_charts.core.compile.models.board.normalized import (
+    NO_TITLE_SHIFT,
+    TitleShift,
+)
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCalloutChart,
     ResolvedChart,
@@ -74,6 +78,7 @@ class BoardRenderSession:
         height: float | None = None,
         is_placeholder: bool = False,
         inset: dict[str, int | float] | None = None,
+        title_shift: TitleShift = NO_TITLE_SHIFT,
     ) -> str | None:
         """Non-VL families → SVG string; VL families → None (caller runs emit path).
 
@@ -103,6 +108,7 @@ class BoardRenderSession:
                     height,
                     board_style=self.board_style,
                     inset=inset,
+                    title_shift=title_shift,
                 )
             case ResolvedSparkBarChart():
                 return render_spark_bar_svg(
@@ -112,6 +118,7 @@ class BoardRenderSession:
                     height,
                     is_placeholder=is_placeholder,
                     board_style=self.board_style,
+                    title_shift=title_shift,
                 )
             case ResolvedCalloutChart():
                 return render_callout_chart_svg(

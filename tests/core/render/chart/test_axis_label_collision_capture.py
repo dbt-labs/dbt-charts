@@ -13,9 +13,10 @@ values: a clean monthly/yearly cadence is exactly what
 coarser calendar unit, then tilt) already handles well — it can almost
 always coarsen a short calendar span down to a handful of yearly labels that
 trivially fit. The residual gap this warning targets is the case that ladder
-can't resolve: day-granularity, non-bucketed dates dense enough that even
-the steepest tilt (-90°, footprint == line height) doesn't clear every
-adjacent pair.
+can't resolve: a calendar span whose month openers are too dense for even the
+steepest tilt (-90°, footprint == line height) to clear every adjacent pair.
+The ladder measures the span, not the rows present, so the card is narrow
+enough that the openers themselves collide.
 """
 
 from __future__ import annotations
@@ -75,19 +76,19 @@ def _warning_codes(yaml_text: str) -> set[str]:
 
 
 def test_many_irregular_dates_on_a_narrow_chart_warn_on_collision() -> None:
-    codes = _warning_codes(_board(n_points=60, width=260))
+    codes = _warning_codes(_board(n_points=60, width=120))
     assert "WARN-AXIS-LABEL-COLLISION" in codes
 
 
 def test_collision_message_reports_the_measured_label_count_not_the_row_count() -> None:
-    """Pin the real render's message text, not just the warning code: 60
-    distinct raw x values halve to 30 through the cadence ladder's own
-    coarsening/narrowing before the fit-check measures them, and the message
-    must report that 30, not a fresh recount of the 60 raw values."""
-    warnings = _render_warnings(_board(n_points=60, width=260))
+    """Pin the real render's message text, not just the warning code: the 60
+    raw x values step to the year openers of their calendar span, halved by
+    parity skipping to 11, before the fit-check measures them. The message
+    must report that 11, not a recount of the 60 raw values."""
+    warnings = _render_warnings(_board(n_points=60, width=120))
     collision = next(w for w in warnings if w.code == "WARN-AXIS-LABEL-COLLISION")
     assert "60 tick labels" not in collision.message
-    assert "30 tick labels" in collision.message
+    assert "11 tick labels" in collision.message
 
 
 def test_few_points_on_a_wide_chart_stay_silent() -> None:

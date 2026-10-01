@@ -13,7 +13,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.board.normalized import (
+    NO_TITLE_SHIFT,
     Board,
+    TitleShift,
     VariableValues,
 )
 from dbt_charts.core.compile.models.board.resolved import (
@@ -197,6 +199,7 @@ def render_layout_item(
                 render_cache=render_cache,
                 padding=additive_padding(card_padding, chart_padding),
                 error_collector=error_collector,
+                title_shift=item.title_shift,
             )
             if chart_svg:
                 rendered = chart_svg
@@ -216,6 +219,7 @@ def render_layout_item(
                 render_cache=render_cache,
                 error_collector=error_collector,
                 painted_canvas=painted_canvas,
+                title_shift=item.title_shift,
             )
 
     if rendered and item.notes:
@@ -351,6 +355,7 @@ def render_chart_item(
     render_cache: RenderCache,
     padding: dict[str, float] | None = None,
     error_collector: list[Diagnostic] | None = None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> tuple[str, float]:
     """Render a chart item with explicit dimensions.
 
@@ -412,6 +417,7 @@ def render_chart_item(
             padding=padding,
             outer_width=available_width,
             inset=inset,
+            title_shift=title_shift,
         )
         return svg, actual_height
     except (RenderError, ExecutionError, DbtChartsError) as e:
@@ -451,6 +457,7 @@ def _render_chart_item_inner(
     padding: dict[str, float] | None = None,
     outer_width: float,
     inset: dict[str, float] | None,
+    title_shift: TitleShift,
 ) -> tuple[str, float]:
     """Internal chart rendering — raises on error.
 
@@ -466,6 +473,7 @@ def _render_chart_item_inner(
         resolved_style = _rs(get_theme_style())
 
     from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+    from dbt_charts.core.render.chart.spec_builders import shift_artifact_title
     from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
     from dbt_charts.core.render.converters.chart import render_chart_artifact
     from dbt_charts.core.render.layout_sizing import build_chart_datasets
@@ -473,7 +481,7 @@ def _render_chart_item_inner(
     chart_type = chart.chart_type
     is_svg_family = chart_type in SVG_LAYOUT_PADDED_TYPES
     paints_marks = chart_type in PAINTS_MARKS
-    cache_key = (chart.id, available_width, available_height)
+    cache_key = (chart.id, available_width, available_height, title_shift)
     if not is_svg_family and cache_key in render_cache:
         chart_svg, _ = render_cache[cache_key]
         # The no-marks guard below needs the row count even on a cache hit.
@@ -498,27 +506,39 @@ def _render_chart_item_inner(
             is_placeholder=False,
             datasets=datasets,
             padding=padding,
+            title_shift=title_shift,
         )
-        chart_svg = render_chart_artifact(
-            artifact,
-            "svg",
-            resolved_style,
-            width=available_width,
-            height=available_height,
-            is_placeholder=False,
-            chart_id=chart.id,
+        from dbt_charts.core.render.layout_sizing import (
+            _support_table_of,
+            _support_table_title_corrected_offset,
         )
+
+        def draw() -> str:
+            return render_chart_artifact(
+                artifact,
+                "svg",
+                resolved_style,
+                width=available_width,
+                height=available_height,
+                is_placeholder=False,
+                chart_id=chart.id,
+            )
+
         # Calibrate title.offset for titled top support_table charts so both the
         # sizing pass (dct render) and artifact replay (dct artifact render) apply
         # the same correction. The sizing pass caches the calibrated SVG and this
         # path is only reached on a cache miss (empty render_cache in artifact replay).
-        from dbt_charts.core.render.layout_sizing import (
-            _support_table_title_corrected_offset,
-        )
-
-        if artifact.kind == "vega_spec" and isinstance(artifact.payload, dict):
+        # The row's title shift goes on after the calibration, which measures the
+        # unshifted title.
+        if (
+            _support_table_of(chart) is not None
+            and artifact.kind == "vega_spec"
+            and isinstance(artifact.payload, dict)
+        ):
+            chart_svg = draw()
             spec = artifact.payload
             spec_target = spec["hconcat"][0] if "hconcat" in spec else spec
+            redraw = not title_shift.is_zero
             if isinstance(spec_target, dict):
                 title_block = spec_target.get("title")
                 if isinstance(title_block, dict):
@@ -529,15 +549,13 @@ def _render_chart_item_inner(
                         )
                         if corrected_offset is not None:
                             title_block["offset"] = corrected_offset
-                            chart_svg = render_chart_artifact(
-                                artifact,
-                                "svg",
-                                resolved_style,
-                                width=available_width,
-                                height=available_height,
-                                is_placeholder=False,
-                                chart_id=chart.id,
-                            )
+                            redraw = True
+            if redraw:
+                shift_artifact_title(artifact, title_shift)
+                chart_svg = draw()
+        else:
+            shift_artifact_title(artifact, title_shift)
+            chart_svg = draw()
 
     if paints_marks and v2_data:
         from dbt_charts.core.diagnostics.codes_render import ERR_CHART_PAINTED_NO_MARKS

@@ -20,25 +20,46 @@ from datetime import date, datetime
 
 import pytest
 
-from dbt_charts.core.text.format_d3 import _apply_padding_modifiers, portable_strftime
+from dbt_charts.core.text.format_d3 import (
+    _apply_padding_modifiers,
+    portable_strftime,
+    unsupported_time_directives,
+)
+
+
+def _raise_like_windows_crt(fmt: str) -> None:
+    """Windows' CRT rejects any unresolved %-/%_/%0 directive, and
+    `%C %e %G %j %k %l %L %q %Q %u %V %W` even bare (no modifier) — it has
+    never implemented the glibc/BSD extensions among these, and does not
+    implement `%L`/`%Q`/`%q` at all. Shared by both fake-CRT classes below
+    so a directive added to one and not the other can't silently pass.
+    """
+    stripped = fmt.replace("%%", "")
+    if re.search(r"%[-_0][A-Za-z]", stripped) or re.search(
+        r"%[CeGjkLlqQuVW]", stripped
+    ):
+        raise ValueError("Invalid format string")
 
 
 class _WindowsLikeDate(date):
-    """Stand-in for Windows' CRT: raises on any unresolved %-/%_/%0 directive,
-    and on `%C %e %G %j %k %l %u %V %W` even bare (no modifier) — Windows'
-    CRT has never implemented these glibc/BSD extensions, with or without a
-    padding modifier.
+    """Stand-in for Windows' CRT (see `_raise_like_windows_crt`).
 
     Simulates the actual platform failure so the suite proves the fix
     regardless of what OS runs the tests.
     """
 
     def strftime(self, fmt: str) -> str:
-        stripped = fmt.replace("%%", "")
-        if re.search(r"%[-_0][A-Za-z]", stripped) or re.search(
-            r"%[CeGjkluVW]", stripped
-        ):
-            raise ValueError("Invalid format string")
+        _raise_like_windows_crt(fmt)
+        return super().strftime(fmt)
+
+
+class _WindowsLikeDatetime(datetime):
+    """`_WindowsLikeDate`'s twin for directives (`%L`) that need a real
+    microsecond field, which plain `date` doesn't carry.
+    """
+
+    def strftime(self, fmt: str) -> str:
+        _raise_like_windows_crt(fmt)
         return super().strftime(fmt)
 
 
@@ -169,11 +190,23 @@ def test_dash_modifier_on_computed_directive_strips_padding() -> None:
     assert portable_strftime(d, "%-j") == "3"
 
 
+def test_quarter_milliseconds_epoch_survive_windows_like_strftime() -> None:
+    """%q/%L/%Q never reach the host libc at all -- Windows' CRT has never
+    implemented any of the three, bare or modified.
+    """
+    d = _WindowsLikeDatetime(2023, 5, 17, 13, 4, 5, 6000)
+    assert portable_strftime(d, "%q") == "2"
+    assert portable_strftime(d, "%L") == "006"
+    assert portable_strftime(d, "%Q") == "1684328645006"
+    assert portable_strftime(d, "%-L") == "6"
+
+
 @pytest.mark.windows
 class TestBareCrtDirectivesAgainstRealDate:
-    """The assertions above, against a plain ``date`` instead of the fake CRT.
+    """The assertions above, against a plain ``date``/``datetime`` instead of
+    the fake CRT.
 
-    If one of the nine directives ever reached the host libc unresolved, the
+    If one of these directives ever reached the host libc unresolved, the
     real Windows CRT raises ``ValueError`` while glibc silently supports it —
     so only this class can fail, and only on Windows.
     """
@@ -202,6 +235,12 @@ class TestBareCrtDirectivesAgainstRealDate:
         assert portable_strftime(date(2023, 1, 2), "%W") == "01"  # Mon
         assert portable_strftime(date(2023, 1, 9), "%W") == "02"  # Mon
 
+    def test_quarter_milliseconds_epoch_are_computed_in_python(self) -> None:
+        d = datetime(2023, 5, 17, 13, 4, 5, 6000)
+        assert portable_strftime(d, "%q") == "2"
+        assert portable_strftime(d, "%L") == "006"
+        assert portable_strftime(d, "%Q") == "1684328645006"
+
 
 def test_modifier_on_composite_directive_passes_through_unchanged() -> None:
     """-/_/0 are only defined for single-field numeric directives.
@@ -215,6 +254,94 @@ def test_modifier_on_composite_directive_passes_through_unchanged() -> None:
     d = datetime(2024, 1, 3, 0, 0, 0)
     for fmt in ("%-T", "%_T", "%-X", "%-x", "%-D", "%-Z"):
         assert portable_strftime(d, fmt) == d.strftime(fmt)
+
+
+def test_quarter_directive_matches_vega() -> None:
+    """%q: 1-indexed quarter number, no padding. Pinned against
+    ``utcFormat(1684328645006, '%q')`` == '2' (2023-05-17, Q2) via vl-convert.
+    """
+    assert portable_strftime(datetime(2023, 5, 17), "%q") == "2"
+    assert portable_strftime(datetime(2023, 1, 1), "%q") == "1"
+    assert portable_strftime(datetime(2023, 12, 31), "%q") == "4"
+
+
+def test_milliseconds_directive_matches_vega() -> None:
+    """%L: 3-digit zero-padded milliseconds. Pinned against
+    ``utcFormat(..., '%L')`` via vl-convert: 6000us -> '006', 0 -> '000'.
+    """
+    assert portable_strftime(datetime(2023, 5, 17, microsecond=6000), "%L") == "006"
+    assert portable_strftime(datetime(2023, 5, 17, microsecond=0), "%L") == "000"
+    assert portable_strftime(datetime(2023, 5, 17, microsecond=100000), "%L") == "100"
+    assert portable_strftime(date(2023, 5, 17), "%L") == "000"
+
+
+def test_milliseconds_directive_padding_modifiers_match_vega() -> None:
+    """%-L strips padding; %_L space-pads to width 3 like %-e/%_e (the d3
+    pad table is ``{"-": "", "_": " ", "0": "0"}`` -- underscore is a fill
+    character swap, not a strip). Pinned against the real d3-computed value
+    (``utcFormat``'s own string, read via a Vega ``aria-label`` so an
+    unrelated SVG-serialization whitespace trim on the rendered glyphs
+    doesn't corrupt the comparison -- see
+    ``test_format_d3_vega_parity.py`` for the full matrix and why
+    aria-label is the right read).
+    """
+    d = datetime(2023, 5, 17, microsecond=7000)
+    assert portable_strftime(d, "%-L") == "7"
+    assert portable_strftime(d, "%_L") == "  7"
+    assert portable_strftime(d, "%0L") == "007"
+    zero = datetime(2023, 5, 17, microsecond=0)
+    assert portable_strftime(zero, "%-L") == "0"
+    assert portable_strftime(zero, "%_L") == "  0"
+    hundred = datetime(2023, 5, 17, microsecond=100_000)
+    assert portable_strftime(hundred, "%_L") == "100"
+
+
+def test_epoch_millis_directive_matches_vega() -> None:
+    """%Q: milliseconds since the Unix epoch. Pinned against
+    ``utcFormat(1684328645006, '%Q')`` == '1684328645006' via vl-convert.
+    """
+    d = datetime(2023, 5, 17, 13, 4, 5, 6000)
+    assert portable_strftime(d, "%Q") == "1684328645006"
+
+
+def test_epoch_millis_directive_ignores_padding_modifiers() -> None:
+    """d3 ignores -/_/0 on %Q (the value is never padded) -- pinned against
+    ``utcFormat(..., '%-Q' | '%0Q' | '%_Q')`` via vl-convert (all identical
+    to the bare directive).
+    """
+    d = datetime(2023, 5, 17, 13, 4, 5, 6000)
+    for modifier in ("-", "0", "_"):
+        assert portable_strftime(d, f"%{modifier}Q") == "1684328645006"
+
+
+def test_epoch_millis_directive_on_date_only_is_midnight_utc() -> None:
+    d = date(2023, 5, 17)
+    assert portable_strftime(d, "%Q") == "1684281600000"
+
+
+def test_unsupported_time_directives_flags_directives_vega_paints_differently() -> None:
+    """%Z/%c/%x/%X are real d3 grammar portable_strftime cannot render
+    identically (locale-composite or a Windows/naive-datetime divergence).
+    """
+    from dbt_charts.core.text.format_d3 import unsupported_time_directives
+
+    assert unsupported_time_directives("%b %Y") == []
+    assert unsupported_time_directives("%q %L %Q") == []
+    assert unsupported_time_directives("%Z") == ["Z"]
+    assert unsupported_time_directives("%c") == ["c"]
+    assert unsupported_time_directives("%x %X") == ["X", "x"]
+    assert unsupported_time_directives("%s") == ["s"]  # local-tz epoch seconds, not UTC
+
+
+def test_unsupported_time_directives_flags_letters_d3_does_not_define() -> None:
+    """%v/%z/%C are not d3-time-format grammar at all -- Vega paints the
+    literal letter while portable_strftime computes a real (divergent) value.
+    """
+    from dbt_charts.core.text.format_d3 import unsupported_time_directives
+
+    assert unsupported_time_directives("%v") == ["v"]
+    assert unsupported_time_directives("%z") == ["z"]
+    assert unsupported_time_directives("%C") == ["C"]
 
 
 def test_is_d3_si_spec_totality_over_compile_accepted_formats():
@@ -234,3 +361,25 @@ def test_is_d3_si_spec_totality_over_compile_accepted_formats():
     assert is_d3_si_spec("date_short") is False  # predefined date name
     assert is_d3_si_spec("my_revenue_alias") is False  # unresolved alias name
     assert is_d3_si_spec("%b %Y") is False  # strftime directive
+
+
+def test_is_d3_fixed_decimal_spec_totality_over_compile_accepted_formats():
+    """Mirrors is_d3_si_spec's totality contract for the fixed-point (f/%)
+    shape that prints decimals -- the predicate build_resolved_axis uses to
+    widen its non-compacting tick derivation to percent/currency_full/number_full.
+    """
+    from dbt_charts.core.text.format_d3 import is_d3_fixed_decimal_spec
+
+    assert is_d3_fixed_decimal_spec(".1%") is True  # percent preset's d3 spec
+    assert is_d3_fixed_decimal_spec("$,.2f") is True  # currency_full's d3 spec
+    assert is_d3_fixed_decimal_spec("$,.3~s") is False  # SI-shaped, not fixed
+    assert is_d3_fixed_decimal_spec("date_short") is False  # predefined date name
+    assert is_d3_fixed_decimal_spec("my_revenue_alias") is False  # unresolved alias
+    assert is_d3_fixed_decimal_spec("%b %Y") is False  # strftime directive
+    assert is_d3_fixed_decimal_spec(",.0f") is False  # integer: no decimals
+    assert is_d3_fixed_decimal_spec(".0%") is False  # percent_whole: no decimals
+
+
+def test_error_remedies_are_themselves_supported() -> None:
+    for remedy in ("%-m/%-d/%Y", "%-I:%M:%S %p", "%-m/%-d/%Y, %-I:%M:%S %p", "%e %b"):
+        assert unsupported_time_directives(remedy) == []

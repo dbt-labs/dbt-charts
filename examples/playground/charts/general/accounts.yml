@@ -1,0 +1,150 @@
+title: Account Detail
+notes: |
+  Bookings history and product usage for one account, or all of them.
+  Linked from dundersign-commercial-finance.yml's company column.
+
+source: dundersign_db
+
+style:
+  variables:
+    position: title-inline
+
+variables:
+  company:
+    placeholder: "All accounts"
+    options:
+      query: company_options
+      column: company
+
+queries:
+  company_options:
+    sql: |
+      SELECT split_part(name, ' - ', 1) AS company
+      FROM opportunities
+      WHERE is_closed AND is_won
+      GROUP BY 1
+      ORDER BY SUM(amount) DESC
+
+  bookings_summary:
+    sql: |
+      WITH scoped AS (
+        SELECT split_part(name, ' - ', 1) AS company, amount, is_won, is_closed
+        FROM opportunities
+      )
+      SELECT SUM(amount) AS bookings
+      FROM scoped
+      WHERE is_closed AND is_won AND {{ filter('company', company) }}
+
+  bookings_by_month:
+    sql: |
+      WITH scoped AS (
+        SELECT split_part(name, ' - ', 1) AS company, amount, close_at, is_won, is_closed
+        FROM opportunities
+      )
+      SELECT
+        date_trunc('month', close_at) AS month,
+        SUM(amount) AS bookings
+      FROM scoped
+      WHERE is_closed AND is_won AND {{ filter('company', company) }}
+      GROUP BY 1
+      ORDER BY 1
+
+  deals:
+    sql: |
+      WITH scoped AS (
+        SELECT
+          split_part(name, ' - ', 1) AS company,
+          split_part(name, ' - ', 2) AS deal,
+          amount,
+          close_at,
+          is_won,
+          is_closed
+        FROM opportunities
+      )
+      SELECT
+        deal,
+        amount::INT AS amount,
+        close_at,
+        CASE WHEN is_won THEN 'Won' ELSE 'Lost' END AS outcome
+      FROM scoped
+      WHERE is_closed AND {{ filter('company', company) }}
+      ORDER BY close_at DESC
+      LIMIT 10
+
+  active_users:
+    sql: |
+      SELECT COUNT(*) AS active_users
+      FROM users
+      WHERE is_active AND {{ filter('company_name', company) }}
+
+  documents_by_month:
+    sql: |
+      WITH scoped_users AS (
+        SELECT id FROM users WHERE {{ filter('company_name', company) }}
+      ),
+      scoped_docs AS (
+        SELECT * FROM documents WHERE owner_user_id IN (SELECT id FROM scoped_users)
+      ),
+      -- status is exclusive (completed docs were also sent), so each series
+      -- uses its own date (sent_at, completed_at), not created_at.
+      sent AS (
+        SELECT date_trunc('month', sent_at) AS month, COUNT(*) AS sent
+        FROM scoped_docs
+        GROUP BY 1
+      ),
+      completed AS (
+        SELECT date_trunc('month', completed_at) AS month, COUNT(*) AS completed
+        FROM scoped_docs
+        WHERE completed_at IS NOT NULL
+        GROUP BY 1
+      )
+      SELECT
+        COALESCE(sent.month, completed.month) AS month,
+        COALESCE(sent.sent, 0) AS sent,
+        COALESCE(completed.completed, 0) AS completed
+      FROM sent
+      FULL OUTER JOIN completed ON sent.month = completed.month
+      ORDER BY 1
+
+charts:
+  bookings_total:
+    query: bookings_summary
+    type: kpi
+    value: bookings
+    label: Total bookings
+  bookings_trend:
+    query: bookings_by_month
+    type: bar
+    x: month
+    y: bookings
+    title: Bookings by month
+  recent_deals:
+    query: deals
+    type: table
+    title: Recent deals
+    style:
+      columns:
+        amount:
+          format: "$,.0f"
+  active_users_total:
+    query: active_users
+    type: kpi
+    value: active_users
+    label: Active users
+  documents_trend:
+    query: documents_by_month
+    type: line
+    x: month
+    y:
+      - sent
+      - completed
+    title: Documents sent vs. completed by month
+rows:
+  - cols:
+      - bookings_total
+      - active_users_total
+  - cols:
+      - bookings_trend
+      - documents_trend
+  - cols:
+      - recent_deals

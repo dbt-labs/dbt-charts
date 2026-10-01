@@ -465,7 +465,7 @@ def _digit_spec(parsed: FormatSpec, precision: int) -> str:
     spec at ``precision`` from an already-parsed spec.
 
     Shared by ``ruler_digit_format``, ``column_digit_format``, and
-    ``non_compacting_tick_format``'s fixed-point path — the three differ only in
+    ``non_compacting_tick_format``'s SI-sourced path — the three differ only in
     how they arrive at ``precision``, not in the spec shape they build from it.
     """
     return str(
@@ -632,15 +632,28 @@ def non_compacting_tick_format(
     Unlike ``ruler_digit_format`` (precision always 1, for an already-scaled
     value), precision here comes from ``step`` -- a non-compacting ladder writes
     its raw, unscaled values, so a half-step (0.5, 1.5, ...) must not round away.
+
+    A fixed-point source (``f`` or ``%``, e.g. ``percent``'s ``.1%``) keeps
+    its own type and grouping and is not trimmed: when the step needs a
+    decimal, every rung carries it (``0.0% 0.2% … 1.0%``), so the ladder reads
+    at one depth. A ``%`` step is read in displayed percent points
+    (``step * 100``): a 10% step needs no decimal even though 0.1 has one.
     """
     parsed = _d3_parse(format_spec)
-    if not _fixed_point_reaches(step):
+    is_percent = parsed.type == "%"
+    display_step = step * 100 if is_percent else step
+    if not _fixed_point_reaches(display_step):
         scientific = dataclasses.replace(
             parsed, type="e", trim=True, comma=False, symbol="", width=None, zero=False
         )
         return parsed.symbol, str(scientific), None
-    precision = _precision_for_step(step)
-    return parsed.symbol, _digit_spec(parsed, precision), precision
+    precision = _precision_for_step(display_step)
+    if parsed.type == "s":
+        return parsed.symbol, _digit_spec(parsed, precision), precision
+    fixed = dataclasses.replace(
+        parsed, precision=precision, symbol="", width=None, zero=False
+    )
+    return parsed.symbol, str(fixed), precision
 
 
 def sub_unit_digit_format(format_spec: str) -> str:

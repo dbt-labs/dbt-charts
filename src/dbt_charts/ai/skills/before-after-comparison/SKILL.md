@@ -87,7 +87,7 @@ See `examples/before-after-comparison.yml` for the inline-data worked example.
 
 | Pitfall | Why it breaks | Fix |
 |---|---|---|
-| Series on different scales | Misleading visual; one series dwarfs the other | Use matching units or a secondary axis |
+| Series on different scales | Misleading visual; one series dwarfs the other | Use matching units, index both series to a common start, or show two stacked charts; a secondary axis draws a relationship that may not exist |
 | Too many series (`y: [a, b, c, d]`) | Legend and bars both unreadable | Cap at 2–3 series; combine the rest |
 | Different x-values per series | Chart gaps or misaligned bars | Ensure both series have a value for every x |
 | Swapped series order | Baseline visually dominates current | Put the primary/current series first in `y:` |

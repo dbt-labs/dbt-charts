@@ -2,7 +2,7 @@ title: link Click-Through Examples
 notes: |
   Demonstrates all three link usage patterns:
     1. Static URL — every bar/point navigates to the same page
-    2. Dynamic URL — field value is interpolated into the path
+    2. Dynamic URL — field value is interpolated into the URL
     3. Variable update — clicking a mark updates a dashboard variable in-place
        (the query string is intercepted by variables.js; no full navigation)
 
@@ -47,14 +47,14 @@ charts:
     x: category
     y: revenue
     title: Static URL — all bars link to the same page
-    link: "https://example.com/sales-report"
+    link: "https://example.com/"
   dynamic_path_link:
     query: revenue_by_region
     type: bar
     x: region
     y: revenue
-    title: Dynamic path URL — each bar links to its own detail page
-    link: /regions/{{ x }}/detail
+    title: Dynamic URL — each bar's link carries its own field value
+    link: "/reference/regions?region={{ x }}"
   variable_update_link:
     query: revenue_by_category
     type: bar
@@ -72,5 +72,9 @@ charts:
     style:
       stack: zero
 rows:
-  - {'cols': ['static_link', 'dynamic_path_link']}
-  - {'cols': ['variable_update_link', 'product_breakdown']}
+  - cols:
+      - static_link
+      - dynamic_path_link
+  - cols:
+      - variable_update_link
+      - product_breakdown

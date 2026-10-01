@@ -354,7 +354,6 @@ style:
     align: left
     column:
       max_number: 2
-      gap: 24
       rule:
         width: 1
         color: dbt-grays.separator
@@ -680,7 +679,7 @@ resolve to the same recipe, and the same error names the recipe if you guess a `
 | 100% stacked | type: bar or type: area with color: and style.stack: normalize |
 | percent stacked bar, normalized bar | type: bar with color: and style.stack: normalize |
 | small multiples, trellis, faceted | multiples.rows: <column> (or multiples.columns:) on a cartesian chart |
-| dual axis, combo, bar and line | layers: on a cartesian chart, with axis_y.position: right on the added layer for its own y-axis |
+| dual axis, combo, bar and line | layers: on a cartesian chart, with axis_y.position: right on the added layer for its own y-axis. Warns `WARN-DUAL-AXIS-COMPETING-SCALES` (independent scales mislead); prefer stacked charts, or indexing both series to a common start in the query |
 | stacked column | type: bar with style.orientation: vertical, color:, and style.stack: zero |
 | grouped column, clustered column | type: bar with style.orientation: vertical, color:, and style.stack: none |
 | lollipop | type: bar with style.marks.bar.band_width thinned to a stem, plus a layers: scatter on the same y (style.marks.bar.size is a separate fixed-pixel mode and does not thin the bar) |

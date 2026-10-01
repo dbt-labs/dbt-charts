@@ -38,6 +38,8 @@ from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.prose import render_prose_svg
 from dbt_charts.core.render.sizing import get_compact_style
 
+from ._prose_plan import full_width_plan
+
 # Recovering "space above the heading" means undoing the baseline's own offset
 # inside its line box, which is ``half_leading + ascent`` (the CSS model
 # ``mdsvg`` implements). Asking the renderer that drew it keeps this helper from
@@ -96,7 +98,9 @@ def _render(markdown: str, width: float, n_cols: int | None) -> str:
         TextColumnStyle(max_number=n_cols) if n_cols is not None else TextColumnStyle()
     )
     text_style = resolved.text.model_copy(update={"column": col})
-    svg, _ = render_prose_svg(markdown, width, text_style, resolved)
+    svg, _ = render_prose_svg(
+        markdown, width, text_style, resolved, plan=full_width_plan(resolved, width)
+    )
     return svg
 
 
@@ -151,7 +155,11 @@ def test_a_mid_blob_heading_keeps_its_full_margin() -> None:
         update={"column": TextColumnStyle(max_number=1)}
     )
     _, paragraph_height = render_prose_svg(
-        ONE_PARAGRAPH, _WIDE_SLOT, text_style, resolved
+        ONE_PARAGRAPH,
+        _WIDE_SLOT,
+        text_style,
+        resolved,
+        plan=full_width_plan(resolved, _WIDE_SLOT),
     )
 
     mid_blob_top = _heading_top(_render(MID_BLOB, _WIDE_SLOT, n_cols=1))

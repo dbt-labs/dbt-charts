@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.8.1.dev469",
+  "version": "0.8.1.dev491",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -8634,6 +8634,34 @@
       "title": "ProjectionStyle",
       "type": "object"
     },
+    "ProsePlan": {
+      "properties": {
+        "grid": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Grid",
+          "type": "integer"
+        },
+        "board_width": {
+          "title": "Board Width",
+          "type": "number"
+        },
+        "gap": {
+          "title": "Gap",
+          "type": "number"
+        }
+      },
+      "required": [
+        "board_width",
+        "gap",
+        "grid"
+      ],
+      "title": "ProsePlan",
+      "type": "object"
+    },
     "QuantitativeAxisStylePatch": {
       "additionalProperties": false,
       "description": "Authored overlay for QuantitativeAxisStyle. Scale-type overlay for quantitative axes. Theme slot: axis_quantitative.\n\nThin today (no extra fields beyond BaseAxisStyle). Subclassed to give\nquantitative-axis patches a distinct type so AxisOverrides can be precisely\ntyped per slot.",
@@ -11173,6 +11201,17 @@
           "additionalProperties": true,
           "title": "Variable Defaults",
           "type": "object"
+        },
+        "prose_plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProsePlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -13488,6 +13527,13 @@
             }
           ],
           "default": null
+        },
+        "title_shift": {
+          "$ref": "#/$defs/TitleShift",
+          "default": {
+            "title_dy": 0.0,
+            "body_dy": 0.0
+          }
         }
       },
       "required": [
@@ -22246,7 +22292,7 @@
     },
     "TextColumnStyle": {
       "additionalProperties": false,
-      "description": "Author overrides for the column layout of board body text.\n\nBody text is measured and flowed whether or not any of these are set: the\nrenderer picks a column count whose measure reads well, and how much text\nthere is decides how many of those columns are worth using. These narrow\nthat choice rather than switching it on.\n\n- ``max_number``: ceiling on the count. The renderer may still choose\n  fewer, when the text is too short to fill them.\n- ``max_chars``: the measure itself, overriding the shipped default. The\n  width is used exactly and the count follows from it.",
+      "description": "Author overrides for the column layout of board body text.\n\nBody text is measured and flowed whether or not any of these are set. A\nprose column is an invisible card sitting on the board's card grid, so\nwhere columns start and how far apart they are follows from the board,\nnot from text settings. These narrow the renderer's choice rather than\nswitching it on.\n\n- ``max_number``: ceiling on the count. The renderer may still choose\n  fewer, when the text is too short to fill them.\n- ``max_chars``: the measure, overriding the shipped default. It caps the\n  text inside a column; it never moves the column.",
       "properties": {
         "max_number": {
           "anyOf": [
@@ -22261,19 +22307,6 @@
           "default": null,
           "description": "Ceiling on the column count. The renderer may choose fewer when there is not enough text to fill them. None = no ceiling.",
           "title": "Max Number"
-        },
-        "gap": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Gap between columns in pixels. None = 1.5 line boxes, so the gutter scales with the type it separates.",
-          "title": "Gap"
         },
         "rule": {
           "anyOf": [
@@ -22298,7 +22331,7 @@
             }
           ],
           "default": null,
-          "description": "Column width as a character count, overriding the shipped measure. The width is used exactly and the column count follows from it.",
+          "description": "Column text width as a character count, overriding the shipped measure. It caps the text inside a column; a column narrower than this limits the text first.",
           "title": "Max Chars"
         }
       },
@@ -22569,6 +22602,26 @@
         }
       },
       "title": "TitlePositionStylePatch",
+      "type": "object"
+    },
+    "TitleShift": {
+      "additionalProperties": false,
+      "description": "How far a cols-row item's title and body sit below their own natural edges.\n\nSet by the sizing pass from the titles actually present in the item's row, so\nevery titled item's first baseline and body top land on the row's shared ones.\nZero means the item renders exactly as it would alone.",
+      "properties": {
+        "title_dy": {
+          "default": 0.0,
+          "description": "Px the title's first baseline moves down.",
+          "title": "Title Dy",
+          "type": "number"
+        },
+        "body_dy": {
+          "default": 0.0,
+          "description": "Px everything below the title moves down (always >= title_dy).",
+          "title": "Body Dy",
+          "type": "number"
+        }
+      },
+      "title": "TitleShift",
       "type": "object"
     },
     "TitleStyle": {

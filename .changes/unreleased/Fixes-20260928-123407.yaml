@@ -1,5 +1,0 @@
-kind: Fixes
-body: "`dct validate <file>` (and the VS Code extension) compiled `dbt_charts.yml` and `_`-prefixed partials as boards, reporting spurious `ERR-EXTRA-FIELD`/`ERR-INTERNAL` errors on valid files. `dbt_charts.yml` now validates against the project config schema, and a private partial validates as a no-layout-required fragment, matching `meta.yml`."
-time: 2026-09-28T12:34:07.177460-07:00
-custom:
-  DbtChartsIssue: 49

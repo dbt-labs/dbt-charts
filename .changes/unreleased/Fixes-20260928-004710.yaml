@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A board with `chart_focus` set no longer prints a WARN-UNREFERENCED-CHART for every other chart on the board. The warning now judges "referenced" against the board''s layout as authored, before focus narrows it to one chart, matching how `--chart` already behaved.'
-time: 2026-09-28T00:47:10.176195-07:00

@@ -45,6 +45,12 @@ Changes in this release:
     instead names the *container* (`style.palettes`, a genuinely declared
     field) and strikes a closed, literal key set inside it.
 
+- **`style.text.column.gap` removed.** Prose columns sit on the board's card
+  grid, so the gutter between two columns is the layout's card gap + `2 * card_padding`
+  and no longer a text setting. A `Deletion` on the tail
+  `("style", "text", "column", "gap")` strips the authored value and reports
+  its `reason`; `style.text.column.max_number`, `max_chars` and `rule` stay.
+
 **Reach**: `TokenRespell`'s paths come from `_relative_field_paths` walking
 `AuthoredBoard`'s model tree once, from the root -- the same walk
 `suffix_rename_moves` uses for every other rename in this package, with the
@@ -70,6 +76,7 @@ mechanics and the still-refused shapes.
 from __future__ import annotations
 
 from dbt_charts.core.compile.migrations.migrations import (
+    Deletion,
     MapKeyDeletion,
     MappedScalar,
     Move,
@@ -349,5 +356,25 @@ def map_key_deletions(
                 role: _map_key_deletion_message(role, variant)
                 for role, variant in RETIRED_PALETTE_ROLE_KEYS.items()
             },
+        ),
+    )
+
+
+def deletions(
+    source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
+) -> tuple[Deletion, ...]:
+    """Return the Deletion for the 0.7.0 -> 0.9.0 boundary: the authored column gap."""
+    return (
+        Deletion(
+            source_schema,
+            target_schema,
+            ("style", "text", "column", "gap"),
+            reason=(
+                "Prose columns sit on the board's card grid now, so the gutter "
+                "between them is the gap the layout puts between cards plus "
+                "twice the card padding and cannot be set on the text. The "
+                "authored column gap was dropped; "
+                "style.text.column.max_number, max_chars and rule still apply."
+            ),
         ),
     )

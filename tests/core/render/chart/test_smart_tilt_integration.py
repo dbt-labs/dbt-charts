@@ -299,24 +299,35 @@ def test_resolve_chart_unrecognized_cadence_omits_label_overlap(make_chart):
     )
 
 
-def test_short_daily_axis_keeps_daily_labels_and_ticks(make_chart):
+def _daily_line_axis(make_chart, days: int) -> dict[str, Any]:
     import datetime
 
     chart = make_chart("line", x="date", y="value")
     start = datetime.date(2024, 1, 1)
     data = [
         {"date": (start + datetime.timedelta(days=i)).isoformat(), "value": i}
-        for i in range(30)
+        for i in range(days)
     ]
-
     spec = generate_vega_lite_spec(
         chart, data, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CONTEXT
     )
-    axis = _x_axis(spec)
+    return _x_axis(spec)
+
+
+def test_short_daily_axis_keeps_daily_labels_and_ticks(make_chart):
+    axis = _daily_line_axis(make_chart, 14)
 
     assert axis["tickCount"] == {"interval": "day", "step": 1}
     assert "'%-d'" in axis["labelExpr"]
     assert "'%y'" in axis["labelExpr"]
+
+
+def test_month_long_daily_axis_steps_to_monday_day_numbers(make_chart):
+    axis = _daily_line_axis(make_chart, 30)
+
+    assert "tickCount" not in axis
+    assert len(axis["values"]) == 5
+    assert "'%-d'" in axis["labelExpr"]
 
 
 def test_long_weekly_axis_promotes_labels_and_ticks_to_months(make_chart):

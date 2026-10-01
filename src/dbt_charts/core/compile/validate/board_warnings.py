@@ -19,7 +19,6 @@ from dbt_charts.core.compile.normalize.chart_focus import (
     PRE_FOCUS_PLACED_CHARTS_META_KEY,
 )
 from dbt_charts.core.diagnostics import (
-    WARN_ADJACENT_TEXT_ROWS,
     WARN_AXIS_ALIGN_DISCARDED,
     WARN_DOUBLE_HEADER,
     WARN_H1_BODY_NO_TITLE,
@@ -37,7 +36,6 @@ def detect_board_warnings(board: Board) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
     _detect_double_headers(board, warnings)
     _detect_single_chart_redundant_title(board, warnings)
-    _detect_adjacent_text_rows(board, warnings)
     _detect_orphan_charts(board, warnings)
     _detect_axis_align_discarded(board, warnings)
     return warnings
@@ -228,129 +226,6 @@ def _has_titled_section(board: Board) -> bool:
         and (bool(item.board.title) or _has_titled_section(item.board))
         for item in board.layout.items
     )
-
-
-# ───────────────────────────── Adjacent text rows ─────────────────────────────
-
-# Characters a prose block needs before it can reach a *second* column, so
-# before stacking it against another can misalign anything. The packer's
-# `viable_column_count` is `line_count // MIN_LINES_PER_COLUMN`, so six lines
-# buy the first column and twelve buy the second; at the 66-character
-# multi-column measure that is 12 × 66. Deliberately approximate — compile has
-# no font metrics and no slot width, and the two constants it multiplies live
-# in render, which compile cannot import (the arithmetic is pinned against them
-# from the test suite, which can). Its only job is to tell a passage from a
-# caption: below this a block is one column wide at any board width, and two
-# single-column blocks of the same measure cannot misalign — they read as
-# ordinary consecutive paragraphs.
-_MIN_FRAGMENTING_CHARS = 792
-
-
-def _detect_adjacent_text_rows(board: Board, warnings: list[Diagnostic]) -> None:
-    """Warn on runs of consecutive prose-only rows anywhere in the tree.
-
-    Each prose block is measured and flowed alone — the column count comes from
-    that block's line count and the balance from its own lines, with no flow
-    between blocks. Stacked, they render as unrelated grids whose column edges
-    do not line up, and whichever block half-fills its last column leaves a gap
-    mid-page. The author wanted one continuous passage and cannot see why they
-    did not get one.
-
-    `cols:` is excluded: prose set side by side is an authored spread, not a
-    fragmented flow. Grid and tab items are positioned rather than stacked.
-    """
-    if board.layout.type == "rows":
-        run: list[LayoutItem] = []
-        for item in board.layout.items:
-            if _is_fragmenting_prose_slot(item):
-                run.append(item)
-                continue
-            _warn_fragmented_run(run, warnings)
-            run = []
-        _warn_fragmented_run(run, warnings)
-    for item in board.layout.items:
-        if item.board is not None:
-            _detect_adjacent_text_rows(item.board, warnings)
-
-
-def _warn_fragmented_run(run: list[LayoutItem], warnings: list[Diagnostic]) -> None:
-    """Emit one warning for a run of prose rows — a run is one decision.
-
-    The mark sits on the second row, the first one that should have been merged
-    upward, with the block it should join alongside. Firing once per adjacent
-    pair would report a four-row run three times over.
-
-    A row with no authored coordinates in this file — an import or a foreach
-    expansion — is not reported at all. `source_path` is empty there, so the
-    warning would carry no location while telling the author to merge two blocks
-    that live in another file, or that a loop generated. Unfollowable advice with
-    nowhere to point is worse than silence.
-    """
-    if len(run) < 2 or not run[1].source_path:
-        return
-    warnings.append(
-        Diagnostic.from_code(
-            WARN_ADJACENT_TEXT_ROWS,
-            path=run[1].source_path or None,
-            related=(
-                RelatedLocation(
-                    path=run[0].source_path,
-                    message="the block this prose should join",
-                ),
-            )
-            if run[0].source_path
-            else (),
-            message=WARN_ADJACENT_TEXT_ROWS.message_template.format(count=len(run)),
-            fix=WARN_ADJACENT_TEXT_ROWS.fix_template,
-        )
-    )
-
-
-def _is_fragmenting_prose_slot(item: LayoutItem) -> bool:
-    """Whether a slot is a passage of prose big enough to fragment the page.
-
-    A `title:` on the slot does not disqualify it — a titled prose row is the
-    ordinary way to write a section, and two of them fragment exactly the way
-    two untitled ones do. Merging keeps the sections: the first title heads the
-    merged block and the rest become headings inside its prose.
-
-    A block under ``_MIN_FRAGMENTING_CHARS`` is excluded, and breaks a run: it
-    is a caption or a lead-in, one column wide whatever the board does, so
-    stacking it misaligns nothing.
-
-    A block holding no paragraph — a markdown table or a code block on its own —
-    is excluded. It does not flow, and merging one into a prose column squeezes
-    it to the measure, so recommending the merge there would be wrong advice
-    rather than merely noisy.
-
-    A slot carrying anything of its own that only a slot can carry — `style:`,
-    `visible:`, a `details:` disclosure, an authored height — is excluded, and
-    for one reason: a merged block has one of each. Merging two rows that style
-    themselves differently has to discard a style; merging a conditionally
-    visible row into an unconditional one publishes prose the author hid. The
-    fix the warning names is not available on those rows, so it must not name
-    it. This is also most of what the prose specimens under
-    `examples/playground-experimental/charts/labs/` are made of — rows that
-    each demonstrate one measure.
-    """
-    nested = item.board
-    if nested is None or nested.layout.items or not nested.text:
-        return False
-    if (
-        nested.authored_style is not None
-        or item.visible is not None
-        or item.details_variable is not None
-        or item.layout_height is not None
-    ):
-        return False
-    if len(nested.text) < _MIN_FRAGMENTING_CHARS:
-        return False
-
-    # Same parser that renders the text, for the same reason as the heading
-    # check above. Lazy-imported to match render.
-    from mdsvg import Paragraph, parse
-
-    return any(isinstance(block, Paragraph) for block in parse(nested.text))
 
 
 # ─────────────────────────────── Orphan charts ────────────────────────────────

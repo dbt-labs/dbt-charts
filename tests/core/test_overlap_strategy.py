@@ -274,7 +274,13 @@ class TestLabelOverlapSeparateField:
         axis_x = _axis_x_with(overlap=ov)
         data = [{"x": "A"}, {"x": "B"}, {"x": "C"}]
         layout = resolve_axis_x_overlap(
-            axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=1200.0
+            axis_x,
+            "x",
+            data,
+            1.0,
+            edge_labels_flushed=False,
+            chart_width=1200.0,
+            continuous_temporal=False,
         )
         assert axis_x.labels.overlap is ov
         assert layout.label_overlap == "allow"
@@ -295,7 +301,13 @@ class TestResolverStrategyWalk:
         axis_x = _axis_x_with(overlap=_overlap(tilt=False, skip=False))
         data = [{"x": v} for v in ["A", "B", "C"]]
         layout = resolve_axis_x_overlap(
-            axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+            axis_x,
+            "x",
+            data,
+            1.0,
+            edge_labels_flushed=False,
+            chart_width=600.0,
+            continuous_temporal=False,
         )
         assert layout.label_overlap == "allow"
 
@@ -308,7 +320,13 @@ class TestResolverStrategyWalk:
         axis_x = _axis_x_with(overlap=_overlap(), angle=-45.0)
         data = [{"x": v} for v in ["A", "B", "C"]]
         layout = resolve_axis_x_overlap(
-            axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+            axis_x,
+            "x",
+            data,
+            1.0,
+            edge_labels_flushed=False,
+            chart_width=600.0,
+            continuous_temporal=False,
         )
         assert layout.label_overlap == "allow"
         assert layout.angle == -45.0
@@ -329,6 +347,7 @@ class TestResolverStrategyWalk:
             is_horizontal_bar=True,
             edge_labels_flushed=False,
             chart_width=600.0,
+            continuous_temporal=False,
         )
         assert layout.label_overlap == "allow"
         assert layout.angle == 0.0
@@ -348,7 +367,13 @@ class TestResolverStrategyWalk:
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=300.0
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=300.0,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "allow"
@@ -378,7 +403,13 @@ class TestResolverStrategyWalk:
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=100.0
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=100.0,
+                continuous_temporal=False,
             )
 
         assert layout.angle == -90.0
@@ -403,7 +434,13 @@ class TestResolverStrategyWalk:
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200.0,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "allow"
@@ -446,6 +483,7 @@ class TestResolverStrategyWalk:
                 edge_labels_flushed=False,
                 chart_width=200.0,
                 domain_values=domain_values,
+                continuous_temporal=False,
             )
 
         assert layout.angle == tilt_increments[-1], layout.angle
@@ -468,7 +506,13 @@ class TestResolverStrategyWalk:
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200.0,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "allow"
@@ -493,7 +537,13 @@ class TestResolverStrategyWalk:
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200.0,
+                continuous_temporal=False,
             )
 
         # No skip → exhausted list → allow (tolerate remaining overlap)
@@ -524,7 +574,13 @@ class TestResolverStrategyWalk:
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200.0,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "allow"
@@ -551,7 +607,13 @@ class TestResolverStrategyWalk:
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200.0,
+                continuous_temporal=False,
             )
 
         assert layout.label_overlap == "allow"
@@ -582,7 +644,13 @@ class TestResolverStrategyWalk:
             ]
         ]
         layout = resolve_axis_x_overlap(
-            axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+            axis_x,
+            "x",
+            data,
+            1.0,
+            edge_labels_flushed=False,
+            chart_width=600.0,
+            continuous_temporal=False,
         )
         assert layout.label_overlap is None
 
@@ -610,7 +678,13 @@ class TestResolverStrategyWalk:
             ]
         ]
         layout = resolve_axis_x_overlap(
-            axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+            axis_x,
+            "x",
+            data,
+            1.0,
+            edge_labels_flushed=False,
+            chart_width=600.0,
+            continuous_temporal=False,
         )
         assert layout.label_overlap == "allow"
 
@@ -677,7 +751,13 @@ class TestCollisionLabelCountThreading:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=100.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=100.0,
+                continuous_temporal=False,
             )
 
         assert layout.collision_label_count == 7
@@ -703,7 +783,13 @@ class TestCollisionLabelCountThreading:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=100.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=100.0,
+                continuous_temporal=False,
             )
 
         assert layout.collision_label_count == 7
@@ -729,7 +815,13 @@ class TestCollisionLabelCountThreading:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=100.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=100.0,
+                continuous_temporal=False,
             )
 
         assert layout.angle == -90.0
@@ -751,7 +843,13 @@ class TestCollisionLabelCountThreading:
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis_x, "x", data, 1.0, edge_labels_flushed=False, chart_width=100.0
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=100.0,
+                continuous_temporal=False,
             )
 
         assert layout.collision_label_count == 20
@@ -783,6 +881,7 @@ class TestCollisionLabelCountThreading:
                 edge_labels_flushed=False,
                 chart_width=10.0,
                 bucket_aligned_temporal=True,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearweek"
@@ -814,6 +913,7 @@ class TestCollisionLabelCountThreading:
                 edge_labels_flushed=False,
                 chart_width=60.0,
                 bucket_aligned_temporal=True,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearweek"
@@ -847,7 +947,13 @@ class TestCollisionLabelCountThreading:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=10.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=10.0,
+                continuous_temporal=False,
             )
 
         assert layout.visibility_time_unit == "year"
@@ -881,7 +987,13 @@ class TestCollisionLabelCountThreading:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=60.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=60.0,
+                continuous_temporal=False,
             )
 
         assert layout.visibility_time_unit == "year"
@@ -930,6 +1042,7 @@ class TestTemporalNoTiltNeverOverwritesAKnownCollision:
                 1.0,
                 edge_labels_flushed=True,
                 chart_width=840.0,
+                continuous_temporal=False,
             )
 
         assert layout.format_time_unit == "yearmonth"
@@ -963,7 +1076,13 @@ class TestTemporalNoTiltNeverOverwritesAKnownCollision:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=60.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=60.0,
+                continuous_temporal=False,
             )
 
         assert layout.visibility_time_unit == "year"
@@ -998,7 +1117,13 @@ class TestTemporalNoTiltNeverOverwritesAKnownCollision:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=100.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=100.0,
+                continuous_temporal=False,
             )
 
         assert layout.visibility_time_unit == "year"
@@ -1039,7 +1164,13 @@ class TestLabelBlockHeight:
         axis = _axis_x_with(overlap=_overlap())
         data = [{"x": v} for v in ["A", "B", "C"]]
         layout = resolve_axis_x_overlap(
-            axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+            axis,
+            "x",
+            data,
+            1.0,
+            edge_labels_flushed=False,
+            chart_width=600.0,
+            continuous_temporal=False,
         )
         assert layout.angle == 0.0
         assert layout.label_block_height == axis.labels.font.size
@@ -1060,7 +1191,13 @@ class TestLabelBlockHeight:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200.0,
+                continuous_temporal=False,
             )
 
         assert layout.angle == -90.0
@@ -1082,7 +1219,13 @@ class TestLabelBlockHeight:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200.0,
+                continuous_temporal=False,
             )
 
         assert layout.angle == -45.0
@@ -1106,7 +1249,13 @@ class TestLabelBlockHeight:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=600.0,
+                continuous_temporal=False,
             )
 
         assert layout.angle == -90.0
@@ -1132,7 +1281,13 @@ class TestLabelBlockHeight:
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+                axis,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=600.0,
+                continuous_temporal=False,
             )
 
         font_size = axis.labels.font.size

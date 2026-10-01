@@ -26,6 +26,8 @@ from dbt_charts.core.fonts import (
     get_fonts_dir,
 )
 
+from ._prose_plan import full_width_plan
+
 
 class TestCompactStyleIncludesConfig:
     """get_compact_style should pull font_family and typography from resolved style."""
@@ -379,7 +381,9 @@ class TestProseHeadingsUseTitleStack:
                 }
             )
             rs = resolve_style(get_theme_style(), patch)
-            _svg, height = render_prose_svg(heading, width, rs.text, rs)
+            _svg, height = render_prose_svg(
+                heading, width, rs.text, rs, plan=full_width_plan(rs, width)
+            )
             return height
 
         # Same family on both sides: a baseline with nothing to disagree about.
@@ -400,7 +404,9 @@ class TestProseHeadingsUseTitleStack:
 
         patch = StylePatch.model_validate({"title": {"font": {"family": "Poppins"}}})
         rs = resolve_style(get_theme_style(), patch)
-        svg, _height = render_prose_svg("# A heading", 400.0, rs.text, rs)
+        svg, _height = render_prose_svg(
+            "# A heading", 400.0, rs.text, rs, plan=full_width_plan(rs, 400.0)
+        )
         assert "Poppins" in svg
 
 

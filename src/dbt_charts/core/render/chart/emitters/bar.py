@@ -104,6 +104,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.text.category_label import category_label_text
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
     cap_padding_to_label_limit,
@@ -951,6 +952,7 @@ def _emit_vertical(
         label_usable_ratio,
         is_horizontal_bar=False,
         edge_labels_flushed=temporal_edge_labels_flushed(emitted_x_vl_type, ax),
+        continuous_temporal=emitted_x_vl_type == "temporal",
         chart_width=box.width - reserved_width,
         domain_values=x_domain,
         resolved_time_unit=emitted_x_time_unit,
@@ -1588,6 +1590,7 @@ def _emit_horizontal(
         label_usable_ratio,
         is_horizontal_bar=True,
         edge_labels_flushed=False,
+        continuous_temporal=False,
         chart_width=box.width,
     )
     ax_vl = axis_to_vl(
@@ -1610,6 +1613,11 @@ def _emit_horizontal(
             str(row[cat_field]) for row in data if row.get(cat_field) is not None
         )
     )
+    if "labelExpr" not in ax_vl:
+        # No case: this axis never gets inject_axis_label_case.
+        cat_labels = [
+            category_label_text(v, ax.labels.format, None) for v in cat_labels
+        ]
     cat_align = ax_vl.get("labelAlign")
     # Measurability: exact per-row category text is always safe to measure
     # UNLESS a labelExpr is authored (VL renders it in preference to the raw

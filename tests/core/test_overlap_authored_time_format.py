@@ -114,8 +114,12 @@ def test_authored_time_format_changes_the_resolved_layout() -> None:
         "chart_width": 420.0,
     }
 
-    bare = resolve_axis_x_overlap(_axis(), "month", data, **kwargs)
-    formatted = resolve_axis_x_overlap(_axis("%b %Y"), "month", data, **kwargs)
+    bare = resolve_axis_x_overlap(
+        _axis(), "month", data, **kwargs, continuous_temporal=False
+    )
+    formatted = resolve_axis_x_overlap(
+        _axis("%b %Y"), "month", data, **kwargs, continuous_temporal=False
+    )
 
     assert bare != formatted
 
@@ -139,6 +143,7 @@ def test_wide_authored_format_does_not_leave_labels_overprinting() -> None:
         label_usable_ratio=0.9,
         edge_labels_flushed=False,
         chart_width=420.0,
+        continuous_temporal=False,
     )
     # A tilted or Vega-thinned layout is a legitimate rescue; only an
     # untilted, unthinned cadence has to clear on width alone.
@@ -153,7 +158,14 @@ def test_wide_authored_format_does_not_leave_labels_overprinting() -> None:
 
 @pytest.mark.parametrize(
     ("time_format", "expected_text"),
-    [("%b %Y", "Jan 2022"), ("%Y", "2022"), ("%B", "January")],
+    [
+        ("%b %Y", "Jan 2022"),
+        ("%Y", "2022"),
+        ("%B", "January"),
+        ("%q", "1"),  # quarter number, not the letter "q"
+        ("%L", "000"),  # milliseconds, not the letter "L"
+        ("%Q", "1640995200000"),  # epoch ms, not the letter "Q"
+    ],
 )
 def test_the_label_vocabulary_speaks_the_authored_format_at_every_grain(
     time_format: str, expected_text: str
@@ -187,8 +199,12 @@ def test_tilt_is_picked_against_the_authored_format_width() -> None:
         "edge_labels_flushed": False,
         "chart_width": 200.0,
     }
-    bare = resolve_axis_x_overlap(_axis(), "month", data, **kwargs)
-    formatted = resolve_axis_x_overlap(_axis("%B %Y"), "month", data, **kwargs)
+    bare = resolve_axis_x_overlap(
+        _axis(), "month", data, **kwargs, continuous_temporal=False
+    )
+    formatted = resolve_axis_x_overlap(
+        _axis("%B %Y"), "month", data, **kwargs, continuous_temporal=False
+    )
 
     assert bare.angle == 0.0
     assert formatted.angle is not None and formatted.angle < 0.0
@@ -215,8 +231,12 @@ def test_daily_data_with_an_authored_format_drops_the_two_row_day_shape() -> Non
         "edge_labels_flushed": False,
         "chart_width": 400.0,
     }
-    bare = resolve_axis_x_overlap(_axis(), "day", data, **kwargs)
-    formatted = resolve_axis_x_overlap(_axis("%d/%m"), "day", data, **kwargs)
+    bare = resolve_axis_x_overlap(
+        _axis(), "day", data, **kwargs, continuous_temporal=False
+    )
+    formatted = resolve_axis_x_overlap(
+        _axis("%d/%m"), "day", data, **kwargs, continuous_temporal=False
+    )
 
     assert bare.format_time_unit == "yearweek"
     assert formatted.format_time_unit != "yearweek"
@@ -240,12 +260,20 @@ def test_collision_warning_fires_when_the_authored_format_cannot_fit() -> None:
     }
 
     bare = resolve_axis_x_overlap(
-        _axis(skip=False, tilt=False), "month", data, **kwargs
+        _axis(skip=False, tilt=False),
+        "month",
+        data,
+        **kwargs,
+        continuous_temporal=False,
     )
     assert bare.collision_label_count is None
 
     formatted = resolve_axis_x_overlap(
-        _axis("%B %Y", skip=False, tilt=False), "month", data, **kwargs
+        _axis("%B %Y", skip=False, tilt=False),
+        "month",
+        data,
+        **kwargs,
+        continuous_temporal=False,
     )
     assert formatted.collision_label_count == len(values)
 
@@ -284,8 +312,12 @@ def test_ordinal_bucket_strings_measure_the_authored_format_too() -> None:
         "chart_width": 420.0,
     }
 
-    bare = resolve_axis_x_overlap(_ordinal_axis(None), "month", data, **kwargs)
-    formatted = resolve_axis_x_overlap(_ordinal_axis("%b %Y"), "month", data, **kwargs)
+    bare = resolve_axis_x_overlap(
+        _ordinal_axis(None), "month", data, **kwargs, continuous_temporal=False
+    )
+    formatted = resolve_axis_x_overlap(
+        _ordinal_axis("%b %Y"), "month", data, **kwargs, continuous_temporal=False
+    )
     # Both tilt to vertical, so the fit verdict is the same; the block height
     # is what differs — it reserves the widest label's own width at -90, and
     # "Jan 2022" is wider than "2022-01".
@@ -308,8 +340,12 @@ def test_non_date_ordinal_values_keep_their_own_text() -> None:
         "edge_labels_flushed": False,
         "chart_width": 420.0,
     }
-    bare = resolve_axis_x_overlap(_ordinal_axis(None), "region", data, **kwargs)
-    formatted = resolve_axis_x_overlap(_ordinal_axis("%b %Y"), "region", data, **kwargs)
+    bare = resolve_axis_x_overlap(
+        _ordinal_axis(None), "region", data, **kwargs, continuous_temporal=False
+    )
+    formatted = resolve_axis_x_overlap(
+        _ordinal_axis("%b %Y"), "region", data, **kwargs, continuous_temporal=False
+    )
     assert bare == formatted
 
 
@@ -340,8 +376,12 @@ def test_pinned_tilt_reserves_the_authored_format_not_the_grain_vocabulary() -> 
         "edge_labels_flushed": False,
         "chart_width": 300.0,
     }
-    bare = resolve_axis_x_overlap(_pinned_axis(None), "month", data, **kwargs)
-    formatted = resolve_axis_x_overlap(_pinned_axis("%B %Y"), "month", data, **kwargs)
+    bare = resolve_axis_x_overlap(
+        _pinned_axis(None), "month", data, **kwargs, continuous_temporal=False
+    )
+    formatted = resolve_axis_x_overlap(
+        _pinned_axis("%B %Y"), "month", data, **kwargs, continuous_temporal=False
+    )
 
     assert bare.angle == formatted.angle == -45.0
     assert formatted.label_block_height > bare.label_block_height * 2
@@ -363,10 +403,18 @@ def test_pinned_tilt_closes_the_ordinal_door_too() -> None:
         "chart_width": 300.0,
     }
     bare = resolve_axis_x_overlap(
-        _pinned_axis(None, "ordinal"), "month", data, **kwargs
+        _pinned_axis(None, "ordinal"),
+        "month",
+        data,
+        **kwargs,
+        continuous_temporal=False,
     )
     formatted = resolve_axis_x_overlap(
-        _pinned_axis("%B %Y", "ordinal"), "month", data, **kwargs
+        _pinned_axis("%B %Y", "ordinal"),
+        "month",
+        data,
+        **kwargs,
+        continuous_temporal=False,
     )
 
     # "January 2022" is wider than the "2022-01" datum it is painted over.
@@ -393,5 +441,7 @@ def test_a_calendar_invalid_iso_shaped_band_is_not_reformatted() -> None:
     # Not merely "does not raise": neither band is reformatted, so the
     # authored format changes nothing about this axis.
     assert resolve_axis_x_overlap(
-        _ordinal_axis("%b %Y"), "x", data, **kwargs
-    ) == resolve_axis_x_overlap(_ordinal_axis(None), "x", data, **kwargs)
+        _ordinal_axis("%b %Y"), "x", data, **kwargs, continuous_temporal=False
+    ) == resolve_axis_x_overlap(
+        _ordinal_axis(None), "x", data, **kwargs, continuous_temporal=False
+    )

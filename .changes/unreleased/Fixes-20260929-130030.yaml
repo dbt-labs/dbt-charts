@@ -1,3 +1,0 @@
-kind: Fixes
-body: Value labels using a predefined format (`number`, `currency`) painted values below 1 with the SI milli prefix, so 0.67 read as "670m". They now write sub-1 values in digits ("0.67") like their axis.
-time: 2026-09-29T13:00:30.000000-07:00

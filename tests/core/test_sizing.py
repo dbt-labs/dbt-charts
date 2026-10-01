@@ -11,6 +11,8 @@ import importlib as _importlib
 import pytest
 from pydantic import TypeAdapter
 
+from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT
+
 # The direct import `import dbt_charts.core.render.converters.chart` fails because
 # dbt_charts.core imports `render` as a function, shadowing the render subpackage
 # in the attribute chain. importlib.import_module bypasses this.
@@ -42,6 +44,7 @@ from ._board_utils import (
     _default_resolved_style,
     apply_static_layout,
 )
+from ._prose_plan import card_plan, full_width_plan
 from ._svg_render import cumulative_ink_x as _cumulative_ink_x
 
 _DEFAULT_STYLE = resolve_style(get_theme_style())
@@ -960,6 +963,7 @@ class TestVariableResolutionInSizing:
             width=800.0,
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
         # With variables - resolves template
@@ -969,6 +973,7 @@ class TestVariableResolutionInSizing:
             variable_values={"name": "World"},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
         # Height with resolved text
@@ -977,6 +982,7 @@ class TestVariableResolutionInSizing:
             width=800.0,
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
         # With variables, height should match the resolved text height
@@ -1135,12 +1141,14 @@ This is visible text."""
             width=800.0,
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=card_plan(_DEFAULT_STYLE, 800.0),
         )
         height_without_comment = get_markdown_text_height(
             text_without_comment,
             width=800.0,
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=card_plan(_DEFAULT_STYLE, 800.0),
         )
 
         # Heights should be the same since comments are stripped
@@ -1171,6 +1179,7 @@ Main text here."""
             variable_values={"show_header": True},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
         # When show_header is False, we don't get the header
@@ -1180,6 +1189,7 @@ Main text here."""
             variable_values={"show_header": False},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
         # Height with header should be significantly larger
@@ -1221,6 +1231,7 @@ Main text here."""
             variable_values={"description": short_value},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=full_width_plan(_DEFAULT_STYLE, narrow_width),
         )
 
         height_long = get_markdown_text_height(
@@ -1229,6 +1240,7 @@ Main text here."""
             variable_values={"description": long_value},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            plan=full_width_plan(_DEFAULT_STYLE, narrow_width),
         )
 
         # Long value should result in greater height due to wrapping
@@ -3013,7 +3025,9 @@ rows:
 
         # The render cache must have an entry at the slot height so the renderer hits.
         chart_id = bar_item.chart.id
-        cache_entry = render_cache.get((chart_id, bar_item.width, bar_item.height))
+        cache_entry = render_cache.get(
+            (chart_id, bar_item.width, bar_item.height, NO_TITLE_SHIFT)
+        )
         assert cache_entry is not None, (
             f"Expected render cache entry at key ({chart_id!r}, {bar_item.width}, "
             f"{bar_item.height}) — renderer will miss without it"
@@ -3418,6 +3432,7 @@ rows:
             resolve_style(get_theme_style()),
             text_style=resolve_style(get_theme_style()).text,
             painted_canvas=None,
+            plan=full_width_plan(resolve_style(get_theme_style()), 497.92),
         )
 
         assert (
@@ -4535,12 +4550,14 @@ def test_markdown_text_height_uses_merged_text_typography() -> None:
         width=180.0,
         text_style=_DEFAULT_STYLE.text,
         resolved_style=_DEFAULT_STYLE,
+        plan=full_width_plan(_DEFAULT_STYLE, 180.0),
     )
     merged_height = get_markdown_text_height(
         content,
         width=180.0,
         resolved_style=merged,
         text_style=merged.text,
+        plan=full_width_plan(merged, 180.0),
     )
 
     assert merged_height > default_height
@@ -4606,10 +4623,18 @@ def test_column_gutter_is_derived_from_the_line_box() -> None:
     long_text = " ".join(["Revenue is recognized when control transfers."] * 40)
 
     unchanged = get_markdown_text_height(
-        long_text, 600.0, text_style=text_style, resolved_style=base
+        long_text,
+        600.0,
+        text_style=text_style,
+        resolved_style=base,
+        plan=full_width_plan(base, 600.0),
     )
     with_big_row_gap = get_markdown_text_height(
-        long_text, 600.0, text_style=text_style, resolved_style=row_gap_changed
+        long_text,
+        600.0,
+        text_style=text_style,
+        resolved_style=row_gap_changed,
+        plan=full_width_plan(row_gap_changed, 600.0),
     )
     assert with_big_row_gap == unchanged, "the gutter must not read layout.rows.gap"
 

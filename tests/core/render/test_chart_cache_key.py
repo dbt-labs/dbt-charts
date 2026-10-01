@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT
 from dbt_charts.core.compile.models.chart.normalized import Chart
 
 """Regression tests: render cache must key by (chart_id, width, height).
@@ -391,8 +392,8 @@ def test_align_cols_heights_same_chart_different_heights_get_separate_entries():
         _align_cols_heights([item1], ROW1_TARGET, render_ctx)
         _align_cols_heights([item2], ROW2_TARGET, render_ctx)
 
-    key1 = ("shared", WIDTH, ROW1_TARGET)
-    key2 = ("shared", WIDTH, ROW2_TARGET)
+    key1 = ("shared", WIDTH, ROW1_TARGET, NO_TITLE_SHIFT)
+    key2 = ("shared", WIDTH, ROW2_TARGET, NO_TITLE_SHIFT)
     assert key1 in render_ctx.render_cache, "Row 1 entry must exist"
     assert key2 in render_ctx.render_cache, "Row 2 entry must exist"
     _, h1 = render_ctx.render_cache[key1]
@@ -490,7 +491,12 @@ class TestGridRowAlignment:
         ):
             _align_all_cols_in_tree(layout, render_ctx)
 
-        assert ("short", WIDTH, ROW_HEIGHT) in render_ctx.render_cache, (
+        assert (
+            "short",
+            WIDTH,
+            ROW_HEIGHT,
+            NO_TITLE_SHIFT,
+        ) in render_ctx.render_cache, (
             "Grid alignment cache entry missing for the shorter chart. "
             "_align_all_cols_in_tree must extend alignment to grid rows."
         )
@@ -1094,7 +1100,9 @@ class TestAlignBoardChartsRowsLayout:
             executor=executor,
             resolved_style=rs,
             chart_style_context=ctx,
-            render_cache={("line_weekly", WIDTH, NATURAL_H): ("<svg/>", NATURAL_H)},
+            render_cache={
+                ("line_weekly", WIDTH, NATURAL_H, NO_TITLE_SHIFT): ("<svg/>", NATURAL_H)
+            },
             natural_heights={("line_weekly", WIDTH): NATURAL_H},
             pre_resolved={"line_weekly": _resolved(chart, ctx)},
         )

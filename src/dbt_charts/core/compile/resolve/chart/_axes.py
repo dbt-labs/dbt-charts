@@ -723,7 +723,10 @@ def legend_row_fits(
 
 
 def estimate_left_axis_reserve_px(
-    dimension_values: Sequence[str] | None, legend: ResolvedLegendStyle
+    dimension_values: Sequence[str] | None,
+    legend: ResolvedLegendStyle,
+    *,
+    unmeasurable_label_limit_px: float | None = None,
 ) -> float:
     """Estimated horizontal space this chart's own left-side axis reserves
     before a top legend's single row can begin -- ``legend_row_fits`` must
@@ -759,8 +762,20 @@ def estimate_left_axis_reserve_px(
     share this theme's muted body-text tier). ``None`` means the axis
     reserving space here isn't dimension-driven -- the fixed floor is the
     whole estimate.
+
+    ``unmeasurable_label_limit_px`` stands in for labels an authored
+    ``axis_x.labels.expr`` paints: that text can't be computed here, but
+    Vega-Lite's ``labelLimit`` truncates it, so the limit bounds the reserve.
+    A limit of zero or less disables truncation in Vega and leaves the
+    painted width unbounded.
+    Takes priority over ``dimension_values`` when set.
     """
     cfg = get_chart_rendering().legend
+    if unmeasurable_label_limit_px is not None:
+        return max(
+            cfg.min_reserve_px,
+            unmeasurable_label_limit_px + cfg.dimension_axis_reserve_chrome_px,
+        )
     if not dimension_values:
         return cfg.min_reserve_px
     measurer = get_font_measurer(legend.label.font.family)

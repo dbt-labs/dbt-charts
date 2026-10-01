@@ -169,11 +169,11 @@ class TestFormatTableCellValueTemporal:
         assert result == "2024-01-15"
 
     def test_invalid_temporal_format_spec_raises(self) -> None:
-        # %Q is not a valid strftime directive — must raise, not silently pass through.
-        with pytest.raises(ValueError, match="%Q"):
+        # %v is not a valid strftime directive — must raise, not silently pass through.
+        with pytest.raises(ValueError, match="%v"):
             format_table_cell_value(
                 datetime.date(2024, 1, 15),
-                "%Q",
+                "%v",
                 {"date_short": _DATE_SHORT_FORMAT},
             )
 

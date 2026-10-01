@@ -29,7 +29,12 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.variable.authored import Variable
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.board.normalized import (
+    NO_TITLE_SHIFT,
+    ProsePlan,
+    TitleShift,
+    VariableValues,
+)
 from dbt_charts.core.compile.models.style.resolved import (
     effective_padding as _effective_padding,
 )
@@ -577,6 +582,7 @@ def _render_text_svg(
     width: float,
     resolved_style: "ResolvedStyle",
     text_style: "TextStyle",
+    plan: "ProsePlan | None",
     allow_raw_html: bool = False,
     path: str | None = None,
     *,
@@ -602,7 +608,7 @@ def _render_text_svg(
     resolved = _resolve_markdown_jinja(text, variables)
     resolved = rewrite_board_links(resolved, get_link_context())
     result = render_prose_svg(
-        resolved, width, text_style, resolved_style, allow_raw_html
+        resolved, width, text_style, resolved_style, plan, allow_raw_html
     )
     check_markdown_contrast(
         resolved,
@@ -633,8 +639,13 @@ def _build_board_content_items(
     text_authored_attrs: str = "",
     header_authored_attrs: str = "",
     title_line_box: tuple[float, float] | None = None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> tuple[list[str], float]:
     """Build inner content item list; return (items, items_height).
+
+    title_shift moves the title down ``title_dy`` and everything after it down
+    ``body_dy`` — the board's cols row puts its first baseline and body top on
+    the row's shared ones.
 
     Delegates gap arithmetic to compute_board_content_box (the single owner).
     card_padding: title, text, and variables are inset on x; layout keeps base x_offset.
@@ -657,7 +668,9 @@ def _build_board_content_items(
     from dbt_charts.core.render.sizing import compute_board_content_box
 
     box = compute_board_content_box(
-        title_height=title_height,
+        title_height=(
+            title_height + title_shift.body_dy if title_svg else title_height
+        ),
         text_height=text_height,
         variables_height=variables_height,
         inline_band_height=inline_header_height,
@@ -740,14 +753,14 @@ def _build_board_content_items(
             header_piece(
                 title_svg,
                 content_x,
-                y,
+                y + title_shift.title_dy,
                 title_authored_attrs,
                 title_height,
                 "title",
                 box.content_top,
             )
         )
-        y += title_height
+        y += title_height + title_shift.body_dy
         header_end = y
         # title → text: 0 gap (heading_margin_bottom_px IS the after-heading rhythm)
 
@@ -1160,6 +1173,7 @@ def render_board_svg(
             prose_width,
             resolved_style=resolved_style,
             text_style=resolved_style.text,
+            plan=board.prose_plan,
             allow_raw_html=board.html_policy == "trusted-raw",
             path="text",
             painted_canvas=painted_canvas,
@@ -1430,6 +1444,7 @@ def render_nested_board(
     render_cache: RenderCache,
     error_collector: list[Diagnostic] | None = None,
     painted_canvas: str | None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> tuple[str, float]:
     """Render a nested board.
 
@@ -1445,6 +1460,8 @@ def render_nested_board(
         painted_canvas: The parent's own painted canvas (see
             ``composite_over_canvas``) — this board's own fill composites
             over it to produce the canvas its own text and children paint on.
+        title_shift: Offsets from this board's cols row. The title moves down
+            ``title_dy`` and everything below it, layout included, ``body_dy``.
 
     Returns:
         (svg_string, actual_height) — actual_height is derived from rendered content.
@@ -1528,6 +1545,7 @@ def render_nested_board(
             prose_width,
             resolved_style=resolved_style,
             text_style=resolved_style.text,
+            plan=board.prose_plan,
             allow_raw_html=board.html_policy == "trusted-raw",
             path=source_path or None,
             painted_canvas=own_canvas,
@@ -1601,6 +1619,7 @@ def render_nested_board(
             if source_path and (title_svg or inline_header_svg or text_svg)
             else ""
         ),
+        title_shift=title_shift,
     )
 
     # Compute board dimensions from actual rendered content, floored at the pre-allocated

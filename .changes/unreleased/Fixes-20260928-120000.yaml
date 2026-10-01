@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct impact` and the dbt model-column check in `dct validate` now report a query as indeterminate instead of resolving columns against the wrong CTE when a parenthesized query body redeclares a CTE after a top-level `WITH`.'
-time: 2026-09-28T12:00:00.000000-07:00

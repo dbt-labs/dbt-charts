@@ -44,12 +44,15 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_KIND_MISMATCH,
     ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
     ERR_FORMAT_PREDEFINED_SHADOW,
+    ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED,
 )
 from dbt_charts.core.text.format_d3 import (
     D3_TIME_FORMAT_DIRECTIVES,
     PYTHON_STRFTIME_DIRECTIVES,
+    VEGA_SAFE_TIME_DIRECTIVES,
     find_unsupported_directive,
     is_time_format,
+    unsupported_time_directives,
 )
 from dbt_charts.core.text.predefined_formats import (
     ALL_PREDEFINED_NAMES,
@@ -184,6 +187,20 @@ def _iter_format_slots(
             )
 
 
+def _raise_if_unsupported_time_directives(spec: str, field_path: str) -> None:
+    unsupported = unsupported_time_directives(spec)
+    if unsupported:
+        raise CompilationError.from_code(
+            ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED,
+            spec=spec,
+            field_path=field_path,
+            directives=", ".join(f"%{letter}" for letter in unsupported),
+            available=", ".join(
+                f"%{letter}" for letter in sorted(VEGA_SAFE_TIME_DIRECTIVES)
+            ),
+        )
+
+
 def _validate_spec(
     value: str | FormatConfig,
     formats: dict[str, str],
@@ -246,6 +263,18 @@ def _validate_spec(
             )
         return
     if spec in formats:
+        # An alias is just another spelling of whatever slot it resolves
+        # in -- a Vega-painted `time_format: myalias` risks the identical
+        # measure-vs-paint divergence as authoring the directive inline, so
+        # the gate must run against the *resolved* target, not the alias
+        # name (which never matches `is_time_format` itself and would
+        # short-circuit past the check entirely). The alias's *definition*
+        # site (`style.formats.myalias: ...`) is validated separately with
+        # `vega_painted` at its default `False`, since the same alias is
+        # legitimately fine in a Python-painted slot (a table column).
+        target = formats[spec]
+        if time_format and vega_painted and is_time_format(target):
+            _raise_if_unsupported_time_directives(target, field_path)
         return
     if time_format and is_time_format(spec):
         # A directive neither d3-time-format nor portable_strftime implements
@@ -253,19 +282,25 @@ def _validate_spec(
         # an uncoded ValueError (ERR-INTERNAL, Python-painted slots) or a
         # literal, unrendered letter (Vega-painted slots).
         bad_directive = find_unsupported_directive(spec, _ACCEPTED_TIME_DIRECTIVES)
-        if bad_directive is None:
-            return
-        raise CompilationError.from_code(
-            ERR_FORMAT_INVALID,
-            spec=spec,
-            field_path=field_path,
-            kind_noun="date/time",
-            explanation=(
-                f"%{bad_directive} is not a strftime directive the engine "
-                "implements. Accepted directives: "
-                f"{', '.join('%' + d for d in sorted(_ACCEPTED_TIME_DIRECTIVES))}."
-            ),
-        )
+        if bad_directive is not None:
+            raise CompilationError.from_code(
+                ERR_FORMAT_INVALID,
+                spec=spec,
+                field_path=field_path,
+                kind_noun="date/time",
+                explanation=(
+                    f"%{bad_directive} is not a strftime directive the engine "
+                    "implements. Accepted directives: "
+                    f"{', '.join('%' + d for d in sorted(_ACCEPTED_TIME_DIRECTIVES))}."
+                ),
+            )
+        # Of the accepted directives, only a Vega-painted slot risks a
+        # measure-vs-paint divergence -- a table column or the footer
+        # timestamp renders through Python directly, so any directive
+        # portable_strftime itself accepts is fine there.
+        if vega_painted:
+            _raise_if_unsupported_time_directives(spec, field_path)
+        return
     try:
         _d3_parse(spec)
     except D3FormatError as e:

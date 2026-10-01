@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A board that dbt Charts migrates in memory no longer prints raw Python warnings to stderr. The notice is now a `WARN-SCHEMA-MIGRATED` warning whose message names the stale file (board, meta.yml, or `extends:` file), so `dct render --diagnostics-json` output stays parseable and the VS Code preview keeps its error summary. A failed `dct render` now reports its warnings next to the errors (honoring `--ignore-warning` and `--no-warnings`), and `dct validate --strict` fails on a board that needs migrating. Under `--diagnostics-json`, empty stdin, a bad `--ignore-warning` code (new `ERR-UNKNOWN-WARNING-CODE` and `ERR-IGNORE-ERROR-CODE`), and a per-board crash are JSON lines too.'
-time: 2026-09-30T12:00:00.000000-07:00

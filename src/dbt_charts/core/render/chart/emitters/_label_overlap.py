@@ -22,6 +22,7 @@ from dbt_charts.core.render.chart.time_unit_detect import (
     cadence_label_text,
     day_week_context,
     detect_time_unit,
+    enumerated_axis_values,
     is_label_opener,
     resolve_label_time_unit,
     resolve_temporal_label_visibility,
@@ -31,7 +32,7 @@ from dbt_charts.core.render.chart.type_inference import (
     infer_vega_type_from_data,
     is_utc_safe_ordinal_date,
 )
-from dbt_charts.core.text.case import apply_case
+from dbt_charts.core.text.category_label import category_label_text
 from dbt_charts.core.text.format_d3 import is_time_format, portable_strftime
 
 
@@ -435,14 +436,9 @@ def _pinned_angle_block_height(
         # band.
         elif authored_format is not None:
             values = _generic_temporal_labels(sorted(values), "", "", authored_format)
-    if font.case in ("upper", "lower"):
-        # Only these two CaseValues change what Vega actually paints wider —
-        # inject_axis_label_case (vl_field_maps.py) can only express upper/
-        # lower as a Vega label expression; every other CaseValue ("title",
-        # "sentence", "slug", "camel") is a render-side no-op, so measuring
-        # them transformed would disagree with the untransformed text Vega
-        # actually draws.
-        values = [apply_case(value, font.case) for value in values]
+    if axis.labels.expr is None:
+        label_format = axis.labels.format if raw_type != "temporal" else None
+        values = [category_label_text(v, label_format, font.case) for v in values]
     measurer = get_font_measurer(font.family)
     max_width = max(measurer.measure(value, font.size) for value in values)
     return _label_block_height(max_width, font.size, angle)
@@ -497,6 +493,7 @@ def _temporal_layout(
     chart_width: float,
     bucket_aligned_temporal: bool,
     edge_labels_flushed: bool,
+    continuous_temporal: bool,
 ) -> AxisLabelLayout:
     supported_time_units = BUCKETED_CALENDAR_UNITS | TIME_PART_UNITS
     encoding_time_unit = (
@@ -527,7 +524,34 @@ def _temporal_layout(
     )
     # An authored format overrides every vocabulary below — `cadence_label_text`.
     authored_format = authored_time_format(axis)
-    dates = [datetime.date.fromisoformat(value[:10]) for value in values]
+    # A continuous temporal scale spaces and ticks by calendar, not by row:
+    # quiet days with no row still take a band and can still open a month, so
+    # measure the span Vega draws. An ordinal axis has one band per row, and
+    # a month opener with no row there has nothing to label.
+    dates = (
+        [
+            datetime.date.fromisoformat(str(value)[:10])
+            for value in enumerated_axis_values(
+                values, encoding_time_unit, axis.fiscal_year_start_month
+            )
+        ]
+        if continuous_temporal and encoding_time_unit in BUCKETED_CALENDAR_UNITS
+        else [datetime.date.fromisoformat(value[:10]) for value in values]
+    )
+    month_openers = (
+        [
+            date
+            for date in dates
+            if is_label_opener(
+                date,
+                encoding_time_unit,
+                "yearmonth",
+                axis.fiscal_year_start_month,
+            )
+        ]
+        if encoding_time_unit in {"yearweek", "yearmonthdate"}
+        else []
+    )
     # The two sub-month branches below both model the stacked day/week shape
     # `_day_label` paints. An authored format replaces that shape with one row
     # of its own text, so neither branch describes the axis any more; fall
@@ -535,7 +559,10 @@ def _temporal_layout(
     if (
         encoding_time_unit in {"yearweek", "yearmonthdate"}
         and axis.labels.time_unit in (None, "auto")
-        and bucket_aligned_temporal
+        and (
+            bucket_aligned_temporal
+            or (continuous_temporal and encoding_time_unit == "yearmonthdate")
+        )
         and authored_format is None
     ):
         candidates = (
@@ -558,18 +585,13 @@ def _temporal_layout(
                     dates, encoding_time_unit, candidate
                 )
                 return AxisLabelLayout(
-                    "allow", 0.0, visibility, indices[0], candidate, font.size
+                    "allow",
+                    0.0,
+                    visibility,
+                    indices[0],
+                    candidate,
+                    font.size,
                 )
-        month_openers = [
-            date
-            for date in dates
-            if is_label_opener(
-                date,
-                encoding_time_unit,
-                "yearmonth",
-                axis.fiscal_year_start_month,
-            )
-        ]
         if len(month_openers) >= 2:
             format_time_unit = "yearmonth"
         else:
@@ -629,16 +651,6 @@ def _temporal_layout(
             native_widths = [
                 measurer.measure(value, font.size) + gap for value in native_labels
             ]
-        month_openers = [
-            date
-            for date in dates
-            if is_label_opener(
-                date,
-                encoding_time_unit,
-                "yearmonth",
-                axis.fiscal_year_start_month,
-            )
-        ]
         native_fits = _fits_flat(native_widths, usable_width)
         if len(month_openers) < 2 or (
             encoding_time_unit == "yearmonthdate" and native_fits
@@ -707,16 +719,7 @@ def _temporal_layout(
             "allow", 0.0, visibility, anchor_index, promoted_format_time_unit, font.size
         )
 
-    visible_dates = [
-        date
-        for date in dates
-        if is_label_opener(
-            date,
-            encoding_time_unit,
-            visibility,
-            axis.fiscal_year_start_month,
-        )
-    ]
+    visible_dates = [dates[i] for i in visible_indices]
     directive: Literal["allow", "parity"] = "allow"
     narrowed_further = False
     if overlap.skip and visibility == "year":
@@ -819,6 +822,7 @@ def resolve_axis_x_overlap(
     is_horizontal_bar: bool = False,
     bucket_aligned_temporal: bool = True,
     edge_labels_flushed: bool,
+    continuous_temporal: bool,
     chart_width: float,
     domain_values: list[Any] | None = None,
     resolved_time_unit: DetectedTimeUnit | _Unresolved = _UNRESOLVED_GRAIN,
@@ -887,6 +891,7 @@ def resolve_axis_x_overlap(
                 chart_width,
                 bucket_aligned_temporal,
                 edge_labels_flushed,
+                continuous_temporal,
             ),
             overlap,
         )
@@ -894,6 +899,8 @@ def resolve_axis_x_overlap(
     font = axis.labels.font
     measurer = get_font_measurer(font.family)
     labels = _ordinal_label_texts(values, authored_time_format(axis))
+    if axis.labels.expr is None:
+        labels = [category_label_text(v, axis.labels.format, font.case) for v in labels]
     widths = [measurer.measure(value, font.size) for value in labels]
     gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(" ", font.size)
     widths = [width + gap for width in widths]

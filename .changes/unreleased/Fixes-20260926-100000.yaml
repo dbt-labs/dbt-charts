@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'The README''s one-sentence prompt for coding agents now gives the install and `dct skills intro` as two separate commands and asks the agent to follow what the intro prints, so each command gets its own approval and the agent acts on the skill it reads.'
-time: 2026-09-26T10:00:00.000000-07:00

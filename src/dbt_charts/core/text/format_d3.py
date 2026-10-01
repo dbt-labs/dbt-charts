@@ -27,8 +27,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import date, datetime
-from typing import Literal
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from typing import Any, Literal
 
 from d3_format import format as _d3_format, parse as _d3_parse
 from d3_format.errors import D3FormatError
@@ -63,20 +64,62 @@ def is_time_format(fmt: str) -> bool:
     return bool(_TIME_FORMAT_RE.search(fmt.replace("%%", "")))
 
 
+# Spellings Python's float() accepts and JS's unary + does not, so the two
+# disagree on whether a tick paints as a number: digit separators, and the
+# non-finite words (JS reads "nan"/"inf" as NaN and paints exactly that).
+_NOT_JS_NUMERIC_RE = re.compile(r"_|^[+-]?(nan|inf(inity)?)$", re.IGNORECASE)
+
+
+def reads_as_number(value: Any) -> bool:  # type-state: explicit_any — a raw query cell
+    """Whether d3 can read this tick value as a number, i.e. JS ``+value``.
+
+    Neither of the two numeric predicates this repo already has answers this
+    question, which is why it is a third one:
+
+    - ``coerce_numeric_cell`` is the shared *null* rule ("no color, no domain
+      contribution") and excludes ``bool``, a contract this question does not
+      share — d3 reads ``+true`` as ``1`` and paints ``0``/``1`` over a boolean
+      dimension rather than NaN.
+    - ``is_vega_numeric_value`` (``core/utils.py``) is the "what VL type is
+      this column" rule and deliberately rejects numeric *strings*. d3
+      coerces those, so rejecting them here would refuse a column that
+      formats perfectly.
+
+    Do not consolidate this into either of them: each rejection above is a
+    board that renders today. Lives here (not ``type_inference.py``, the
+    render-layer module that originated it) so a leaf ``core/text/`` caller
+    — e.g. ``category_label_text`` — can reuse it without a render import.
+    """
+    if isinstance(value, (int, float, Decimal)):
+        return True
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return True  # JS reads +"" and +" " as 0
+        if _NOT_JS_NUMERIC_RE.search(text):
+            return False
+        try:
+            float(text)
+        except ValueError:
+            return False
+        return True
+    return False
+
+
 # Every strftime directive letter portable_strftime actually paints (native
-# strftime letters, plus the nine CRT-unsupported ones _DIRECTIVE_COMPUTERS
+# strftime letters, plus the twelve CRT-unsupported ones _DIRECTIVE_COMPUTERS
 # substitutes in Python first). Padding modifiers (-, _, 0) between % and the
 # letter are accepted but don't change which letters are valid. `E`/`O` are
-# POSIX locale modifiers, not directives in their own right, and `q` has no
-# computer below -- none of the three belong here.
+# POSIX locale modifiers, not directives in their own right -- neither
+# belongs here.
 PYTHON_STRFTIME_DIRECTIVES: frozenset[str] = frozenset(
-    "aAbBcCdDefFgGhHIjklmMnpPrRsSTuUVwWxXyYzZ"
+    "aAbBcCdDefFgGhHIjklLmMnpPqQrRsSTuUVwWxXyYzZ"
 )
 
 # Directive letters d3-time-format implements. Vega paints a time_format,
 # axis-label, or tooltip spec by sending it straight to d3-time-format, never
-# through portable_strftime, so a directive here compiles even where Python's
-# set above doesn't cover it (%L, %q, %Q).
+# through portable_strftime, so these are the letters a Vega-painted slot can
+# legitimately author.
 D3_TIME_FORMAT_DIRECTIVES: frozenset[str] = frozenset("aAbBcdefgGHIjLmMpqQsSuUVwWxXyYZ")
 
 # Matches a % directive sequence: optional padding modifier + letter.
@@ -110,7 +153,7 @@ def find_unsupported_directive(
 # render more than one padded value or none at all, so stripping padding from
 # their combined output would mangle it (e.g. "00:00:00" -> ":00:00" for
 # %-T) — those must reach strftime unmodified.
-_PADDED_NUMERIC_DIRECTIVES = frozenset("CdeGHIjklmMSuUVwWyY")
+_PADDED_NUMERIC_DIRECTIVES = frozenset("CdeGHIjklLmMqQSuUVwWyY")
 
 
 def _century(d: date) -> str:
@@ -167,6 +210,35 @@ def _week_monday_first(d: date) -> str:
     return f"{(days_since_jan1 - days_to_first_monday) // 7 + 1:02d}"
 
 
+def _quarter(d: date) -> str:
+    return str((d.month - 1) // 3 + 1)
+
+
+def _milliseconds(d: date | datetime) -> str:
+    ms = d.microsecond // 1000 if isinstance(d, datetime) else 0
+    return f"{ms:03d}"
+
+
+_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _epoch_millis(d: date | datetime) -> str:
+    # A naive datetime (or a plain date) is the same "already UTC" convention
+    # table_support.py documents for its own strftime callers -- Vega's
+    # utcFormat has no concept of a naive instant, so ours must pick the one
+    # reading that makes measurement match paint.
+    dt = d if isinstance(d, datetime) else datetime(d.year, d.month, d.day)
+    dt = (
+        dt.replace(tzinfo=timezone.utc)
+        if dt.tzinfo is None
+        else dt.astimezone(timezone.utc)
+    )
+    delta = dt - _EPOCH_UTC
+    return str(
+        (delta.days * 86_400 + delta.seconds) * 1000 + delta.microseconds // 1000
+    )
+
+
 # %G/%V/%u each call date.isocalendar() independently rather than sharing one
 # cached call, but since isocalendar() is a pure function of the date, that
 # can't introduce drift between them.
@@ -177,6 +249,9 @@ _DIRECTIVE_COMPUTERS: dict[str, Callable[[date | datetime], str]] = {
     "j": _day_of_year,
     "k": _hour_24_space_padded,
     "l": _hour_12_space_padded,
+    "L": _milliseconds,
+    "q": _quarter,
+    "Q": _epoch_millis,
     "u": _iso_weekday,
     "V": _iso_week,
     "W": _week_monday_first,
@@ -190,9 +265,40 @@ _DIRECTIVE_COMPUTERS: dict[str, Callable[[date | datetime], str]] = {
 # modified) is decided in `_substitute`, not by the regex.
 _TIME_DIRECTIVE_RE = re.compile(r"%%|%([-_0])?([A-Za-z])")
 
+# The d3-time-format directive alphabet portable_strftime renders byte-
+# identical to Vega's utcFormat, bare and under every padding modifier --
+# enforced, not just asserted: ``test_format_d3_vega_parity.py`` probes real
+# Vega (``vl_convert``) for this exact set x every modifier and fails if one
+# drifts, so this comment cannot go stale the way an unverified claim did
+# before (``%_L``, bare ``%f``/``%g``, all silently wrong here at one point).
+# The excluded real d3 directives are %c/%x/%X (locale composites: Python
+# renders them through the host's C-locale strftime, not d3's en-US
+# "%x, %X"), %Z (empty on a naive datetime, unlike d3's "+0000"), and %s
+# (Python's %s silently uses the host's local timezone rather than a true
+# UTC epoch count). %f and %g are real d3 directives whose modifier forms
+# Python renders differently. Every remaining letter
+# is not d3-time-format grammar at all -- Vega paints the literal letter
+# while Python's strftime may compute an unrelated value (or, on Windows,
+# raise).
+VEGA_SAFE_TIME_DIRECTIVES = frozenset("aAbBdeGHIjLmMpqQSuUVwWyY")
+
+
+def unsupported_time_directives(fmt: str) -> list[str]:
+    """Directive letters in ``fmt`` outside ``VEGA_SAFE_TIME_DIRECTIVES``,
+    sorted and de-duplicated. Empty when every directive Vega would paint
+    from ``fmt`` matches what ``portable_strftime`` measures.
+    """
+    return sorted(
+        {
+            letter
+            for _, letter in _TIME_DIRECTIVE_RE.findall(fmt)
+            if letter and letter not in VEGA_SAFE_TIME_DIRECTIVES
+        }
+    )
+
 
 def _apply_padding_modifiers(d: date | datetime, fmt: str) -> str:
-    """Resolve `-`/`_`/`0` padding modifiers and the nine CRT-unsupported
+    """Resolve `-`/`_`/`0` padding modifiers and the twelve CRT-unsupported
     directives (bare or modified) in ``fmt`` to plain text.
 
     Every other directive (including `%%` and modified non-numeric
@@ -234,10 +340,11 @@ def portable_strftime(d: date | datetime, fmt: str) -> str:
     and six of them (``%e %G %j %u %V %W``) are themselves glibc/BSD
     extensions — both are directives glibc and macOS's libc implement but
     Windows' CRT does not, so ``datetime.strftime`` raises
-    ``ValueError: Invalid format string`` there. Substituting the affected
-    directives with their computed value before delegating the rest of the
-    spec to strftime sidesteps the host libc entirely, so the result is
-    identical on every platform.
+    ``ValueError: Invalid format string`` there. `%L`/`%Q`/`%q` are d3-only
+    directives Windows' CRT (and glibc/macOS) never implement at all.
+    Substituting the affected directives with their computed value before
+    delegating the rest of the spec to strftime sidesteps the host libc
+    entirely, so the result is identical on every platform.
     """
     return d.strftime(_apply_padding_modifiers(d, fmt))
 
@@ -357,6 +464,23 @@ def is_d3_si_spec(spec: str) -> bool:
         return _is_si_spec(spec)
     except D3FormatError:
         return False
+
+
+def is_d3_fixed_decimal_spec(spec: str) -> bool:
+    """True when spec is fixed-point d3 grammar ('f' or '%') that prints at
+    least one decimal place. Never raises on a compile-accepted non-d3 spec.
+
+    ``is_d3_si_spec``'s sibling, with the same totality contract for the same
+    reason. A zero-precision spec (``integer``, ``percent_whole``) has no
+    decimals to over-print, so it answers False.
+    """
+    if spec in PREDEFINED_NUMBER_NAMES or is_time_format(spec):
+        return False
+    try:
+        parsed = _d3_parse(spec)
+    except D3FormatError:
+        return False
+    return parsed.type in ("f", "%") and bool(parsed.precision)
 
 
 def round_aware_spec(format_spec: str) -> str:

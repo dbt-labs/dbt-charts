@@ -54,7 +54,7 @@ from dbt_charts.core.compile.resolve.style.scale import (
     build_resolved_scale,
 )
 from dbt_charts.core.font_measure import compose_decimal_units
-from dbt_charts.core.text.format_d3 import is_d3_si_spec
+from dbt_charts.core.text.format_d3 import is_d3_fixed_decimal_spec, is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import (
     build_decimal_pad_table,
     non_compacting_tick_format,
@@ -468,6 +468,18 @@ def build_resolved_axis(
         if axis.labels.format is not None and is_d3_si_spec(axis.labels.format)
         else None
     )
+    # A decimal-carrying fixed-point house format (percent, currency_full, ...)
+    # never compacts, so the ruler never reaches it; the tick_label branch
+    # below derives its tick precision from the ladder step instead of
+    # painting the preset's data precision (10.0%). A raw d3 spec stays
+    # literal.
+    _fixed_decimal_format = (
+        axis.labels.format
+        if format_is_house
+        and axis.labels.format is not None
+        and is_d3_fixed_decimal_spec(axis.labels.format)
+        else None
+    )
     ruler = _build_ruler(
         tick_values=tick_values,
         si_format=_si_format,
@@ -479,10 +491,11 @@ def build_resolved_axis(
         chart_id=chart_id,
     )
 
-    # tick_label.format is ruler's non-compacting sibling: a ladder that
-    # does NOT compact (raw_scale is None) gets its ticks rewritten by
-    # `non_compacting_tick_format`, unless the format is a literal d3 spec
-    # (not house, per format_is_house) or the ladder has too little to derive
+    # tick_label.format is ruler's non-compacting sibling: an SI ladder that
+    # does NOT compact (raw_scale is None), or any decimal-carrying fixed-point
+    # house format, gets its ticks rewritten by `non_compacting_tick_format`,
+    # unless the format is a literal d3 spec (not house, per format_is_house)
+    # or the ladder has too little to derive
     # a step from. Recomputed here rather than read off `ruler is None`
     # because `ruler` can also be None for reasons (non-SI format,
     # authored label.expr) this branch independently re-checks.
@@ -493,9 +506,16 @@ def build_resolved_axis(
     # d3 sub-unit prefixes read as the house magnitude suffixes -- 0.3 as
     # "300m", milli misread as million.
     raw_scale = shared_scale_for_ladder(list(tick_values)) if tick_values else None
+    step_format = (
+        _fixed_decimal_format
+        if _fixed_decimal_format is not None
+        else _si_format
+        if raw_scale is None
+        else None
+    )
     tick_label: ResolvedTickLabel | None = None
     if (
-        raw_scale is None
+        step_format is not None
         and format_is_house
         and len(tick_values) >= 2
         # `nice_tick_values` rounds each rung to 10 places, so a near-degenerate
@@ -503,7 +523,6 @@ def build_resolved_axis(
         # are equal: two ticks, no step. Same exit as a ladder too short to
         # carry one.
         and tick_values[0] != tick_values[1]
-        and _si_format is not None
         and label.expr is None
     ):
         step = abs(tick_values[1] - tick_values[0])
@@ -511,11 +530,9 @@ def build_resolved_axis(
         # Integer place-value alignment is automatic under text-anchor=end;
         # fractional/decimal tail alignment is not -- decimal_pad_table
         # (baked below when column_forming) compensates for that.
-        # _si_format is the same resolved string as axis.labels.format here (the
-        # guard is `_si_format is not None`), narrowed to str for the caller.
         # A None precision is the scientific register: no fixed decimal
         # position, so no pad table.
-        prefix, digit_spec, precision = non_compacting_tick_format(_si_format, step)
+        prefix, digit_spec, precision = non_compacting_tick_format(step_format, step)
         anchor_at_start_plain = None
         if prefix and column_forming:
             # anchor_at_start_plain stays None below when not column_forming

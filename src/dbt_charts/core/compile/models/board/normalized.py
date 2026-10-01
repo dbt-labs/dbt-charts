@@ -4,9 +4,10 @@ Stage: NORMALIZE (Output) / EXECUTE and RENDER (Input)
 Purpose: Layout, Board, and core document types.
 """
 
+from dataclasses import dataclass
 from typing import Any, Literal, TypeGuard
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -33,6 +34,42 @@ VariableValues = dict[str, Any]
 # ============================================================================
 # UNIFIED LAYOUT
 # ============================================================================
+
+
+class TitleShift(BaseModel):
+    """How far a cols-row item's title and body sit below their own natural edges.
+
+    Set by the sizing pass from the titles actually present in the item's row, so
+    every titled item's first baseline and body top land on the row's shared ones.
+    Zero means the item renders exactly as it would alone.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    title_dy: float = Field(
+        default=0.0, description="Px the title's first baseline moves down."
+    )
+    body_dy: float = Field(
+        default=0.0,
+        description="Px everything below the title moves down (always >= title_dy).",
+    )
+
+    @model_validator(mode="after")
+    def _body_follows_title(self) -> "TitleShift":
+        if self.body_dy < self.title_dy - 1e-9:
+            raise ValueError(
+                f"body_dy ({self.body_dy}) must not be less than title_dy "
+                f"({self.title_dy}): the body cannot sit above its title"
+            )
+        return self
+
+    @property
+    def is_zero(self) -> bool:
+        """True when the item renders unshifted."""
+        return self.title_dy == 0.0 and self.body_dy == 0.0
+
+
+NO_TITLE_SHIFT = TitleShift()
 
 
 class LayoutItem(BaseModel):
@@ -120,6 +157,10 @@ class LayoutItem(BaseModel):
     height: float = Field(default=0.0, description="Pixel height; set by sizing.")
     x: float = Field(default=0.0, description="X position in pixels; set by sizing.")
     y: float = Field(default=0.0, description="Y position in pixels; set by sizing.")
+    title_shift: TitleShift = Field(
+        default=NO_TITLE_SHIFT,
+        description="Title and body offsets within a cols row; set by sizing.",
+    )
 
     # Layout visibility — evaluated at render time; None means always visible.
     # Accepts: bool (static), str (variable name or Jinja expression),
@@ -256,6 +297,28 @@ class Layout(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+@dataclass(frozen=True)
+class ProsePlan:
+    """The card grid one run of stacked prose sits on.
+
+    Chosen once for the whole run, above both the sizing pass and the render
+    pass, so every block in the run takes its columns from the same spans and
+    both passes draw the same geometry.
+
+    Attributes:
+        grid: Spans the run's grid divides the board into: 3 (thirds), 2
+            (halves) or 1 (the whole board, when even a half is unreadable).
+        board_width: Content width of the board whose card grid the spans are,
+            in pixels. A block's own container width is measured against it.
+        gap: Gap between the cards of a ``cols:`` row at the run's position, in
+            pixels; the spans are separated by it.
+    """
+
+    grid: Literal[1, 2, 3]
+    board_width: float
+    gap: float
+
+
 # ============================================================================
 # COMPILED BOARD
 # ============================================================================
@@ -385,6 +448,14 @@ class Board(BaseModel):
     # Board-scoped resolved style — authoritative, produced at compile time.
     resolved_style: ResolvedStyle = Field(
         description="Board-scoped resolved style; produced at compile time. Render reads this instead of re-merging patches.",
+    )
+    prose_plan: ProsePlan | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Card grid this board's own text sits on; set by the board-level "
+            "prose pass before sizing. None on a board with no text."
+        ),
     )
     # Board-scoped chart style cascade context — compiler working state
     # (sparse axis overlays, patch sentinels, palette/role token bindings, the

@@ -4,6 +4,8 @@ from xml.etree import ElementTree
 
 from dbt_charts.core.compile.config import get_theme_style
 
+from .._prose_plan import card_plan
+
 
 def _svg_text_content(svg: str) -> str:
     return "".join(ElementTree.fromstring(svg).itertext())
@@ -26,6 +28,7 @@ text: "{{ segment }}"
         resolved_style=resolve_style(get_theme_style()),
         text_style=resolve_style(get_theme_style()).text,
         painted_canvas=None,
+        plan=card_plan(resolve_style(get_theme_style()), 500.0),
     )
 
     text_content = _svg_text_content(svg)

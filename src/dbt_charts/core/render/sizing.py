@@ -100,6 +100,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     Board,
     Layout,
     LayoutItem,
+    ProsePlan,
     VariableValues,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -695,6 +696,7 @@ def get_markdown_text_height(
     *,
     text_style: TextStyle,
     resolved_style: ResolvedStyle,
+    plan: ProsePlan | None,
     allow_raw_html: bool = False,
 ) -> float:
     """Height the renderer will draw this markdown at, measured by rendering it.
@@ -713,7 +715,7 @@ def get_markdown_text_height(
 
     resolved_content = resolve_jinja_template(text, variable_values or {}, strict=False)
     _, height = render_prose_svg(
-        resolved_content, width, text_style, resolved_style, allow_raw_html
+        resolved_content, width, text_style, resolved_style, plan, allow_raw_html
     )
     return height
 
@@ -1943,6 +1945,7 @@ def nested_board_sizing_context(
             variable_values,
             text_style=nested_board.resolved_style.text,
             resolved_style=nrs,
+            plan=nested_board.prose_plan,
             allow_raw_html=nested_board.html_policy == "trusted-raw",
         )
         if nested_board.text

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -15,7 +14,7 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.vl_field_maps import emit_resolved_scale_vl
-from dbt_charts.core.text.format_d3 import is_time_format
+from dbt_charts.core.text.format_d3 import is_time_format, reads_as_number
 from dbt_charts.core.utils import CellValue, vega_infers_quantitative
 
 if TYPE_CHECKING:
@@ -428,46 +427,6 @@ HEATMAP_FORMAT_REMEDY = (
 )
 
 
-# Spellings Python's float() accepts and JS's unary + does not, so the two
-# disagree on whether a tick paints as a number: digit separators, and the
-# non-finite words (JS reads "nan"/"inf" as NaN and paints exactly that).
-_NOT_JS_NUMERIC_RE = re.compile(r"_|^[+-]?(nan|inf(inity)?)$", re.IGNORECASE)
-
-
-def _reads_as_number(value: Any) -> bool:  # type-state: explicit_any — a raw query cell
-    """Whether d3 can read this tick value as a number, i.e. JS ``+value``.
-
-    Neither of the two numeric predicates this repo already has answers this
-    question, which is why it is a third one:
-
-    - ``coerce_numeric_cell`` is the shared *null* rule ("no color, no domain
-      contribution") and excludes ``bool``, a contract this question does not
-      share — d3 reads ``+true`` as ``1`` and paints ``0``/``1`` over a boolean
-      dimension rather than NaN.
-    - ``is_vega_numeric_value`` (``core/utils.py``) is the "what VL type is
-      this column" rule and deliberately rejects numeric *strings*. d3
-      coerces those, so rejecting them here would refuse a column that
-      formats perfectly.
-
-    Do not consolidate this into either of them: each rejection above is a
-    board that renders today.
-    """
-    if isinstance(value, (int, float, Decimal)):
-        return True
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return True  # JS reads +"" and +" " as 0
-        if _NOT_JS_NUMERIC_RE.search(text):
-            return False
-        try:
-            float(text)
-        except ValueError:
-            return False
-        return True
-    return False
-
-
 def gate_label_format(
     fmt: str | None,
     field: str,
@@ -488,7 +447,7 @@ def gate_label_format(
     its own drop/NaN/literal-text behavior. Two failures share the code:
 
     - **A band scale** (``vl_type`` nominal or ordinal) whose **ticks d3
-      cannot read as numbers**, per ``_reads_as_number`` — JS ``+value``,
+      cannot read as numbers**, per ``reads_as_number`` — JS ``+value``,
       the only rule that decides whether a tick paints as a number or as
       ``NaN``. Numeric categories (``stage_id: 1, 2, 3``), numeric strings
       and booleans all format cleanly, so they stay legal: a misaddressed
@@ -535,7 +494,7 @@ def gate_label_format(
     # absent from all of them — is missing evidence, not a category axis,
     # and `all` answers True for it.
     if vl_type != "temporal" and all(
-        _reads_as_number(value)
+        reads_as_number(value)
         for value in (row.get(field) for row in data)
         if value is not None
     ):
@@ -698,7 +657,8 @@ def build_cartesian_x_encoding(
     # bucket for a coarser label cadence (e.g. a month label over weekly
     # data) can be absent from `data` even though the domain spans it.
     # Enumerate the full calendar span instead so no represented period
-    # silently loses its label tick.
+    # silently loses its label tick. `_temporal_layout` also measures the
+    # enumerated span on a continuous scale.
     label_cadence_values = (
         enumerated_axis_values(all_axis_values, time_unit, fiscal_year_start_month)
         if vl_type == "temporal"

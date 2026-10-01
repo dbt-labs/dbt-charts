@@ -12,9 +12,13 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.render.column_packer import (
-    MAX_COLUMN_COUNT,
+    MIN_CHARS,
+    MIN_LINES_PER_COLUMN,
     PackUnit,
+    choose_grid,
+    columns_earned,
     pack_columns,
+    span_boxes,
 )
 
 
@@ -185,117 +189,94 @@ class TestColumnOrder:
             )
 
 
-class TestViableColumnCount:
-    def test_short_passages_stay_single_column(self) -> None:
-        """Two columns of one line each is not a two-column layout."""
-        from dbt_charts.core.render.column_packer import viable_column_count
+class TestSpanBoxes:
+    """A span is the box card i of an N-up ``cols:`` row occupies."""
 
-        for lines in (1, 2, 4, 5):
-            assert viable_column_count(lines, requested=3) == 1
+    @pytest.mark.parametrize("grid", [2, 3])
+    def test_a_full_width_container_offers_the_whole_grid(self, grid: int) -> None:
+        boxes = span_boxes(1128.0, 1128.0, grid, 20.0)
+        assert len(boxes) == grid
+        assert boxes[0][0] == 0.0
+        end = boxes[-1][0] + boxes[-1][1]
+        assert end == pytest.approx(1128.0)
+        for (x, w), (next_x, _) in zip(boxes, boxes[1:], strict=False):
+            assert next_x - (x + w) == pytest.approx(20.0)
 
-    def test_count_steps_down_until_columns_are_worth_having(self) -> None:
-        from dbt_charts.core.render.column_packer import (
-            MIN_LINES_PER_COLUMN,
-            viable_column_count,
-        )
+    def test_a_two_thirds_card_offers_two_thirds_on_the_board_grid(self) -> None:
+        third = (1128.0 - 40.0) / 3
+        boxes = span_boxes(2 * third + 20.0, 1128.0, 3, 20.0)
+        assert [x for x, _ in boxes] == pytest.approx([0.0, third + 20.0])
+        assert [w for _, w in boxes] == pytest.approx([third, third])
 
-        assert viable_column_count(2 * MIN_LINES_PER_COLUMN, requested=3) == 2
-        assert viable_column_count(3 * MIN_LINES_PER_COLUMN, requested=3) == 3
+    def test_a_card_a_hair_short_of_two_spans_never_overflows(self) -> None:
+        third = (1128.0 - 40.0) / 3
+        container = 2 * third + 20.0 - 6.7
+        boxes = span_boxes(container, 1128.0, 3, 20.0)
+        assert len(boxes) == 2
+        assert boxes[1][0] + boxes[1][1] == pytest.approx(container)
 
-    def test_never_exceeds_what_the_width_allows(self) -> None:
-        from dbt_charts.core.render.column_packer import viable_column_count
-
-        assert viable_column_count(500, requested=2) == 2
-
-
-class TestMeasurePlan:
-    """Choosing the column count from the measure, not from ceil()."""
-
-    def test_every_common_board_width_lands_in_the_readable_band(self) -> None:
-        from dbt_charts.core.render.column_packer import plan_measure
-
-        for slot in (1096.0, 900.0, 840.0, 672.0, 533.0, 460.0, 400.0, 320.0):
-            plan = plan_measure(
-                slot, char_width=6.146, gutter=29.4, ceiling=MAX_COLUMN_COUNT
-            )
-            chars = plan.column_width / 6.146
-            assert 45 <= chars <= 80, f"{slot}px slot delivered {chars:.0f} chars"
-
-    def test_it_fills_the_slot_whenever_an_integer_count_can(self) -> None:
-        from dbt_charts.core.render.column_packer import plan_measure
-
-        plan = plan_measure(
-            1096.0, char_width=6.146, gutter=29.4, ceiling=MAX_COLUMN_COUNT
-        )
-        used = plan.columns * plan.column_width + (plan.columns - 1) * 29.4
-        assert used == pytest.approx(1096.0, abs=1.0)
-        assert plan.column_width * plan.columns > 1000, "the slot is filled"
-
-    def test_multi_column_aims_at_66_not_at_the_cap(self) -> None:
-        """Sustained reading accumulates return sweeps, so columns stay tight."""
-        from dbt_charts.core.render.column_packer import plan_measure
-
-        plan = plan_measure(
-            1096.0, char_width=6.146, gutter=29.4, ceiling=MAX_COLUMN_COUNT
-        )
-        assert plan.columns > 1
-        assert plan.column_width / 6.146 < 75
-
-    def test_a_single_column_may_run_to_the_wcag_cap(self) -> None:
-        """One column of few lines makes few sweeps, so it keeps more slot.
-
-        533px gives 87 characters at one column and 41 at two -- neither is
-        readable, so the measure wins. Capping at 80 rather than 66 leaves 41px
-        of white space instead of 127px.
-        """
-        from dbt_charts.core.render.column_packer import plan_measure
-
-        plan = plan_measure(
-            533.0, char_width=6.146, gutter=29.4, ceiling=MAX_COLUMN_COUNT
-        )
-        assert plan.columns == 1
-        assert plan.column_width < 533.0, "the remainder stays white space"
-        assert plan.column_width / 6.146 == pytest.approx(80.0, abs=1.0)
-
-    def test_a_short_passage_gets_a_narrow_column_not_the_whole_slot(self) -> None:
-        """Length is no excuse for line length -- 1096px is 178 characters."""
-        from dbt_charts.core.render.column_packer import plan_measure
-
-        plan = plan_measure(1096.0, char_width=6.146, gutter=29.4, ceiling=1)
-        assert plan.columns == 1
-        assert plan.column_width / 6.146 == pytest.approx(80.0, abs=1.0)
-        assert plan.column_width < 1096.0, "the remainder stays white space"
-
-    def test_ceiling_never_raises_the_count(self) -> None:
-        from dbt_charts.core.render.column_packer import plan_measure
-
-        wide = plan_measure(
-            1096.0, char_width=6.146, gutter=29.4, ceiling=MAX_COLUMN_COUNT
-        )
-        held = plan_measure(1096.0, char_width=6.146, gutter=29.4, ceiling=2)
-        assert held.columns <= 2 < wide.columns + 1
+    @pytest.mark.parametrize("fraction", [0.25, 1 / 3, 0.5])
+    def test_a_card_under_two_spans_offers_itself_whole(self, fraction: float) -> None:
+        container = 1128.0 * fraction
+        assert span_boxes(container, 1128.0, 3, 20.0) == ((0.0, container),)
 
 
-class TestNarrowSlots:
-    """A planned column must fit the slot it was planned for.
+class TestChooseGrid:
+    CHAR_PX = 6.49  # 14px body serif
 
-    Below the readable floor there is no good answer: the slot cannot hold a
-    45-character line. The slot still wins, because a cramped line is a bad
-    result and a clipped one is a destroyed result -- the containing SVG is a
-    viewport, so anything wider than the slot is silently cut off, not spilled.
-    """
+    def test_thirds_is_the_default(self) -> None:
+        assert choose_grid(1128.0, 20.0, 16.0, self.CHAR_PX) == 3
 
-    @pytest.mark.parametrize(
-        "slot", [600.0, 500.0, 400.0, 340.0, 300.0, 260.0, 220.0, 180.0, 120.0]
-    )
-    def test_planned_columns_never_exceed_the_slot(self, slot: float) -> None:
-        from dbt_charts.core.render.column_packer import plan_measure
+    def test_halves_when_a_third_holds_fewer_than_the_floor(self) -> None:
+        third_content = (900.0 - 2 * 20.0) / 3 - 2 * 16.0
+        assert third_content / self.CHAR_PX < MIN_CHARS
+        assert choose_grid(900.0, 20.0, 16.0, self.CHAR_PX) == 2
 
-        plan = plan_measure(
-            slot, char_width=6.494, gutter=29.4, ceiling=MAX_COLUMN_COUNT
-        )
-        used = plan.columns * plan.column_width + (plan.columns - 1) * 29.4
-        assert used <= slot + 0.5, (
-            f"{slot:.0f}px slot planned {plan.columns} column(s) of "
-            f"{plan.column_width:.0f}px -- text would be clipped, not wrapped"
-        )
+    def test_one_up_when_a_half_is_under_the_floor(self) -> None:
+        half_content = (600.0 - 20.0) / 2 - 2 * 16.0
+        assert half_content / self.CHAR_PX < MIN_CHARS
+        assert choose_grid(600.0, 20.0, 16.0, self.CHAR_PX) == 1
+
+    def test_larger_body_type_flips_a_wide_board_to_halves(self) -> None:
+        assert choose_grid(1128.0, 20.0, 16.0, 7.4) == 2
+
+
+class TestOneUpGrid:
+    def test_a_one_up_grid_offers_the_container_whole(self) -> None:
+        assert span_boxes(568.0, 568.0, 1, 20.0) == ((0.0, 568.0),)
+
+    def test_a_card_on_a_one_up_grid_is_whole_too(self) -> None:
+        assert span_boxes(300.0, 568.0, 1, 20.0) == ((0.0, 300.0),)
+
+
+class TestColumnsEarned:
+    def test_a_short_passage_is_one_column(self) -> None:
+        for lines in (0, 1, 2, MIN_LINES_PER_COLUMN * 2 - 1):
+            assert columns_earned(lines, spans=3) == 1
+
+    def test_each_extra_column_must_earn_the_line_floor(self) -> None:
+        assert columns_earned(2 * MIN_LINES_PER_COLUMN, spans=3) == 2
+        assert columns_earned(3 * MIN_LINES_PER_COLUMN, spans=3) == 3
+
+    def test_spans_bound_the_count(self) -> None:
+        assert columns_earned(500, spans=2) == 2
+        assert columns_earned(500, spans=1) == 1
+
+
+class TestSpanBoxesAtTheDefaultGap:
+    """A row of cards with no gap still holds every span at any board width."""
+
+    @pytest.mark.parametrize("grid", [2, 3])
+    def test_a_full_width_container_offers_the_whole_grid_at_any_width(
+        self, grid: int
+    ) -> None:
+        for tenths in range(3000, 24000, 7):
+            width = tenths / 10
+            assert len(span_boxes(width, width, grid, 0.0)) == grid, width
+
+    def test_a_card_a_pixel_short_of_two_spans_keeps_both(self) -> None:
+        boxes = span_boxes(751.5, 1128.0, 3, 0.0)
+        assert len(boxes) == 2
+
+    def test_a_card_under_two_spans_is_not_rounded_up(self) -> None:
+        assert len(span_boxes(1128.0 * 0.5, 1128.0, 3, 0.0)) == 1

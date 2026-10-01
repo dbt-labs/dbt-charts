@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.text.case import apply_case
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.board.normalized import TitleShift
     from dbt_charts.core.compile.models.style.theme import PaddingStyle
+    from dbt_charts.core.render.chart.artifacts import RenderArtifact
     from dbt_charts.core.text.case import CaseValue
 
 
@@ -81,6 +84,52 @@ def bump_padding_right(
     raw_right = padding.get("right", 0)  # type-state: silent_fallback — additive read
     padding["right"] = float(raw_right) + add_px
     spec["padding"] = padding
+
+
+# Vega's own default for title.offset, which applies when neither the title block
+# nor config.title sets one.
+VEGA_TITLE_OFFSET = 4
+# Vega's own default for the gap between a title and its subtitle, which applies
+# because the spec never sets subtitlePadding; the subtitle line is as tall as
+# its font size because the spec never sets subtitleLineHeight either.
+VEGA_SUBTITLE_PADDING = 3
+
+
+def shift_chart_title(spec: VLDict, shift: TitleShift) -> None:
+    """Move a titled spec's plot down ``body_dy`` and its title down about ``title_dy``.
+
+    Top padding moves title and plot together. ``title.offset`` then moves the
+    plot alone, by whole pixels (``round(body_dy - title_dy)``) with the padding
+    carrying the remainder, so the plot lands exactly ``body_dy`` lower and the
+    baseline within half a pixel of ``title_dy``. An hconcat spec (endpoint-label
+    rail) holds its title on pane 0; the panes share a y scale and align by view,
+    so the rail follows. The spec must already carry a title block and 4-key
+    padding.
+    """
+    if shift.is_zero:
+        return
+    gap_extra = round(shift.body_dy - shift.title_dy)
+    bump_padding_top(spec, shift.body_dy - gap_extra)
+    title_block = (spec["hconcat"][0] if "hconcat" in spec else spec)["title"]
+    if "offset" in title_block:
+        current_offset = title_block["offset"]
+    else:
+        # A null themed offset means Vega's own default.
+        current_offset = spec["config"]["title"].get(
+            "offset", VEGA_TITLE_OFFSET
+        )  # type-state: silent_fallback — a null themed offset is Vega's own default
+    title_block["offset"] = current_offset + gap_extra
+
+
+def shift_artifact_title(artifact: RenderArtifact, shift: TitleShift) -> None:
+    """``shift_chart_title`` for a ``vega_spec`` artifact.
+
+    An ``svg`` artifact came from a hand-drawn family that shifted its own title.
+    """
+    if shift.is_zero or artifact.kind != "vega_spec":
+        return
+    assert isinstance(artifact.payload, dict)
+    shift_chart_title(artifact.payload, shift)
 
 
 def set_chart_title(

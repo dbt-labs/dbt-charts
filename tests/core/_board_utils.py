@@ -106,6 +106,7 @@ def apply_static_layout(board: Board) -> Board:
     excluded; that belongs to calculate_data_aware_layout.
     """
     from dbt_charts.core.compile.sizing import get_board_gap
+    from dbt_charts.core.render.prose import plan_board_prose
     from dbt_charts.core.render.sizing import (
         calculate_layout_height,
         calculate_layout_items,
@@ -118,6 +119,7 @@ def apply_static_layout(board: Board) -> Board:
     card_gap = float(_theme.frame.card_gap) if board.card_gap else 0.0
     gap = get_board_gap(board)
     variable_values = board.variable_defaults
+    plan_board_prose(board, variable_values, content_width)
     container_height = calculate_layout_height(
         board.layout,
         card_gap,

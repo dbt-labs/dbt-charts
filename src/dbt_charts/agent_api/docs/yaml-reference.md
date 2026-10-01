@@ -2029,9 +2029,8 @@ Authored overlay for TextColumnStyle. Author overrides for the column layout of 
 | Field | Type | Description |
 |-------|------|-------------|
 | `max_number` | int | Ceiling on the column count. The renderer may choose fewer when there is not enough text to fill them. None = no ceiling. |
-| `gap` | float | Gap between columns in pixels. None = 1.5 line boxes, so the gutter scales with the type it separates. |
 | `rule` | [ColumnRuleStyle](#columnrulestyle) | Vertical rule drawn between columns. None = no rule. |
-| `max_chars` | int | Column width as a character count, overriding the shipped measure. The width is used exactly and the column count follows from it. |
+| `max_chars` | int | Column text width as a character count, overriding the shipped measure. It caps the text inside a column; a column narrower than this limits the text first. |
 
 <a id="textcodestyle"></a>
 ## TextCodeStyle

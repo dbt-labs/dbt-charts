@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -186,7 +187,9 @@ def test_align_cols_heights_corrects_height_for_support_table_chart():
         _align_cols_heights([item_dt, item_tall], TARGET_HEIGHT, render_ctx)
 
     # After alignment, dt_bar's cached height must not exceed target_height + small tolerance.
-    _, cached_height = render_ctx.render_cache[("dt_bar", ITEM_WIDTH, TARGET_HEIGHT)]
+    _, cached_height = render_ctx.render_cache[
+        ("dt_bar", ITEM_WIDTH, TARGET_HEIGHT, NO_TITLE_SHIFT)
+    ]
 
     assert cached_height <= TARGET_HEIGHT + 5, (
         f"_align_cols_heights cached inflated height {cached_height:.1f}px for a "

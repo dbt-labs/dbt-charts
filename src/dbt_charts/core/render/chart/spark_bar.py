@@ -10,6 +10,10 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
 
 from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.compile.models.board.normalized import (
+    NO_TITLE_SHIFT,
+    TitleShift,
+)
 from dbt_charts.core.compile.models.chart.authored import ChartSort
 from dbt_charts.core.compile.models.chart.resolved.spark_bar import (
     ResolvedSparkBarChart,
@@ -280,6 +284,7 @@ def render_spark_bar_svg(
     is_placeholder: bool = False,
     *,
     board_style: ResolvedStyle,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> str:
     """Render a ``ResolvedSparkBarChart`` as SVG.
 
@@ -316,6 +321,7 @@ def render_spark_bar_svg(
         is_placeholder=is_placeholder,
         data=data,
         title_font=chart.style.title_font,
+        title_shift=title_shift,
     )
 
 
@@ -334,7 +340,8 @@ def _render_spark_bar_svg_core(
     height: float | None,
     is_placeholder: bool,
     data: list[dict[str, Any]],
-    title_font: ResolvedFontStyle | None = None,
+    title_font: ResolvedFontStyle | None,
+    title_shift: TitleShift,
 ) -> str:
     """Render spark bar SVG from family-agnostic primitives.
 
@@ -416,8 +423,12 @@ def _render_spark_bar_svg_core(
     title_height = spark_rendering.title_height if title else 0
     if title and subtitle_text:
         title_height += chart_title_size
-    chart_height = height or (
-        title_height + (num_bars * row_height) + spark_config.bar.padding
+    # The shifted title band is added to the card: bars keep their own room.
+    title_height += title_shift.body_dy
+    chart_height = (
+        height + title_shift.body_dy
+        if height
+        else title_height + (num_bars * row_height) + spark_config.bar.padding
     )
 
     # Calculate bar area dimensions
@@ -459,7 +470,7 @@ def _render_spark_bar_svg_core(
         )
         escaped_title = html_module.escape(_display_title)
         svg_parts.append(
-            f'<text x="0" y="{escape_attr(spark_rendering.title_baseline_y)}" '
+            f'<text x="0" y="{escape_attr(spark_rendering.title_baseline_y + title_shift.title_dy)}" '
             f'font-size="{escape_attr(chart_title_size)}" font-weight="{escape_attr(chart_title_weight)}" fill="{escape_attr(text_color)}" '
             f'font-family="{escape_attr(chart_title_family)}"{authored_kind_attr("title")}>'
             f"{escaped_title}</text>",
@@ -471,7 +482,7 @@ def _render_spark_bar_svg_core(
             )
             subtitle_font_size = float(spark_config.subtitle.font.size)
             svg_parts.append(
-                f'<text x="0" y="{escape_attr(spark_rendering.title_baseline_y + chart_title_size)}" '
+                f'<text x="0" y="{escape_attr(spark_rendering.title_baseline_y + title_shift.title_dy + chart_title_size)}" '
                 f'font-size="{escape_attr(subtitle_font_size)}" fill="{escape_attr(secondary_color)}" '
                 f'font-family="{escape_attr(spark_config.font.family)}"{authored_kind_attr("subtitle")}>'
                 f"{escaped_subtitle}</text>",

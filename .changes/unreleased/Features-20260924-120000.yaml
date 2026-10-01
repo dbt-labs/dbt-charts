@@ -1,3 +1,0 @@
-kind: Features
-body: "Bars, and bar layers on any bar, line, area, or scatter chart, take a y_start column, so a bar can run from a value other than zero, which draws floating bars, dumbbells, ranged dots, waterfalls, candlesticks, and gantts."
-time: 2026-09-24T12:00:00.000000-07:00

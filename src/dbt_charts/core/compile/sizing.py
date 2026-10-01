@@ -41,6 +41,22 @@ def get_board_gap(board: Board) -> float:
     return 0.0
 
 
+def card_row_gap(board: Board, *, is_root: bool, card_gap: float) -> float:
+    """Gap between the cards of the layout ``board`` places, as the sizing pass pitches them.
+
+    A root ``cols``/``grid`` layout takes its own type's gap (``get_board_gap``); any other
+    board is sized from its ``style.gap`` (0 when unset). Either way
+    ``card_gap`` is added. Prose that must land on card edges asks here instead
+    of restating either rule.
+    """
+    # Only the root layouts that pitch cards themselves; a tab panel is a board
+    # of its own, sized like a nested one.
+    if is_root and board.layout.type in ("cols", "grid"):
+        return get_board_gap(board) + card_gap
+    own = board.resolved_style.gap
+    return (own if own is not None else 0.0) + card_gap
+
+
 def parse_dimension(value: str | None, total: float) -> float | None:
     """Parse a dimension string to pixels.
 

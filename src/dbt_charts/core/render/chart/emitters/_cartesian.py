@@ -35,6 +35,7 @@ from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
+from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisStyle,
@@ -87,6 +88,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.utils import normalize_scalar_for_json
 from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.category_label import category_label_text
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SPECS,
     PredefinedNumberFormat,
@@ -489,6 +491,7 @@ def resolve_cartesian_x(
         label_usable_ratio,
         bucket_aligned_temporal=curve == "step",
         edge_labels_flushed=temporal_edge_labels_flushed(vl_type, ax),
+        continuous_temporal=vl_type == "temporal",
         chart_width=chart_width - reserved_width,
         domain_values=domain_values,
         resolved_time_unit=resolved_x_time_unit,
@@ -1133,6 +1136,11 @@ def facet_extra_axis_width_px(
     }
     if not domain:
         return 0.0
+    if labels.expr is None:
+        # Only scatter's nominal y gets the case expr; heatmap and horizontal
+        # bar category axes paint uncased.
+        case = font.case if isinstance(chart, ResolvedScatterChart) else None
+        domain = {category_label_text(v, labels.format, case) for v in domain}
     measurer = get_font_measurer(font.family)
     label_limit = (
         labels.max_width if labels.max_width is not None else DEFAULT_VL_LABEL_LIMIT

@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'Hovering a bar, heatmap cell or arc now dims the other marks, and line and area hover markers draw, for charts inside a `cols:` row. Before, the hover runtime read its background from a rect that charts transparent over their board never paint, so only the tooltip showed.'
-time: 2026-10-02T15:00:00.000000+00:00

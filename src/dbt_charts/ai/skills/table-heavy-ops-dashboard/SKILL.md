@@ -110,6 +110,7 @@ See `examples/table-heavy-ops-dashboard.yml` — five incident rows with
 priority, status, revenue impact, and owner columns. Inline data, no warehouse
 needed.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

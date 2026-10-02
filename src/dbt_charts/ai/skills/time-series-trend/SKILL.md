@@ -133,6 +133,7 @@ it is on the same unsupported list as `REGR_SLOPE`.
 See `examples/time-series-trend.yml` — six months of revenue, no warehouse
 needed. Add `variables:` + `WHERE` clause when connecting to a live source.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

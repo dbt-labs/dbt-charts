@@ -1,0 +1,3 @@
+kind: Features
+body: 'A new render warning, WARN-SERIES-LABELS-REPEAT-WORD, fires when every series label of a multi-series chart repeats the same leading or trailing word -- e.g. "Documents Created" / "Documents Completed" instead of "Created" / "Completed". Its fix says to drop the word when the title or `y_label` already states it, and to move it there otherwise.'
+time: 2026-09-20T09:18:37.519039-07:00

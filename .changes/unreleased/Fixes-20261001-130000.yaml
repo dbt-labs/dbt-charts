@@ -1,0 +1,3 @@
+kind: Fixes
+body: The zero baseline rule on a `y_start` bar no longer announces NaN to screen readers. It inherited the bar's span channel from the chart, so its `aria-label` named a missing `y_start` value. The rule now announces only its own zero value.
+time: 2026-10-01T13:00:00.000000-07:00

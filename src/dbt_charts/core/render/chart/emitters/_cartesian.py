@@ -1384,6 +1384,11 @@ def full_rule_at(
     ``axis`` controls orientation:
     - ``"x"``: rule at x=value spanning full y height (horizontal bar zero line)
     - ``"y"``: rule at y=value spanning full x width (vertical zero line)
+
+    The rule's own datum has no span column, so the perpendicular span
+    channel is explicitly nulled (VL's "None disables an inherited channel")
+    — otherwise a ``y_start`` bar's ``y2``/``x2`` field leaks into the rule and
+    its auto aria description announces ``NaN``.
     """
     datum_channel = axis  # "x" or "y" — the channel carrying the datum value
     datum_enc: VLDict = {"datum": value, "type": "quantitative"}
@@ -1392,6 +1397,7 @@ def full_rule_at(
             "x": datum_enc,
             "y": {"value": 0},
             "y2": {"value": "height"},
+            "x2": None,
             "color": {"value": color},
             "yOffset": {"value": 0},
         }
@@ -1400,6 +1406,7 @@ def full_rule_at(
             "y": datum_enc,
             "x": {"value": 0},
             "x2": {"value": "width"},
+            "y2": None,
             "color": {"value": color},
             "xOffset": {"value": 0},
         }

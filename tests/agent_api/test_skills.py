@@ -21,6 +21,7 @@ from dbt_charts.agent_api.skills import (
     search_skills,
     skill_description,
 )
+from dbt_charts.ai.tools import TOOL_HANDLERS
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import raise_on_dashboard_failure
 from dbt_charts.core.compile import compile_file
@@ -59,6 +60,10 @@ _LEFTOVER_MACRO_RE = re.compile(r"\{\{\s*s_[a-z][a-z0-9_]*\s*\}\}")
 # If this fires, a marker was malformed/misspelled so _IF_TOOL_RE didn't match it
 # and the literal token leaked into the agent's context window.
 _LEFTOVER_IF_TOOL_RE = re.compile(r"\{\{#if_tool|\{\{/if_tool\}\}")
+# Captures the NAME out of a raw (pre-render) {{#if_tool NAME}} opening marker,
+# for the marker-name validity check below -- distinct from _LEFTOVER_IF_TOOL_RE,
+# which only detects an unconsumed marker in a RENDERED body.
+_IF_TOOL_MARKER_RE = re.compile(r"\{\{#if_tool\s+([a-z][a-z0-9_]*)\s*\}\}")
 
 
 class TestListSkills:
@@ -91,6 +96,28 @@ class TestGetSkill:
         skill = get_skill("board-build")
         assert skill.directory is not None, "a builtin skill is file-backed"
         assert (skill.directory / "SKILL.md").is_file()
+
+    def test_available_tools_gates_if_tool_blocks_in_the_body(self) -> None:
+        """Same contract as `load_shared_prompt`'s `available_tools` — a caller
+        that holds less than the full tool surface (the MCP connector) must be
+        able to gate `{{#if_tool}}` blocks the same way."""
+        without_write = get_skill(
+            "board-build",
+            available_tools={"render_board", "validate_board"},
+        )
+        assert "write_file" not in without_write.body
+
+        with_write = get_skill(
+            "board-build",
+            available_tools={"render_board", "validate_board", "write_file"},
+        )
+        assert "write_file" in with_write.body
+
+    def test_available_tools_none_keeps_every_block(self) -> None:
+        """The default (`None`) is the CLI/full-chat/stdio-MCP contract — no
+        gating, every `{{#if_tool}}` block survives."""
+        skill = get_skill("board-build")
+        assert "write_file" in skill.body
 
 
 class TestSkillDirectoryTyping:
@@ -714,6 +741,20 @@ def test_packaged_skill_renders_cleanly_on_each_surface(
         f"{skill_name} ({surface}): residual {{{{#if_tool}}}} markers {if_tool_leftovers!r} — "
         "a marker was malformed/misspelled/unclosed so _IF_TOOL_RE did not consume it; "
         "the literal token would leak into the agent's context window."
+    )
+
+
+@pytest.mark.parametrize("skill_path", SKILL_MARKDOWN, ids=lambda p: str(p))
+def test_every_if_tool_marker_names_a_real_tool(skill_path: Path) -> None:
+    """A misspelled `{{#if_tool NAME}}` marker silently drops its block on every
+    surface that gates (the MCP connector) and survives everywhere else, so no
+    rendered-body test notices. Check the raw markdown instead."""
+    text = skill_path.read_text(encoding="utf-8")
+    names = _IF_TOOL_MARKER_RE.findall(text)
+    stale = [name for name in names if name not in TOOL_HANDLERS]
+    assert not stale, (
+        f"{skill_path}: {{{{#if_tool}}}} marker(s) {stale!r} name no real "
+        f"tool (TOOL_HANDLERS has {sorted(TOOL_HANDLERS)!r})"
     )
 
 

@@ -98,6 +98,7 @@ See `examples/kpi-row.yml` for the full 3-KPI worked example.
 See `examples/kpi-row.yml` — three KPIs (Revenue, Orders, Avg Order Value)
 from one inline-data query. Compiles and renders without a warehouse.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

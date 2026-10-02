@@ -34,7 +34,7 @@ Error occurs
 
 ## YAML Validation Errors
 
-These come from `{{ s_validate_board }}`. The error message tells you exactly what's wrong.
+{{#if_tool validate_board}}These come from `{{ s_validate_board }}`. {{/if_tool}}The error message tells you exactly what's wrong.
 
 ### "must have at least one layout"
 
@@ -133,7 +133,7 @@ Use `options.static` for static values, not `options.values`.
 
 ## SQL Execution Errors
 
-These come from `{{ s_query_board }}`, `{{ s_execute_query }}`, or `{{ s_render_board }}`.
+These come from any of: {{#if_tool query_board}}`{{ s_query_board }}`, {{/if_tool}}`{{ s_execute_query }}`, `{{ s_render_board }}`.
 
 ### "table does not exist"
 
@@ -192,22 +192,22 @@ These show up when `{{ s_render_board }}` produces unexpected visual results.
   2-pixel column rather than a 2:1 share
 - Too many items in one `cols:` array = each gets too narrow
 
-## Full Error Reference
+{{#if_tool docs}}## Full Error Reference
 
 {{ s_error_reference_footer }} Check it when an error's code (`ERR-*`) isn't
 covered by a pattern below.
 
-## Debugging Checklist
+{{/if_tool}}## Debugging Checklist
 
 When stuck, work through this in order:
 
 1. **Read the full error** — not just the first line. The details matter.
-2. **Validate the YAML** — `{{ s_validate_board }}` catches structural issues before SQL runs.
-3. **Test one query at a time** — `{{ s_query_board }}` for saved board queries, `{{ s_execute_query }}` for raw SQL.
-4. **Check column names** — INFORMATION_SCHEMA via `{{ s_execute_query }}`, or `{{ s_describe_query }}` to verify.
-5. **Simplify** — Remove charts until you find the one that's broken.
-6. **Re-render** — Confirm the fix visually.
-7. **Restore metadata** — Ensure `notes` fields remain populated for queries/charts/layout sections and variables.
+{{#if_tool validate_board}}1. **Validate the YAML** — `{{ s_validate_board }}` catches structural issues before SQL runs.
+{{/if_tool}}1. **Test one query at a time** — {{#if_tool query_board}}`{{ s_query_board }}` for saved board queries, {{/if_tool}}`{{ s_execute_query }}` for raw SQL.
+1. **Check column names** — INFORMATION_SCHEMA via `{{ s_execute_query }}`{{#if_tool describe_query}}, or `{{ s_describe_query }}` to verify{{/if_tool}}.
+1. **Simplify** — Remove charts until you find the one that's broken.
+1. **Re-render** — Confirm the fix visually.
+1. **Restore metadata** — Ensure `notes` fields remain populated for queries/charts/layout sections and variables.
 
 ## Common Mistakes
 

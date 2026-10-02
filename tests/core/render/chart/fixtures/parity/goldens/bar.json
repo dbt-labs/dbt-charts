@@ -192,6 +192,7 @@
           "datum": 0,
           "type": "quantitative"
         },
+        "x2": null,
         "y": {
           "value": 0
         },

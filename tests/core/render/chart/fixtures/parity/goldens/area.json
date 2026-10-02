@@ -206,7 +206,8 @@
         "y": {
           "datum": 0,
           "type": "quantitative"
-        }
+        },
+        "y2": null
       },
       "mark": {
         "color": "#8A8C8F",

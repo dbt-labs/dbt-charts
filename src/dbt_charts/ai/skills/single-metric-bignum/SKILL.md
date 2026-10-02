@@ -87,6 +87,7 @@ See `examples/single-metric-bignum.yml` for the worked example.
 See `examples/single-metric-bignum.yml` — a hero MRR KPI with a +14.2%
 support row. Inline data, no warehouse required.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

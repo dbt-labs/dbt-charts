@@ -122,19 +122,25 @@ Most important information first, following Western reading pattern (top-left �
   *stacked* bar (a grouped bar keeps a legend); where it applies it hides the
   color legend, so `visible: false` there, not `legend:`, is what puts those
   series names back in a legend
+- **Series labels stay tight** — short, unique, clear. A word every series
+  shares describes the chart, not a series: say it once in the title or
+  `y_label` — `Created` / `Completed` under "Document Volume", not
+  `Documents Created` / `Documents Completed`. Keep a repeat only when a label
+  would be unclear without it. These labels come from the query — the column
+  alias for `y: [a, b]`, the column's own values for `color:`
 - **Maximize data-ink ratio** — every pixel should represent data
 
 **Never write a raw hex.** `color: "#4C78A8"` is the Vega default, not ours — it
 pins a color that stops answering to the theme. Author palette tokens
 (`category[1]`, `negative.solid`, `dbt-grays.muted`) — or a palette name where
-one is asked for (`palette: dbt-seq-blue`); `{{ s_docs_color }}` has the full table. Best of all, author no color and let the theme pick.
+one is asked for (`palette: dbt-seq-blue`).{{#if_tool docs}} `{{ s_docs_color }}` has the full table.{{/if_tool}} Best of all, author no color and let the theme pick.
 
 **"Same color = same meaning everywhere" is enforced for you, board-wide.**
 Once two or more charts color by the same field, dbt charts assigns each
 value one palette slot and every chart honors it — no per-chart matching
 needed. Pin a specific value to a specific slot under
-`style.charts.category_colors.<field>.values`; `{{ s_docs_charts }}` has the
-full syntax.
+`style.charts.category_colors.<field>.values`.{{#if_tool docs}} `{{ s_docs_charts }}` has the
+full syntax.{{/if_tool}}
 
 ### 6. Numeric Display
 
@@ -183,6 +189,7 @@ Before delivering:
 - [ ] Titles are informative ("Revenue by Region, Last 30 Days" not "Chart 1")
 - [ ] User's most important question answered at a glance
 - [ ] Query/chart/layout/variable `notes` metadata is filled for AI context
+- [ ] No word repeats across every series label — it lives once in the title
 
 ## Common Mistakes
 
@@ -195,6 +202,7 @@ Before delivering:
 | A hex literal in a color slot | Use a palette token — `category[1]`, `negative.solid`, `dbt-grays.muted` — so the theme still owns the color |
 | Generic titles | Titles should state what the chart answers |
 | Section title over every row | Drop it — labeled charts don't need a heading repeating them. Reserve titles for reports or a real scoping/mode boundary |
+| Every series label repeats a word (`Documents Created` / `Documents Completed`) | Say it once in the title or `y_label`; alias the query column for `y: [a, b]`, or shorten the `color:` column's values |
 | Scrolling dashboard | Reduce charts or split dashboards |
 
 ## Rationalizations to Resist

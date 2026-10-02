@@ -115,6 +115,7 @@ See `examples/drill-down-link.yml` — the source board: a bar chart with
 warehouse required. The target board is documented in the body above — author
 it as a separate YAML file in the same `charts/` directory.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

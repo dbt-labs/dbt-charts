@@ -2357,6 +2357,44 @@ WARN_SERIES_LABEL_TRUNCATED = REGISTRY.register(
     )
 )
 
+WARN_SERIES_LABELS_REPEAT_WORD = REGISTRY.register(
+    WarningCode(
+        code="WARN-SERIES-LABELS-REPEAT-WORD",
+        domain="render",
+        title="Every series label repeats the same word",
+        message_template=(
+            "Chart {chart_id!r}: every {authored_key!r} series label repeats "
+            "{repeated}: {labels}."
+        ),
+        fix_template=(
+            "{once} Tighter labels: {shortened}. Alias the query column for a "
+            "wide `y: [...]` chart (`SELECT ... AS created`), or shorten the "
+            "`color:` column's own values for a long-form chart. Keep the "
+            "repeat only when a label would be unclear without it."
+        ),
+        doc=(
+            "Fires when every series label of a multi-series chart shares a "
+            "leading or trailing word: 'Documents Created' / 'Documents "
+            "Completed' makes the reader parse 'Documents' once per label to "
+            "learn nothing, and widens the label rail. A word every series "
+            "shares describes the chart, not a series, so it belongs in the "
+            "title or y_label. The fix text adapts: when the title or y_label "
+            "already says the word it advises dropping it, otherwise moving "
+            "it there. `color:` values only fire when the title or y_label "
+            "already says the word, since a shared word in a data value is "
+            "often part of the name ('North America' / 'South America'). Words under three characters or without a letter (the "
+            "year of a date-valued column) are ignored, and nothing "
+            "fires when a tightened label would be under three characters "
+            "('Region A' -> 'A') or no longer distinct. Labels are the humanized measure names for a wide "
+            "`y: [a, b]` chart, or the distinct `color:` column values for a "
+            "long-form chart; a wide chart also authoring `color:` is "
+            "skipped, since its labels are '<value> - <measure>' composites. "
+            "The detector only reports -- it never rewrites a label itself."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_CHART_TITLE_TRUNCATED = REGISTRY.register(
     WarningCode(
         code="WARN-CHART-TITLE-TRUNCATED",

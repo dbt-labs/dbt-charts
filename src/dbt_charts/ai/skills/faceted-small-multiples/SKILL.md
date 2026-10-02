@@ -111,6 +111,7 @@ See `examples/faceted-small-multiples.yml` for the worked example (Option A).
 See `examples/faceted-small-multiples.yml` — monthly signups by channel using
 color encoding (Option A). Inline data, no warehouse required.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

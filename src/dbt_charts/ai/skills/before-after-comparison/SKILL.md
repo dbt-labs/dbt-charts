@@ -97,6 +97,7 @@ See `examples/before-after-comparison.yml` for the inline-data worked example.
 See `examples/before-after-comparison.yml` — four departments comparing
 current vs baseline spend. Inline data, no warehouse needed.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

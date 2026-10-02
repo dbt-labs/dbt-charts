@@ -74,6 +74,7 @@ See `examples/two-by-two-grid-overview.yml` for the inline-data worked example.
 See `examples/two-by-two-grid-overview.yml` — four charts (two line + two bar)
 arranged 2×2 from two inline-data queries. No warehouse required.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

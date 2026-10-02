@@ -18,20 +18,7 @@ from __future__ import annotations
 
 from dbt_charts.core.diagnostics import WARN_SERIES_LABEL_TRUNCATED, Diagnostic
 from dbt_charts.core.render.chart.series_label_truncation import SeriesLabelTruncation
-from dbt_charts.core.render.warnings.base import WarningContext
-
-# Labels quoted in full before the message falls back to a count. Enough to
-# recognize which values are the problem without pasting a whole column in.
-_MAX_LISTED = 3
-
-
-def _phrase(truncations: list[SeriesLabelTruncation]) -> str:
-    """Quote up to ``_MAX_LISTED`` cut labels, then count the remainder."""
-    names = [repr(t.series_name) for t in truncations]
-    if len(names) <= _MAX_LISTED:
-        return ", ".join(names)
-    remaining = len(names) - _MAX_LISTED
-    return f"{', '.join(names[:_MAX_LISTED])} and {remaining} more"
+from dbt_charts.core.render.warnings.base import WarningContext, listed_phrase
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
@@ -54,7 +41,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                         labels_noun="label" if len(cut) == 1 else "labels",
                         were="was" if len(cut) == 1 else "were",
                         authored_field=authored_field,
-                        labels=_phrase(cut),
+                        labels=listed_phrase([t.series_name for t in cut]),
                     ),
                     fix=WARN_SERIES_LABEL_TRUNCATED.fix_template.format(
                         authored_field=authored_field

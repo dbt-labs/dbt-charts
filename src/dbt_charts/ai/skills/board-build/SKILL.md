@@ -38,8 +38,8 @@ These rules hold on **every** surface, regardless of the default:
 {{#if_tool write_file}}- **A direct instruction is work to do, not work to hand back.** When the user asks you to save, copy, or edit a file, do it rather than describing how they could. A preview-first default governs work you were *not* asked to save. **Scope is your host's to define** — how many files one request may touch, and where you may write, is a permission question your host's instructions answer; follow them, and don't infer a broader license from this rule.
 {{/if_tool}}
 Build dashboards and reports **incrementally** — one chart at a time, validating at every step. Never one-shot an entire dashboard.
-
-{{#if_tool write_file}}### Duplicating a board
+{{#if_tool write_file}}
+### Duplicating a board
 
 Copy a dashboard with `{{ s_read_file }}` then `{{ s_write_file }}` to the new path — there is no copy verb and you don't need one. Never `extends:` (the copy stays coupled to the original) and never a rebuild from a render (inlines result data, loses the SQL).
 {{/if_tool}}
@@ -52,9 +52,8 @@ Copy a dashboard with `{{ s_read_file }}` then `{{ s_write_file }}` to the new p
 - **`{{ s_skill_review }}`** — self-review checklist run at delivery
 - **`{{ s_skill_troubleshooting }}`** — when something breaks
 
-{{ s_docs_discovery }}
-
-## Metadata Requirement
+{{#if_tool docs}}{{ s_docs_discovery }}
+{{/if_tool}}## Metadata Requirement
 
 Fill `notes` on every named object — agents downstream rely on it for context and
 search. It never renders:
@@ -156,11 +155,13 @@ Don't put a `title:` on every row. A section heading over already-labeled charts
 
 ### Step 6 — Save the Final YAML (when saving applies)
 
-Skip this step when you are previewing ephemerally — see "Previewing vs. saving a board" above; your host decides the default. On hosts that offer the user a Save control over the rendered preview (the Cloud chat, for example), saving an unprompted preview is the user's click — don't write that file yourself. {{#if_tool write_file}}That default does not apply when the user explicitly asked you to save, copy, duplicate, move, or rename something: an explicit ask is your authorization on every host, so carry it out. {{/if_tool}}When saving applies, write the YAML to a **new** board under `charts/` (never silently fold into an existing one) with your normal file-edit mechanism, then:
+Skip this step when you are previewing ephemerally — see "Previewing vs. saving a board" above; your host decides the default. On hosts that offer the user a Save control over the rendered preview (the Cloud chat, for example), saving an unprompted preview is the user's click — don't write that file yourself. {{#if_tool write_file}}That default does not apply when the user explicitly asked you to save, copy, duplicate, move, or rename something: an explicit ask is your authorization on every host, so carry it out. {{/if_tool}}When saving applies, write the YAML to a **new** board under `charts/` (never silently fold into an existing one) with your normal file-edit mechanism.
+
+{{#if_tool validate_board}}Then validate it:
 
 {{ s_validate_example }}
 
-Fix any errors `{{ s_validate_board }}` reports, then re-run until it passes.
+Fix any errors `{{ s_validate_board }}` reports, then re-run until it passes. {{/if_tool}}Confirm it renders with `{{ s_render_board }}` — a failed compile reports the same diagnostics validation would, so fix whatever it reports and re-render until it passes.
 
 **YAML style:** write block style — one key per line. Avoid JSON-like inline flow maps (`{ type: bar, x: month }`); they read and diff worse than indented blocks. Inline arrays (`y: [revenue, cost]`) are fine.
 
@@ -181,8 +182,8 @@ Pass concrete values via the `variables` parameter when testing. When the query 
 | Tool | When | What It Catches |
 |------|------|-----------------|
 | `{{ s_execute_query }}` | While drafting raw SQL | SQL errors, missing tables, wrong column names |
-| `{{ s_validate_board }}` | After every YAML edit | YAML schema errors, unknown fields, broken chart/query/layout references |
-{{#if_tool query_board}}| `{{ s_query_board }}` | After saving YAML with named queries | Actual named-query columns and sample rows |
+{{#if_tool validate_board}}| `{{ s_validate_board }}` | After every YAML edit | YAML schema errors, unknown fields, broken chart/query/layout references |
+{{/if_tool}}{{#if_tool query_board}}| `{{ s_query_board }}` | After saving YAML with named queries | Actual named-query columns and sample rows |
 {{/if_tool}}| `{{ s_render_board }}` | Before delivery | Query execution, render errors, layout issues, misleading visuals |
 
 These tools are fast. Use them after every change, not just at the end.
@@ -195,7 +196,7 @@ Run the review skill as the final step before declaring the board done:
 
 - {{ s_review_pointer }}
 
-It orchestrates structural ({{ s_validate_board }}) and visual (PNG + vision) passes and returns a ranked findings list. Fix each `blocker`, then re-run the review. Rendering and validation are cached — the loop is cheap.
+It orchestrates {{#if_tool validate_board}}structural ({{ s_validate_board }}) and {{/if_tool}}visual (PNG + vision) passes and returns a ranked findings list. Fix each `blocker`, then re-run the review. Rendering and validation are cached — the loop is cheap.
 
 ## Data Requirements Per Chart Type
 
@@ -330,8 +331,8 @@ Named presets (prefer these over raw D3 strings):
 | Building the entire dashboard in one pass | Build one chart at a time |
 | Writing SQL without checking column names | Check INFORMATION_SCHEMA via `{{ s_execute_query }}` first |
 | Hardcoding values during exploration | Use `{{ variables }}` from the start so the query cache survives |
-| Skipping validation between changes | `{{ s_validate_board }}` after every YAML edit |
-| Too many charts (>8) the user didn't ask for | Split into multiple dashboards |
+{{#if_tool validate_board}}| Skipping validation between changes | `{{ s_validate_board }}` after every YAML edit |
+{{/if_tool}}| Too many charts (>8) the user didn't ask for | Split into multiple dashboards |
 | Using chart-type names as keys in layout | `table:` or `bar:` as keys cause parse errors — use descriptive names like `revenue_table` |
 | Referencing query names in layout | Layout references charts, not queries — create a chart that wraps the query |
 | KPI query returns multiple rows | Use `SUM()`/`COUNT()`/`AVG()` to aggregate to 1 row |
@@ -339,7 +340,7 @@ Named presets (prefer these over raw D3 strings):
 | Putting `height:` or `aspect_ratio:` under `style:` | Move them to chart root: `charts.my_chart.height: 400` — `style:` is paint only |
 | Writing raw D3 format strings (`"$,.2s"`, `".1%"`) | Use a named preset (`currency`, `percent`) — clearer and theme-consistent |
 | Scaling values for display in SQL (`/1000`, `_k`/`_m` columns) | Query in natural units; compacting is the chart format's job (`currency`) |
-| Writing a raw hex in a color slot (`color: "#4C78A8"`) | Author a palette token — `{{ s_docs_color }}` — or no color at all, and let the theme pick |
+| Writing a raw hex in a color slot (`color: "#4C78A8"`) | Author a palette token{{#if_tool docs}} — `{{ s_docs_color }}` —{{/if_tool}} or no color at all, and let the theme pick |
 | Putting `format:` on a line/bar/area/scatter chart | Use `style.number_format:` for the measure — chart-root `format:` is rejected on cartesian chart families |
 | Putting a number preset on `style.axis_x.labels.format` | `axis_x` is the dimension channel regardless of chart orientation. It raises `ERR-LABEL-FORMAT-AXIS-MISMATCH` on a band scale whose ticks are not already numbers, and on a temporal x too (dates get no exemption). Format the measure (`style.number_format` / `style.axis_y.labels.format`) instead — a number preset belongs on the dimension only when its ticks are themselves numbers |
 | Using `percent_number` or `percent_number_delta` on a line/bar/area chart | These are KPI-only — use `percent` or `percent_delta` instead (input must be decimal fraction 0–1) |

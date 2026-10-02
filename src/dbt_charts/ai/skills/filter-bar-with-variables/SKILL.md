@@ -100,6 +100,7 @@ See `examples/filter-bar-with-variables.yml` — region dropdown and date
 pickers wired to a sales query. Uses inline data to compile without a
 warehouse; swap `columns/values` for `sql:` when connecting to a live source.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

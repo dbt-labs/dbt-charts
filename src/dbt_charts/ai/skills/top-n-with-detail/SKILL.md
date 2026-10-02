@@ -93,6 +93,7 @@ See `examples/top-n-with-detail.yml` for the inline-data worked example.
 See `examples/top-n-with-detail.yml` — top 5 products, bar + table, inline
 data. No warehouse required.
 
-## YAML Reference
+{{#if_tool docs}}## YAML Reference
 
 For syntax and field details: {{ s_yaml_reference_footer }}
+{{/if_tool}}

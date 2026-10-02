@@ -17,7 +17,7 @@ metadata:
 
 # Dashboard Structural Review
 
-Read the board's YAML, run `{{ s_validate_board }}`,
+Read the board's YAML{{#if_tool validate_board}}, run `{{ s_validate_board }}`,{{/if_tool}}
 then evaluate the design choices encoded in the YAML against a checklist.
 Produces a markdown findings list with severity tags. No rendering required —
 this is the cheap pass.
@@ -31,15 +31,15 @@ this is the cheap pass.
 
 ## When NOT to use
 
-- Schema validation alone — `{{ s_validate_board }}`
+{{#if_tool validate_board}}- Schema validation alone — `{{ s_validate_board }}`
   is the right tool, this skill calls it
-- Visual problems ("the legend is overlapping the title") — use
+{{/if_tool}}- Visual problems ("the legend is overlapping the title") — use
   `{{ s_skill_name_visual_review }}`
 - Comparing two versions of a board — use `looker-compare-diff` pattern instead
 
 ## Protocol
 
-1. **Validate.** Run `{{ s_validate_board }}`
+{{#if_tool validate_board}}1. **Validate.** Run `{{ s_validate_board }}`
    on the board path:
 
    {{ s_validate_example }}
@@ -47,9 +47,9 @@ this is the cheap pass.
    If validation reports errors, surface them and stop — there's nothing to
    review until the schema is valid.
 
-2. **Read the board YAML** with the agent's file-reading tool.
+{{/if_tool}}1. **Read the board YAML** with the agent's file-reading tool.
 
-3. **Evaluate against the checklist below.** For each finding, emit a row with
+1. **Evaluate against the checklist below.** For each finding, emit a row with
    severity, the YAML path or chart name, and a concrete fix.
 
 ## Checklist
@@ -184,8 +184,8 @@ can short-circuit.
 
 | Mistake | Fix |
 |---|---|
-| Returning "looks fine" without validating first | Always run `{{ s_validate_board }}` — if it fails, there's nothing to review |
-| Padding findings with `nit`-level noise | Cap at 5 findings total; promote the most severe |
+{{#if_tool validate_board}}| Returning "looks fine" without validating first | Always run `{{ s_validate_board }}` — if it fails, there's nothing to review |
+{{/if_tool}}| Padding findings with `nit`-level noise | Cap at 5 findings total; promote the most severe |
 | Emitting findings without a concrete fix | Every finding needs an actionable suggestion |
 | Inventing rules not in the checklist | Stay anchored to the checklist; if you discover a real gap, file a follow-up to extend the skill |
 

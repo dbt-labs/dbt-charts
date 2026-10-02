@@ -897,7 +897,22 @@ def project_connect(
     git_url: Annotated[
         str | None,
         typer.Option(
-            "--git-url", help="Connect a public GitHub URL, with no browser hop"
+            "--git-url", help="Connect a repository by HTTPS URL, with no browser hop"
+        ),
+    ] = None,
+    git_username: Annotated[
+        str | None,
+        typer.Option(
+            "--git-username",
+            help="Username for a private --git-url repo (blank: anonymous)",
+        ),
+    ] = None,
+    git_password: Annotated[
+        str | None,
+        typer.Option(
+            "--git-password",
+            help="Password or token for --git-username (blank: none)",
+            envvar="DCT_GIT_PASSWORD",
         ),
     ] = None,
     root: Annotated[
@@ -940,7 +955,8 @@ def project_connect(
 
     \b
     Two paths:
-      --git-url URL   fully headless; public GitHub repos only
+      --git-url URL   fully headless; private repos with --git-username and
+                      --git-password (or DCT_GIT_PASSWORD)
       (default)       prints a URL, waits for you to install the GitHub App
                       and pick the repo in the browser, then finishes here
 
@@ -961,6 +977,10 @@ def project_connect(
         raise typer.BadParameter(
             "--git-url has no browser pick to start or wait for",
             param_hint="--git-url",
+        )
+    if git_username and not git_url:
+        raise typer.BadParameter(
+            "--git-username applies only to --git-url", param_hint="--git-username"
         )
     if poll_interval < MIN_POLL_INTERVAL_SECONDS:
         raise typer.BadParameter(
@@ -1020,6 +1040,8 @@ def project_connect(
                     git_url,
                     trunk or "",
                     root or "",
+                    git_username=git_username or "",
+                    git_password=git_password or "",
                 )
             else:
                 project = _connect_through_github(

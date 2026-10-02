@@ -71,6 +71,7 @@ import dbt_charts.core.render.warnings.query_result_truncated as query_result_tr
 import dbt_charts.core.render.warnings.query_returned_zero_rows as query_returned_zero_rows
 import dbt_charts.core.render.warnings.redundant_encoding as redundant_encoding
 import dbt_charts.core.render.warnings.series_label_truncated as series_label_truncated
+import dbt_charts.core.render.warnings.series_labels_repeat_word as series_labels_repeat_word
 import dbt_charts.core.render.warnings.spark_label_truncated as spark_label_truncated
 import dbt_charts.core.render.warnings.static_pagination_capped as static_pagination_capped
 import dbt_charts.core.render.warnings.table_columns_overflow as table_columns_overflow
@@ -141,6 +142,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     query_result_truncated,
     query_returned_zero_rows,
     redundant_encoding,
+    series_labels_repeat_word,
     wide_measure_label_collision,
     y_encoding_mostly_null,
 ]

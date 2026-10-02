@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: 'Cloud rejects a `git_remote_url` that embeds `user:password@` credentials when creating a project. The project-create API, `CloudClient.create_project`, and `dct cloud project connect --git-url` (`--git-username`, `--git-password`) take the username and password separately instead; Cloud stores the password encrypted.'
+time: 2026-09-30T15:00:00.000000-04:00

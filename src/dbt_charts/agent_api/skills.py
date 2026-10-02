@@ -520,7 +520,9 @@ def _load_all() -> dict[str, Skill]:
     return skills
 
 
-def _rendered_body(skill: Skill, surface: SkillSurface) -> str:
+def _rendered_body(
+    skill: Skill, surface: SkillSurface, available_tools: set[str] | None = None
+) -> str:
     """Display body for ``surface``: macro-rendered for built-ins,
     disclaimer-framed + size-capped for project skills.
 
@@ -533,10 +535,15 @@ def _rendered_body(skill: Skill, surface: SkillSurface) -> str:
     authored one. An authored skill's body is never macro-rendered; instead
     ``_format_authored_skill_body`` wraps it here (not at parse time — see
     ``_searchable_body`` for why the un-wrapped form matters too).
+
+    ``available_tools`` only applies to the built-in path — an authored body
+    was never written against the ``{{#if_tool}}`` convention.
     """
     if skill.source != "builtin":
         return _format_authored_skill_body(skill.body, skill.name, skill.source)
-    return render_skill_body(skill.body, surface=surface)
+    return render_skill_body(
+        skill.body, surface=surface, available_tools=available_tools
+    )
 
 
 def _searchable_body(skill: Skill, surface: SkillSurface) -> str:
@@ -563,11 +570,13 @@ def _rendered_description(skill: Skill, surface: SkillSurface) -> str:
     return render_skill_body(skill.description, surface=surface)
 
 
-def _render_for_surface(skill: Skill, surface: SkillSurface) -> Skill:
+def _render_for_surface(
+    skill: Skill, surface: SkillSurface, available_tools: set[str] | None = None
+) -> Skill:
     """Return a shallow copy of ``skill`` with body + description + ``rendered_for`` set."""
     return skill.model_copy(
         update={
-            "body": _rendered_body(skill, surface),
+            "body": _rendered_body(skill, surface, available_tools=available_tools),
             "description": _rendered_description(skill, surface),
             "rendered_for": surface,
         }
@@ -650,6 +659,7 @@ def get_skill(
     skill_dirs: tuple[str, ...] = PROJECT_SKILLS_DIRS,
     extra_skill_files: tuple[str, ...] = (),
     extra_skills: tuple[Skill, ...] = (),
+    available_tools: set[str] | None = None,
 ) -> Skill:
     """Return one skill by name, rendered for ``surface``.
 
@@ -658,6 +668,14 @@ def get_skill(
     Raises ``SkillNotFound`` when the skill does not exist *or* is not exposed
     on the requested surface (e.g. ``mcp-setup`` is CLI-only and is
     invisible to tool-call agents).
+
+    ``available_tools``: same contract as ``dbt_charts.ai.prompts.load_shared_prompt``
+    — when given, ``{{#if_tool NAME}}`` blocks naming a tool outside this set
+    are dropped. ``None`` (the default) keeps every block, correct for a
+    caller holding the whole tool surface (CLI, full chat, the stdio MCP
+    server). A caller with a narrower tool set (the Cloud connector) must
+    pass its real one, or a served skill teaches a host to call a tool it
+    was never given.
     """
     merged, _errors = _merged_skills(
         project,
@@ -670,7 +688,7 @@ def get_skill(
         raise SkillNotFound(
             f"Unknown skill: {name!r}. Run `dct skills` to list available."
         )
-    return _render_for_surface(skill, surface)
+    return _render_for_surface(skill, surface, available_tools=available_tools)
 
 
 def skill_description(name: str, *, surface: SkillSurface = "tool") -> str:

@@ -1257,6 +1257,82 @@ class TestProjects:
         assert body["slug"] == "analytics"
         assert body["trunk_branch"] == "main"
 
+    def test_connect_with_a_git_url_sends_the_credentials(self, api: FakeApi) -> None:
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--org",
+                "acme-data",
+                "--git-url",
+                "https://github.com/acme/analytics",
+                "--git-username",
+                "alice",
+                "--git-password",
+                "s3cret-token",
+            ],
+        )
+        assert result.exit_code == 0, out(result)
+        body = api.body("POST", "/api/orgs/acme-data/projects")
+        assert body["git_username"] == "alice"
+        assert body["git_password"] == "s3cret-token"
+        assert "s3cret-token" not in out(result)
+
+    def test_connect_reads_the_password_from_the_environment(
+        self, api: FakeApi
+    ) -> None:
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--org",
+                "acme-data",
+                "--git-url",
+                "https://github.com/acme/analytics",
+                "--git-username",
+                "alice",
+            ],
+            env={"DCT_GIT_PASSWORD": "env-token"},
+        )
+        assert result.exit_code == 0, out(result)
+        body = api.body("POST", "/api/orgs/acme-data/projects")
+        assert body["git_password"] == "env-token"
+
+    def test_an_exported_password_does_not_block_the_browser_connect(
+        self, api: FakeApi
+    ) -> None:
+        result = runner.invoke(
+            app,
+            ["cloud", "project", "connect", "--org", "acme-data", "--start"],
+            env={"DCT_GIT_PASSWORD": "env-token"},
+        )
+        assert result.exit_code != 2, out(result)
+        assert "applies only to --git-url" not in out(result)
+
+    def test_connect_credentials_without_a_git_url_are_refused(
+        self, api: FakeApi
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--org",
+                "acme-data",
+                "--git-username",
+                "a",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "--git-url" in out(result)
+
     def test_connect_with_a_github_git_url_hints_the_app_flow_for_scaffold(
         self, api: FakeApi
     ) -> None:

@@ -184,6 +184,20 @@ class WarningContext(BaseModel):
     contrast_warnings: list[ContrastRecord] = []
 
 
+# Labels quoted in full before a message falls back to a count. Enough to
+# recognize which values are the problem without pasting a whole column in.
+_MAX_LISTED = 3
+
+
+def listed_phrase(items: list[str]) -> str:
+    """Quote up to ``_MAX_LISTED`` items, then count the remainder."""
+    quoted = [repr(item) for item in items]
+    if len(quoted) <= _MAX_LISTED:
+        return ", ".join(quoted)
+    remaining = len(quoted) - _MAX_LISTED
+    return f"{', '.join(quoted[:_MAX_LISTED])} and {remaining} more"
+
+
 @dataclass(frozen=True)
 class ChartSeries:
     """The authored key/field a series-count diagnostic should name so its

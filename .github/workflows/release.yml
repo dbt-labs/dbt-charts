@@ -64,8 +64,8 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          if ! git branch -r --contains "${{ github.sha }}" | grep -qE '^[[:space:]]+origin/main$'; then
-            echo "::error::Tag '$TAG' (commit ${{ github.sha }}) is not on origin/main."
+          if ! git branch -r --contains "${{ github.sha }}" | grep -qE '^[[:space:]]+origin/(main|release/.+)$'; then
+            echo "::error::Tag '$TAG' (commit ${{ github.sha }}) is not on origin/main or a release branch."
             exit 1
           fi
 

@@ -228,7 +228,7 @@ environment, so install the one you use as an extra:
 uv tool install "dbt-charts[bigquery]"  # or: pip install "dbt-charts[bigquery]"
                                          # also: athena, clickhouse, databricks,
                                          # postgresql, redshift, snowflake, spark,
-                                         # trino. DuckDB is built in.
+                                         # sqlserver, trino. DuckDB is built in.
 ```
 
 Unreleased `main` ships as an unsupported dev build on every export:

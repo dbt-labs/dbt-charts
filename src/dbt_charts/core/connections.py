@@ -34,8 +34,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts._install_hint import install_hint
+
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.source import BigQuerySourceConfig, SourceConfig
+    from dbt_charts.core.compile.models.source import (
+        BigQuerySourceConfig,
+        ResolvedSourceConfig,
+        SourceConfig,
+    )
     from dbt_charts.core.inspect.bulk_schema import SchemaTree
     from dbt_charts.core.inspect.relations import Relation
 
@@ -280,7 +286,7 @@ def import_bigquery(module_name: str) -> Any:
     except ImportError as err:
         raise ImportError(
             f"{module_name} is required for BigQuery connections. "
-            "Install the bigquery extra: pip install 'dbt-charts[bigquery]'"
+            f"Install the bigquery extra: {install_hint('bigquery')}"
         ) from err
 
 
@@ -377,7 +383,7 @@ def dataset_location(source_config: SourceConfig) -> str:
 
 
 def test_connection(
-    source_config: SourceConfig,
+    source_config: ResolvedSourceConfig,
 ) -> tuple[bool, WarehouseProbeError | None]:
     """Verify that source_config can reach the database.
 
@@ -396,7 +402,8 @@ def test_connection(
 
     Args:
         source_config: Typed SourceConfig instance (DuckDBSourceConfig,
-            PostgresSourceConfig, etc.).
+            PostgresSourceConfig, etc.), or the DbtTargetSourceConfig a
+            ``dbt_profile`` source expands to.
 
     Returns:
         (True, None) on success.

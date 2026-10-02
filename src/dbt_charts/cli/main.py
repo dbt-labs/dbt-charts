@@ -38,6 +38,7 @@ from dbt_charts.cli.commands import (
     cloud as cloud_cmd,
     describe as describe_cmd,
     docs as docs_cmd,
+    doctor as doctor_cmd,
     examples as examples_cmd,
     extension as extension_cmd,
     impact as impact_cmd,
@@ -794,7 +795,8 @@ def render(
         RenderFormat | None,
         typer.Option(
             help=(
-                "Output format: svg, html, png, pdf, terminal, json, text, "
+                "Output format: svg, html, png, pdf, thumbnail (an abstracted "
+                "SVG preview with no readable text), terminal, json, text, "
                 "text-data (text plus every query's rows, grouped by query, "
                 "row-capped), yaml, or data"
             )
@@ -1621,6 +1623,40 @@ def docs(
     )
 
 
+@app.command("doctor", rich_help_panel="Reference")
+def doctor(
+    project_dir: ProjectDirOption = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+    with_warehouse: Annotated[
+        bool,
+        typer.Option(
+            "--with-warehouse",
+            help="Also connect to each warehouse source with SELECT 1.",
+        ),
+    ] = False,
+) -> None:
+    """Diagnose why dct can't reach your data: install, project, adapters.
+
+    Reports how dbt Charts was installed, whether the project and profiles.yml
+    were found, and whether each source's warehouse adapter is installed. Paste
+    the output into a support ticket. Exits 1 when any check fails.
+
+    \b
+    Examples:
+      dct doctor                   # Offline checks only
+      dct doctor --with-warehouse  # Also test each warehouse connection
+      dct doctor --json            # Machine-readable report
+    """
+    doctor_cmd.doctor_command(
+        project_dir=project_dir,
+        with_warehouse=with_warehouse,
+        json_output=json_output,
+    )
+
+
 app.add_typer(init_app, name="init", rich_help_panel="Reference")
 
 
@@ -1748,7 +1784,7 @@ def _reconfigure_console_encoding() -> None:
 def version_callback(value: bool) -> None:
     """Print version and exit."""
     if value:
-        from dbt_charts.cli._version_info import collect
+        from dbt_charts.agent_api.version_info import collect
 
         typer.echo(collect().render())
         raise typer.Exit()

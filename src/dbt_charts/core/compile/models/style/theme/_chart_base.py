@@ -34,6 +34,7 @@ from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     ColorStyle,
     FontStyle,
+    FormatConfig,
     StaticGradientColorStyle,
 )
 from dbt_charts.core.compile.models.schema_names import (
@@ -46,6 +47,7 @@ from dbt_charts.core.compile.models.style.theme.board import (
 )
 from dbt_charts.core.compile.models.style.theme.legend import (
     LegendStyle,
+    PieLegendStyle,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     BasemapStyle,
@@ -203,7 +205,6 @@ class _PaintedChartStyleBase(_ChartStyleBase):
     max_height: Annotated[float, Inherit(from_path="Style.charts.max_height")] = Field(
         description="Maximum chart height in pixels."
     )
-    legend: LegendStyle = Field(description="Chart legend style.")
     # Unified color config: static ink, categorical palette, and gradient scale.
     # Required at ChartsStyle level (theme must supply color.categorical).
     # Per-family patches (derived via build_patch_model_ext) get ColorStyle | None.
@@ -231,7 +232,42 @@ else:
     )
 
 
-class _CartesianChartStyle(_PaintedChartStyleBaseAllOptional):
+class _LegendedChartStyleBase(BaseModel):
+    """The legend slot for families placed along a plot edge (not pie/donut)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    legend: LegendStyle = Field(description="Chart legend style.")
+
+
+class _PieLegendedChartStyleBase(BaseModel):
+    """The legend slot for pie and donut."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    legend: PieLegendStyle = Field(description="Pie key style.")
+
+
+if TYPE_CHECKING:
+
+    class _LegendedChartStyleBaseAllOptional(_LegendedChartStyleBase):
+        pass
+
+    class _PieLegendedChartStyleBaseAllOptional(_PieLegendedChartStyleBase):
+        pass
+
+else:
+    _LegendedChartStyleBaseAllOptional = build_patch_model_ext(
+        _LegendedChartStyleBase, is_recursive=True
+    )
+    _PieLegendedChartStyleBaseAllOptional = build_patch_model_ext(
+        _PieLegendedChartStyleBase, is_recursive=True
+    )
+
+
+class _CartesianChartStyle(
+    _PaintedChartStyleBaseAllOptional, _LegendedChartStyleBaseAllOptional
+):
     """Cartesian families: bar, line, area, scatter, histogram, heatmap.
 
     Shared axis tier — theme YAML populates per-family axis overrides here.
@@ -267,11 +303,11 @@ class _CartesianChartStyle(_PaintedChartStyleBaseAllOptional):
         default=None,
         description="Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render.",
     )
-    number_format: Annotated[NumberFormatAlias | str | None, Format(kind="number")] = (
-        Field(
-            default=None,
-            description="Default number format for axes and tooltips (D3 format string); None inherits from theme.",
-        )
+    number_format: Annotated[
+        NumberFormatAlias | str | FormatConfig | None, Format(kind="number")
+    ] = Field(
+        default=None,
+        description="Default number format for axes and tooltips (D3 format string); None inherits from theme.",
     )
     time_format: Annotated[TimeFormatAlias | str | None, Format(kind="time")] = Field(
         default=None,
@@ -312,7 +348,9 @@ class _QuantitativeAxisChartStyleMixin(BaseModel):
     )
 
 
-class _RadialChartStyle(_PaintedChartStyleBaseAllOptional):
+class _RadialChartStyle(
+    _PaintedChartStyleBaseAllOptional, _PieLegendedChartStyleBaseAllOptional
+):
     """Radial families: pie, donut."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -331,7 +369,9 @@ class _RadialChartStyle(_PaintedChartStyleBaseAllOptional):
 
 
 class _GeoChartStyle(
-    _ChartCardStyleMixinAllOptional, _PaintedChartStyleBaseAllOptional
+    _ChartCardStyleMixinAllOptional,
+    _PaintedChartStyleBaseAllOptional,
+    _LegendedChartStyleBaseAllOptional,
 ):
     """Geo families: geoshape (choropleth), point_map.
 

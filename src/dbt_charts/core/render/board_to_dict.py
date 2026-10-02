@@ -23,19 +23,23 @@ from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
-    FormatState,
     ResolvedAreaChart,
     ResolvedBarChart,
     ResolvedKpiChart,
     ResolvedLineChart,
     ResolvedScatterChart,
 )
+from dbt_charts.core.compile.models.primitives import (
+    AUTHORED_FORMATS,
+    FormatAliases,
+    ResolvedFormat,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.variable.authored import INTERNAL_VARIABLE_FIELDS
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.execute.chart_resolution import collect_shared_y_datasets
+from dbt_charts.core.execute.chart_resolution import collect_layer_datasets
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 
@@ -208,18 +212,17 @@ def kept_rows_phrase(truncated: dict[str, int]) -> str:
 def _cartesian_y_range_display(
     chart: _CartesianValueAxisChart,
     data: list[dict[str, Any]],  # type-state: explicit_any — query row
-    format_raw: FormatState,
-    formats: dict[str, str] | None,
+    value_axis_format: ResolvedFormat | None,
+    formats: FormatAliases | None,
 ) -> str | None:
-    """Format the y column's min-max range as a standalone value, the same
-    way a KPI headline or a table cell would.
+    """Format the y column's min-max range as a standalone value.
 
-    ``format_raw`` is passed through unresolved (the cascade's raw winner —
-    theme default included, not just an authored value — never a
-    pre-resolved d3 spec) so ``format_value`` can apply house notation and
-    the sub-unit fallback internally.
+    The axis's raw format (theme default included) is re-resolved, not its
+    baked spec, so ``format_value`` applies house notation and the sub-unit
+    fallback.
     """
-    if format_raw is None or not isinstance(chart.y, str):
+    authored = value_axis_format.authored if value_axis_format is not None else None
+    if authored is None or not isinstance(chart.y, str):
         return None
     from dbt_charts.core.render.format_utils import format_value
 
@@ -228,15 +231,14 @@ def _cartesian_y_range_display(
         return None
     lo, hi = min(values), max(values)
     return (
-        f"{format_value(lo, format_raw, formats)}"
-        f"–{format_value(hi, format_raw, formats)}"
+        f"{format_value(lo, authored, formats)}–{format_value(hi, authored, formats)}"
     )
 
 
 def _kpi_text_parts(
     resolved: ResolvedKpiChart,
     row: dict[str, Any],  # type-state: explicit_any — a query row, dynamically typed
-    formats: dict[str, str] | None,
+    formats: FormatAliases | None,
 ) -> dict[str, str]:
     """Format a KPI's headline value and support line as the SVG renderer draws them.
 
@@ -247,11 +249,11 @@ def _kpi_text_parts(
     chart actually paints. A missing value/support column raises
     ``ChartDataError``, same as the render layer.
     """
-    from dbt_charts.core.render.chart.kpi import _format_value_parts, _resolve_value
+    from dbt_charts.core.render.chart.kpi import _resolve_value, kpi_value_text
 
     chart_id = resolved.id
     cell, _ = _resolve_value(resolved.value, row, chart_id)
-    prefix, number_str, suffix, _is_numeric = _format_value_parts(
+    display = kpi_value_text(
         cell,
         resolved.format,
         chart_id,
@@ -259,7 +261,6 @@ def _kpi_text_parts(
         native=resolved.format_native,
         format_may_be_cascaded=True,
     )
-    display = f"{prefix}{number_str}{suffix}"
     # Headline glyph (e.g. "▲"): a style setting (chart/kpi.py:548 draws it
     # from the same slot), distinct from the support glyph below, which is
     # per-instance authored on the support block itself.
@@ -274,10 +275,7 @@ def _kpi_text_parts(
         value_str = ""
         if support.value is not None:
             s_cell, _ = _resolve_value(support.value, row, chart_id)
-            s_prefix, s_number_str, s_suffix, _s_is_numeric = _format_value_parts(
-                s_cell, support.format, chart_id, formats
-            )
-            value_str = f"{s_prefix}{s_number_str}{s_suffix}"
+            value_str = kpi_value_text(s_cell, support.format, chart_id, formats)
         glyph = support.glyph or ""  # type-state: silent_fallback — unauthored
         label = support.label or ""  # type-state: silent_fallback — unauthored
         support_line = " ".join(part for part in (glyph, value_str, label) if part)
@@ -325,7 +323,7 @@ def _render_chart_item(
 
     try:
         data = executor.execute_chart(chart, variables)
-        datasets = collect_shared_y_datasets(chart, data, executor, variables)
+        datasets = collect_layer_datasets(chart, data, executor, variables)
         # Resolve against the full result so data-aware resolution (auto type,
         # auto fields) is unaffected by the cap; only the emitted rows shrink.
         resolved = resolve(
@@ -345,6 +343,7 @@ def _render_chart_item(
             "chart": resolved.model_dump(
                 mode="json",
                 exclude_none=True,
+                context={AUTHORED_FORMATS: True},
                 exclude={
                     "style",  # resolved style — not authored schema
                     "resolved_channels",  # internal channel bindings
@@ -367,7 +366,7 @@ def _render_chart_item(
                 y_range_display = _cartesian_y_range_display(
                     chart,
                     data,
-                    resolved.style.axis_y.format_raw,
+                    resolved.style.axis_y.labels.format,
                     chart_style_context.formats,
                 )
                 if y_range_display:

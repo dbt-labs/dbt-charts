@@ -8,9 +8,12 @@ passing validation and blowing up as ERR-INTERNAL deep inside rasterization.
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.text.format_d3 import format_d3
+
+from ..._svg_render import render_board_to_svg
 
 
 def _board_with_format(format_value: str) -> str:
@@ -289,11 +292,994 @@ rows:
     assert result.errors[0].code == "ERR-FORMAT-INVALID"
 
 
+def test_support_table_entry_affix_with_non_default_sign_flag_compiles_clean() -> None:
+    """A support_table entry is exempt from the sign-conflict check that rejects the
+    same shape on axis_y.labels.
+    """
+    board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_eur: -100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    support_table:
+      - source: revenue_eur
+        format:
+          spec: "(,.0f"
+          suffix: " EUR"
+rows:
+  - revenue
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    # d3's accounting flag wraps a negative in parens; painted alongside the authored
+    # suffix that must survive untouched.
+    assert "(100) EUR" in svg
+    assert "−100 EUR" not in svg
+
+
+def test_support_table_entry_affix_with_no_spec_compiles_clean() -> None:
+    """A spec-less FormatConfig ({prefix: "EUR "} alone) on a support_table entry has no
+    digit format of its own.
+    """
+    no_format_board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_eur: 100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    support_table:
+      - source: revenue_eur
+rows:
+  - revenue
+"""
+    no_format_result = compile_board(no_format_board)
+    assert no_format_result.success, no_format_result.errors
+    no_format_svg = render_board_to_svg(no_format_board)
+    assert ">100<" in no_format_svg
+
+    prefixed_board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_eur: 100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    support_table:
+      - source: revenue_eur
+        format:
+          prefix: "EUR "
+rows:
+  - revenue
+"""
+    prefixed_result = compile_board(prefixed_board)
+    assert prefixed_result.success, prefixed_result.errors
+    prefixed_svg = render_board_to_svg(prefixed_board)
+    assert "EUR 100" in prefixed_svg
+
+
+def test_donut_total_affix_with_non_default_sign_flag_compiles_clean() -> None:
+    """The donut center total (TotalStyle) is exempt from the same sign-conflict check
+    for the same reason as support_table.
+    """
+    board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {k: a, v: 1}
+charts:
+  share:
+    query: q
+    type: donut
+    theta: v
+    color: k
+    total:
+      format:
+        spec: "(,.0f"
+        prefix: "€"
+rows:
+  - share
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    assert "€" in svg
+
+
+def test_donut_total_digits_match_with_and_without_a_prefix() -> None:
+    """Adding a prefix must change nothing but the prefix."""
+    no_prefix_board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {k: a, v: 168000}
+      - {k: b, v: 28000}
+charts:
+  share:
+    query: q
+    type: donut
+    theta: v
+    color: k
+    total:
+      label: Net
+rows:
+  - share
+"""
+    prefixed_board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {k: a, v: 168000}
+      - {k: b, v: 28000}
+charts:
+  share:
+    query: q
+    type: donut
+    theta: v
+    color: k
+    total:
+      label: Net
+    style:
+      total:
+        value:
+          format:
+            prefix: "EUR "
+rows:
+  - share
+"""
+    no_prefix_result = compile_board(no_prefix_board)
+    assert no_prefix_result.success, no_prefix_result.errors
+    no_prefix_svg = render_board_to_svg(no_prefix_board)
+    assert "196,000" in no_prefix_svg
+
+    prefixed_result = compile_board(prefixed_board)
+    assert prefixed_result.success, prefixed_result.errors
+    prefixed_svg = render_board_to_svg(prefixed_board)
+    assert "EUR 196,000" in prefixed_svg
+    assert "196k" not in prefixed_svg
+
+
 def _assert_format_invalid(yaml: str, needle: str) -> None:
     result = compile_board(yaml)
     assert not result.success, f"{needle} must fail compile, got success"
     assert [e.code for e in result.errors] == ["ERR-FORMAT-INVALID"], result.errors
     assert needle in result.errors[0].message
+
+
+def test_affix_with_accounting_sign_flag_compiles_clean_on_every_vega_painted_slot() -> (
+    None
+):
+    """A FormatConfig prefix/suffix combined with a "(" d3 sign flag used to fail
+    compile on every Vega-painted slot.
+    """
+    board = """
+title: T
+style:
+  formats:
+    eur: {spec: "(,.0f", suffix: " EUR"}
+  charts:
+    tooltip:
+      format: eur
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_eur: -100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    style:
+      axis_y:
+        labels:
+          format:
+            spec: "(,.0f"
+            suffix: " EUR"
+      marks:
+        bar:
+          labels:
+            visible: true
+            format:
+              spec: "(,.0f"
+              suffix: " EUR"
+rows:
+  - revenue
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    assert svg.count("(100) EUR") >= 3, svg
+
+
+def test_affix_with_plus_sign_flag_compiles_clean_on_a_vega_painted_slot() -> None:
+    """A "+" sign flag composes correctly on a Vega-painted slot too, for the same
+    reason as the accounting "(" flag above.
+    """
+    board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_eur: 100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    style:
+      axis_y:
+        labels:
+          format:
+            spec: "+,.0f"
+            prefix: "€"
+rows:
+  - revenue
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    assert "+€100" in svg
+
+
+def test_affix_with_plus_sign_flag_compiles_clean_on_a_kpi() -> None:
+    """A "+" sign flag composes correctly with an authored affix on a Python-painted
+    slot.
+    """
+    result = compile_board(
+        """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT 1234 AS revenue_eur
+charts:
+  headline:
+    query: q
+    type: kpi
+    value: revenue_eur
+    style:
+      value:
+        format:
+          spec: "+,.0f"
+          prefix: "€"
+rows:
+  - headline
+"""
+    )
+    assert result.success, result.errors
+
+
+def test_affix_with_parenthesis_sign_flag_compiles_clean_on_a_kpi() -> None:
+    """A "(" sign flag also composes correctly on a Python-painted slot."""
+    result = compile_board(
+        """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT -154500 AS revenue_eur
+charts:
+  headline:
+    query: q
+    type: kpi
+    value: revenue_eur
+    style:
+      value:
+        format:
+          spec: "(,.0f"
+          prefix: "€"
+rows:
+  - headline
+"""
+    )
+    assert result.success, result.errors
+
+
+def test_affix_with_default_sign_flag_compiles_clean() -> None:
+    """The default sign flag ('-', or unspecified) is unaffected."""
+    result = compile_board(
+        """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT 'Jan' AS month, 100 AS revenue_eur
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    style:
+      axis_y:
+        labels:
+          format:
+            spec: ",.0f"
+            prefix: "€"
+rows:
+  - revenue
+"""
+    )
+    assert result.success, result.errors
+
+
+def _board_with_axis_y_format(format_yaml: str) -> str:
+    return f"""
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT 'Jan' AS month, 100 AS revenue_eur
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    style:
+      axis_y:
+        labels:
+          format: {format_yaml}
+rows:
+  - revenue
+"""
+
+
+def test_affix_with_native_dollar_prefix_compiles_clean_on_a_non_si_axis() -> None:
+    """A fixed-point spec's own native "$" and an authored prefix are not a render
+    conflict on a non-SI axis.
+    """
+    result = compile_board(_board_with_axis_y_format('{spec: "$,.2f", prefix: "€"}'))
+    assert result.success, result.errors
+
+
+def test_affix_with_native_dollar_prefix_compiles_clean_on_an_si_axis() -> None:
+    """An SI ("~s") spec's own native "$" (the "currency" preset, "$.3~s") composes
+    around an authored prefix, not just the fixed-point case above.
+    """
+    board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_usd: 12400000}
+      - {month: Feb, revenue_usd: -3100000}
+  q2:
+    type: values
+    rows:
+      - {k: a, v: 154500}
+      - {k: b, v: 41500}
+charts:
+  axis_and_number:
+    query: q
+    type: bar
+    x: month
+    y: revenue_usd
+    style:
+      axis_y:
+        labels:
+          format: {spec: "$.3~s", prefix: "US "}
+  support_table_entry:
+    query: q
+    type: bar
+    x: month
+    y: revenue_usd
+    support_table:
+      - source: revenue_usd
+        format: {spec: "$.3~s", prefix: "US "}
+  total_donut:
+    query: q2
+    type: donut
+    theta: v
+    color: k
+    total:
+      format: {spec: "$.3~s", prefix: "US "}
+rows:
+  - axis_and_number
+  - support_table_entry
+  - total_donut
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    # Axis ladder: a spaced prefix leads the sign, the symbol follows it.
+    assert "US $5mn" in svg
+    assert "US −$5mn" in svg
+    # support_table: each value's own SI magnitude, same composition.
+    assert "US $12.4M" in svg
+    assert "US −$3.1M" in svg
+    # Donut total: same composition, no sign case (theta can't be negative).
+    assert "US $196k" in svg
+    assert "$US" not in svg
+
+
+def test_affix_with_native_dollar_suffix_compiles_clean() -> None:
+    """An authored SUFFIX combined with a spec that already carries its own "$" symbol
+    is legal.
+    """
+    result = compile_board(_board_with_axis_y_format('{spec: "$,.0f", suffix: " net"}'))
+    assert result.success, result.errors
+
+
+def test_affix_with_native_dollar_prefix_compiles_clean_on_a_kpi() -> None:
+    """The symbol conflict is scoped to Vega-painted slots, like the sign check above
+    it.
+    """
+    result = compile_board(
+        """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT 154500 AS revenue_usd
+charts:
+  headline:
+    query: q
+    type: kpi
+    value: revenue_usd
+    style:
+      value:
+        format:
+          spec: "$,.0f"
+          prefix: "US "
+rows:
+  - headline
+"""
+    )
+    assert result.success, result.errors
+
+
+def test_affix_with_native_dollar_prefix_paints_consistently_on_every_vega_slot() -> (
+    None
+):
+    """ "$,.0f" + prefix: "US " must compile and paint prefix-then-sign-then-native-
+    symbol-body identically on every Vega-painted slot.
+    """
+    board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_usd: 154500}
+      - {month: Feb, revenue_usd: -41500}
+charts:
+  axis_and_number:
+    query: q
+    type: bar
+    x: month
+    y: revenue_usd
+    style:
+      axis_y:
+        labels:
+          format: {spec: "$,.0f", prefix: "US "}
+      number_format: {spec: "$,.0f", prefix: "US "}
+  bar_labels:
+    query: q
+    type: bar
+    x: month
+    y: revenue_usd
+    style:
+      marks:
+        bar:
+          labels:
+            visible: true
+            format: {spec: "$,.0f", prefix: "US "}
+  support_table_entry:
+    query: q
+    type: bar
+    x: month
+    y: revenue_usd
+    support_table:
+      - source: revenue_usd
+        format: {spec: "$,.0f", prefix: "US "}
+rows:
+  - axis_and_number
+  - bar_labels
+  - support_table_entry
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    assert "US $154,500" in svg
+    assert "US −$41,500" in svg
+    assert "$US " not in svg
+
+
+def test_affix_with_native_dollar_prefix_compiles_clean_on_a_donut_total() -> None:
+    """The same "$,.0f" + prefix: "US " shape on the donut center total
+    (``style.total.value.format``, or the chart-level ``total.format``
+    shorthand) must compile and paint "US $196,000", the same composer as
+    the axis/support_table case above (a donut's theta can never itself be
+    negative -- ERR-PIE-NEGATIVE-THETA -- so there is no sign case to pin
+    here)."""
+    board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {k: a, v: 154500}
+      - {k: b, v: 41500}
+charts:
+  share:
+    query: q
+    type: donut
+    theta: v
+    color: k
+    total:
+      format: {spec: "$,.0f", prefix: "US "}
+rows:
+  - share
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    assert "US $196,000" in svg
+
+
+def test_affix_with_spec_less_format_config_falls_back_on_a_vega_painted_slot() -> None:
+    """A spec-less FormatConfig ({prefix: "EUR "} alone) has no digit format for a Vega
+    painter to compose the affix around.
+    """
+    no_format_board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_eur: 1500}
+      - {month: Feb, revenue_eur: 3200}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+rows:
+  - revenue
+"""
+    no_format_result = compile_board(no_format_board)
+    assert no_format_result.success, no_format_result.errors
+    no_format_svg = render_board_to_svg(no_format_board)
+    assert "1,000" in no_format_svg
+    assert "3,000" in no_format_svg
+
+    prefixed_board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_eur: 1500}
+      - {month: Feb, revenue_eur: 3200}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    style:
+      axis_y:
+        labels:
+          format:
+            prefix: "EUR "
+rows:
+  - revenue
+"""
+    prefixed_result = compile_board(prefixed_board)
+    assert prefixed_result.success, prefixed_result.errors
+    prefixed_svg = render_board_to_svg(prefixed_board)
+    assert "EUR 1,000" in prefixed_svg
+    assert "EUR 3,000" in prefixed_svg
+    assert "1k" not in prefixed_svg
+
+
+def _axis_y_sub_unit_ticks(svg: str) -> list[str]:
+    import re
+
+    return [t for t in re.findall(r"<text[^>]*>(.*?)</text>", svg) if "EUR" in t]
+
+
+def test_spec_less_affix_on_axis_x_takes_the_non_compacting_sub_unit_guard() -> None:
+    """A spec-less affix on a quantitative axis_x (a scatter's x column) must take the
+    same non-compacting sub-unit guard the primary axis_y gets
+    (``ResolvedFormat.is_spec_less_affix``, ``_axes.py``) -- 0.18/0.42/ 0.95 as
+    ``EUR 0.2``/``EUR 0.4``, never d3's own raw SI prefix (``EUR 200m``, a milli
+    misread as a magnitude suffix).
+    """
+    inline_board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {x_val: 0.18, y_val: 5}
+      - {x_val: 0.42, y_val: 15}
+      - {x_val: 0.95, y_val: 25}
+charts:
+  scatter_chart:
+    query: q
+    type: scatter
+    x: x_val
+    y: y_val
+    style:
+      axis_x:
+        labels:
+          format: {prefix: "EUR "}
+rows:
+  - scatter_chart
+"""
+    inline_result = compile_board(inline_board)
+    assert inline_result.success, inline_result.errors
+    inline_svg = render_board_to_svg(inline_board)
+    assert "m" not in "".join(_axis_y_sub_unit_ticks(inline_svg)), inline_svg
+    assert any(
+        "EUR 0.2" in t or "EUR 0.4" in t for t in _axis_y_sub_unit_ticks(inline_svg)
+    )
+
+    alias_board = """
+title: T
+style:
+  formats:
+    eur:
+      prefix: "EUR "
+queries:
+  q:
+    type: values
+    rows:
+      - {x_val: 0.18, y_val: 5}
+      - {x_val: 0.42, y_val: 15}
+      - {x_val: 0.95, y_val: 25}
+charts:
+  scatter_chart:
+    query: q
+    type: scatter
+    x: x_val
+    y: y_val
+    style:
+      axis_x:
+        labels:
+          format: eur
+rows:
+  - scatter_chart
+"""
+    alias_result = compile_board(alias_board)
+    assert alias_result.success, alias_result.errors
+    alias_svg = render_board_to_svg(alias_board)
+    assert "m" not in "".join(_axis_y_sub_unit_ticks(alias_svg)), alias_svg
+    assert _axis_y_sub_unit_ticks(alias_svg) == _axis_y_sub_unit_ticks(inline_svg)
+
+
+def test_spec_less_affix_on_an_overlay_layer_axis_y_takes_the_sub_unit_guard() -> None:
+    """The same non-compacting sub-unit guard as the test above, on an overlay layer's
+    own ``axis_y``.
+    """
+    inline_board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, a: 100, b: 0.18}
+      - {month: Feb, a: 200, b: 0.42}
+      - {month: Mar, a: 150, b: 0.95}
+charts:
+  combo:
+    query: q
+    type: bar
+    x: month
+    y: a
+    layers:
+      - type: line
+        y: b
+        axis_y:
+          position: right
+          labels:
+            format: {prefix: "EUR "}
+rows:
+  - combo
+"""
+    inline_result = compile_board(inline_board)
+    assert inline_result.success, inline_result.errors
+    inline_svg = render_board_to_svg(inline_board)
+    inline_ticks = _axis_y_sub_unit_ticks(inline_svg)
+    assert "m" not in "".join(inline_ticks), inline_svg
+    assert any("EUR 0.5" in t or "EUR 1" in t for t in inline_ticks), inline_ticks
+
+    alias_board = """
+title: T
+style:
+  formats:
+    eur:
+      prefix: "EUR "
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, a: 100, b: 0.18}
+      - {month: Feb, a: 200, b: 0.42}
+      - {month: Mar, a: 150, b: 0.95}
+charts:
+  combo:
+    query: q
+    type: bar
+    x: month
+    y: a
+    layers:
+      - type: line
+        y: b
+        axis_y:
+          position: right
+          labels:
+            format: eur
+rows:
+  - combo
+"""
+    alias_result = compile_board(alias_board)
+    assert alias_result.success, alias_result.errors
+    alias_svg = render_board_to_svg(alias_board)
+    alias_ticks = _axis_y_sub_unit_ticks(alias_svg)
+    assert "m" not in "".join(alias_ticks), alias_svg
+    assert alias_ticks == inline_ticks
+
+
+def test_affix_with_spec_less_format_config_compiles_clean_on_a_kpi() -> None:
+    """A spec-less FormatConfig is legal on a Python-painted slot."""
+    result = compile_board(
+        """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT 1234 AS revenue_eur
+charts:
+  headline:
+    query: q
+    type: kpi
+    value: revenue_eur
+    style:
+      value:
+        format:
+          prefix: "€"
+rows:
+  - headline
+"""
+    )
+    assert result.success, result.errors
+
+
+def test_affix_with_si_shaped_spec_compiles_clean() -> None:
+    """An authored prefix combined with a bare SI ("~s") spec is legal."""
+    result = compile_board(_board_with_axis_y_format('{spec: ".3~s", prefix: "€"}'))
+    assert result.success, result.errors
+
+
+def test_affix_with_predefined_currency_name_compiles_clean() -> None:
+    """The predefined-name branch resolves to its own d3 spec ($.3~s for "currency")."""
+    result = compile_board(_board_with_axis_y_format('{spec: currency, prefix: "€"}'))
+    assert result.success, result.errors
+
+
+def test_affix_with_predefined_plain_name_compiles_clean() -> None:
+    """A predefined name with no native symbol and no SI shape (e.g. "integer" ->
+    ",.0f") has no house ladder to collide with.
+    """
+    result = compile_board(_board_with_axis_y_format('{spec: integer, prefix: "€"}'))
+    assert result.success, result.errors
+
+
+def test_affix_with_alias_sign_flag_compiles_clean() -> None:
+    """A style.formats alias name (not a predefined name, not a raw literal) resolves to
+    its own target spec before this check runs.
+    """
+    board = """
+title: T
+style:
+  formats:
+    signed: "(,.0f"
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue_eur: -100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue_eur
+    style:
+      axis_y:
+        labels:
+          format: {spec: signed, prefix: "€"}
+rows:
+  - revenue
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    assert "€(100)" in svg
+
+
+def test_affix_on_time_format_rejected() -> None:
+    """A strftime spec has no d3 symbol/sign/SI shape for an affix to compose against,
+    and no render path paints a FormatConfig affix on a temporal slot.
+    """
+    result = compile_board(
+        """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::date AS month, 100 AS revenue
+charts:
+  revenue:
+    query: q
+    type: line
+    x: month
+    y: revenue
+    style:
+      axis_x:
+        labels:
+          format:
+            spec: "%b %Y"
+            prefix: "FY "
+rows:
+  - revenue
+"""
+    )
+    assert not result.success
+    assert [e.code for e in result.errors] == ["ERR-FORMAT-AFFIX-TIME-UNSUPPORTED"]
+
+
+def test_time_affix_error_never_sends_notation_to_a_kpi_or_table() -> None:
+    from dbt_charts.core.diagnostics.codes_compile import (
+        ERR_FORMAT_AFFIX_TIME_UNSUPPORTED,
+    )
+
+    template = ERR_FORMAT_AFFIX_TIME_UNSUPPORTED.message_template
+    assert "move a prefix/suffix" in template
+    assert "prefix/suffix/notation to" not in template
+    assert "move it" not in template
+
+
+def test_affix_on_predefined_time_name_rejected() -> None:
+    """A predefined TIME name (date_short) has no entry in PREDEFINED_SPECS (number-
+    only).
+    """
+    result = compile_board(
+        """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::date AS month, 100 AS revenue
+charts:
+  revenue:
+    query: q
+    type: line
+    x: month
+    y: revenue
+    style:
+      axis_x:
+        labels:
+          format:
+            spec: date_short
+            prefix: "FY "
+rows:
+  - revenue
+"""
+    )
+    assert not result.success
+    assert [e.code for e in result.errors] == ["ERR-FORMAT-AFFIX-TIME-UNSUPPORTED"]
+
+
+def test_affix_on_alias_time_name_rejected() -> None:
+    """A style.formats alias whose own target is a strftime pattern must also reject an
+    authored affix.
+    """
+    result = compile_board(
+        """
+title: T
+style:
+  formats:
+    mymonth: "%b %Y"
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::date AS month, 100 AS revenue
+charts:
+  revenue:
+    query: q
+    type: line
+    x: month
+    y: revenue
+    style:
+      axis_x:
+        labels:
+          format:
+            spec: mymonth
+            prefix: "FY "
+rows:
+  - revenue
+"""
+    )
+    assert not result.success
+    assert [e.code for e in result.errors] == ["ERR-FORMAT-AFFIX-TIME-UNSUPPORTED"]
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        {"columns": {"period": {"format": {"spec": "%b %Y", "prefix": "FY "}}}},
+        {"columns": {"period": {"format": {"spec": "date_short", "suffix": " (FY)"}}}},
+        {"columns": {"period": {"format": {"spec": "%b %Y", "notation": "analytic"}}}},
+        {"column_defaults": {"format": {"spec": "date_short", "suffix": " (FY)"}}},
+        {"column_defaults": {"format": {"spec": "%b %Y", "prefix": "FY "}}},
+    ],
+    ids=[
+        "column-strftime-prefix",
+        "column-predefined-suffix",
+        "column-notation",
+        "defaults-predefined-suffix",
+        "defaults-strftime-prefix",
+    ],
+)
+def test_affix_beside_a_date_spec_on_a_table_column_still_compiles(
+    style: dict[str, object],
+) -> None:
+    """A table column's format accepted a FormatConfig before affixes were composed
+    anywhere, and paints a date through its own date painter.
+    """
+    result = compile_board(
+        yaml.safe_dump(
+            {
+                "title": "T",
+                "queries": {
+                    "q": {
+                        "source": "db",
+                        "sql": "SELECT '2024-01-01'::date AS period, 100 AS revenue",
+                    }
+                },
+                "charts": {"t": {"query": "q", "type": "table", "style": style}},
+                "rows": ["t"],
+            }
+        )
+    )
+    assert result.success, result.errors
 
 
 def test_mark_label_format_is_validated() -> None:
@@ -932,15 +1918,8 @@ rows:
     assert "Cannot define" in result.errors[0].message
 
 
-def test_style_formats_target_predefined_name_raises() -> None:
-    """A style.formats alias whose TARGET is a predefined name is a compile error.
-
-    `formats: {mine: currency}` is not a valid format alias: "currency" is not a
-    d3-format spec. At runtime, resolve_format("mine") returns the literal string
-    "currency" and _d3_format("currency") raises in the browser. Catch it at compile.
-    """
-    result = compile_board(
-        """
+def _board_with_alias(alias_target: str, slot: str) -> str:
+    return f"""
 title: T
 queries:
   q:
@@ -948,22 +1927,42 @@ queries:
     sql: SELECT 'Jan' AS month, 100 AS revenue
 style:
   formats:
-    mine: currency
+    mine: {alias_target}
 charts:
   revenue:
     query: q
     type: bar
     x: month
     y: revenue
+    style:
+      {slot}: mine
 rows:
   - revenue
 """
-    )
-    assert not result.success, (
-        "style.formats target that is a predefined name (not a d3 spec) must fail compile()"
-    )
-    assert result.errors[0].code == "ERR-FORMAT-INVALID"
-    assert "currency" in result.errors[0].message
+
+
+@pytest.mark.parametrize(
+    "alias_target",
+    [
+        pytest.param("currency", id="preset"),
+        pytest.param('{spec: number, prefix: "EUR "}', id="preset-with-affix"),
+    ],
+)
+def test_style_formats_alias_may_target_a_preset(alias_target: str) -> None:
+    """An alias can name a preset, so a named house format keeps house rules."""
+    result = compile_board(_board_with_alias(alias_target, "number_format"))
+    assert result.success, [e.message for e in result.errors]
+
+
+def test_alias_to_a_native_preset_is_rejected_in_a_vega_slot() -> None:
+    """The alias is judged as if its preset were written in the slot."""
+    result = compile_board(_board_with_alias("percent_number", "number_format"))
+    assert [e.code for e in result.errors] == ["ERR-FORMAT-NATIVE-IN-VEGA-SLOT"]
+
+
+def test_alias_to_a_number_preset_is_rejected_on_time_format() -> None:
+    result = compile_board(_board_with_alias("currency", "time_format"))
+    assert [e.code for e in result.errors] == ["ERR-FORMAT-KIND-MISMATCH"]
 
 
 # Boards used to pin native-in-Vega rejection for every _VEGA_PAINTED_PARENTS entry.
@@ -1576,6 +2575,136 @@ rows:
 """
     result = compile_board(board)
     assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_alias_spec_less_affix_falls_back_through_bare_alias_spelling() -> None:
+    """The affix fallback must follow the alias indirection."""
+    board = """
+title: T
+style:
+  formats:
+    eur:
+      prefix: "EUR "
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 1500}
+      - {month: Feb, revenue: 3200}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      number_format: eur
+rows:
+  - revenue
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    assert "EUR 1,000" in svg
+    assert "EUR 3,000" in svg
+    assert "1k" not in svg
+
+
+def test_alias_sign_flag_compiles_clean_through_bare_alias_spelling() -> None:
+    """The sign flag must compose correctly through the alias indirection on a Vega-
+    painted slot too.
+    """
+    board = """
+title: T
+style:
+  formats:
+    eur:
+      spec: "(,.0f"
+      prefix: "€"
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: -100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      number_format: eur
+rows:
+  - revenue
+"""
+    result = compile_board(board)
+    assert result.success, result.errors
+    svg = render_board_to_svg(board)
+    assert "€(100)" in svg
+
+
+def test_alias_spec_less_affix_compiles_clean_through_bare_alias_spelling_on_a_kpi() -> (
+    None
+):
+    """The alias-indirection fix must not flip vega_painted for a Python-painted slot."""
+    result = compile_board(
+        """
+title: T
+style:
+  formats:
+    eur:
+      prefix: "EUR "
+queries:
+  q:
+    source: db
+    sql: SELECT 154500 AS revenue
+charts:
+  headline:
+    query: q
+    type: kpi
+    value: revenue
+    style:
+      value:
+        format: eur
+rows:
+  - headline
+"""
+    )
+    assert result.success, result.errors
+
+
+@pytest.mark.parametrize(
+    "eur",
+    [
+        pytest.param('{prefix: "EUR "}', id="spec-less"),
+        pytest.param('{spec: ",.0f", prefix: "EUR "}', id="number-spec"),
+    ],
+)
+def test_affixed_alias_on_time_format_rejected(eur: str) -> None:
+    """An alias smuggles an affix onto style.time_format, which never paints one."""
+    result = compile_board(
+        f"""
+title: T
+style:
+  formats:
+    eur: {eur}
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::date AS month, 100 AS revenue
+charts:
+  revenue:
+    query: q
+    type: line
+    x: month
+    y: revenue
+    style:
+      time_format: eur
+rows:
+  - revenue
+"""
+    )
+    assert [e.code for e in result.errors] == ["ERR-FORMAT-AFFIX-TIME-UNSUPPORTED"]
 
 
 # ── Time directive vocabulary: only directives Vega paints identically ───────

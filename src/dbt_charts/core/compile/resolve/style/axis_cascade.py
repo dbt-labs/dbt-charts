@@ -10,15 +10,25 @@ module.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
 from types import EllipsisType
 from typing import Any, Literal, TypeVar, overload
 
 from pydantic import BaseModel
 
 from d3_format import format as _d3_format
-from dbt_charts.core.compile.format import resolve_format, tick_min_step_for_format
+from dbt_charts.core.compile.format import (
+    check_anchored_sign,
+    resolve_format_parts,
+    resolve_format_parts_for_values,
+    tick_min_step_for_format,
+)
 from dbt_charts.core.compile.merge import merge_onto_base
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import (
+    AuthoredFormat,
+    FormatAliases,
+    ResolvedFormat,
+)
 from dbt_charts.core.compile.models.style.authored import (
     AxisXStylePatch,
     AxisYStylePatch,
@@ -35,6 +45,7 @@ from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisLineStyle,
     ResolvedAxisStyle,
     ResolvedAxisTicksStyle,
+    ResolvedMirrorAxis,
     ResolvedRulerAxis,
     ResolvedTickLabel,
 )
@@ -61,8 +72,12 @@ from dbt_charts.core.text.numeral_scale import (
     shared_scale_for_ladder,
     sub_unit_digit_format,
     sub_unit_scientific_format,
+    with_symbol,
 )
-from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_SUB_UNIT_FALLBACK,
+    PredefinedNumberFormat,
+)
 
 # Fields on AxisLabelStyle (base) that are optional VL passthroughs.
 # "overlap" is handled explicitly (AxisLabelOverlapConfig → ResolvedAxisLabelOverlapConfig).
@@ -78,7 +93,6 @@ _LABEL_PASSTHROUGH = (
     "bound",
     "flush",
     "offset",
-    "format",
 )
 
 
@@ -239,6 +253,54 @@ def _resolve_overlap_config(
     return ResolvedAxisLabelOverlapConfig(tilt=overlap.tilt, skip=overlap.skip)
 
 
+def _affix_anchor_at_start(tick_values: tuple[float, ...]) -> bool:
+    """Whether an anchored affix sits on the first tick rather than the last.
+
+    Sign-aware: the largest positive tick, else the most negative, so a
+    zero-crossing ladder never anchors on its larger negative extreme or the 0
+    cap. With no ladder, Vega's last tick.
+    """
+    if not tick_values:
+        return False
+    positives = [v for v in tick_values if v > 0]
+    anchor_value = max(positives) if positives else min(tick_values)
+    return tick_values.index(anchor_value) == 0
+
+
+def _anchors_affix(fmt: ResolvedFormat) -> bool:
+    return fmt.repeat == "anchor" and bool(fmt.prefix or fmt.suffix)
+
+
+def ladderless_tick_label(
+    fmt: ResolvedFormat, measure_values: Sequence[float]
+) -> ResolvedTickLabel:
+    """The tick label of an SI axis with no ladder: sub-1 values paint plain
+    digits, the rest keep the SI spec. An anchored affix sits on the end Vega
+    draws nearest the larger-magnitude value: the first (bottom) tick when the
+    most negative value outweighs the most positive, else the last."""
+    anchor_at_start = bool(measure_values) and -min(measure_values) > max(
+        measure_values
+    )
+    return ResolvedTickLabel(
+        format=sub_unit_digit_format(fmt.spec),
+        anchor_at_start=anchor_at_start if _anchors_affix(fmt) else None,
+        si_format=fmt.spec,
+        scientific_format=sub_unit_scientific_format(fmt.spec),
+    )
+
+
+def affix_tick_label(
+    fmt: ResolvedFormat, tick_values: tuple[float, ...]
+) -> ResolvedTickLabel | None:
+    """A ``repeat: anchor`` affix on an axis no ruler or house tick label
+    paints; ``None`` keeps ``compose_axis_format``'s affix on every tick."""
+    if not _anchors_affix(fmt):
+        return None
+    return ResolvedTickLabel(
+        format=fmt.spec, anchor_at_start=_affix_anchor_at_start(tick_values)
+    )
+
+
 def _scale_names_ticks_or_is_log(scale: BaseScaleStyle | XScaleStyle | None) -> bool:
     """An authored ``scale.values`` ladder or a log scale owns its own ticks."""
     if scale is None:
@@ -258,13 +320,15 @@ def build_resolved_axis(
     domain_max: float | EllipsisType = ...,
     domain_min: float | EllipsisType = ...,
     column_forming: bool = True,
-    format_raw: str | None,
+    format: ResolvedFormat | None,
     is_quantitative: bool = False,
     quantitative_for_alignment: bool | None = None,
     zero_anchored: bool = False,
     chart_id: str,
     y_gridline_caps_bottom: bool | None = None,
+    formats: FormatAliases | None,
     floor_tick_step: bool = False,
+    measure_values: Sequence[float] = (),
 ) -> ResolvedAxisStyle:
     """Build ResolvedAxisStyle from a channel-typed AxisXStyle or AxisYStyle.
 
@@ -289,20 +353,9 @@ def build_resolved_axis(
     from measured space characters, ``font_measure.compose_suffix_reservation``),
     so only one is required to resolve a tabular label font.
 
-    ``format_raw`` is the axis's raw, pre-resolution ``labels.format``
-    string — never the resolved d3 spec — baked straight onto
-    ``ResolvedAxisStyle.format_raw``; see that field's docstring for the
-    house-vs-literal rule it decides. Computed once below as
-    ``format_is_house`` and read by ``_force_right`` and both
-    non-compacting-ladder branches — a ladder that doesn't compact still
-    writes its ticks in full unless the format is a predefined name; the
-    compacting ``ruler`` branch reads it not at all — a house-named SI
-    format still gets full ruler treatment there. Required, not defaulted: a
-    caller that forgets to thread it should get a type error, not a
-    silently-wrong verdict either way. A caller with no real raw to offer (a
-    synthetic axis with no genuine cascade-authored format at all —
-    histogram/heatmap's VL-computed axes) passes ``None`` explicitly, which
-    is never a predefined name and so never earns house treatment.
+    ``format`` is the axis's baked label format, carried whole onto
+    ``labels.format``. ``format.is_house`` is the one house-vs-literal test;
+    ``None`` (the board-level probe) is never house.
 
     ``floor_tick_step`` opts the measure axis (``AxisYStyle``) into deriving
     ``ticks.step`` from its fixed-decimal format when no ladder was baked
@@ -368,6 +421,11 @@ def build_resolved_axis(
     which keeps the tick showing — the same answer this axis always had
     before ``"auto"`` existed, for a context that structurally can't ask the
     real geometric question.
+
+    ``formats`` resolves an authored ``axis_y.mirror.format``.
+
+    ``measure_values`` are the finite values the axis plots, read where no
+    ladder says which end an anchored affix belongs on; empty when unknown.
     """
 
     def _require(value: Any, path: str) -> Any:
@@ -409,8 +467,7 @@ def build_resolved_axis(
     # configs.  non-column-forming axes (horizontal bar measure) are exempt:
     # their reserve is always False regardless of start_anchored.
     _resolved_font = resolve_cascaded_font(axis.labels.font, "charts.axis.labels.font")
-    # See ResolvedAxisStyle.format_raw's docstring for the house-vs-literal rule.
-    format_is_house = format_raw in PREDEFINED_NUMBER_NAMES
+    format_is_house = format is not None and format.is_house
     _quantitative_for_alignment = (
         is_quantitative
         if quantitative_for_alignment is None
@@ -433,13 +490,6 @@ def build_resolved_axis(
         else _resolve_own_side_align(axis.labels.align, edge)
     )
 
-    label = ResolvedAxisElementStyle(
-        font=_resolved_font,
-        padding=_require(axis.labels.padding, "charts.axis.labels.padding"),
-        align=resolved_label_align,
-        overlap=_resolve_overlap_config(axis.labels.overlap),
-        **label_kwargs,
-    )
     # Which mechanism aligns this axis's digits is a function of the
     # resolved *anchoring* (text-anchor:start vs :end), never of which
     # physical edge the axis happens to sit on: start-anchored digits grow
@@ -456,17 +506,17 @@ def build_resolved_axis(
     # render's own safety net (`_fallback_reversed_label_align`) can still
     # delete an own-side/center `labelAlign` afterward. `_render_align`
     # folds that predicted outcome in; see its own docstring.
-    fallback_fires = _label_align_fallback_fires(label.align, edge, label.font.case)
-    start_anchored = _render_align(label.align, edge, fallback_fires) == "left"
+    fallback_fires = _label_align_fallback_fires(
+        resolved_label_align, edge, _resolved_font.case
+    )
+    start_anchored = _render_align(resolved_label_align, edge, fallback_fires) == "left"
     # One SI-shape verdict, computed here and handed to both _build_ruler calls
     # and the tick_label branch below, so none of them re-derives it. The axis's
     # resolved format when SI-shaped, else None. This does NOT feed _force_right:
     # the alignment force is scoped to house-rule format *aliases* only -- a raw
     # d3 spec renders as literal d3, not the house register.
     _si_format = (
-        axis.labels.format
-        if axis.labels.format is not None and is_d3_si_spec(axis.labels.format)
-        else None
+        format.spec if format is not None and is_d3_si_spec(format.spec) else None
     )
     # A decimal-carrying fixed-point house format (percent, currency_full, ...)
     # never compacts, so the ruler never reaches it; the tick_label branch
@@ -474,31 +524,30 @@ def build_resolved_axis(
     # painting the preset's data precision (10.0%). A raw d3 spec stays
     # literal.
     _fixed_decimal_format = (
-        axis.labels.format
+        format.spec
         if format_is_house
-        and axis.labels.format is not None
-        and is_d3_fixed_decimal_spec(axis.labels.format)
+        and format is not None
+        and is_d3_fixed_decimal_spec(format.spec)
         else None
     )
     ruler = _build_ruler(
         tick_values=tick_values,
         si_format=_si_format,
-        label_expr=label.expr,
+        label_expr=axis.labels.expr,
         column_forming=column_forming,
         start_anchored=start_anchored,
-        font_family=label.font.family,
-        font_tabular=label.font.tabular_figures,
+        font_family=_resolved_font.family,
+        font_tabular=_resolved_font.tabular_figures,
         chart_id=chart_id,
+        notation=format.notation if format is not None else None,
+        repeat=format.repeat if format is not None else None,
     )
 
-    # tick_label.format is ruler's non-compacting sibling: an SI ladder that
-    # does NOT compact (raw_scale is None), or any decimal-carrying fixed-point
-    # house format, gets its ticks rewritten by `non_compacting_tick_format`,
-    # unless the format is a literal d3 spec (not house, per format_is_house)
-    # or the ladder has too little to derive
-    # a step from. Recomputed here rather than read off `ruler is None`
-    # because `ruler` can also be None for reasons (non-SI format,
-    # authored label.expr) this branch independently re-checks.
+    # tick_label is ruler's non-compacting sibling: an SI ladder that does not
+    # compact, or a decimal-carrying fixed-point house format, is rewritten by
+    # `non_compacting_tick_format` unless the format is not house or the ladder
+    # has no step to derive. `ruler is None` alone is not enough: other causes
+    # are re-checked here.
     #
     # There is no magnitude floor on the ladder: nothing chooses SI below
     # thousands (`shared_scale_for_ladder` declines), so a sub-1 ladder left
@@ -523,7 +572,7 @@ def build_resolved_axis(
         # are equal: two ticks, no step. Same exit as a ladder too short to
         # carry one.
         and tick_values[0] != tick_values[1]
-        and label.expr is None
+        and axis.labels.expr is None
     ):
         step = abs(tick_values[1] - tick_values[0])
         # Prefix-split still applies when there's a currency symbol.
@@ -534,28 +583,19 @@ def build_resolved_axis(
         # position, so no pad table.
         prefix, digit_spec, precision = non_compacting_tick_format(step_format, step)
         anchor_at_start_plain = None
-        if prefix and column_forming:
-            # anchor_at_start_plain stays None below when not column_forming
-            # -- inject_axis_numeral_expr reads a None here (with prefix set)
-            # as the repeat signal, not "no anchor decided yet". Mirrors
-            # _build_ruler's effective_mode override (scale.py).
-            #
-            # Sign-aware anchor: prefer the largest positive tick so the
-            # prefix lands on the most prominent value. A "$" has no scale
-            # dependency (unlike a shared "K"/"M" suffix, whose magnitude
-            # determines the unit), so anchoring on the magnitude-extreme
-            # regardless of sign produces the wrong tick on a zero-crossing
-            # ladder where the negative extreme is larger. Fall back to
-            # min() for all-negative-zero-topped ladders so the prefix
-            # never anchors on the 0 cap, which carries no magnitude.
-            positives = [v for v in tick_values if v > 0]
-            anchor_value = max(positives) if positives else min(tick_values)
-            anchor_at_start_plain = tick_values.index(anchor_value) == 0
+        assert format is not None  # format_is_house implies a format
+        # An authored affix anchors like currency's native "$"; None is the
+        # repeat signal, the default where no column forms.
+        anchored = (
+            column_forming if format.repeat is None else format.repeat == "anchor"
+        )
+        if (prefix or format.prefix or format.suffix) and anchored:
+            anchor_at_start_plain = _affix_anchor_at_start(tick_values)
         if (
             precision is not None
             and column_forming
             and not start_anchored
-            and label.font.tabular_figures
+            and _resolved_font.tabular_figures
         ):
             # Only pad when ticks have mixed fractional depth; uniform depth
             # means every label already aligns (no fix needed).
@@ -564,7 +604,7 @@ def build_resolved_axis(
                 len(_d3_format(digit_spec, v).partition(".")[2]) for v in tick_values
             }
             if len(frac_depths) > 1:
-                digit_unit, dot_unit = compose_decimal_units(label.font.family)
+                digit_unit, dot_unit = compose_decimal_units(_resolved_font.family)
                 tick_label_pad_table: tuple[str, ...] = build_decimal_pad_table(
                     precision, digit_unit, dot_unit
                 )
@@ -582,7 +622,7 @@ def build_resolved_axis(
         not tick_values
         and format_is_house
         and _si_format is not None
-        and label.expr is None
+        and axis.labels.expr is None
         # Excludes a log-scale axis, which also reaches here with empty
         # tick_values for its own, unrelated reason -- see the docstring
         # above and `inject_axis_numeral_expr`'s own for why.
@@ -594,59 +634,91 @@ def build_resolved_axis(
     ):
         # See the docstring above for the mechanism; `inject_axis_numeral_expr`
         # is the authoritative account of how the three specs below compose.
-        tick_label = ResolvedTickLabel(
-            format=sub_unit_digit_format(_si_format),
-            si_format=_si_format,
-            scientific_format=sub_unit_scientific_format(_si_format),
-        )
+        assert format is not None  # _si_format implies a format
+        tick_label = ladderless_tick_label(format, measure_values)
+    elif ruler is None and format is not None and axis.labels.expr is None:
+        tick_label = affix_tick_label(format, tick_values)
 
-    # style.axis_y.mirror draws the y-scale on both edges (MirrorAxisFeature,
-    # render/chart/features/mirror_axis.py). The mirrored edge's own
-    # resolved anchoring is not always the primary's opposite (an authored
-    # labels.align resolves against each edge independently), so it gets
-    # its own _build_ruler call here, at resolve, through the same guard --
-    # never re-derived in render, where the guard has already run and
-    # cannot reach it. mirror.expr/mirror.format replace the ghost's paint
-    # entirely, so there is nothing for a baked ruler to describe; skip
-    # rather than bake a decision no consumer reads (and that could
-    # spuriously trip the guard for a font this device was never asked to
-    # measure).
-    mirror_ruler: ResolvedRulerAxis | None = None
-    mirror_overrides_label = (
-        isinstance(axis, AxisYStyle)
-        and isinstance(axis.mirror, AxisMirrorStyle)
-        and (axis.mirror.expr is not None or axis.mirror.format is not None)
-    )
-    if (
-        ruler is not None
-        and isinstance(axis, AxisYStyle)
-        and axis.mirror
-        and edge in ("left", "right")
-        and not mirror_overrides_label
-    ):
-        opposite_edge: Literal["left", "right"] = "left" if edge == "right" else "right"
-        # NOT a second `_resolve_own_side_align` against `opposite_edge` --
-        # `MirrorAxisFeature` never re-resolves the authored align for its
-        # own edge; it copies the PRIMARY's already-resolved `labelAlign`
-        # verbatim (`dict(primary_axis)`). `label.align` (the primary's own
-        # resolved value) fed through `_render_align` for `opposite_edge`
-        # is what that verbatim copy actually renders as on the ghost's
-        # edge -- re-resolving `inward`/`outward` against `opposite_edge`
-        # instead computes a decision render never makes. `fallback_fires`
-        # is the same one outcome the primary's own render-accurate
-        # anchoring above used: the fallback runs once, against the
-        # primary's edge, and both axes inherit or smart-default from that
-        # single result -- never re-evaluated per edge.
-        mirror_ruler = _build_ruler(
-            tick_values=tick_values,
-            si_format=_si_format,
-            label_expr=label.expr,
-            column_forming=column_forming,
-            start_anchored=_render_align(label.align, opposite_edge, fallback_fires)
-            == "left",
-            font_family=label.font.family,
-            font_tabular=label.font.tabular_figures,
-            chart_id=chart_id,
+    # The mirrored edge anchors independently of the primary (labels.align
+    # resolves per edge), so it gets its own _build_ruler call. An authored
+    # mirror.format/.expr replaces the ghost's paint: no ruler then.
+    mirror: ResolvedMirrorAxis | None = None
+    if isinstance(axis, AxisYStyle) and axis.mirror:
+        authored_mirror = (
+            axis.mirror if isinstance(axis.mirror, AxisMirrorStyle) else None
+        )
+        mirror_format: ResolvedFormat | None = None
+        mirror_ruler: ResolvedRulerAxis | None = None
+        mirror_tick_label: ResolvedTickLabel | None = None
+        if authored_mirror is not None and authored_mirror.format is not None:
+            # One shared scale: the mirror paints the primary's digits.
+            mirror_format = resolve_format_parts(
+                authored_mirror.format,
+                formats,
+                no_format_default=PredefinedNumberFormat.number,
+            )
+            if not tick_values and mirror_format.raw in PREDEFINED_SUB_UNIT_FALLBACK:
+                mirror_tick_label = ladderless_tick_label(mirror_format, measure_values)
+            elif (
+                mirror_format.raw in PREDEFINED_SUB_UNIT_FALLBACK
+                and raw_scale is None
+                and len(tick_values) >= 2
+                and tick_values[0] != tick_values[1]
+            ):
+                mirror_symbol, mirror_digits, _ = non_compacting_tick_format(
+                    mirror_format.spec, abs(tick_values[1] - tick_values[0])
+                )
+                mirror_format = resolve_format_parts(
+                    authored_mirror.format,
+                    formats,
+                    no_format_default=PredefinedNumberFormat.number,
+                    spec=with_symbol(mirror_digits, mirror_symbol),
+                )
+            else:
+                mirror_format = resolve_format_parts_for_values(
+                    authored_mirror.format,
+                    formats,
+                    tick_values,
+                    no_format_default=PredefinedNumberFormat.number,
+                )
+            if mirror_tick_label is None:
+                mirror_tick_label = affix_tick_label(mirror_format, tick_values)
+            if (
+                mirror_tick_label is not None
+                and mirror_tick_label.anchor_at_start is not None
+            ):
+                check_anchored_sign(
+                    mirror_format, f"charts.{chart_id}.style.axis_y.mirror.format"
+                )
+        elif (
+            (authored_mirror is None or authored_mirror.expr is None)
+            and ruler is not None
+            and edge in ("left", "right")
+        ):
+            opposite_edge: Literal["left", "right"] = (
+                "left" if edge == "right" else "right"
+            )
+            # MirrorAxisFeature copies the primary's `labelAlign` onto the ghost.
+            mirror_ruler = _build_ruler(
+                tick_values=tick_values,
+                si_format=_si_format,
+                label_expr=axis.labels.expr,
+                column_forming=column_forming,
+                start_anchored=_render_align(
+                    resolved_label_align, opposite_edge, fallback_fires
+                )
+                == "left",
+                font_family=_resolved_font.family,
+                font_tabular=_resolved_font.tabular_figures,
+                chart_id=chart_id,
+                notation=format.notation if format is not None else None,
+                repeat=format.repeat if format is not None else None,
+            )
+        mirror = ResolvedMirrorAxis(
+            format=mirror_format,
+            expr=authored_mirror.expr if authored_mirror is not None else None,
+            ruler=mirror_ruler,
+            tick_label=mirror_tick_label,
         )
 
     # Where we bake no ladder (tick_values empty) Vega-Lite picks the ticks
@@ -660,10 +732,10 @@ def build_resolved_axis(
         and floor_tick_step
         and is_quantitative
         and not tick_values
-        and label.format is not None
+        and format is not None
         and not _scale_names_ticks_or_is_log(axis.scale)
     ):
-        tick_step = tick_min_step_for_format(label.format)
+        tick_step = tick_min_step_for_format(format.spec)
 
     ticks_visible = axis.ticks.visible
     # "auto" is only ever declared on DimensionTicksStyle (axis_x's own tick
@@ -677,6 +749,20 @@ def build_resolved_axis(
         else:
             ticks_visible = y_gridline_caps_bottom
 
+    axis_key = "axis_y" if isinstance(axis, AxisYStyle) else "axis_x"
+    anchors_affix = (ruler is not None and not ruler.prefix_repeats) or (
+        tick_label is not None and tick_label.anchor_at_start is not None
+    )
+    if format is not None and anchors_affix:
+        check_anchored_sign(format, f"charts.{chart_id}.style.{axis_key}.labels.format")
+    label = ResolvedAxisElementStyle(
+        font=_resolved_font,
+        padding=_require(axis.labels.padding, "charts.axis.labels.padding"),
+        align=resolved_label_align,
+        overlap=_resolve_overlap_config(axis.labels.overlap),
+        format=format,
+        **label_kwargs,
+    )
     return ResolvedAxisStyle(
         grid=ResolvedAxisGridStyle(
             visible=_require(axis.grid.visible, "charts.axis.grid.visible"),
@@ -712,7 +798,7 @@ def build_resolved_axis(
             **{f: getattr(axis.title, f) for f in _TITLE_PASSTHROUGH},
         ),
         position=axis.position,
-        mirror=axis.mirror if isinstance(axis, AxisYStyle) else None,
+        mirror=mirror,
         band_position=band_position,
         scale=build_resolved_scale(axis.scale),
         fill=axis.fill if isinstance(axis, AxisXStyle) else None,
@@ -739,13 +825,11 @@ def build_resolved_axis(
         ),
         tick_values=tick_values,
         ruler=ruler,
-        mirror_ruler=mirror_ruler,
         tick_label=tick_label,
         domain_max=None if domain_max is ... else domain_max,
         domain_min=None if domain_min is ... else domain_min,
         is_quantitative=is_quantitative,
         zero_anchored=zero_anchored,
-        format_raw=format_raw,
     )
 
 
@@ -809,7 +893,7 @@ def _merge_axis_cascade(
     channel_type: str,
     chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
-    chart_fallback_format: str | FormatConfig | None = None,
+    chart_fallback_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
@@ -823,7 +907,7 @@ def _merge_axis_cascade(
     channel_type: str,
     chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
-    chart_fallback_format: str | FormatConfig | None = None,
+    chart_fallback_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
@@ -836,7 +920,7 @@ def _merge_axis_cascade(
     channel_type: str,
     chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
-    chart_fallback_format: str | FormatConfig | None = None,
+    chart_fallback_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
@@ -975,21 +1059,13 @@ def _merge_axis_cascade(
     # Layer 10: chart-level format fallback (chart.format / style.number_format /
     # style.time_format).  Sits after all board layers so chart-authored format
     # beats the board, but before chart-local style.axis_* so those still win.
-    # Merges the RAW spec/name, same as every other layer -- resolution
-    # happens once, at the end of the whole cascade, from whichever layer's
-    # raw string is left standing.
+    # Merges the raw authored value; resolution happens once, after the cascade.
     if chart_fallback_format is not None:
-        # A FormatConfig with no spec (e.g. prefix/suffix only) means "no
-        # number formatting, just decorate" -- "" forces a clean override of
-        # any inherited format.
-        _fallback_spec = (
-            chart_fallback_format.spec
-            if isinstance(chart_fallback_format, FormatConfig)
-            else chart_fallback_format
-        ) or ""  # type-state: silent_fallback — spec-less clears the field
         base = merge_onto_base(
             base,
-            BaseAxisStylePatch.model_validate({"labels": {"format": _fallback_spec}}),
+            BaseAxisStylePatch.model_validate(
+                {"labels": {"format": chart_fallback_format}}
+            ),
         )
 
     band_position: float | None = None
@@ -1020,30 +1096,6 @@ def _merge_axis_cascade(
         _channel_patch = getattr(chart_style_context, f"axis_overrides_{axis_name[-1]}")
         base = merge_onto_base(base, _channel_patch)
 
-    # mirror.format is an authored per-edge relabel (AxisMirrorStyle, y-axis
-    # only) that never passes through the labels.format cascade above — it
-    # is stored as-is on the resolved axis and handed to Vega verbatim by
-    # mirror_axis.py, so it must get the same resolve_format treatment
-    # (alias lookup + round-aware trim) here, not at the render read site,
-    # or the mirrored edge and the primary edge disagree on digits for what
-    # is meant to be one shared scale.
-    if (
-        isinstance(base, AxisYStyle)
-        and isinstance(base.mirror, AxisMirrorStyle)
-        and base.mirror.format is not None
-    ):
-        base = base.model_copy(
-            update={
-                "mirror": base.mirror.model_copy(
-                    update={
-                        "format": resolve_format(
-                            base.mirror.format, chart_style_context.formats
-                        )
-                    }
-                )
-            }
-        )
-
     return base, band_position
 
 
@@ -1053,7 +1105,7 @@ def resolved_axis_style(
     channel_type: str,
     chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
-    chart_fallback_format: str | FormatConfig | None = None,
+    chart_fallback_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
@@ -1136,20 +1188,20 @@ def resolved_axis_style(
         label_authored=label_authored,
     )
     # No tick_values here -- this cascade never bakes a ruler ladder, so
-    # ruler is always None regardless of chart_id (which build_resolved_axis
-    # needs only for the tabular-guarantee error message, unreachable on
-    # this no-ladder path). No caller of this wrapper has a real chart id to
-    # offer, so "" is passed inline rather than threading a dead parameter
-    # through resolved_axis_style's public signature. base.labels.format is
-    # threaded through as format_raw regardless -- cheap and correct, and not
-    # inert: the ladder-less sub-unit bake's own entry condition is empty
-    # tick_values, which this wrapper always has. What keeps it from firing
-    # on this path is that `labels.format` here is still an unresolved raw
-    # name (e.g. "number"), not the literal d3 spec `is_d3_si_spec` requires.
+    # No ladder here, so chart_id (only used by the tabular-guarantee error) is "".
+    # Only axis geometry is read off this axis.
     return build_resolved_axis(
         base,
         band_position=band_position,
-        format_raw=base.labels.format,
+        format=(
+            resolve_format_parts(
+                base.labels.format,
+                chart_style_context.formats,
+                no_format_default=None,
+            )
+            if base.labels.format is not None
+            else None
+        ),
         is_quantitative=channel_type == "quantitative",
         chart_id="",
         # This wrapper resolves one axis in isolation, with no paired y-axis
@@ -1157,4 +1209,5 @@ def resolved_axis_style(
         # the parameter default, since this axis's own `ticks` field is never
         # read on this no-ladder path regardless (see the comment above).
         y_gridline_caps_bottom=None,
+        formats=chart_style_context.formats,
     )

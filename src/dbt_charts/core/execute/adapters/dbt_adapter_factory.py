@@ -11,14 +11,18 @@ import importlib
 import logging
 import multiprocessing
 import shutil
+import sys
 import tempfile
 import weakref
 from collections.abc import Generator
 from contextlib import contextmanager
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
+from dbt_charts._install_hint import install_hint
 from dbt_charts.core.compile.models.source import infer_bq_method
+from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.native_attribution import (
     native_attribution_credential,
 )
@@ -30,30 +34,105 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Mapping: source_config type → (module_path, AdapterClass, CredentialsClass)
+# Mapping: source_config type → (module_path, AdapterClass, CredentialsClass, extra)
+# `extra` is the dbt-charts optional-dependency group that installs the adapter;
+# None for dbt-duckdb, a core dependency.
 # Add entries here when new warehouse adapters are needed.
 # This is the single source of truth — dbt_adapter.py imports from here.
-_ADAPTER_TYPE_MAP: dict[str, tuple[str, str, str]] = {
-    "duckdb": ("dbt.adapters.duckdb", "DuckDBAdapter", "DuckDBCredentials"),
-    "postgres": ("dbt.adapters.postgres", "PostgresAdapter", "PostgresCredentials"),
-    "postgresql": ("dbt.adapters.postgres", "PostgresAdapter", "PostgresCredentials"),
-    "redshift": ("dbt.adapters.redshift", "RedshiftAdapter", "RedshiftCredentials"),
-    "snowflake": ("dbt.adapters.snowflake", "SnowflakeAdapter", "SnowflakeCredentials"),
-    "bigquery": ("dbt.adapters.bigquery", "BigQueryAdapter", "BigQueryCredentials"),
-    "spark": ("dbt.adapters.spark", "SparkAdapter", "SparkCredentials"),
+_ADAPTER_TYPE_MAP: dict[str, tuple[str, str, str, str | None]] = {
+    "duckdb": ("dbt.adapters.duckdb", "DuckDBAdapter", "DuckDBCredentials", None),
+    "postgres": (
+        "dbt.adapters.postgres",
+        "PostgresAdapter",
+        "PostgresCredentials",
+        "postgresql",
+    ),
+    "postgresql": (
+        "dbt.adapters.postgres",
+        "PostgresAdapter",
+        "PostgresCredentials",
+        "postgresql",
+    ),
+    "redshift": (
+        "dbt.adapters.redshift",
+        "RedshiftAdapter",
+        "RedshiftCredentials",
+        "redshift",
+    ),
+    "snowflake": (
+        "dbt.adapters.snowflake",
+        "SnowflakeAdapter",
+        "SnowflakeCredentials",
+        "snowflake",
+    ),
+    "bigquery": (
+        "dbt.adapters.bigquery",
+        "BigQueryAdapter",
+        "BigQueryCredentials",
+        "bigquery",
+    ),
+    "spark": ("dbt.adapters.spark", "SparkAdapter", "SparkCredentials", "spark"),
     "databricks": (
         "dbt.adapters.databricks",
         "DatabricksAdapter",
         "DatabricksCredentials",
+        "databricks",
     ),
-    "trino": ("dbt.adapters.trino", "TrinoAdapter", "TrinoCredentialsFactory"),
-    "athena": ("dbt.adapters.athena", "AthenaAdapter", "AthenaCredentials"),
+    "trino": ("dbt.adapters.trino", "TrinoAdapter", "TrinoCredentialsFactory", "trino"),
+    "athena": ("dbt.adapters.athena", "AthenaAdapter", "AthenaCredentials", "athena"),
     "clickhouse": (
         "dbt.adapters.clickhouse",
         "ClickHouseAdapter",
         "ClickHouseCredentials",
+        "clickhouse",
+    ),
+    "sqlserver": (
+        "dbt.adapters.sqlserver",
+        "SQLServerAdapter",
+        "SQLServerCredentials",
+        "sqlserver",
     ),
 }
+
+SUPPORTED_ADAPTER_TYPES = frozenset(_ADAPTER_TYPE_MAP)
+
+
+class AdapterNotInstalledError(ExecutionError, ImportError):
+    """A source's dbt adapter package is missing: an ImportError that also
+    carries ERR-ADAPTER-NOT-INSTALLED and its install command."""
+
+
+def import_adapter_module(adapter_type: str) -> ModuleType:
+    """Import the dbt adapter package for ``adapter_type``.
+
+    Raises:
+        ValueError: ``adapter_type`` names no supported adapter.
+        AdapterNotInstalledError: the adapter package is not installed.
+    """
+    entry = _ADAPTER_TYPE_MAP.get(adapter_type.lower())
+    if entry is None:
+        raise ValueError(
+            f"Unsupported adapter type '{adapter_type}'. "
+            f"Supported: {', '.join(sorted(_ADAPTER_TYPE_MAP))}. "
+            f"For other warehouses, install the relevant dbt-<warehouse> package "
+            f"and add an entry to _ADAPTER_TYPE_MAP in dbt_adapter_factory.py."
+        )
+    module_path, _, _, extra = entry
+    try:
+        return importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        # Only the adapter package itself being absent is fixed by installing
+        # the extra; a broken dependency inside an installed adapter is not.
+        if e.name is None or not (
+            e.name == module_path or module_path.startswith(e.name + ".")
+        ):
+            raise
+        raise AdapterNotInstalledError.from_code(
+            ERR_ADAPTER_NOT_INSTALLED,
+            adapter_type=adapter_type,
+            package="dbt-" + module_path.rsplit(".", 1)[1],
+            install=install_hint(extra),
+        ) from e
 
 
 # dbt's Credentials base class requires both `database` and `schema` as str.
@@ -107,6 +186,20 @@ def _ensure_duckdb_readonly_initialize_db_patch() -> None:
     _duckdb_initialize_db_patched = True
 
 
+def _route_dbt_events_to_stderr() -> None:
+    """Point dbt's console event logger at stderr.
+
+    dbt writes its events, behavior-change warnings included, to stdout through
+    a handler bound at import. dbt-sqlserver 1.10+ raises two of them on every
+    adapter it builds, and on stdout they corrupt ``dct query --json``.
+    """
+    for handler in logging.getLogger("stdout_log").handlers:
+        if isinstance(handler, logging.StreamHandler):
+            # Not setStream(): it flushes the stream being replaced first, and a
+            # stream a previous capture closed raises there.
+            handler.stream = sys.stderr
+
+
 def build_adapter(
     source_config: dict[str, Any],
     *,
@@ -136,7 +229,8 @@ def build_adapter(
 
     Raises:
         ValueError: 'type' key is missing or names an unsupported adapter.
-        ImportError: The dbt adapter package for this warehouse is not installed.
+        AdapterNotInstalledError: The dbt adapter package for this warehouse is
+            not installed.
     """
     adapter_type = source_config.get("type")
     if not adapter_type:
@@ -145,24 +239,9 @@ def build_adapter(
         )
 
     adapter_type_lower = str(adapter_type).lower()
-    entry = _ADAPTER_TYPE_MAP.get(adapter_type_lower)
-    if entry is None:
-        raise ValueError(
-            f"Unsupported adapter type '{adapter_type}'. "
-            f"Supported: {', '.join(sorted(_ADAPTER_TYPE_MAP))}. "
-            f"For other warehouses, install the relevant dbt-<warehouse> package "
-            f"and add an entry to _ADAPTER_TYPE_MAP in dbt_adapter_factory.py."
-        )
-
-    module_path, adapter_name, creds_name = entry
-
-    try:
-        mod = importlib.import_module(module_path)
-    except ImportError as e:
-        raise ImportError(
-            f"dbt-{adapter_type_lower} is not installed. "
-            f"Install it with: pip install dbt-{adapter_type_lower}"
-        ) from e
+    mod = import_adapter_module(adapter_type_lower)
+    _route_dbt_events_to_stderr()
+    _, adapter_name, creds_name, _ = _ADAPTER_TYPE_MAP[adapter_type_lower]
 
     adapter_cls = getattr(mod, adapter_name)
     creds_cls = getattr(mod, creds_name)

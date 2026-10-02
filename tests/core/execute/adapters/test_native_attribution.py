@@ -56,7 +56,8 @@ class TestPerWarehouseShape:
         ) == native_attribution_credential("postgres")
 
     @pytest.mark.parametrize(
-        "adapter_type", ["redshift", "athena", "duckdb", "bigquery", "clickhouse"]
+        "adapter_type",
+        ["redshift", "athena", "duckdb", "bigquery", "clickhouse", "sqlserver"],
     )
     def test_warehouses_without_an_inert_field_get_nothing(
         self, adapter_type: str

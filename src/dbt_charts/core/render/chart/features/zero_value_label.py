@@ -44,6 +44,7 @@ from dbt_charts.core.render.chart.features.value_labels import (
     label_size_encoding,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
+from dbt_charts.core.render.format_utils import format_value
 from dbt_charts.core.utils import coerce_numeric_cell
 
 
@@ -131,7 +132,15 @@ class ZeroValueLabelFeature:
             "type": "quantitative",
         }
         if labels.format is not None:
-            text_enc["format"] = labels.format
+            fmt = labels.format
+            if fmt.prefix or fmt.suffix:
+                # Only the value 0 paints, so the affix is composed once in
+                # Python; a per-row transform would break a sorted domain.
+                text_enc.pop("field")
+                text_enc.pop("type")
+                text_enc["value"] = format_value(0, labels.format)
+            else:
+                text_enc["format"] = fmt.spec
         layer_enc: VLDict = {"text": text_enc}
         size = label_size_encoding(labels)
         if size is not None:

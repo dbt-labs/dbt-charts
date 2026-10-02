@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
 _MANIFEST_CONTENT = json.dumps(
@@ -168,3 +170,124 @@ def test_corrupt_manifest_surfaces_as_diagnostic(tmp_path: Path) -> None:
 
     # Must not raise — error must be in result.errors as a diagnostic
     assert any("ERR-DBT-MANIFEST-UNREADABLE" in e.code for e in result.errors)
+
+
+def _prod_manifest(model: str) -> str:
+    return json.dumps(
+        {
+            "nodes": {
+                f"model.analytics.{model}": {
+                    "resource_type": "model",
+                    "name": model,
+                    "schema": "prod",
+                    "relation_name": f"prod.{model}",
+                }
+            },
+            "sources": {},
+        }
+    )
+
+
+def _board_on(source: str, model: str) -> str:
+    return (
+        "queries:\n"
+        "  orders:\n"
+        f"    sql: \"SELECT * FROM {{{{ ref('{model}') }}}}\"\n"
+        f"    source: {source}\n"
+        "rows: []\n"
+    )
+
+
+def _project_with_prod_source(
+    tmp_path: Path, *, prod_manifest: str | None
+) -> FilesystemProject:
+    """Default manifest knows fct_orders; the prod_wh source's own knows what
+    ``prod_manifest`` says (or has no manifest at all)."""
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "target").mkdir()
+    (tmp_path / "target" / "manifest.json").write_text(_MANIFEST_CONTENT)
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n"
+        "  prod_wh:\n"
+        "    type: dbt_profile\n"
+        "    profile: analytics\n"
+        "    target: prod\n"
+        "    target_path: target/prod\n"
+    )
+    if prod_manifest is not None:
+        (tmp_path / "target" / "prod").mkdir()
+        (tmp_path / "target" / "prod" / "manifest.json").write_text(prod_manifest)
+    return FilesystemProject(tmp_path)
+
+
+def test_ref_validates_against_the_sources_target_path(tmp_path: Path) -> None:
+    from dbt_charts.agent_api.validate import validate_content
+
+    project = _project_with_prod_source(
+        tmp_path, prod_manifest=_prod_manifest("fct_prod_only")
+    )
+
+    ok = validate_content(_board_on("prod_wh", "fct_prod_only"), project=project)
+    stale = validate_content(_board_on("prod_wh", "fct_orders"), project=project)
+
+    assert [e for e in ok.errors if "ERR-DBT" in e.code] == []
+    assert [e.code for e in stale.errors if "ERR-DBT" in e.code] == [
+        "ERR-DBT-REF-UNKNOWN-NODE"
+    ]
+
+
+def test_missing_target_path_manifest_warns_naming_the_path(tmp_path: Path) -> None:
+    from dbt_charts.agent_api.validate import validate_content
+
+    project = _project_with_prod_source(tmp_path, prod_manifest=None)
+
+    result = validate_content(_board_on("prod_wh", "fct_orders"), project=project)
+
+    warns = [w for w in result.warnings if w.code == "WARN-DBT-MANIFEST-MISSING"]
+    assert len(warns) == 1
+    assert "target/prod/manifest.json" in warns[0].message
+
+
+def test_board_sources_resolve_target_path_ahead_of_the_project(
+    tmp_path: Path,
+) -> None:
+    """A board-level `sources:` entry shadows the project's, as at execution."""
+    from dbt_charts.agent_api.validate import validate_content
+
+    project = _project_with_prod_source(
+        tmp_path, prod_manifest=_prod_manifest("fct_prod_only")
+    )
+    board = (
+        "sources:\n"
+        "  prod_wh:\n"
+        "    type: dbt_profile\n"
+        "    profile: analytics\n"
+        "    target_path: target\n" + _board_on("prod_wh", "fct_orders")
+    )
+
+    result = validate_content(board, project=project)
+
+    assert [e for e in result.errors if "ERR-DBT" in e.code] == []
+
+
+def test_target_path_env_var_renders_as_execution_renders_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dbt_charts.agent_api.validate import validate_content
+
+    project = _project_with_prod_source(
+        tmp_path, prod_manifest=_prod_manifest("fct_prod_only")
+    )
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n"
+        "  prod_wh:\n"
+        "    type: dbt_profile\n"
+        "    profile: analytics\n"
+        "    target_path: \"target/{{ env_var('DCT_TEST_TARGET') }}\"\n"
+    )
+    monkeypatch.setenv("DCT_TEST_TARGET", "prod")
+
+    result = validate_content(_board_on("prod_wh", "fct_prod_only"), project=project)
+
+    assert [e for e in result.errors if "ERR-DBT" in e.code] == []
+    assert [w for w in result.warnings if w.code == "WARN-DBT-MANIFEST-MISSING"] == []

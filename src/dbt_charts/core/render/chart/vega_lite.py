@@ -60,6 +60,8 @@ from dbt_charts.core.diagnostics import (
     ERR_RESOLVED_PIE_WIDTH_MISMATCH,
     ERR_VEGA_LITE_UNSUPPORTED_TYPE,
 )
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_LEGEND_ALIGN_UNSUPPORTED
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData, RenderArtifact
 from dbt_charts.core.render.chart.emitters._cartesian import (
@@ -303,6 +305,7 @@ def _render_vl_artifact(
             vl, resolved.title_style, chart_id=resolved.id, available_width=width
         )
         _stamp_value_label_layer_sentinel(chart_spec, vl)
+        _stamp_legend_align_sentinel(resolved, vl)
         _trace_vl_spec(resolved.id, "v2", vl)
         return RenderArtifact(kind="vega_spec", payload=vl)
     if "hconcat" in vl:
@@ -392,6 +395,7 @@ def _render_vl_artifact(
         )
     _stamp_axis_label_kind_sentinel(resolved, vl)
     _stamp_value_label_layer_sentinel(chart_spec, vl)
+    _stamp_legend_align_sentinel(resolved, vl)
     _trace_vl_spec(resolved.id, "v2", vl)
     return RenderArtifact(kind="vega_spec", payload=vl)
 
@@ -435,6 +439,51 @@ def _stamp_axis_label_kind_sentinel(
         vl["$df_axis_label_kinds"] = {"X": "x_label", "Y": "y_label"}
     elif _field("y") == x_column and _field("x") != x_column:
         vl["$df_axis_label_kinds"] = {"X": "y_label", "Y": "x_label"}
+
+
+def _emits_legend(
+    node: Any,  # type-state: explicit_any — foreign VL JSON spec
+    *,
+    in_config: bool,
+) -> bool:
+    """Whether any encoding carries a legend config (a single-series bar has none)."""
+    if isinstance(node, dict):
+        return any(
+            (key == "legend" and isinstance(value, dict) and not in_config)
+            or _emits_legend(value, in_config=in_config or key == "config")
+            for key, value in node.items()
+        )
+    if isinstance(node, list):
+        return any(_emits_legend(item, in_config=in_config) for item in node)
+    return False
+
+
+def _stamp_legend_align_sentinel(
+    resolved: ResolvedChart,
+    vl: dict[str, Any],  # type-state: explicit_any — foreign VL JSON spec
+) -> None:
+    """The edge and alignment a legend is slid to once the spec has rendered.
+
+    Vega-Lite has no centered or end legend orient, so a visible legend resolved
+    to ``align: center``, or to ``end`` on a reserved strip, is emitted at its
+    edge's cardinal or corner and ``render_vega_spec`` slides it along that edge
+    (``converters/legend_align.py``).
+    """
+    if not isinstance(resolved, (_CartesianResolvedChartFields, ResolvedPieChart)):
+        return
+    legend = resolved.legend
+    align = legend.position.align
+    # An overlay corner (`top-right`) is already end-aligned by its orient.
+    needs_slide = align == "center" or (align == "end" and not legend.position.overlay)
+    if not (legend.visible and needs_slide and _emits_legend(vl, in_config=False)):
+        return
+    if any(key in vl for key in ("facet", "hconcat", "vconcat", "repeat")):
+        raise ChartDataError.from_code(
+            ERR_LEGEND_ALIGN_UNSUPPORTED,
+            chart_id=resolved.id,
+            reason="small multiples and endpoint-label rails have no single plot to align in",
+        )
+    vl["$df_legend_align"] = {"edge": legend.position.edge, "align": align}
 
 
 def _stamp_value_label_layer_sentinel(
@@ -519,14 +568,29 @@ def _render_arc_attached_table(
     """Render and compose the finalized pie and companion table children."""
     from dbt_charts.core.render.chart.arc_attached_table import (
         compose_attached_table_svg,
+        heading_block_height,
     )
     from dbt_charts.core.render.chart.emitters.pie import prepare_pie_render_rows
+    from dbt_charts.core.render.chart.spec_builders import (
+        bump_padding_top,
+        shift_artifact_title,
+    )
     from dbt_charts.core.render.chart.table import render_table_svg
     from dbt_charts.core.render.svg_utils import extract_svg_dimensions
+    from dbt_charts.core.render.title_band import vega_title_block_height
 
     assert chart.attached_table is not None
     assert chart.attached_table_placement != "none"
     assert chart.attached_heading_font is not None
+    table_svg = render_table_svg(
+        chart.attached_table,
+        prepare_pie_render_rows(chart, data)[1],
+        width=chart.attached_table_width,
+        board_style=resolved_style,
+    )
+    table_dims = extract_svg_dimensions(table_svg)
+    top_table_y = 0.0
+    padding_top = float(padding["top"]) if padding else 0.0
     donut_artifact = _render_vl_artifact(
         chart,
         data,
@@ -537,6 +601,31 @@ def _render_arc_attached_table(
         datasets=None,
         padding=padding,
     )
+    if chart.attached_table_placement == "top":
+        # The table sits between the title and the wheel, so the wheel's plot is
+        # pushed down by the table's height (heading included) and its gap.
+        table_height = table_dims.height + (
+            heading_block_height(
+                chart.attached_heading_font.size, chart.hybrid_heading_gap
+            )
+            if chart.attached_heading
+            else 0.0
+        )
+        room = table_height + chart.attached_table_gap
+        assert isinstance(donut_artifact.payload, dict)
+        # `autosize: fit` holds the whole view to its height, so the room is
+        # added to that height or it would come out of the wheel instead.
+        payload = donut_artifact.payload
+        base_height = payload.get(  # type-state: silent_fallback — an unsized pie spec takes the theme's view height
+            "height", resolved_style.chart_defaults.view.continuous_height
+        )
+        payload["height"] = base_height + room
+        if chart.title:
+            shift_artifact_title(donut_artifact, TitleShift(body_dy=room))
+            top_table_y = padding_top + vega_title_block_height(chart)
+        else:
+            bump_padding_top(donut_artifact.payload, room)
+            top_table_y = padding_top
     donut_svg = render_chart_artifact(
         donut_artifact,
         "svg",
@@ -546,13 +635,6 @@ def _render_arc_attached_table(
         chart_id=chart.id,
     )
     donut_dims = extract_svg_dimensions(donut_svg)
-    table_svg = render_table_svg(
-        chart.attached_table,
-        prepare_pie_render_rows(chart, data)[1],
-        width=chart.attached_table_width,
-        board_style=resolved_style,
-    )
-    table_dims = extract_svg_dimensions(table_svg)
     composed, _w, _h = compose_attached_table_svg(
         donut_svg=donut_svg,
         table_svg=table_svg,
@@ -569,6 +651,10 @@ def _render_arc_attached_table(
         heading_color=chart.attached_heading_font.color,
         gap=chart.attached_table_gap,
         heading_gap=chart.hybrid_heading_gap,
+        top_table_y=top_table_y,
+        align=chart.attached_table_align,
+        inset_left=float(padding["left"]) if padding else 0.0,
+        inset_right=float(padding["right"]) if padding else 0.0,
     )
     return RenderArtifact(kind="svg", payload=composed)
 

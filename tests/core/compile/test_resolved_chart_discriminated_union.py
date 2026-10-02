@@ -240,6 +240,8 @@ def test_spark_bar_constructs() -> None:
 
 import dataclasses
 
+from ..conftest import baked_format
+
 
 def _default_axis_d(chart_type: str, x_type: str, y_type: str) -> tuple[dict, dict]:
     """Return (axis_x dict, axis_y dict) for dispatch test payloads."""
@@ -254,7 +256,7 @@ def _default_axis_d(chart_type: str, x_type: str, y_type: str) -> tuple[dict, di
     from ..conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -262,17 +264,26 @@ def _default_axis_d(chart_type: str, x_type: str, y_type: str) -> tuple[dict, di
         y_type,
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     ax = build_resolved_axis(
         ax_merged,
+        format=baked_format(ax_merged),
         band_position=ax_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     ay = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     return dataclasses.asdict(ax), dataclasses.asdict(ay)
 

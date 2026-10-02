@@ -5,7 +5,9 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import (
+    FormatAliases,
     ResolvedFontStyle,
+    ResolvedFormat,
     ResolvedScaleTarget,
 )
 from dbt_charts.core.compile.models.style.authored import PaginationConfig
@@ -29,7 +31,7 @@ class ResolvedTableStyle(BaseModel):
     title: TitleStyle = Field(
         description="Resolved chart title style from the cascade.",
     )
-    formats: dict[str, str] | None = Field(
+    formats: FormatAliases | None = Field(
         description="Resolved format aliases available to table cells.",
     )
     title_font: ResolvedFontStyle = Field(
@@ -110,6 +112,10 @@ class ResolvedTableColumnConfig(TableColumnConfig):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    format: ResolvedFormat | None = Field(
+        default=None,
+        description="Resolved value format; None when the column authors none.",
+    )
     scale: ResolvedColumnScaleConfig | None = Field(
         default=None,
         description="Resolved continuous color mapping configuration for this column.",

@@ -265,6 +265,106 @@ def test_layer_axis_y_label_format_emits_to_vl() -> None:
     assert axis.get("format") == "$,.0f"
 
 
+def test_layer_axis_y_label_format_affix_composes_a_label_expr() -> None:
+    """A FormatConfig prefix on a layer's own axis_y.labels.format has nowhere to ride
+    in VL's native `format:` (a plain d3 spec string).
+    """
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={
+            "position": "right",
+            "labels": {"format": {"spec": ",.0f", "prefix": "EUR "}},
+        },
+    )
+    vl = _render_bar_with_layers([layer])
+    axis = _find_layer_y_axis(vl, orient="right")
+    assert axis is not None, "No right-orient y axis in VL output"
+    assert "EUR" in (axis.get("labelExpr") or ""), axis
+
+
+def test_layer_axis_y_label_format_spec_less_affix_renders() -> None:
+    """A layer's axis_y.labels.format authoring only a prefix, with no spec of its own,
+    must not crash.
+    """
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    spec_less_layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={"position": "right", "labels": {"format": {"prefix": "EUR "}}},
+    )
+    vl = _render_bar_with_layers([spec_less_layer])
+    axis = _find_layer_y_axis(vl, orient="right")
+    assert axis is not None, "No right-orient y axis in VL output"
+    spec_less_expr = axis.get("labelExpr") or ""
+    assert "EUR" in spec_less_expr, spec_less_expr
+    assert "abs(datum.value) < 1" in spec_less_expr, spec_less_expr
+
+    explicit_layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={
+            "position": "right",
+            "labels": {"format": {"spec": ".3~s", "prefix": "EUR "}},
+        },
+    )
+    explicit_vl = _render_bar_with_layers([explicit_layer])
+    explicit_axis = _find_layer_y_axis(explicit_vl, orient="right")
+    assert explicit_axis is not None, "No right-orient y axis in VL output"
+    assert spec_less_expr != explicit_axis.get("labelExpr"), (
+        "a raw literal SI spec is an intentional, non-alias choice and must "
+        "not take the sub-unit guard the spec-less spelling does"
+    )
+    assert "abs(datum.value) < 1" not in (explicit_axis.get("labelExpr") or "")
+
+
+def test_layer_own_axis_affix_composes_even_when_base_axis_already_did() -> None:
+    """A dual-axis layer's own axis_y.labels.format affix must reach its axis even when
+    the base chart's own y format ALSO composed a labelExpr.
+    """
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={
+            "position": "right",
+            "labels": {"format": {"spec": ".0%", "suffix": " pts"}},
+        },
+    )
+    vl = _render_bar_with_layers([layer], format={"spec": ",.0f", "prefix": "€"})
+    right_axis = _find_layer_y_axis(vl, orient="right")
+    assert right_axis is not None, "No right-orient y axis in VL output"
+    expr = right_axis.get("labelExpr") or ""
+    assert "pts" in expr, expr
+    assert "€" not in expr, expr
+
+
+def test_layer_axis_y_label_format_notation_composes_a_label_expr() -> None:
+    """A FormatConfig `notation` override on a layer's own axis_y.labels.format
+    must reach the painted axis exactly like an affix does, even with no
+    prefix/suffix authored alongside it -- the resolve step must extract
+    `notation` the same way it extracts prefix/suffix, not only when an
+    affix also happens to be present."""
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={
+            "position": "right",
+            "labels": {"format": {"spec": ".3~s", "notation": "narrative"}},
+        },
+    )
+    vl = _render_bar_with_layers([layer])
+    axis = _find_layer_y_axis(vl, orient="right")
+    assert axis is not None, "No right-orient y axis in VL output"
+    assert axis.get("labelExpr"), axis
+
+
 def test_layer_axis_y_label_format_inline_d3_is_native() -> None:
     """axis_y.labels.format authored as a literal d3 spec passes through unmodified.
 
@@ -950,3 +1050,243 @@ def test_shared_scale_overlay_axis_matches_base_when_base_cannot_measure() -> No
         f"labelPadding, not a bare re-derivation: base={base_axis}, "
         f"overlay={overlay_axis}"
     )
+
+
+# ── a layer's sub-unit axis guard is baked at resolve ────────────────────
+
+_SUB_UNIT_DATA: list[dict] = [
+    {"month": "Jan", "revenue": 100.0, "target": 0.2},
+    {"month": "Feb", "revenue": 200.0, "target": 0.7},
+    {"month": "Mar", "revenue": 150.0, "target": 0.4},
+]
+
+
+def _resolve_layer(layer_axis_y: dict, data: list[dict] = _SUB_UNIT_DATA):  # type: ignore[no-untyped-def]
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.resolve import resolve
+
+    layer = LineLayer(type="line", y="target", axis_y=layer_axis_y)
+    chart = _bar_normalized(layers=[layer])
+    return resolve(chart, data, _default_board_style()).layers[0]
+
+
+def test_layer_spec_less_affix_resolves_the_guarded_tick_label_and_tooltip() -> None:
+    """A spec-less affix on a layer axis resolves the per-tick guarded label."""
+    from dbt_charts.core.text.numeral_scale import sub_unit_digit_format
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    resolved_layer = _resolve_layer(
+        {"position": "right", "labels": {"format": {"prefix": "EUR "}}}
+    )
+    guarded = sub_unit_digit_format(".3~s")
+    assert resolved_layer.axis_y.tick_label is not None
+    assert resolved_layer.axis_y.tick_label.format == guarded
+    assert resolved_layer.axis_y.tick_label.si_format == ".3~s"
+    assert resolved_layer.axis_y.labels.format.prefix == "EUR "
+    tooltip = resolved_layer.axis_y.tooltip_format
+    assert (tooltip.spec, tooltip.prefix) == (PREDEFINED_SPECS["number_full"], "EUR ")
+
+
+def test_layer_alias_to_a_preset_resolves_the_guarded_tick_label() -> None:
+    """An alias naming a preset keeps the preset's sub-unit guard."""
+    import dataclasses
+
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.resolve import resolve
+
+    ctx = dataclasses.replace(_default_board_style(), formats={"mine": "number"})
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={"position": "right", "labels": {"format": "mine"}},
+    )
+    resolved = resolve(_bar_normalized(layers=[layer]), _SUB_UNIT_DATA, ctx)
+    assert resolved.layers[0].axis_y.tick_label is not None
+
+
+def test_layer_literal_si_spec_resolves_no_guard() -> None:
+    resolved_layer = _resolve_layer(
+        {
+            "position": "right",
+            "labels": {"format": {"spec": ".3~s", "prefix": "EUR "}},
+        }
+    )
+    assert resolved_layer.axis_y.tick_label is None
+    assert resolved_layer.axis_y.tooltip_format is None
+
+
+def test_layer_axis_paints_the_guarded_spec_its_resolved_layer_carries() -> None:
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    axis_y = {"position": "right", "labels": {"format": {"prefix": "EUR "}}}
+    resolved_layer = _resolve_layer(axis_y)
+    vl = _render_bar_with_layers([LineLayer(type="line", y="target", axis_y=axis_y)])
+    axis = _find_layer_y_axis(vl, orient="right")
+    assert axis is not None, "No right-orient y axis in VL output"
+    assert resolved_layer.axis_y.tick_label is not None
+    assert (
+        f'format(datum.value,"{resolved_layer.axis_y.tick_label.format}")'
+        in axis["labelExpr"]
+    )
+
+
+def test_layer_bare_preset_above_one_keeps_the_tooltip_unguarded() -> None:
+    """Values of 1 or more compact under the preset in the tooltip, as on the base
+    chart.
+    """
+    large = [{**row, "target": row["target"] * 1e7} for row in _SUB_UNIT_DATA]
+    resolved_layer = _resolve_layer(
+        {"position": "right", "labels": {"format": "currency"}}, large
+    )
+    assert resolved_layer.axis_y.tick_label is not None
+    assert resolved_layer.axis_y.tooltip_format is None
+
+
+def test_layer_tooltip_with_mixed_magnitude_data_takes_the_base_chart_vote() -> None:
+    """A layer tooltip votes like every base-chart tooltip."""
+    mixed = [
+        {**row, "target": value}
+        for row, value in zip(_SUB_UNIT_DATA, [0.5, 1234.5, 2456789.0], strict=True)
+    ]
+    resolved_layer = _resolve_layer(
+        {"position": "right", "labels": {"format": "currency"}}, mixed
+    )
+    assert resolved_layer.axis_y.tooltip_format.spec == "$,.2f"
+
+
+def test_layer_with_an_own_query_missing_from_datasets_raises() -> None:
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
+    layer = LineLayer(
+        type="line",
+        y="target",
+        query="goals",
+        axis_y={"position": "right", "labels": {"format": "currency"}},
+    )
+    chart = _bar_normalized(layers=[layer])
+    with pytest.raises(ChartDataError, match="goals"):
+        resolve(chart, _DATA, _default_board_style(), datasets={"other": []})
+
+
+def test_unformatted_right_axis_layer_query_absent_from_datasets_resolves() -> None:
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.resolve import resolve
+
+    layer = LineLayer(
+        type="line", y="target", query="goals", axis_y={"position": "right"}
+    )
+    chart = _bar_normalized(layers=[layer])
+    resolved = resolve(chart, _DATA, _default_board_style(), datasets={"q": _DATA})
+    assert resolved.layers[0].query_name == "goals"
+
+
+def test_right_axis_layer_votes_from_its_own_query_at_runtime() -> None:
+    """A right-axis own-query layer is never gathered for the primary scale, yet its
+    format vote still reads its own rows.
+    """
+    from unittest.mock import MagicMock
+
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.execute.chart_resolution import (
+        resolve_chart_with_runtime_inputs,
+    )
+
+    layer = LineLayer(
+        type="line",
+        y="goal",
+        query="goals",
+        axis_y={"position": "right", "labels": {"format": "currency"}},
+    )
+    executor = MagicMock()
+    executor.execute_query.return_value = [{"month": "Jan", "goal": 0.67}]
+    resolved = resolve_chart_with_runtime_inputs(
+        _bar_normalized(layers=[layer]),
+        _DATA,
+        _default_board_style(),
+        400,
+        executor,
+        {},
+    )
+    assert resolved.layers[0].axis_y.tooltip_format.spec == "$,.2f"
+    executor.execute_query.assert_called_once_with("goals", {})
+
+
+@pytest.mark.parametrize(
+    "fmt",
+    [
+        {"spec": ",.0f", "suffix": " EUR", "repeat": "anchor"},
+        {"prefix": "EUR ", "repeat": "anchor"},
+    ],
+    ids=["plain", "ladderless"],
+)
+def test_layer_axis_y_anchor_repeat_affixes_one_tick(fmt) -> None:
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={"position": "right", "labels": {"format": fmt}},
+    )
+    axis = _find_layer_y_axis(_render_bar_with_layers([layer]), orient="right")
+    assert axis is not None
+    assert "datum.index === 1" in axis["labelExpr"], axis
+
+
+def test_layer_axis_y_anchored_prefix_leads_the_sign() -> None:
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.resolve import resolve
+
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={
+            "position": "right",
+            "labels": {"format": {"spec": ",.0f", "prefix": "€", "repeat": "anchor"}},
+        },
+    )
+    import json
+
+    resolved = resolve(_bar_normalized(layers=[layer]), _DATA, _default_board_style())
+    # The format keeps its standalone placement for single-value slots...
+    assert resolved.layers[0].axis_y.labels.format.placement == "before_prefix"
+    # ...and the anchored tick composes the prefix ahead of the sign.
+    axis = _find_layer_y_axis(_render_bar_with_layers([layer]), orient="right")
+    assert axis is not None
+    assert json.dumps("€") + " + (test(" in axis["labelExpr"], axis["labelExpr"]
+
+
+@pytest.mark.parametrize(("prefix", "painted"), [("€", "−€500"), ("EUR ", "EUR −500")])
+def test_layer_tooltip_keeps_the_standalone_sign_placement(prefix, painted) -> None:
+    """A tooltip shows one value, so an anchored layer axis's prefix does not
+    lead its sign there."""
+    import html
+    import re
+
+    import vl_convert as vlc
+
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+    from dbt_charts.core.render.chart.translate import translate_to_vl
+
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={
+            "position": "right",
+            "labels": {
+                "format": {"spec": ",.0f", "prefix": prefix, "repeat": "anchor"}
+            },
+        },
+    )
+    data = [{"month": "Jan", "revenue": 100.0, "target": -500.0}]
+    chart = _bar_normalized(layers=[layer])
+    resolved = resolve(chart, data, _default_board_style())
+    vl = translate_to_vl(BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), data)))
+    labels = [
+        html.unescape(a)
+        for a in re.findall(r'aria-label="([^"]*)"', vlc.vegalite_to_svg(vl))
+    ]
+    assert any(f"target: {painted}" in label for label in labels), labels

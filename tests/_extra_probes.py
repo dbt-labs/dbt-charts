@@ -45,6 +45,7 @@ EXTRA_PROBES_EXCUSED: dict[str, str] = {
     "trino": "full dbt adapter + driver stack; install weight",
     "athena": "full dbt adapter + driver stack; install weight",
     "clickhouse": "full dbt adapter + driver stack; install weight",
+    "sqlserver": "full dbt adapter + driver stack; install weight",
     # fastapi/uvicorn are unconditional base dependencies (identical
     # versions declared both places) — the extra changes nothing an
     # `import fastapi, uvicorn` probe could observe with or without it.

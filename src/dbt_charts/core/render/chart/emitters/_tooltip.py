@@ -40,6 +40,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.time_unit_detect import (
@@ -47,6 +48,10 @@ from dbt_charts.core.render.chart.time_unit_detect import (
     tooltip_header_date_expr,
 )
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
+from dbt_charts.core.render.chart.vl_field_maps import (
+    _affixed_digits_expr,
+    sign_affixed_expr,
+)
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_TIME_SPECS,
     PredefinedTimeFormat,
@@ -84,6 +89,9 @@ MUTED = "⁠"  # WORD JOINER
 SWATCH = "\u200b"  # ZERO WIDTH SPACE
 
 
+_NO_FORMAT = ResolvedFormat(spec="")
+
+
 @dataclass(frozen=True)
 class TooltipField:
     """One value contributing to a structured tooltip row.
@@ -96,7 +104,9 @@ class TooltipField:
     field: str
     title: str
     kind: Literal["nominal", "quantitative", "temporal"] = "nominal"
-    format: str = ""
+    # A quantitative row composes its authored affix like an axis labelExpr
+    # (``_value_expr``); a temporal row's spec is a UTC date format.
+    format: ResolvedFormat = _NO_FORMAT
     # Bucketed calendar grain (see time_unit_detect.BUCKETED_CALENDAR_UNITS),
     # or "" for continuous/sub-daily temporal data (same empty-string-means-
     # unset convention as `format` above). Only meaningful when
@@ -207,15 +217,24 @@ def series_row_promoted(field: str, data: ChartRenderData) -> bool:
     return field_cardinality(field, data) > 1
 
 
+def _format_quantitative_expr(value_expr: str, fmt: ResolvedFormat) -> str:
+    """A quantitative Vega expression's number format; an affix composes through
+    ``_affixed_digits_expr`` like the axis labelExpr. ``value_expr`` may be any
+    expression."""
+    if fmt.has_affix:
+        return _affixed_digits_expr(value_expr, fmt.spec, fmt, anchored=False)
+    return f"format({value_expr}, {json.dumps(fmt.spec)})"
+
+
 def _value_expr(tf: TooltipField) -> str:
     if tf.literal:
         return json.dumps(tf.field)
     ref = f"datum[{json.dumps(tf.field)}]"
     if tf.kind == "quantitative":
-        return f"format({ref}, {json.dumps(tf.format)})"
+        return _format_quantitative_expr(ref, tf.format)
     if tf.kind == "temporal":
-        if tf.format:
-            return f"utcFormat(toDate({ref}), {json.dumps(tf.format)})"
+        if tf.format.spec:
+            return f"utcFormat(toDate({ref}), {json.dumps(tf.format.spec)})"
         return tooltip_header_date_expr(ref, tf.time_unit)
     return ref
 
@@ -392,13 +411,15 @@ def span_tooltip_rows(
     else:
         e = f"datum[{json.dumps(end.field)}]"
         s = f"datum[{json.dumps(start.field)}]"
-        magnitude = f"format(abs({e} - {s}), {json.dumps(end.format)})"
+        magnitude = _format_quantitative_expr(f"abs({e} - {s})", end.format)
         if span_rises_only(rows, end.field, start.field):
             fields = [TooltipField(_SPAN_DIFFERENCE_FIELD, "Range")]
             expr = magnitude
         else:
             fields = [TooltipField(_SPAN_DIFFERENCE_FIELD, "Change")]
-            expr = f"({e} >= {s} ? '+' : '\\u2212') + {magnitude}"
+            expr = sign_affixed_expr(
+                f"({e} >= {s} ? '+' : '\\u2212')", magnitude, end.format
+            )
         transforms = [{"calculate": expr, "as": _SPAN_DIFFERENCE_FIELD}]
     ends = [tf for tf in (start, end) if tf.field not in covered]
     return [*ends, *fields], transforms

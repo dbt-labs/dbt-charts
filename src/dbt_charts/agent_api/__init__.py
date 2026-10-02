@@ -76,6 +76,11 @@ if TYPE_CHECKING:
         DocsSearchHit as DocsSearchHit,
         Topic as Topic,
     )
+    from dbt_charts.agent_api.doctor import (
+        DoctorCheck as DoctorCheck,
+        DoctorReport as DoctorReport,
+        run_doctor as run_doctor,
+    )
     from dbt_charts.agent_api.import_closure import (
         board_import_closure as board_import_closure,
     )
@@ -150,6 +155,8 @@ __all__ = [
     "DescribeBoardResult",
     "Diagnostic",
     "DocsArgs",
+    "DoctorCheck",
+    "DoctorReport",
     "DocsResult",
     "DocsSearchHit",
     "BoardFile",
@@ -189,6 +196,7 @@ __all__ = [
     "design_target",
     "get_fonts_dir",
     "init_project",
+    "run_doctor",
     "migrate_paths",
     "query_board",
     "QueryRefCalls",
@@ -244,6 +252,9 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "DocsResult": ("dbt_charts.agent_api.docs", "DocsResult"),
     "DocsSearchHit": ("dbt_charts.agent_api.docs", "DocsSearchHit"),
     "Topic": ("dbt_charts.agent_api.docs", "Topic"),
+    "DoctorCheck": ("dbt_charts.agent_api.doctor", "DoctorCheck"),
+    "DoctorReport": ("dbt_charts.agent_api.doctor", "DoctorReport"),
+    "run_doctor": ("dbt_charts.agent_api.doctor", "run_doctor"),
     "InitResult": ("dbt_charts.agent_api.init", "InitResult"),
     "init_project": ("dbt_charts.agent_api.init", "init_project"),
     "MigrateError": ("dbt_charts.agent_api.migrate", "MigrateError"),

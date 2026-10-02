@@ -54,8 +54,14 @@ from dbt_charts.core.execute.adapters.base import (
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import ConnectionSetupFailed
-from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    AdapterNotInstalledError,
+    ConnectionSetupFailed,
+)
+from dbt_charts.core.execute.adapters.dbt_utils import (
+    DbtRefResolver,
+    source_target_path,
+)
 from dbt_charts.core.execute.sql_literals import (
     INLINE_PLACEHOLDERS,
     inline_params_for_dialect,
@@ -190,7 +196,7 @@ class _SourcePool:
         # the timeout SQL to run once at connection setup, or None when the
         # dialect has no server-side SQL mechanism (DuckDB returns None;
         # BigQuery's cap is a job-level setting applied in _ensure_connected,
-        # ClickHouse's a credential applied just below).
+        # ClickHouse's and SQL Server's are credentials applied just below).
         self._timeout_sql = self._dialect.statement_timeout_sql(self._timeout_seconds)
         # The config every worker thread hands build_adapter: `source_config`
         # itself unless the dialect's cap is credential-shaped and it put the
@@ -240,7 +246,7 @@ class _SourcePool:
     def _execute_on_worker(
         self, inlined_sql: str, setup_sql: str | None, limit: int | None
     ) -> Any:  # type-state: explicit_any — dbt-adapters' agate.Table is untyped here
-        adapter = self._ensure_connected()
+        adapter = self._replace_if_released(self._ensure_connected())
         dirty = self._tls.session_dirty
         try:
             # Inside the try: a connection that died while idle fails here rather
@@ -253,6 +259,7 @@ class _SourcePool:
             # retrying would just burn the same timeout window again.
             raise
         except Exception:  # noqa: BLE001 — retried below only if the session died
+            adapter = self._replace_if_released(adapter)
             if self._connection_alive(adapter):
                 # The warehouse received the query and rejected it. Re-sending it
                 # fails identically, and the reconnect throws away a warm
@@ -261,6 +268,29 @@ class _SourcePool:
             self._drop_connection()
             adapter = self._ensure_connected()
             return self._run(adapter, inlined_sql, setup_sql, limit)
+
+    def _replace_if_released(
+        self,
+        adapter: Any,  # type-state: explicit_any — dbt adapter instance is untyped here
+    ) -> Any:  # type-state: explicit_any — dbt adapter instance is untyped here
+        """The adapter to run on: a fresh one if the driver released its connection.
+
+        dbt-sqlserver releases the connection on any error, so this must run
+        before :meth:`_connection_alive` probes it. The rebuild goes through
+        ``_ensure_connected`` and gets its per-connection setup.
+        """
+        from dbt.adapters.contracts.connection import ConnectionState
+        from dbt.adapters.exceptions import InvalidConnectionError
+
+        try:
+            state = adapter.connections.get_thread_connection().state
+        except InvalidConnectionError:
+            # dbt drops the thread's connection when closing it failed.
+            state = None
+        if state == ConnectionState.OPEN:
+            return adapter
+        self._drop_connection()
+        return self._ensure_connected()
 
     def _connection_alive(self, adapter: Any) -> bool:
         """Whether the warehouse still answers on this connection.
@@ -340,6 +370,9 @@ class _SourcePool:
         cause that is false. The lazy connection handle is forced open for
         every dialect (not just bigquery/postgres/snowflake) so a connect
         failure on any dialect is caught here rather than leaking into _run().
+
+        A missing adapter package is the exception: AdapterNotInstalledError
+        propagates unwrapped and the caller reports its install command.
         """
         adapter = getattr(self._tls, "adapter", None)
         if adapter is not None:
@@ -392,6 +425,10 @@ class _SourcePool:
             # sufficient and correct — no per-query prepend needed.
             if self._timeout_sql is not None:
                 adapter.execute(self._timeout_sql, auto_begin=False, fetch=False)
+        except AdapterNotInstalledError:
+            # A missing package is a setup error with its own install command,
+            # not a connection failure to bucket as "check your credentials".
+            raise
         except Exception as e:  # noqa: BLE001 — reclassified by caller, not swallowed
             raise ConnectionSetupFailed(e) from e
 
@@ -535,7 +572,20 @@ class SqlAdapter(BaseAdapter):
         )
         if isinstance(prepared, QueryResult):
             return prepared
+        return self.execute_prepared(prepared, query, source_config)
 
+    def execute_prepared(
+        self,
+        prepared: PreparedSql,
+        query: SqlQuery,
+        source_config: ResolvedSourceConfig | None,
+    ) -> QueryResult:
+        """Send SQL from :meth:`prepare_sql` to the warehouse.
+
+        Public so a check that must wrap the *rendered* statement (SQL Server's
+        describe embeds it in a string literal, which rendering must not see)
+        can substitute ``prepared.sql`` and still run on the real execute path.
+        """
         # Resolver-provided source_config is the single source of truth. When
         # absent, the adapter falls through to its own default connection using
         # the configured profile_type. dbt_profile sources are expanded to their
@@ -574,7 +624,9 @@ class SqlAdapter(BaseAdapter):
         propagates one error shape whichever half produced it.
         """
         try:
-            sql, resolved_relations = self._dbt_refs.resolve(query.sql)
+            sql, resolved_relations = self._dbt_refs.resolve(
+                query.sql, source_target_path(source_config)
+            )
         except DbtChartsError as e:
             return handle_adapter_error("dbt ref resolution", e)
 
@@ -735,6 +787,8 @@ class SqlAdapter(BaseAdapter):
                     code=ERR_QUERY_DURATION_EXCEEDED,
                 ),
             )
+        except AdapterNotInstalledError as e:
+            return handle_adapter_error(f"{dialect_name} query setup", e)
         except ConnectionSetupFailed as e:
             # Building/connecting the worker's dbt adapter failed (bad
             # credentials, unreachable host) — the warehouse never saw the

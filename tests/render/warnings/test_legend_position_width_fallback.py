@@ -1,11 +1,12 @@
 """Tests for the LEGEND_POSITION_WIDTH_FALLBACK render-warning detector.
 
-Detection rule: fires on a cartesian chart whose resolved
+Detection rule: fires on a cartesian chart or pie whose resolved
 ``legend.position_overridden_by_width`` is set -- the tiny width tier
-(< 352.5px) forced the legend back to `top` over an authored non-top
-`legend.position`. The fact is baked at resolve time
-(``cartesian_series_naming()``, ``_axes.py``); this detector only reads it
-off ``ctx.layout_charts``, the placement-matched chart instances.
+(< 352.5px) forced a cartesian legend back to `top`, or a pie's side key fell
+below the wheel, over an authored `legend.position.edge`. The fact is baked at
+resolve time (``cartesian_series_naming()`` in ``_axes.py``, ``_resolve_pie``);
+this detector only reads it off ``ctx.layout_charts``, the placement-matched
+chart instances.
 """
 
 from __future__ import annotations
@@ -60,7 +61,9 @@ def _ctx(chart: Any, width: float | None) -> WarningContext:
 
 def test_fires_when_tiny_width_overrides_authored_position() -> None:
     chart = _bar(
-        style=BarChartStylePatch.model_validate({"legend": {"position": "bottom"}})
+        style=BarChartStylePatch.model_validate(
+            {"legend": {"position": {"edge": "bottom"}}}
+        )
     )
     warnings = detector.detect(_ctx(chart, _TINY_WIDTH))
     assert len(warnings) == 1
@@ -74,7 +77,9 @@ def test_fires_when_tiny_width_overrides_authored_position() -> None:
 
 def test_silent_at_a_width_that_fits_a_side_legend() -> None:
     chart = _bar(
-        style=BarChartStylePatch.model_validate({"legend": {"position": "bottom"}})
+        style=BarChartStylePatch.model_validate(
+            {"legend": {"position": {"edge": "bottom"}}}
+        )
     )
     assert detector.detect(_ctx(chart, _WIDE_WIDTH)) == []
 
@@ -90,7 +95,9 @@ def test_silent_when_authored_position_already_top() -> None:
     """Authored `position: top` agrees with the tiny-width fallback -- no
     override happened."""
     chart = _bar(
-        style=BarChartStylePatch.model_validate({"legend": {"position": "top"}})
+        style=BarChartStylePatch.model_validate(
+            {"legend": {"position": {"edge": "top"}}}
+        )
     )
     assert detector.detect(_ctx(chart, _TINY_WIDTH)) == []
 
@@ -104,7 +111,9 @@ def test_silent_when_chart_absent_from_layout_charts() -> None:
     """Charts not reached by the active layout tree are absent from
     layout_charts -- the detector must skip them."""
     chart = _bar(
-        style=BarChartStylePatch.model_validate({"legend": {"position": "bottom"}})
+        style=BarChartStylePatch.model_validate(
+            {"legend": {"position": {"edge": "bottom"}}}
+        )
     )
     resolved = make_test_resolved_chart(chart, _ROWS, width=_TINY_WIDTH)
     board = make_test_resolved_board(charts={resolved.id: resolved})

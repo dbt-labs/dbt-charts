@@ -8,13 +8,14 @@ mark channels (``color``/``background``/``opacity``/``stroke_*`` are
 from __future__ import annotations
 
 import html as html_module
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cache
 from importlib.resources import files
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from dbt_charts.core.colors import (
     is_sanitizable_color,
@@ -28,7 +29,11 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.authored import (
     TableColumnConfig,
 )
-from dbt_charts.core.compile.models.primitives import FontStyle
+from dbt_charts.core.compile.models.primitives import (
+    FontStyle,
+    FormatAliases,
+    ResolvedFormat,
+)
 from dbt_charts.core.compile.models.style.authored import (
     PaginationConfig,
     fill_table_column_defaults,
@@ -56,7 +61,12 @@ if TYPE_CHECKING:
     )
     from mdsvg.fonts import FontMeasurer
 
-from dbt_charts.core.compile.format import decimal_pad_table_for, resolve_format
+from dbt_charts.core.compile.format import (
+    column_symbol_mode,
+    decimal_pad_table_for,
+    resolve_format,
+    resolve_format_parts,
+)
 from dbt_charts.core.compile.models.style.theme import (
     VALID_FONT_WEIGHTS,
     PaginatorStyle,
@@ -1278,7 +1288,7 @@ def _has_overflow(
     *,
     header_font: FontStyle | None = None,
     wrap: bool,
-    formats: dict[str, str] | None = None,
+    formats: FormatAliases | None = None,
     header_visible: bool = True,
     column_when_rules: Mapping[str, tuple[Any, ...]],
 ) -> bool:
@@ -1398,7 +1408,7 @@ def _compute_lane_positions(
     cell_pad: int,
     cell_font: FontStyle,
     column_when_rules: Mapping[str, tuple[Any, ...]],
-    formats: dict[str, str] | None = None,
+    formats: FormatAliases | None = None,
 ) -> dict[str, tuple[float, float, float, float, float]]:
     """Compute fixed (prefix_x, number_x, suffix_x, content_left, content_right) per numeric column.
 
@@ -1651,7 +1661,7 @@ def _compute_wrap_layout(
     text_baseline_offset: float,
     measurer: FontMeasurer,
     column_when_rules: Mapping[str, tuple[Any, ...]],
-    formats: dict[str, str] | None = None,
+    formats: FormatAliases | None = None,
 ) -> tuple[list[int], list[dict[str, list[str]]]]:
     """Pre-compute per-row heights and cached wrapped lines for text cells.
 
@@ -1814,7 +1824,7 @@ def _render_data_rows(
     cell_font: FontStyle,
     table_width: float,
     cell_pad: int | None = None,
-    symbol_mode: str = "all",
+    symbol_mode: Literal["all", "anchors"] = "all",
     row_rule_width: float = 0.0,
     summary_rule_width: float = 0.0,
     rule_color: str | None = None,
@@ -1823,7 +1833,7 @@ def _render_data_rows(
     role_summary: TableRowRoleStyle | None = None,
     role_total: TableRowRoleStyle | None = None,
     resolved_style: ResolvedChartDefaults | None = None,
-    formats: dict[str, str] | None = None,
+    formats: FormatAliases | None = None,
     row_numbers: TableRowNumbersStyle | None = None,
     page_offset: int = 0,
     row_heights: list[int] | None = None,
@@ -1888,6 +1898,18 @@ def _render_data_rows(
             0,
         )
         shared_scale_anchor_row[col] = anchor_idx
+
+    column_formats: dict[str, ResolvedFormat] = {}
+    # A column format's `repeat` overrides the table's symbol_mode.
+    column_symbol_modes: dict[str, Literal["all", "anchors"]] = {}
+    for col in col_lane_positions:
+        col_cfg = column_configs.get(col)
+        column_formats[col] = resolve_format_parts(
+            col_cfg.format if col_cfg else None,
+            formats,
+            no_format_default=None,
+        )
+        column_symbol_modes[col] = column_symbol_mode(column_formats[col], symbol_mode)
 
     # Column names for link resolution (stable across rows)
     all_data_columns = list(rows[0].keys()) if rows else []
@@ -2177,7 +2199,8 @@ def _render_data_rows(
                         f'<text x="{escape_attr(rn_x)}" y="{escape_attr(y)}" '
                         f'font-size="{escape_attr(font_size)}" fill="{escape_attr(colors["muted"])}" '
                         f'text-anchor="{escape_attr(rn_anchor)}" '
-                        f'font-family="{escape_attr(_SANS_NUMERIC_FONT_STACK)}">'
+                        f'font-family="{escape_attr(_SANS_NUMERIC_FONT_STACK)}" '
+                        f'data-col="{escape_attr(i)}">'
                         f"{absolute_index}</text>",
                     )
                 continue
@@ -2479,8 +2502,9 @@ def _render_data_rows(
                 magnitude_anchor_row = (
                     shared_scale_anchor_row[col] if shared_scale is not None else None
                 )
+                col_symbol_mode = column_symbol_modes[col]
                 is_anchor_row = (
-                    symbol_mode != "anchors"
+                    col_symbol_mode != "anchors"
                     or row_is_summary
                     or (
                         magnitude_anchor_row is not None
@@ -2498,6 +2522,11 @@ def _render_data_rows(
                     # already raised on by _compute_lane_positions's identical
                     # gate, computed over the full dataset before any row here
                     # paints.
+                    lane_value_attr = (
+                        f' data-value="{escape_attr(num_value)}"'
+                        if math.isfinite(num_value)
+                        else ""
+                    )
                     prefix, number_str, suffix = format_kpi_parts(
                         num_value,
                         fmt,
@@ -2511,6 +2540,7 @@ def _render_data_rows(
                             col_config.decimal_pad_table, number_str
                         )
                 else:
+                    lane_value_attr = ""
                     prefix, number_str, suffix = (
                         "",
                         format_table_cell_value(
@@ -2531,12 +2561,17 @@ def _render_data_rows(
                 # ruler's own ANCHOR/REPEAT contract), so it arrives here
                 # already blank on a non-anchor row and this same check
                 # strips it like any other non-magnitude suffix — no special
-                # case needed. The combined suffix leads with the magnitude
-                # token (magnitude + unit), so a prefix match keeps it even
-                # when an explicit unit follows.
-                if symbol_mode == "anchors" and row_idx != 0 and not row_is_summary:
+                # case needed. The combined suffix is magnitude + unit + the
+                # authored suffix; the authored part is never a magnitude
+                # ("EUR" starts with E), so only the computed head is matched.
+                if col_symbol_mode == "anchors" and row_idx != 0 and not row_is_summary:
                     prefix = ""
-                    if not any(suffix.startswith(m) for m in MAGNITUDE_SUFFIXES):
+                    computed_suffix = suffix.removesuffix(
+                        column_formats[col].suffix.strip()
+                    )
+                    if not any(
+                        computed_suffix.startswith(m) for m in MAGNITUDE_SUFFIXES
+                    ):
                         suffix = ""
 
                 # When a glyph is active for this cell, it replaces the
@@ -2551,7 +2586,8 @@ def _render_data_rows(
                 svg_parts.append(
                     f'<text{cell_link_class_attr} y="{escape_attr(y)}" font-size="{escape_attr(font_size)}" '
                     f'fill="{escape_attr(fill_color)}" '
-                    f'font-family="{escape_attr(cell_font_family)}"{numeric_style}{font_weight_attr}{font_style_attr}{font_decoration_attr}>',
+                    f'font-family="{escape_attr(cell_font_family)}"{numeric_style}{font_weight_attr}{font_style_attr}{font_decoration_attr}'
+                    f' data-col="{escape_attr(i)}"{lane_value_attr}>',
                 )
 
                 # Prefix tspan: end-anchored at prefix_x (left of number).
@@ -2672,7 +2708,8 @@ def _render_data_rows(
                         f'<text{cell_link_class_attr} x="{escape_attr(x)}" '
                         f'font-size="{escape_attr(font_size)}" fill="{escape_attr(fill_color)}" '
                         f'text-anchor="{escape_attr(anchor)}" '
-                        f'font-family="{escape_attr(cell_font_family)}"{font_weight_attr}{font_style_attr}{font_decoration_attr}>'
+                        f'font-family="{escape_attr(cell_font_family)}"{font_weight_attr}{font_style_attr}{font_decoration_attr}'
+                        f' data-col="{escape_attr(i)}">'
                     )
                     for li, line in enumerate(lines):
                         ly = first_y + li * line_height
@@ -2686,7 +2723,8 @@ def _render_data_rows(
                         f'<text{cell_link_class_attr} x="{escape_attr(x)}" y="{escape_attr(y)}" '
                         f'font-size="{escape_attr(font_size)}" fill="{escape_attr(fill_color)}" '
                         f'text-anchor="{escape_attr(anchor)}" '
-                        f'font-family="{escape_attr(cell_font_family)}"{numeric_style}{font_weight_attr}{font_style_attr}{font_decoration_attr}>'
+                        f'font-family="{escape_attr(cell_font_family)}"{numeric_style}{font_weight_attr}{font_style_attr}{font_decoration_attr}'
+                        f' data-col="{escape_attr(i)}">'
                         f"{glyph_prefix_inline}{html_module.escape(lines[0])}</text>",
                     )
 
@@ -3009,9 +3047,17 @@ def strip_pagination_chrome(svg: str) -> str:
     return _PAGINATOR_GROUP_RE.sub("", svg)
 
 
+def _column_format(
+    config: TableColumnConfig, formats: FormatAliases | None
+) -> ResolvedFormat | None:
+    if config.format is None:
+        return None
+    return resolve_format_parts(config.format, formats, no_format_default=None)
+
+
 def _as_resolved_table_column(
     config: TableColumnConfig,
-    formats: dict[str, str] | None,
+    formats: FormatAliases | None,
     font_family: str,
 ) -> ResolvedTableColumnConfig:
     """Upgrade a plain ``TableColumnConfig`` built at render time to the
@@ -3032,15 +3078,19 @@ def _as_resolved_table_column(
     from the spec alone, producing a non-empty table for any trim-enabled
     fixed-point format (including columns where all rows share the same depth).
     """
-    resolved_fmt = resolve_format(config.format, formats)
-    pad_table = decimal_pad_table_for(resolved_fmt, font_family)
+    fmt = _column_format(config, formats)
+    pad_table = decimal_pad_table_for(fmt.spec if fmt else "", font_family)
     return ResolvedTableColumnConfig.model_validate(
-        {**config.model_dump(exclude_none=True), "decimal_pad_table": pad_table}
+        {
+            **config.model_dump(exclude_none=True),
+            "format": fmt,
+            "decimal_pad_table": pad_table,
+        }
     )
 
 
 def _transpose_data_for_render(
-    formats: dict[str, str] | None,
+    formats: FormatAliases | None,
     columns: dict[str, ResolvedTableColumnConfig] | None,
     column_defaults: TableColumnDefaultsConfig | None,
     data: list[dict[str, Any]],
@@ -3130,6 +3180,7 @@ def _fanned_leaf_config(
     fallback_label: str,
     measure_identity: bool,
     defaults: TableColumnDefaultsConfig | None,
+    formats: FormatAliases | None,
     values: list[Any],  # type-state: explicit_any — raw leaf cell values
 ) -> ResolvedTableColumnConfig:
     """Construct the leaf-key variant of a measure-keyed config.
@@ -3182,7 +3233,11 @@ def _fanned_leaf_config(
     if base.scale is not None:
         resolved_extras["scale"] = base.scale
     return ResolvedTableColumnConfig.model_validate(
-        {**working.model_dump(exclude_none=True), **resolved_extras}
+        {
+            **working.model_dump(exclude_none=True),
+            **resolved_extras,
+            "format": _column_format(working, formats),
+        }
     )
 
 
@@ -3423,6 +3478,7 @@ def _layout_table(
                     fallback_label=slug_to_text(_display_label),
                     measure_identity=_authored_here,
                     defaults=chart.column_defaults,
+                    formats=table_style.formats,
                     values=[row.get(leaf) for row in data],
                 )
             else:
@@ -3474,6 +3530,7 @@ def _layout_table(
                     fallback_label=slug_to_text(leaf),
                     measure_identity=False,
                     defaults=chart.column_defaults,
+                    formats=table_style.formats,
                     values=[row.get(leaf) for row in data],
                 )
                 continue

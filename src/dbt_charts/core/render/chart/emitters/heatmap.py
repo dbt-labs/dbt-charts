@@ -347,8 +347,8 @@ class HeatmapEmitter:
             # Tooltip format on color encoding for quantitative heatmap values.
             if enc.get("type") == "quantitative":
                 fmt = chart.style.tooltip_format
-                if fmt:
-                    enc.setdefault("format", fmt)
+                if fmt.spec:
+                    enc.setdefault("format", fmt.spec)
             encoding["color"] = enc
         # mark_props: rect mark props + tooltip (no fill — color encoding owns it).
         mark_props: dict[str, Any] = {"tooltip": True}

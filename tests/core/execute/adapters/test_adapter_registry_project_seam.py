@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
+
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.project import Project, ProjectDirectory, ProjectPath
@@ -95,6 +97,24 @@ class TestManifestLoadThroughSeam:
         # Must not raise — exists() returns False, so no manifest is found.
         rels = resolver._all_manifest_relationships()  # noqa: SLF001
         assert rels == []
+
+    def test_inspect_ignores_an_unusable_dbt_target_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """dbt accepts an absolute DBT_TARGET_PATH; inspect only enriches from the
+        manifest, so it reads as no manifest rather than failing the profile."""
+        from dbt_charts.cli.filesystem_project import FilesystemProject
+        from dbt_charts.core.inspect.cache_factory import build_resolver
+        from dbt_charts.core.inspect.sources.dbt import DbtSchemaSource
+
+        monkeypatch.setenv("DBT_TARGET_PATH", "/ci/target")
+        project = FilesystemProject(tmp_path)
+        registry = AdapterRegistry(
+            project=project, project_sources=ProjectSourcesConfig(sources={})
+        )
+
+        assert build_resolver(registry)._all_manifest_relationships() == []  # noqa: SLF001
+        assert DbtSchemaSource(adapter=None, project=project)._load_manifest() is None  # noqa: SLF001
 
     def test_dbt_schema_source_reads_manifest_via_seam(self) -> None:
         """DbtSchemaSource uses project.exists()/read_text(), not raw Path reads."""

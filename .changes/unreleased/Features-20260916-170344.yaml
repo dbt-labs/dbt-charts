@@ -1,0 +1,5 @@
+kind: Features
+body: 'Every number format slot accepts a `FormatConfig` with `prefix`, `suffix` and `notation`, inline or as a `style.formats` alias, so non-dollar currencies (`€500`, `EUR 500`) paint everywhere. `sign_placement` and `repeat` control where the sign sits and whether the affix appears on every value or once per axis, column or row.'
+time: 2026-09-16T17:03:44.904292-07:00
+custom:
+    DbtChartsIssue: 27

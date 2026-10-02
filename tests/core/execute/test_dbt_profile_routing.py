@@ -272,8 +272,12 @@ class TestDbtProfileDuckdbRouting:
 # ---------------------------------------------------------------------------
 
 
-def _write_manifest(project_dir: Path, relpath: str = "target/manifest.json") -> None:
-    """Write a manifest declaring one model, `orders`, in schema `main`."""
+def _write_manifest(
+    project_dir: Path,
+    relpath: str = "target/manifest.json",
+    schema: str = "main",
+) -> None:
+    """Write a manifest declaring one model, `orders`, in `schema`."""
     manifest_path = project_dir / relpath
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
@@ -283,7 +287,7 @@ def _write_manifest(project_dir: Path, relpath: str = "target/manifest.json") ->
                     "model.test_project.orders": {
                         "resource_type": "model",
                         "name": "orders",
-                        "schema": "main",
+                        "schema": schema,
                         "alias": "orders",
                     }
                 },
@@ -329,6 +333,49 @@ class TestDbtProfileDuckdbRefResolution:
         )
         assert result.error is None, f"ref() query failed: {result.error}"
         assert result.data == [{"revenue": 100}]
+
+    def test_target_path_selects_the_manifest_the_ref_resolves_against(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """`target_path:` on the source routes ref() to that manifest's relation;
+        the default manifest (a different schema here) is never consulted."""
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        monkeypatch.delenv("DBT_TARGET_PATH", raising=False)
+
+        db_path = tmp_path / "warehouse.duckdb"
+        conn = duckdb.connect(str(db_path))
+        conn.execute("CREATE TABLE orders (revenue INTEGER)")
+        conn.execute("INSERT INTO orders VALUES (1)")
+        conn.execute("CREATE SCHEMA prod_main")
+        conn.execute("CREATE TABLE prod_main.orders (revenue INTEGER)")
+        conn.execute("INSERT INTO prod_main.orders VALUES (200)")
+        conn.close()
+        _make_project(tmp_path, db_path)
+        (tmp_path / "dbt_charts.yml").write_text(
+            "name: test_project\n"
+            "sources:\n"
+            "  prod:\n"
+            "    type: dbt_profile\n"
+            "    profile: test_project\n"
+            "    target: dev\n"
+            "    target_path: target/prod\n"
+        )
+        _write_manifest(tmp_path)
+        _write_manifest(tmp_path, "target/prod/manifest.json", schema="prod_main")
+
+        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+
+        result = registry.execute(
+            SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="prod")
+        )
+        assert result.error is None, f"ref() query failed: {result.error}"
+        assert result.data == [{"revenue": 200}]
 
     def test_ref_without_manifest_names_the_missing_manifest(
         self,
@@ -889,3 +936,96 @@ class TestAttributionSurvivesTheProfileExpansion:
             {"type": "dbt_profile", "profile": "analytics", "target": "dev"},
         )
         assert resolved.attribution == {}
+
+    def test_authored_target_path_reaches_the_resolved_config(
+        self, tmp_path: Path
+    ) -> None:
+        resolved = self._resolve(
+            tmp_path,
+            {
+                "type": "dbt_profile",
+                "profile": "analytics",
+                "target": "dev",
+                "target_path": "target/prod",
+            },
+        )
+        assert resolved.target_path == "target/prod"
+
+    def test_absent_target_path_expands_to_none(self, tmp_path: Path) -> None:
+        resolved = self._resolve(
+            tmp_path,
+            {"type": "dbt_profile", "profile": "analytics", "target": "dev"},
+        )
+        assert resolved.target_path is None
+
+
+class TestBoardPrepareSqlTargetPath:
+    """Prepared board SQL resolves ref() against the source's own manifest."""
+
+    def test_ref_resolves_against_target_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.core.compile.compiler import compile
+        from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        _write_manifest(tmp_path)
+        _write_manifest(tmp_path, "target/prod/manifest.json", schema="prod_main")
+        (tmp_path / "dbt_charts.yml").write_text("name: test_project\n")
+        compiled = compile(
+            "title: T\n"
+            "queries:\n"
+            "  q:\n"
+            "    sql: SELECT revenue FROM {{ ref('orders') }}\n"
+            "    source: prod\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: q\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        assert compiled.board is not None, compiled.errors
+        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+
+        prepared = registry.prepare_sql(
+            compiled.query_registry["q"],
+            board=compiled.board,
+            variables={},
+            source_config=DbtTargetSourceConfig(
+                type="postgres", host="h", target_path="target/prod"
+            ),
+        )
+
+        assert not hasattr(prepared, "error"), prepared
+        assert "prod_main.orders" in prepared.sql
+
+    def test_sql_adapter_resolves_against_target_path(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """The adapter's own ref() pass, which sees SQL composition left raw."""
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        _write_manifest(tmp_path)
+        _write_manifest(tmp_path, "target/prod/manifest.json", schema="prod_main")
+        (tmp_path / "dbt_charts.yml").write_text("name: test_project\n")
+        config = DbtTargetSourceConfig(
+            type="postgres", host="h", target_path="target/prod"
+        )
+        query = SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="prod")
+        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        adapter = registry.get_adapter(query, config)
+        assert adapter is not None
+
+        prepared = adapter.prepare_sql(query, variables={}, source_config=config)
+
+        assert not hasattr(prepared, "error"), prepared
+        assert "prod_main.orders" in prepared.sql

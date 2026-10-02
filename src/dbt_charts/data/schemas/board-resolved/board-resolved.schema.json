@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.8.1.dev491",
+  "version": "0.9.1.dev48",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -66,6 +66,18 @@
           ],
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
+        },
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
         },
         "preferred_width": {
           "anyOf": [
@@ -156,18 +168,6 @@
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
         },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
-        },
         "color": {
           "anyOf": [
             {
@@ -230,6 +230,9 @@
         },
         "number_format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -1420,6 +1423,9 @@
         "format": {
           "anyOf": [
             {
+              "$ref": "#/$defs/FormatConfig"
+            },
+            {
               "enum": [
                 "currency",
                 "currency_full",
@@ -1505,6 +1511,9 @@
       "properties": {
         "format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -2145,6 +2154,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -2234,18 +2255,6 @@
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
         },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
-        },
         "color": {
           "anyOf": [
             {
@@ -2308,6 +2317,9 @@
         },
         "number_format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -2485,6 +2497,9 @@
         },
         "format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -2714,6 +2729,9 @@
         },
         "format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -3588,9 +3606,21 @@
         "magnitude_colored": {
           "title": "Magnitude Colored",
           "type": "boolean"
+        },
+        "canvas": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Canvas"
         }
       },
       "required": [
+        "canvas",
         "chart_type",
         "defined_in_other_file",
         "id",
@@ -3643,246 +3673,6 @@
         "by"
       ],
       "title": "ChartSort",
-      "type": "object"
-    },
-    "ChartSupportTable": {
-      "additionalProperties": false,
-      "description": "Container for a chart's support_table block.",
-      "properties": {
-        "entries": {
-          "description": "List of support-table entries (source, aggregate, or per-series rows). A source entry may be written as a bare column name (`revenue` in place of `{source: revenue}`), the same scalar-listable spelling `y:` uses.",
-          "items": {
-            "oneOf": [
-              {
-                "$ref": "#/$defs/ChartSupportTableAggregate"
-              },
-              {
-                "$ref": "#/$defs/ChartSupportTablePerSeries"
-              },
-              {
-                "$ref": "#/$defs/ChartSupportTableSource"
-              }
-            ]
-          },
-          "minItems": 1,
-          "title": "Entries",
-          "type": "array"
-        }
-      },
-      "required": [
-        "entries"
-      ],
-      "title": "ChartSupportTable",
-      "type": "object"
-    },
-    "ChartSupportTableAggregate": {
-      "additionalProperties": false,
-      "description": "A support_table row that reads an aggregate of a column grouped by x.",
-      "properties": {
-        "aggregate": {
-          "description": "Aggregate operation applied per x-group. One of: sum, avg, min, max, median, count, count_distinct. Exact names only: no aliases (spec G4).",
-          "enum": [
-            "avg",
-            "count",
-            "count_distinct",
-            "max",
-            "median",
-            "min",
-            "sum"
-          ],
-          "title": "Aggregate",
-          "type": "string"
-        },
-        "source": {
-          "description": "Query column being aggregated. Always required alongside `aggregate:` (spec G2).",
-          "title": "Source",
-          "type": "string"
-        },
-        "format": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FormatConfig"
-            },
-            {
-              "enum": [
-                "currency",
-                "currency_full",
-                "currency_whole",
-                "date_short",
-                "delta",
-                "integer",
-                "number",
-                "number_full",
-                "percent",
-                "percent_delta",
-                "percent_whole",
-                "time_short",
-                "year"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "D3 format string or format config object for the aggregated value. Optional.",
-          "title": "Format"
-        },
-        "label": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Column header label override for this row.",
-          "title": "Label"
-        }
-      },
-      "required": [
-        "aggregate",
-        "source"
-      ],
-      "title": "ChartSupportTableAggregate",
-      "type": "object"
-    },
-    "ChartSupportTablePerSeries": {
-      "additionalProperties": false,
-      "description": "A support_table entry that expands into one row per color: series.\n\nWhen ``by_measure=True`` the entry expands into a single row reading the\nnamed y-field directly, without a color: channel.  This is the expansion\nmode for multi-y charts (``y: [revenue, margin]``) where each measure is\nits own y-axis series rather than a color-encoded pivot.",
-      "properties": {
-        "per_series": {
-          "description": "Query column the row reads from (per-x, per-series value).",
-          "title": "Per Series",
-          "type": "string"
-        },
-        "by_measure": {
-          "default": false,
-          "description": "When True, expand one row reading the named measure field directly (no color: groupby). Required for multi-y charts where each measure is its own y-field rather than a color-encoded series.",
-          "title": "By Measure",
-          "type": "boolean"
-        },
-        "label": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Row label displayed in the strip's label gutter. When None and by_measure=True, the per_series column name is used. Has no effect when by_measure=False (series name is the label).",
-          "title": "Label"
-        },
-        "format": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FormatConfig"
-            },
-            {
-              "enum": [
-                "currency",
-                "currency_full",
-                "currency_whole",
-                "date_short",
-                "delta",
-                "integer",
-                "number",
-                "number_full",
-                "percent",
-                "percent_delta",
-                "percent_whole",
-                "time_short",
-                "year"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "D3 format string or format config object. Optional.",
-          "title": "Format"
-        }
-      },
-      "required": [
-        "per_series"
-      ],
-      "title": "ChartSupportTablePerSeries",
-      "type": "object"
-    },
-    "ChartSupportTableSource": {
-      "additionalProperties": false,
-      "description": "A support_table row that reads a column's raw per-x value.",
-      "properties": {
-        "source": {
-          "description": "Query column the row reads from (per-x raw value).",
-          "title": "Source",
-          "type": "string"
-        },
-        "format": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FormatConfig"
-            },
-            {
-              "enum": [
-                "currency",
-                "currency_full",
-                "currency_whole",
-                "date_short",
-                "delta",
-                "integer",
-                "number",
-                "number_full",
-                "percent",
-                "percent_delta",
-                "percent_whole",
-                "time_short",
-                "year"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "D3 format string or format config object. Optional; inherits the chart measure format when omitted and source matches chart.y.",
-          "title": "Format"
-        },
-        "label": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Left-stub row label. Optional.",
-          "title": "Label"
-        }
-      },
-      "required": [
-        "source"
-      ],
-      "title": "ChartSupportTableSource",
       "type": "object"
     },
     "ChartTotal": {
@@ -4719,6 +4509,9 @@
         "format": {
           "anyOf": [
             {
+              "$ref": "#/$defs/FormatConfig"
+            },
+            {
               "enum": [
                 "currency",
                 "currency_full",
@@ -5356,6 +5149,40 @@
           "default": null,
           "description": "Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn).",
           "title": "Notation"
+        },
+        "sign_placement": {
+          "anyOf": [
+            {
+              "enum": [
+                "after_prefix",
+                "before_prefix"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where a negative sign sits against the prefix: 'before_prefix' (\u2212\u20ac500) or 'after_prefix' (EUR \u2212500). Unset: after_prefix when the prefix ends in a space or paints on one value only, else before_prefix. Table columns keep the sign with the digits and reject it.",
+          "title": "Sign Placement"
+        },
+        "repeat": {
+          "anyOf": [
+            {
+              "enum": [
+                "anchor",
+                "every"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether the prefix/suffix paints on 'every' value of an axis, table column or support_table row, or on one 'anchor' value. Unset keeps each surface's default. Single-value slots ignore it.",
+          "title": "Repeat"
         }
       },
       "title": "FormatConfig",
@@ -5432,6 +5259,18 @@
       "additionalProperties": false,
       "description": "Geoshape (choropleth) chart style.",
       "properties": {
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -5520,18 +5359,6 @@
           "default": null,
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
-        },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
         },
         "color": {
           "anyOf": [
@@ -5717,6 +5544,18 @@
       "additionalProperties": false,
       "description": "Heatmap chart style.",
       "properties": {
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -5806,18 +5645,6 @@
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
         },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
-        },
         "color": {
           "anyOf": [
             {
@@ -5880,6 +5707,9 @@
         },
         "number_format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -5994,6 +5824,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -6083,18 +5925,6 @@
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
         },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
-        },
         "color": {
           "anyOf": [
             {
@@ -6157,6 +5987,9 @@
         },
         "number_format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -6674,106 +6507,6 @@
       "title": "KpiSlotStyle",
       "type": "object"
     },
-    "KpiSupportConfig": {
-      "additionalProperties": false,
-      "description": "Support-line block authored alongside a KPI's main value.",
-      "properties": {
-        "value": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Column reference (string column name) for the support number/text.",
-          "title": "Value"
-        },
-        "label": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Trailing explainer text rendered beside the support value.",
-          "title": "Label"
-        },
-        "format": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FormatConfig"
-            },
-            {
-              "enum": [
-                "currency",
-                "currency_full",
-                "currency_whole",
-                "date_short",
-                "delta",
-                "integer",
-                "number",
-                "number_full",
-                "percent",
-                "percent_delta",
-                "percent_whole",
-                "time_short",
-                "year"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "How the value is written: a D3 spec, a preset name, or a format block. A date value defaults to date_short when unformatted.",
-          "title": "Format"
-        },
-        "glyph": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Text shown before the value (e.g. '\u25b2', '\u25bc', '\u25cf').",
-          "title": "Glyph"
-        },
-        "tone": {
-          "anyOf": [
-            {
-              "enum": [
-                "info",
-                "negative",
-                "positive",
-                "warning"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Semantic styling for the support value/glyph.",
-          "title": "Tone"
-        }
-      },
-      "title": "KpiSupportConfig",
-      "type": "object"
-    },
     "KpiTonesStyle": {
       "additionalProperties": false,
       "description": "Semantic tone palette shared by the KPI support row and table conditional glyphs.\n\nColors are theme tokens \u2014 the renderer reads them through this model\nrather than hardcoding hexes, so themes can rebrand the semantic\nvocabulary without touching the renderer. Lives on ``Style.tones``\n(board level) rather than under any one chart family, since both KPI\nand table read it.\n\nFour tones \u2014 positive, negative, warning, info (neutral blue). Tone\nlives on the block it paints: a KPI's headline value stays neutral by\ndesign (NYT/FT convention \u2014 the absolute number is direction-neutral),\nso only ``support.tone`` (KpiSupportConfig) reads this palette for KPI.\nA support row without a tone uses default chrome colors.",
@@ -6897,45 +6630,6 @@
       "title": "LayerAxisYGrid",
       "type": "object"
     },
-    "LayerAxisYLabels": {
-      "additionalProperties": false,
-      "description": "Per-layer y-axis tick-label format patch.",
-      "properties": {
-        "format": {
-          "anyOf": [
-            {
-              "enum": [
-                "currency",
-                "currency_full",
-                "currency_whole",
-                "date_short",
-                "delta",
-                "integer",
-                "number",
-                "number_full",
-                "percent",
-                "percent_delta",
-                "percent_whole",
-                "time_short",
-                "year"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "d3 format string for this layer's y-axis tick labels.",
-          "title": "Format"
-        }
-      },
-      "title": "LayerAxisYLabels",
-      "type": "object"
-    },
     "LayerAxisYScale": {
       "additionalProperties": false,
       "description": "Per-layer y-axis scale patch.",
@@ -6958,92 +6652,6 @@
         }
       },
       "title": "LayerAxisYScale",
-      "type": "object"
-    },
-    "LayerAxisYStyle": {
-      "additionalProperties": false,
-      "description": "Per-layer y-axis settings on a layered chart.",
-      "properties": {
-        "position": {
-          "anyOf": [
-            {
-              "enum": [
-                "left",
-                "right"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Y-axis side for this layer (left or right).",
-          "title": "Position"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Title on this layer's own y axis; defaults to the layer's label.",
-          "title": "Title"
-        },
-        "scale": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LayerAxisYScale"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Scale options for this layer's y axis, holding the [min, max] domain."
-        },
-        "ticks": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LayerAxisYTicks"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Tick options for this layer's y axis, holding the target count."
-        },
-        "grid": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LayerAxisYGrid"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Grid options for this layer's y axis, holding its visibility."
-        },
-        "labels": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LayerAxisYLabels"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Tick-label options for this layer's y axis, holding the number format."
-        }
-      },
-      "title": "LayerAxisYStyle",
       "type": "object"
     },
     "LayerAxisYTicks": {
@@ -7162,22 +6770,18 @@
       "title": "LegendLabelStylePatch",
       "type": "object"
     },
-    "LegendStylePatch": {
+    "LegendPositionStylePatch": {
       "additionalProperties": false,
-      "description": "Authored overlay for LegendStyle.",
+      "description": "Authored overlay for LegendPositionStyle. Cartesian and geo legend placement: edge, align along it, overlay or reserve.\n\nEvery leaf is a cascade-managed sentinel: no theme populates them, and None\nmeans \"the engine decides\" (``resolve/style/legend_position.py``), which\nbakes the concrete placement into the resolved legend.",
       "properties": {
-        "position": {
+        "edge": {
           "anyOf": [
             {
               "enum": [
                 "bottom",
-                "bottom-left",
-                "bottom-right",
                 "left",
                 "right",
-                "top",
-                "top-left",
-                "top-right"
+                "top"
               ],
               "type": "string"
             },
@@ -7186,9 +6790,48 @@
             }
           ],
           "default": null,
-          "description": "Legend position (VL legend orient).",
-          "title": "Position"
+          "description": "Side of the plot the legend sits on. None = the engine decides.",
+          "title": "Edge"
         },
+        "align": {
+          "anyOf": [
+            {
+              "enum": [
+                "center",
+                "end",
+                "start"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Position along the edge. None = the engine decides.",
+          "title": "Align"
+        },
+        "overlay": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "True floats the legend over the plot, reserving no space; False reserves a strip for it. None = the engine decides.",
+          "title": "Overlay"
+        }
+      },
+      "title": "LegendPositionStylePatch",
+      "type": "object"
+    },
+    "LegendStylePatch": {
+      "additionalProperties": false,
+      "description": "Authored overlay for LegendStyle.",
+      "properties": {
         "direction": {
           "anyOf": [
             {
@@ -7323,6 +6966,18 @@
           "default": null,
           "description": "When False, emits symbolFillColor='transparent' to produce a hollow legend glyph. None uses Vega-Lite's default (filled symbol).",
           "title": "Symbol Fill"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendPositionStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Legend placement: edge, align along the edge, overlay or reserve."
         }
       },
       "title": "LegendStylePatch",
@@ -7422,6 +7077,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -7511,18 +7178,6 @@
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
         },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
-        },
         "color": {
           "anyOf": [
             {
@@ -7585,6 +7240,9 @@
         },
         "number_format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -8019,6 +7677,18 @@
       "additionalProperties": false,
       "description": "Pie/donut chart style: geometry + total (flat) + marks sub-block.\n\n``total`` stays flat at this level (compositional slot, not a VL mark).\n``inner_radius`` is on _RadialChartStyle (cascade sentinel: None = solid pie).",
       "properties": {
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PieLegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pie key style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -8100,18 +7770,6 @@
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
         },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
-        },
         "color": {
           "anyOf": [
             {
@@ -8153,6 +7811,206 @@
         "total"
       ],
       "title": "PieChartStyle",
+      "type": "object"
+    },
+    "PieLegendStylePatch": {
+      "additionalProperties": false,
+      "description": "Authored overlay for PieLegendStyle.",
+      "properties": {
+        "direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Legend layout direction.",
+          "title": "Direction"
+        },
+        "columns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Legend entry columns. Zero keeps the renderer default; positive values set Vega-Lite legend columns.",
+          "title": "Columns"
+        },
+        "compact_columns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Entry columns for an automatic compact top-horizontal legend.",
+          "title": "Compact Columns"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendLabelStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Legend label style."
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendTitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Legend title style."
+        },
+        "visible": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Show the legend. None = legend visible; False = explicitly suppressed.",
+          "title": "Visible"
+        },
+        "symbol_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum number of legend entries to display; maps to VL symbolLimit. None uses Vega-Lite's default (no cap). Set to a positive integer to prevent legend overflow on high-cardinality series.",
+          "title": "Symbol Limit"
+        },
+        "values": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Explicit legend entry order/filter; each entry resolves against the real legend domain by its rendered text or its column/measure name (case/separator-insensitive). None lets the renderer infer order from the data.",
+          "title": "Values"
+        },
+        "symbol_shape": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Override the legend glyph shape; maps to VL legend.symbolType. None uses the mark-aware glyph derived from the chart's mark type.",
+          "title": "Symbol Shape"
+        },
+        "symbol_fill": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When False, emits symbolFillColor='transparent' to produce a hollow legend glyph. None uses Vega-Lite's default (filled symbol).",
+          "title": "Symbol Fill"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PiePositionStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pie key placement: edge and align along it."
+        }
+      },
+      "title": "PieLegendStylePatch",
+      "type": "object"
+    },
+    "PiePositionStylePatch": {
+      "additionalProperties": false,
+      "description": "Authored overlay for PiePositionStyle. Pie key placement: edge and align, never overlay.\n\nA floating key would cover wedges, so a pie key always reserves its room.",
+      "properties": {
+        "edge": {
+          "anyOf": [
+            {
+              "enum": [
+                "bottom",
+                "left",
+                "right",
+                "top"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Side of the wheel the key (legend or attached table) sits on. None = the engine decides.",
+          "title": "Edge"
+        },
+        "align": {
+          "anyOf": [
+            {
+              "enum": [
+                "center",
+                "end",
+                "start"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Position of the key along that edge. None = the engine decides.",
+          "title": "Align"
+        }
+      },
+      "title": "PiePositionStylePatch",
       "type": "object"
     },
     "PlaceholderOverlay": {
@@ -8232,6 +8090,9 @@
         },
         "format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",
@@ -8339,6 +8200,18 @@
       "additionalProperties": false,
       "description": "Point map chart style.",
       "properties": {
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -8427,18 +8300,6 @@
           "default": null,
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
-        },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
         },
         "color": {
           "anyOf": [
@@ -9149,7 +9010,7 @@
         "support_table": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ChartSupportTable"
+              "$ref": "#/$defs/ResolvedSupportTable"
             },
             {
               "type": "null"
@@ -9161,18 +9022,14 @@
         "format": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FormatConfig"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string"
             }
           ],
           "default": null,
-          "description": "D3-format string, FormatConfig, or None for primary numeric axis.",
-          "title": "Format"
+          "description": "Authored chart-level measure format, resolved; None when unauthored."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -9330,10 +9187,10 @@
           "$ref": "#/$defs/ResolvedAreaLineStyle"
         },
         "point_mark": {
-          "$ref": "#/$defs/PointMarkStyle"
+          "$ref": "#/$defs/ResolvedPointMarkStyle"
         },
         "axis_y": {
-          "$ref": "#/$defs/LayerAxisYStyle"
+          "$ref": "#/$defs/ResolvedLayerAxisY"
         },
         "x": {
           "anyOf": [
@@ -9424,7 +9281,7 @@
           "type": "number"
         },
         "labels": {
-          "$ref": "#/$defs/PointLabelsStyle",
+          "$ref": "#/$defs/ResolvedPointLabels",
           "description": "Baked point labels style for the area's plotted points."
         }
       },
@@ -9494,9 +9351,8 @@
           "description": "Baked y-axis style, after the full style cascade."
         },
         "tooltip_format": {
-          "description": "Resolved d3 tooltip number format ('' = VL default).",
-          "title": "Tooltip Format",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedFormat",
+          "description": "Resolved d3 tooltip number format ('' = VL default)."
         },
         "title_font": {
           "anyOf": [
@@ -9555,7 +9411,7 @@
           "description": "Cascade-merged top-edge line geometry \u2014 stroke, halo, and value labels (see ResolvedAreaLineStyle)."
         },
         "point_mark": {
-          "$ref": "#/$defs/PointMarkStyle",
+          "$ref": "#/$defs/ResolvedPointMarkStyle",
           "description": "Point-overlay mark at each plotted value; size 0 (default) renders no points, matching the line-chart precedent."
         },
         "dashes": {
@@ -9754,14 +9610,13 @@
         "format": {
           "anyOf": [
             {
-              "type": "null"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
-          "default": null,
-          "title": "Format"
+          "default": null
         },
         "tilt_increments": {
           "anyOf": [
@@ -9952,16 +9807,12 @@
         "mirror": {
           "anyOf": [
             {
-              "$ref": "#/$defs/AxisMirrorStyle"
-            },
-            {
-              "type": "boolean"
+              "$ref": "#/$defs/ResolvedMirrorAxis"
             },
             {
               "type": "null"
             }
-          ],
-          "title": "Mirror"
+          ]
         },
         "band_position": {
           "anyOf": [
@@ -10054,17 +9905,6 @@
           ],
           "default": null
         },
-        "mirror_ruler": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ResolvedRulerAxis"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "tick_label": {
           "anyOf": [
             {
@@ -10109,18 +9949,6 @@
           "default": false,
           "title": "Zero Anchored",
           "type": "boolean"
-        },
-        "format_raw": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "title": "Format Raw"
         }
       },
       "required": [
@@ -10551,7 +10379,7 @@
         "support_table": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ChartSupportTable"
+              "$ref": "#/$defs/ResolvedSupportTable"
             },
             {
               "type": "null"
@@ -10563,18 +10391,14 @@
         "format": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FormatConfig"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string"
             }
           ],
           "default": null,
-          "description": "D3-format string, FormatConfig, or None for primary numeric axis.",
-          "title": "Format"
+          "description": "Authored chart-level measure format, resolved; None when unauthored."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -10774,6 +10598,109 @@
       "title": "ResolvedBarChart",
       "type": "object"
     },
+    "ResolvedBarLabels": {
+      "additionalProperties": false,
+      "properties": {
+        "visible": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Show numeric value labels on each mark; False by default.",
+          "title": "Visible"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Column to source label text from; None uses the chart's y-field.",
+          "title": "Field"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved value-label format."
+        },
+        "dx": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Horizontal pixel offset for value labels; overrides the position default.",
+          "title": "Dx"
+        },
+        "dy": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vertical pixel offset for value labels; overrides the position default.",
+          "title": "Dy"
+        },
+        "font": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FontStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value label font style (color, size, family, etc.)."
+        },
+        "position": {
+          "anyOf": [
+            {
+              "enum": [
+                "above",
+                "bottom",
+                "middle",
+                "middle_aligned",
+                "top"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Label position relative to the bar. 'above' places labels above the bar top (outside). 'top' places labels just inside the top edge. 'middle' centers labels vertically in the bar. 'middle_aligned' centers all labels at a common height (mean of bar heights / 2). 'bottom' places labels just inside the bottom edge.",
+          "title": "Position"
+        }
+      },
+      "title": "ResolvedBarLabels",
+      "type": "object"
+    },
     "ResolvedBarLayer": {
       "properties": {
         "type": {
@@ -10782,10 +10709,10 @@
           "type": "string"
         },
         "bar_mark": {
-          "$ref": "#/$defs/BarMarkStyle"
+          "$ref": "#/$defs/ResolvedBarMarkStyle"
         },
         "axis_y": {
-          "$ref": "#/$defs/LayerAxisYStyle"
+          "$ref": "#/$defs/ResolvedLayerAxisY"
         },
         "x": {
           "anyOf": [
@@ -10872,6 +10799,124 @@
       "title": "ResolvedBarLayer",
       "type": "object"
     },
+    "ResolvedBarMarkStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BorderStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bar border style (color/width also serve as the bar stroke)."
+        },
+        "padding": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Padding around bar marks in pixels.",
+          "title": "Padding"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Bar width in pixels; overrides all other sizing.",
+          "title": "Size"
+        },
+        "band_width": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Bar width as a fraction of the band step (0\u20131).",
+          "title": "Band Width"
+        },
+        "gap": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Target pixel gap between adjacent bars on a continuous scale.",
+          "title": "Gap"
+        },
+        "min_size": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Narrowest a computed bar width may shrink to on a continuous scale.",
+          "title": "Min Size"
+        },
+        "max_size": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Widest a computed bar width may grow to on a continuous scale. Also stands in for an unauthored `size` when reserving axis padding and when budgeting a horizontal bar chart's minimum height.",
+          "title": "Max Size"
+        },
+        "opacity": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Bar fill opacity (0\u20131); None uses VL default.",
+          "title": "Opacity"
+        },
+        "labels": {
+          "$ref": "#/$defs/ResolvedBarLabels",
+          "description": "Resolved segment labels."
+        },
+        "total_label": {
+          "$ref": "#/$defs/ResolvedBarTotalLabel",
+          "description": "Resolved stack totals."
+        }
+      },
+      "title": "ResolvedBarMarkStyle",
+      "type": "object"
+    },
     "ResolvedBarStyle": {
       "additionalProperties": false,
       "description": "Bar family style slice \u2014 self-contained, globals merged down.\n\nEvery field is concrete after resolve; the bar emitter reads only these.\nInherits axis_x, axis_y, tooltip_format, series_label,\nendpoint_labels, single_series_fill, label_usable_ratio\nfrom the cartesian base hierarchy.",
@@ -10885,9 +10930,8 @@
           "description": "Baked y-axis style, after the full style cascade."
         },
         "tooltip_format": {
-          "description": "Resolved d3 tooltip number format ('' = VL default).",
-          "title": "Tooltip Format",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedFormat",
+          "description": "Resolved d3 tooltip number format ('' = VL default)."
         },
         "title_font": {
           "anyOf": [
@@ -10938,7 +10982,7 @@
           "title": "Stack Order"
         },
         "mark": {
-          "$ref": "#/$defs/BarMarkStyle",
+          "$ref": "#/$defs/ResolvedBarMarkStyle",
           "description": "Cascade-merged bar mark geometry (padding, size, labels)."
         },
         "overlap": {
@@ -11012,6 +11056,68 @@
         "tooltip_format"
       ],
       "title": "ResolvedBarStyle",
+      "type": "object"
+    },
+    "ResolvedBarTotalLabel": {
+      "additionalProperties": false,
+      "properties": {
+        "visible": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Show stack total labels above each bar stack. Only takes effect on stacked bar charts; ignored otherwise.",
+          "title": "Visible"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved stack-total label format."
+        },
+        "dx": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Horizontal pixel offset for stack total labels.",
+          "title": "Dx"
+        },
+        "dy": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vertical pixel offset for stack total labels.",
+          "title": "Dy"
+        },
+        "font": {
+          "$ref": "#/$defs/FontStyle",
+          "description": "Stack total label font style overrides; cascade fills missing fields from charts.font."
+        }
+      },
+      "title": "ResolvedBarTotalLabel",
       "type": "object"
     },
     "ResolvedBoard": {
@@ -11641,7 +11747,14 @@
           "anyOf": [
             {
               "additionalProperties": {
-                "type": "string"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FormatConfig"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
               },
               "type": "object"
             },
@@ -11854,6 +11967,24 @@
       ],
       "title": "ResolvedFontStyle",
       "type": "object"
+    },
+    "ResolvedFormat": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "type": "string"
+        }
+      ]
     },
     "ResolvedGeoshapeChart": {
       "additionalProperties": false,
@@ -12234,6 +12365,18 @@
       "additionalProperties": false,
       "description": "GeoshapeChartStyle with a resolved color field.\n\nCarries a ResolvedStaticGradientColorStyle so the gradient's resolved_stops\nare preserved through pydantic serialization (board artifact round-trip).\nemitters/geo.py reads chart.style.geoshape.color.gradient from this field\nunchanged \u2014 the path is identical, now provably resolved.",
       "properties": {
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -12322,18 +12465,6 @@
           "default": null,
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
-        },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
         },
         "color": {
           "anyOf": [
@@ -12764,7 +12895,7 @@
         "support_table": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ChartSupportTable"
+              "$ref": "#/$defs/ResolvedSupportTable"
             },
             {
               "type": "null"
@@ -12776,18 +12907,14 @@
         "format": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FormatConfig"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string"
             }
           ],
           "default": null,
-          "description": "D3-format string, FormatConfig, or None for primary numeric axis.",
-          "title": "Format"
+          "description": "Authored chart-level measure format, resolved; None when unauthored."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -12894,9 +13021,8 @@
           "description": "Baked y-axis style, after the full style cascade."
         },
         "tooltip_format": {
-          "description": "Resolved d3 tooltip number format ('' = VL default).",
-          "title": "Tooltip Format",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedFormat",
+          "description": "Resolved d3 tooltip number format ('' = VL default)."
         },
         "title_font": {
           "anyOf": [
@@ -13149,7 +13275,7 @@
         "support": {
           "anyOf": [
             {
-              "$ref": "#/$defs/KpiSupportConfig"
+              "$ref": "#/$defs/ResolvedKpiSupportConfig"
             },
             {
               "type": "null"
@@ -13172,7 +13298,7 @@
         "format": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FormatConfig"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
@@ -13243,6 +13369,200 @@
         "title"
       ],
       "title": "ResolvedKpiStyle",
+      "type": "object"
+    },
+    "ResolvedKpiSupportConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Column reference (string column name) for the support number/text.",
+          "title": "Value"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Trailing explainer text rendered beside the support value.",
+          "title": "Label"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved support value format; a date value defaults to date_short when None."
+        },
+        "glyph": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Text shown before the value (e.g. '\u25b2', '\u25bc', '\u25cf').",
+          "title": "Glyph"
+        },
+        "tone": {
+          "anyOf": [
+            {
+              "enum": [
+                "info",
+                "negative",
+                "positive",
+                "warning"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic styling for the support value/glyph.",
+          "title": "Tone"
+        }
+      },
+      "title": "ResolvedKpiSupportConfig",
+      "type": "object"
+    },
+    "ResolvedLayerAxisY": {
+      "properties": {
+        "position": {
+          "anyOf": [
+            {
+              "enum": [
+                "left",
+                "right"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LayerAxisYScale"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ticks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LayerAxisYTicks"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LayerAxisYGrid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedLayerAxisYLabels"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tick_label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedTickLabel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tooltip_format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ResolvedLayerAxisY",
+      "type": "object"
+    },
+    "ResolvedLayerAxisYLabels": {
+      "properties": {
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ResolvedLayerAxisYLabels",
       "type": "object"
     },
     "ResolvedLayout": {
@@ -13590,23 +13910,48 @@
       "title": "ResolvedLegendElementStyle",
       "type": "object"
     },
+    "ResolvedLegendPosition": {
+      "additionalProperties": false,
+      "description": "Concrete legend placement; radial families never overlay.",
+      "properties": {
+        "edge": {
+          "enum": [
+            "bottom",
+            "left",
+            "right",
+            "top"
+          ],
+          "title": "Edge",
+          "type": "string"
+        },
+        "align": {
+          "enum": [
+            "center",
+            "end",
+            "start"
+          ],
+          "title": "Align",
+          "type": "string"
+        },
+        "overlay": {
+          "title": "Overlay",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "align",
+        "edge",
+        "overlay"
+      ],
+      "title": "ResolvedLegendPosition",
+      "type": "object"
+    },
     "ResolvedLegendStyle": {
       "additionalProperties": false,
       "description": "Resolved legend style.\n\n``visible`` is False when the theme or a chart-local patch suppresses the\nlegend. The render layer checks the boolean to emit VL ``legend: null``.",
       "properties": {
         "position": {
-          "enum": [
-            "bottom",
-            "bottom-left",
-            "bottom-right",
-            "left",
-            "right",
-            "top",
-            "top-left",
-            "top-right"
-          ],
-          "title": "Position",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedLegendPosition"
         },
         "direction": {
           "enum": [
@@ -13691,13 +14036,9 @@
             {
               "enum": [
                 "bottom",
-                "bottom-left",
-                "bottom-right",
                 "left",
                 "right",
-                "top",
-                "top-left",
-                "top-right"
+                "top"
               ],
               "type": "string"
             },
@@ -14038,7 +14379,7 @@
         "support_table": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ChartSupportTable"
+              "$ref": "#/$defs/ResolvedSupportTable"
             },
             {
               "type": "null"
@@ -14050,18 +14391,14 @@
         "format": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FormatConfig"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string"
             }
           ],
           "default": null,
-          "description": "D3-format string, FormatConfig, or None for primary numeric axis.",
-          "title": "Format"
+          "description": "Authored chart-level measure format, resolved; None when unauthored."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -14197,10 +14534,10 @@
           "$ref": "#/$defs/ResolvedLineMarkStyle"
         },
         "point_mark": {
-          "$ref": "#/$defs/PointMarkStyle"
+          "$ref": "#/$defs/ResolvedPointMarkStyle"
         },
         "axis_y": {
-          "$ref": "#/$defs/LayerAxisYStyle"
+          "$ref": "#/$defs/ResolvedLayerAxisY"
         },
         "x": {
           "anyOf": [
@@ -14344,7 +14681,7 @@
           "title": "Disconnected Cap"
         },
         "labels": {
-          "$ref": "#/$defs/PointLabelsStyle",
+          "$ref": "#/$defs/ResolvedPointLabels",
           "description": "Baked point labels style."
         }
       },
@@ -14369,9 +14706,8 @@
           "description": "Baked y-axis style, after the full style cascade."
         },
         "tooltip_format": {
-          "description": "Resolved d3 tooltip number format ('' = VL default).",
-          "title": "Tooltip Format",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedFormat",
+          "description": "Resolved d3 tooltip number format ('' = VL default)."
         },
         "title_font": {
           "anyOf": [
@@ -14408,7 +14744,7 @@
           "description": "Cascade-merged line mark geometry (stroke, halo, labels)."
         },
         "point_mark": {
-          "$ref": "#/$defs/PointMarkStyle",
+          "$ref": "#/$defs/ResolvedPointMarkStyle",
           "description": "Cascade-merged point mark geometry; size=None or <=0 means no point overlay."
         },
         "dashes": {
@@ -14448,6 +14784,57 @@
         "tooltip_format"
       ],
       "title": "ResolvedLineStyle",
+      "type": "object"
+    },
+    "ResolvedMirrorAxis": {
+      "properties": {
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expr": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Expr"
+        },
+        "ruler": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedRulerAxis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tick_label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedTickLabel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ResolvedMirrorAxis",
       "type": "object"
     },
     "ResolvedNamedPaletteScaleTargetConfig": {
@@ -14997,18 +15384,14 @@
         "format": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FormatConfig"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string"
             }
           ],
           "default": null,
-          "description": "D3-format string, FormatConfig, or None for slice values.",
-          "title": "Format"
+          "description": "Authored slice-value format, resolved; None when unauthored."
         },
         "style": {
           "$ref": "#/$defs/ResolvedPieStyle",
@@ -15079,11 +15462,24 @@
         "attached_table_placement": {
           "default": "none",
           "enum": [
-            "below",
+            "bottom",
+            "left",
             "none",
-            "right"
+            "right",
+            "top"
           ],
           "title": "Attached Table Placement",
+          "type": "string"
+        },
+        "attached_table_align": {
+          "default": "start",
+          "description": "Table position along its edge.",
+          "enum": [
+            "center",
+            "end",
+            "start"
+          ],
+          "title": "Attached Table Align",
           "type": "string"
         },
         "attached_table_width": {
@@ -15151,12 +15547,11 @@
           "description": "Cascade-merged slice mark geometry (opacity, corner radius, labels)."
         },
         "tooltip_format": {
-          "description": "Resolved d3 tooltip number format ('' = VL default).",
-          "title": "Tooltip Format",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedFormat",
+          "description": "Resolved d3 tooltip number format ('' = VL default)."
         },
         "total_style": {
-          "$ref": "#/$defs/TotalStyle",
+          "$ref": "#/$defs/ResolvedTotalStyle",
           "description": "Donut center total paint: value number (font + resolved format) and caption label (font)."
         },
         "title_font": {
@@ -15179,6 +15574,109 @@
         "total_style"
       ],
       "title": "ResolvedPieStyle",
+      "type": "object"
+    },
+    "ResolvedPointLabels": {
+      "additionalProperties": false,
+      "properties": {
+        "visible": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Show numeric value labels on each mark; False by default.",
+          "title": "Visible"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Column to source label text from; None uses the chart's y-field.",
+          "title": "Field"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved value-label format."
+        },
+        "dx": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Horizontal pixel offset for value labels; overrides the position default.",
+          "title": "Dx"
+        },
+        "dy": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vertical pixel offset for value labels; overrides the position default.",
+          "title": "Dy"
+        },
+        "font": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FontStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value label font style (color, size, family, etc.)."
+        },
+        "position": {
+          "anyOf": [
+            {
+              "enum": [
+                "bottom",
+                "left",
+                "middle",
+                "right",
+                "top"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Label position relative to the point. 'top' places labels above the point. 'bottom' places labels below. 'left' to the left. 'right' to the right. 'middle' centers on the point.",
+          "title": "Position"
+        }
+      },
+      "title": "ResolvedPointLabels",
       "type": "object"
     },
     "ResolvedPointMapChart": {
@@ -15589,7 +16087,7 @@
           "description": "Resolved point-map style from the cascade."
         },
         "point_mark": {
-          "$ref": "#/$defs/PointMarkStyle",
+          "$ref": "#/$defs/ResolvedPointMarkStyle",
           "description": "Baked point mark style for scatter-style points on maps."
         },
         "single_series_fill": {
@@ -15621,6 +16119,108 @@
         "tooltip_format"
       ],
       "title": "ResolvedPointMapStyle",
+      "type": "object"
+    },
+    "ResolvedPointMarkStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Point size in square pixels; 0 disables points on line charts.",
+          "title": "Size"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Point color; None inherits the series color.",
+          "title": "Color"
+        },
+        "shape": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Point shape (e.g. 'circle', 'square'); None uses VL default.",
+          "title": "Shape"
+        },
+        "opacity": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Point opacity 0\u20131; None uses VL default.",
+          "title": "Opacity"
+        },
+        "filled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether points are filled; None uses VL default.",
+          "title": "Filled"
+        },
+        "fill": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Point interior fill color; only applied when filled=false.",
+          "title": "Fill"
+        },
+        "stroke_width": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Stroke width in pixels for hollow point rings; None uses VL default.",
+          "title": "Stroke Width"
+        },
+        "labels": {
+          "$ref": "#/$defs/ResolvedPointLabels",
+          "description": "Resolved point labels."
+        }
+      },
+      "title": "ResolvedPointMarkStyle",
       "type": "object"
     },
     "ResolvedRulerAxis": {
@@ -15656,6 +16256,14 @@
           "title": "Reservation",
           "type": "string"
         },
+        "register": {
+          "enum": [
+            "analytic",
+            "narrative"
+          ],
+          "title": "Register",
+          "type": "string"
+        },
         "decimal_pad_table": {
           "items": {
             "type": "string"
@@ -15671,6 +16279,7 @@
         "mode",
         "prefix",
         "prefix_repeats",
+        "register",
         "reservation",
         "reserve"
       ],
@@ -16542,7 +17151,7 @@
         "support_table": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ChartSupportTable"
+              "$ref": "#/$defs/ResolvedSupportTable"
             },
             {
               "type": "null"
@@ -16554,18 +17163,14 @@
         "format": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FormatConfig"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string"
             }
           ],
           "default": null,
-          "description": "D3-format string, FormatConfig, or None for primary numeric axis.",
-          "title": "Format"
+          "description": "Authored chart-level measure format, resolved; None when unauthored."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -16724,10 +17329,10 @@
           "type": "string"
         },
         "point_mark": {
-          "$ref": "#/$defs/PointMarkStyle"
+          "$ref": "#/$defs/ResolvedPointMarkStyle"
         },
         "axis_y": {
-          "$ref": "#/$defs/LayerAxisYStyle"
+          "$ref": "#/$defs/ResolvedLayerAxisY"
         },
         "x": {
           "anyOf": [
@@ -16815,9 +17420,8 @@
           "description": "Baked y-axis style, after the full style cascade."
         },
         "tooltip_format": {
-          "description": "Resolved d3 tooltip number format ('' = VL default).",
-          "title": "Tooltip Format",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedFormat",
+          "description": "Resolved d3 tooltip number format ('' = VL default)."
         },
         "title_font": {
           "anyOf": [
@@ -16832,7 +17436,7 @@
           "description": "Baked title font (size/weight/family/\u2026) from the width tier."
         },
         "point_mark": {
-          "$ref": "#/$defs/PointMarkStyle",
+          "$ref": "#/$defs/ResolvedPointMarkStyle",
           "description": "Cascade-merged point mark geometry."
         },
         "single_series_fill": {
@@ -17572,6 +18176,177 @@
       "title": "ResolvedStyleChannel",
       "type": "object"
     },
+    "ResolvedSupportTable": {
+      "additionalProperties": false,
+      "description": "A chart's support_table with every entry's format final.",
+      "properties": {
+        "entries": {
+          "description": "Support-table entries, formats resolved.",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolvedSupportTableAggregate"
+              },
+              {
+                "$ref": "#/$defs/ResolvedSupportTablePerSeries"
+              },
+              {
+                "$ref": "#/$defs/ResolvedSupportTableSource"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Entries",
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "title": "ResolvedSupportTable",
+      "type": "object"
+    },
+    "ResolvedSupportTableAggregate": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregate": {
+          "description": "Aggregate operation applied per x-group. One of: sum, avg, min, max, median, count, count_distinct. Exact names only: no aliases (spec G4).",
+          "enum": [
+            "avg",
+            "count",
+            "count_distinct",
+            "max",
+            "median",
+            "min",
+            "sum"
+          ],
+          "title": "Aggregate",
+          "type": "string"
+        },
+        "source": {
+          "description": "Query column being aggregated. Always required alongside `aggregate:` (spec G2).",
+          "title": "Source",
+          "type": "string"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved row value format."
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Column header label override for this row.",
+          "title": "Label"
+        }
+      },
+      "required": [
+        "aggregate",
+        "source"
+      ],
+      "title": "ResolvedSupportTableAggregate",
+      "type": "object"
+    },
+    "ResolvedSupportTablePerSeries": {
+      "additionalProperties": false,
+      "properties": {
+        "per_series": {
+          "description": "Query column the row reads from (per-x, per-series value).",
+          "title": "Per Series",
+          "type": "string"
+        },
+        "by_measure": {
+          "default": false,
+          "description": "When True, expand one row reading the named measure field directly (no color: groupby). Required for multi-y charts where each measure is its own y-field rather than a color-encoded series.",
+          "title": "By Measure",
+          "type": "boolean"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Row label displayed in the strip's label gutter. When None and by_measure=True, the per_series column name is used. Has no effect when by_measure=False (series name is the label).",
+          "title": "Label"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved row value format."
+        }
+      },
+      "required": [
+        "per_series"
+      ],
+      "title": "ResolvedSupportTablePerSeries",
+      "type": "object"
+    },
+    "ResolvedSupportTableSource": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "description": "Query column the row reads from (per-x raw value).",
+          "title": "Source",
+          "type": "string"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved row value format."
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Left-stub row label. Optional.",
+          "title": "Label"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "ResolvedSupportTableSource",
+      "type": "object"
+    },
     "ResolvedTableChart": {
       "additionalProperties": false,
       "description": "Render-ready table chart.",
@@ -17970,36 +18745,14 @@
         "format": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FormatConfig"
-            },
-            {
-              "enum": [
-                "currency",
-                "currency_full",
-                "currency_whole",
-                "date_short",
-                "delta",
-                "integer",
-                "number",
-                "number_full",
-                "percent",
-                "percent_delta",
-                "percent_whole",
-                "time_short",
-                "year"
-              ],
-              "type": "string"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string"
             }
           ],
           "default": null,
-          "description": "How the number is written: a D3 spec, a preset name, or a format block.",
-          "title": "Format"
+          "description": "Resolved value format; None when the column authors none."
         },
         "spark": {
           "anyOf": [
@@ -18237,7 +18990,14 @@
           "anyOf": [
             {
               "additionalProperties": {
-                "type": "string"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FormatConfig"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
               },
               "type": "object"
             },
@@ -18333,6 +19093,48 @@
         "format"
       ],
       "title": "ResolvedTickLabel",
+      "type": "object"
+    },
+    "ResolvedTotalStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/ResolvedTotalValueSlot",
+          "description": "Donut center value paint and its resolved format."
+        },
+        "label": {
+          "$ref": "#/$defs/TotalSlotStyle",
+          "description": "Style for the donut center label (the caption)."
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "title": "ResolvedTotalStyle",
+      "type": "object"
+    },
+    "ResolvedTotalValueSlot": {
+      "additionalProperties": false,
+      "properties": {
+        "font": {
+          "$ref": "#/$defs/FontStyle",
+          "description": "Donut center total element font style overrides."
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved donut center value format."
+        }
+      },
+      "title": "ResolvedTotalValueSlot",
       "type": "object"
     },
     "RuleMarkStyle": {
@@ -19215,6 +20017,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LegendStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart legend style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -19304,18 +20118,6 @@
           "description": "Maximum chart height in pixels.",
           "title": "Max Height"
         },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LegendStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart legend style."
-        },
         "color": {
           "anyOf": [
             {
@@ -19378,6 +20180,9 @@
         },
         "number_format": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
             {
               "enum": [
                 "currency",

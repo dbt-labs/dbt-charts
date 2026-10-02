@@ -1170,7 +1170,7 @@ class TestWithResolvedScaleStops:
         assert result is not None
         assert isinstance(result["val"], ResolvedTableColumnConfig)
         assert result["val"].scale is None
-        assert result["val"].format == "0.2f"
+        assert result["val"].format.spec == "0.2f"
 
     def test_none_columns_returns_none(self) -> None:
         from dbt_charts.core.compile.resolve.chart._table import (

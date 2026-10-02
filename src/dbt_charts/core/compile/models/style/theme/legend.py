@@ -15,22 +15,11 @@ from dbt_charts.core.compile.models.primitives import (
     FontStyle,
 )
 
-# Vega-Lite legend orient values (encoding.color.legend.orient), minus VL's
-# own "none" — that value means "no automatic placement, position me with
-# legendX/legendY", which with no coordinates floats the legend inside the
-# plot. Nothing here sets those coordinates, and an author spelling "none"
-# means "no legend": that is `legend.visible: false`.
-# Ref: https://vega.github.io/vega-lite/docs/legend.html
-LegendPosition = Literal[
-    "left",
-    "right",
-    "top",
-    "bottom",
-    "top-left",
-    "top-right",
-    "bottom-left",
-    "bottom-right",
-]
+# Where a legend sits relative to the plot. `edge` is the side it hugs,
+# `align` its position along that edge, `overlay` whether it floats over the
+# marks (reserving nothing) or takes a strip beside the plot.
+LegendEdge = Literal["left", "right", "top", "bottom"]
+LegendAlign = Literal["start", "center", "end"]
 # Vega-Lite legend direction values (encoding.color.legend.direction).
 LegendDirection = Literal["horizontal", "vertical"]
 
@@ -61,10 +50,59 @@ class LegendTitleStyle(LegendElementStyle):
     )
 
 
-class LegendStyle(BaseModel):
+class LegendPositionStyle(BaseModel):
+    """Cartesian and geo legend placement: edge, align along it, overlay or reserve.
+
+    Every leaf is a cascade-managed sentinel: no theme populates them, and None
+    means "the engine decides" (``resolve/style/legend_position.py``), which
+    bakes the concrete placement into the resolved legend.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    position: LegendPosition = Field(description="Legend position (VL legend orient).")
+    edge: LegendEdge | None = Field(
+        default=None,
+        description="Side of the plot the legend sits on. None = the engine decides.",
+    )
+    align: LegendAlign | None = Field(
+        default=None,
+        description="Position along the edge. None = the engine decides.",
+    )
+    overlay: bool | None = Field(
+        default=None,
+        description=(
+            "True floats the legend over the plot, reserving no space; False "
+            "reserves a strip for it. None = the engine decides."
+        ),
+    )
+
+
+class PiePositionStyle(BaseModel):
+    """Pie key placement: edge and align, never overlay.
+
+    A floating key would cover wedges, so a pie key always reserves its room.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    edge: LegendEdge | None = Field(
+        default=None,
+        description=(
+            "Side of the wheel the key (legend or attached table) sits on. "
+            "None = the engine decides."
+        ),
+    )
+    align: LegendAlign | None = Field(
+        default=None,
+        description=("Position of the key along that edge. None = the engine decides."),
+    )
+
+
+class _LegendStyleBase(BaseModel):
+    """Every legend field except ``position``, whose shape differs per family."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     direction: LegendDirection = Field(description="Legend layout direction.")
     columns: int = Field(
         ge=0,
@@ -125,4 +163,18 @@ class LegendStyle(BaseModel):
             "When False, emits symbolFillColor='transparent' to produce a hollow "
             "legend glyph. None uses Vega-Lite's default (filled symbol)."
         ),
+    )
+
+
+class LegendStyle(_LegendStyleBase):
+    position: LegendPositionStyle = Field(
+        default_factory=LegendPositionStyle,
+        description="Legend placement: edge, align along the edge, overlay or reserve.",
+    )
+
+
+class PieLegendStyle(_LegendStyleBase):
+    position: PiePositionStyle = Field(
+        default_factory=PiePositionStyle,
+        description="Pie key placement: edge and align along it.",
     )

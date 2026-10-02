@@ -16,12 +16,13 @@ import pytest
 
 import dbt_charts.core.dbt_manifest as _mod
 from dbt_charts.core.dbt_manifest import (
-    MANIFEST_CANDIDATES,
     load_manifest,
     load_manifest_at,
+    manifest_relpath,
     ref_index,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_TARGET_PATH_INVALID
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.project import Project
 
@@ -157,8 +158,184 @@ class TestManifestCandidate:
 
         assert load_manifest(project) is None
 
-    def test_manifest_candidates_contains_only_target(self) -> None:
-        assert MANIFEST_CANDIDATES == ("target/manifest.json",)
+
+class TestManifestRelpath:
+    """Same precedence dbt uses: authored > DBT_TARGET_PATH > target-path: > target."""
+
+    def test_defaults_to_target(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("DBT_TARGET_PATH", raising=False)
+
+        assert manifest_relpath(in_memory_project(tmp_path, {})) == (
+            "target/manifest.json"
+        )
+
+    def test_dbt_project_target_path(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("DBT_TARGET_PATH", raising=False)
+        project = in_memory_project(
+            tmp_path, {"dbt_project.yml": "name: p\ntarget-path: build/\n"}
+        )
+
+        assert manifest_relpath(project) == "build/manifest.json"
+
+    def test_env_beats_dbt_project(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DBT_TARGET_PATH", "env_target")
+        project = in_memory_project(
+            tmp_path, {"dbt_project.yml": "name: p\ntarget-path: build\n"}
+        )
+
+        assert manifest_relpath(project) == "env_target/manifest.json"
+
+    def test_authored_beats_env(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DBT_TARGET_PATH", "env_target")
+
+        assert manifest_relpath(in_memory_project(tmp_path, {}), "target/prod/") == (
+            "target/prod/manifest.json"
+        )
+
+    def test_dbt_project_without_target_path_key(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("DBT_TARGET_PATH", raising=False)
+        project = in_memory_project(tmp_path, {"dbt_project.yml": "name: p\n"})
+
+        assert manifest_relpath(project) == "target/manifest.json"
+
+
+class TestInvalidTargetPath:
+    """A directory the Project seam cannot read is a coded error, never a raw
+    ValueError that crashes validate for boards that never set target_path."""
+
+    @pytest.mark.parametrize("target_path", ["/abs/target", "../build", "t/{{ x }}"])
+    def test_authored(
+        self,
+        target_path: str,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+    ) -> None:
+        with pytest.raises(DbtChartsError) as exc_info:
+            load_manifest(in_memory_project(tmp_path, {}), target_path)
+
+        assert exc_info.value.code is ERR_DBT_TARGET_PATH_INVALID
+        assert "target_path" in str(exc_info.value)
+
+    def test_env(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DBT_TARGET_PATH", "/ci/target")
+
+        with pytest.raises(DbtChartsError) as exc_info:
+            load_manifest(in_memory_project(tmp_path, {}))
+
+        assert exc_info.value.code is ERR_DBT_TARGET_PATH_INVALID
+        assert "DBT_TARGET_PATH" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "dbt_project",
+        [
+            "target-path: ../build\n",
+            "target-path: \"{{ env_var('T') }}\"\n",
+            "name: [unclosed\n",
+        ],
+    )
+    def test_dbt_project(
+        self,
+        dbt_project: str,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+    ) -> None:
+        project = in_memory_project(tmp_path, {"dbt_project.yml": dbt_project})
+
+        with pytest.raises(DbtChartsError) as exc_info:
+            load_manifest(project)
+
+        assert exc_info.value.code is ERR_DBT_TARGET_PATH_INVALID
+        assert "dbt_project.yml" in str(exc_info.value)
+
+
+class TestOptionalLoad:
+    def test_unusable_target_path_reads_as_no_manifest(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DBT_TARGET_PATH", "/ci/target")
+        project = in_memory_project(tmp_path, {})
+
+        assert load_manifest(project, optional=True) is None
+        with pytest.raises(DbtChartsError):
+            load_manifest(project)
+
+    def test_corrupt_manifest_still_raises(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+    ) -> None:
+        project = in_memory_project(tmp_path, {"target/manifest.json": "{bad"})
+
+        with pytest.raises(DbtChartsError):
+            load_manifest(project, optional=True)
+
+
+class TestLoadManifestTargetPath:
+    def test_loads_the_authored_path_not_the_default(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("DBT_TARGET_PATH", raising=False)
+        prod = _MINIMAL_MANIFEST.replace("analytics", "prod_schema")
+        project = in_memory_project(
+            tmp_path,
+            {
+                "target/manifest.json": _MINIMAL_MANIFEST,
+                "target/prod/manifest.json": prod,
+            },
+        )
+
+        loaded = load_manifest(project, "target/prod")
+
+        assert loaded is not None
+        assert loaded.relpath == "target/prod/manifest.json"
+        assert ref_index(loaded).refs["orders"] == ("prod_schema.orders", "prod_schema")
+
+    def test_missing_authored_path_does_not_fall_back_to_default(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+    ) -> None:
+        project = in_memory_project(
+            tmp_path, {"target/manifest.json": _MINIMAL_MANIFEST}
+        )
+
+        assert load_manifest(project, "target/prod") is None
 
 
 class TestMemo:
@@ -378,7 +555,7 @@ class TestErrorPaths:
         tmp_path: Path,
     ) -> None:
         """load_manifest_at names whatever relpath the caller passed — not
-        restricted to MANIFEST_CANDIDATES entries."""
+        restricted to the default manifest path."""
         project = in_memory_project(
             tmp_path, {"custom/manifest.json": "{ not valid json {{"}
         )

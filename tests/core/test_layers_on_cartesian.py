@@ -430,13 +430,13 @@ def test_layer_axis_y_survives_to_resolved() -> None:
 
 def test_emit_line_layer_returns_halo_fg_hover() -> None:
     """emit_line_layer returns [halo-line, fg-line, invisible-hover] for point-less series."""
+    from dbt_charts.core.compile.models.style.resolved import (
+        ResolvedPointLabels,
+        ResolvedPointMarkStyle,
+    )
     from dbt_charts.core.compile.models.style.resolved._marks import (
         ResolvedLineMarkStyle,
         ResolvedStrokeStyle,
-    )
-    from dbt_charts.core.compile.models.style.theme import (
-        PointLabelsStyle,
-        PointMarkStyle,
     )
     from dbt_charts.core.render.chart.emitters._layers import (
         HOVER_TARGET_SIZE,
@@ -447,12 +447,12 @@ def test_emit_line_layer_returns_halo_fg_hover() -> None:
         stroke=ResolvedStrokeStyle(width=2.0),
         halo_multiplier=2.0,
         curve=None,
-        labels=PointLabelsStyle(),
+        labels=ResolvedPointLabels(),
     )
-    # PointMarkStyle().size is None → no point overlay
+    # ResolvedPointMarkStyle().size is None → no point overlay
     layers = emit_line_layer(
         line_mark=line_mark,
-        point_mark=PointMarkStyle(),
+        point_mark=ResolvedPointMarkStyle(),
         halo_color="#ffffff",
         single_series_color="#4e79a7",
         has_color_encoding=False,
@@ -551,11 +551,11 @@ def test_emit_area_layer_returns_sub_layers() -> None:
 
 def test_emit_scatter_layer_returns_mark_props() -> None:
     """emit_scatter_layer returns a mark_props dict with tooltip=True and fill."""
-    from dbt_charts.core.compile.models.style.theme import PointMarkStyle
+    from dbt_charts.core.compile.models.style.resolved import ResolvedPointMarkStyle
     from dbt_charts.core.render.chart.emitters._layers import emit_scatter_layer
 
     result = emit_scatter_layer(
-        point_mark=PointMarkStyle(),
+        point_mark=ResolvedPointMarkStyle(),
         has_color_encoding=False,
         single_series_fill="#aabbcc",
     )

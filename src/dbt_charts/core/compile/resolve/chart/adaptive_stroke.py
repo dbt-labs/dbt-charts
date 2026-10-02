@@ -15,7 +15,7 @@ full calibration table and design rationale.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.resolve.chart._chart_rows import PanelRows, reduce_panels
@@ -32,6 +32,8 @@ if TYPE_CHECKING:
         PointMarkStyle,
     )
     from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
+
+_PointMarkT = TypeVar("_PointMarkT", bound="PointMarkStyle")
 
 
 def adaptive_stroke(
@@ -347,12 +349,12 @@ def bake_line_stroke(
 
 
 def bake_point_companions(
-    point_mark: PointMarkStyle,
+    point_mark: _PointMarkT,
     stroke: float,
     px_per_point: float,
     size_authored: bool,
     ring_authored: bool,
-) -> PointMarkStyle:
+) -> _PointMarkT:
     """Derive a line's point-marker geometry from its baked stroke and density.
 
     Lives next to ``bake_line_stroke`` because the two are one decision: once

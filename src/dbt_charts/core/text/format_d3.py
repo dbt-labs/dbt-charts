@@ -41,6 +41,17 @@ from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 # imports this name rather than restating the same two-value Literal.
 Notation = Literal["analytic", "narrative"]
 
+# Where a leading sign sits against an authored prefix: "−€500" or "EUR −500".
+SignPlacement = Literal["before_prefix", "after_prefix"]
+
+
+def default_sign_placement(prefix: str | None) -> SignPlacement:
+    """A spaced prefix is a word or code ("EUR −500"); a glued one is a symbol
+    ("−€500")."""
+    spaced = prefix is not None and prefix[-1:].isspace()
+    return "after_prefix" if spaced else "before_prefix"
+
+
 # Rendered wherever a value is absent — never a per-surface literal. A wrong
 # result that merely looks right (a stray "-" mistaken for a value) is worse
 # than an obviously-blank cell, so every surface renders the same character.
@@ -378,12 +389,51 @@ _D3_TO_NARRATIVE: dict[str, str] = {
 }
 
 
+# Leading sign glyphs: d3's U+2212 plus ASCII "-"/"+". Parenthesized
+# negatives are not split: a prefix lands ahead of the paren.
+_LEADING_SIGN_CHARS = "−+-"
+
+
+def split_leading_sign(text: str) -> tuple[str, str]:
+    """Split a formatted number's leading sign glyph from its body."""
+    if text and text[0] in _LEADING_SIGN_CHARS:
+        return text[0], text[1:]
+    return "", text
+
+
+def affix_signed(
+    text: str, prefix: str, suffix: str, sign_placement: SignPlacement | None
+) -> str:
+    """``text`` wrapped in ``prefix``/``suffix``, its leading sign placed per
+    ``sign_placement``, which a prefix requires. d3's own ``$`` stays inside
+    ``text``, after the sign."""
+    if not prefix:
+        return f"{text}{suffix}"
+    if sign_placement is None:
+        raise ValueError(f"prefix {prefix!r} needs a sign_placement")
+    sign, body = split_leading_sign(text)
+    if sign_placement == "after_prefix":
+        return f"{prefix}{sign}{body}{suffix}"
+    return f"{sign}{prefix}{body}{suffix}"
+
+
+def sign_affixed(
+    sign: str, affixed: str, prefix: str, sign_placement: SignPlacement | None
+) -> str:
+    """``sign`` placed against ``prefix`` in ``affixed``, an unsigned value
+    already wrapped in that prefix (a signed change: ``+``/``−``)."""
+    if not affixed.startswith(prefix):
+        raise ValueError(f"{affixed!r} does not start with prefix {prefix!r}")
+    return affix_signed(sign + affixed[len(prefix) :], prefix, "", sign_placement)
+
+
 def format_d3(
     value: int | float | None,
     format_spec: str,
     prefix: str = "",
     suffix: str = "",
     notation: Notation | None = None,
+    sign_placement: SignPlacement | None = None,
 ) -> str:
     """Format a value using D3-style format specification.
 
@@ -397,6 +447,8 @@ def format_d3(
         prefix: Custom prefix to prepend
         suffix: Custom suffix to append
         notation: SI-prefix notation family ("analytic" or "narrative")
+        sign_placement: where a leading sign sits against ``prefix``;
+            required with a prefix
 
     Returns:
         Formatted string
@@ -405,7 +457,7 @@ def format_d3(
         return f"{prefix}{NULL_DISPLAY}{suffix}"
 
     if not format_spec:
-        return f"{prefix}{value}{suffix}"
+        return affix_signed(str(value), prefix, suffix, sign_placement)
 
     formatted = _d3_format(format_spec)(float(value))
 
@@ -421,7 +473,7 @@ def format_d3(
         else:
             raise ValueError(f"Unknown notation: {notation!r}")
 
-    return f"{prefix}{formatted}{suffix}"
+    return affix_signed(formatted, prefix, suffix, sign_placement)
 
 
 def _is_si_spec(spec: str) -> bool:

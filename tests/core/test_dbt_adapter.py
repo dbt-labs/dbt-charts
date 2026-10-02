@@ -209,6 +209,92 @@ class TestReadTargetDict:
             _read_target_dict(tmp_path, "nonexistent", "dev")
 
 
+class TestMissingAdapterPackage:
+    """A profile whose adapter isn't installed names the extra, not dbt's internals."""
+
+    @staticmethod
+    def _write_profile(path: Path, adapter_type: str) -> None:
+        (path / "profiles.yml").write_text(
+            "demo:\n"
+            "  target: dev\n"
+            "  outputs:\n"
+            "    dev:\n"
+            f"      type: {adapter_type}\n"
+            "      account: abc\n"
+            "      user: u\n"
+            "      database: d\n"
+            "      warehouse: w\n"
+            "      schema: s\n"
+        )
+
+    @staticmethod
+    def _plugin_not_found(typename: str) -> Any:
+        from dbt_common.exceptions import DbtRuntimeError
+
+        raise DbtRuntimeError(f"Could not find adapter type {typename}!")
+
+    def test_missing_mapped_adapter_raises_coded_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
+        from dbt_charts.core.execute.adapters.dbt_adapter import _read_target_dict
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            AdapterNotInstalledError,
+        )
+
+        self._write_profile(tmp_path, "snowflake")
+        monkeypatch.setitem(sys.modules, "dbt.adapters.snowflake", None)
+        monkeypatch.setattr("dbt.adapters.factory.load_plugin", self._plugin_not_found)
+
+        with pytest.raises(AdapterNotInstalledError) as exc_info:
+            _read_target_dict(tmp_path, "demo", "dev")
+        assert exc_info.value.code is ERR_ADAPTER_NOT_INSTALLED
+        assert "dbt-charts[snowflake]" in str(exc_info.value)
+
+    def test_unmapped_adapter_keeps_dbts_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A type dbt Charts has no mapping for keeps dbt's own text."""
+        from dbt_charts.core.execute.adapters.dbt_adapter import _read_target_dict
+
+        self._write_profile(tmp_path, "sqlserver")
+        monkeypatch.setattr("dbt.adapters.factory.load_plugin", self._plugin_not_found)
+
+        with pytest.raises(ValueError, match="Could not find adapter type sqlserver"):
+            _read_target_dict(tmp_path, "demo", "dev")
+
+    def test_execute_returns_coded_error_when_build_adapter_finds_no_package(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import sys
+
+        from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
+        from dbt_charts.core.execute.adapters import dbt_adapter_factory
+
+        (tmp_path / "dbt_project.yml").write_text("name: test\nprofile: demo\n")
+        (tmp_path / "profiles.yml").write_text(
+            "demo:\n  target: dev\n  outputs:\n    dev:\n"
+            "      type: duckdb\n      path: ':memory:'\n"
+        )
+
+        def _missing(_cfg: dict[str, Any], **_kw: Any) -> Any:
+            dbt_adapter_factory.import_adapter_module("snowflake")
+
+        monkeypatch.setitem(sys.modules, "dbt.adapters.snowflake", None)
+        monkeypatch.setattr(dbt_adapter_factory, "build_adapter", _missing)
+
+        adapter = _dbt(dbt_project_path=tmp_path, local_project=local_project)
+        result = adapter.execute(SqlQuery(sql="SELECT 1", source="my_named_source"))
+
+        assert result.error is not None
+        assert result.error.code is ERR_ADAPTER_NOT_INSTALLED
+
+
 class TestReadProfilesYml:
     """_read_profiles_yml must reject non-mapping content, not silently treat as {}."""
 

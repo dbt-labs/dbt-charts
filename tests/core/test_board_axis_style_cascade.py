@@ -132,7 +132,7 @@ def test_board_level_axis_y_non_si_format_isolates_m1():
     resolved = resolved_axis_style(
         ctx, "axis_y", "quantitative", chart_type="", label_authored=False
     )
-    assert resolved.labels.format == "$,.0f"
+    assert resolved.labels.format.spec == "$,.0f"
 
 
 def test_board_level_axis_x_format_cascades_on_quantitative_channel():
@@ -145,7 +145,7 @@ def test_board_level_axis_x_format_cascades_on_quantitative_channel():
     resolved = resolved_axis_style(
         ctx, "axis_x", "quantitative", chart_type="", label_authored=False
     )
-    assert resolved.labels.format == "$,.0f"
+    assert resolved.labels.format.spec == "$,.0f"
 
 
 def test_chart_local_axis_y_still_wins_over_board_level():
@@ -164,7 +164,7 @@ def test_chart_local_axis_y_still_wins_over_board_level():
         chart_type="",
         label_authored=False,
     )
-    assert resolved.labels.format == "$,.0f"
+    assert resolved.labels.format.spec == "$,.0f"
 
 
 def test_board_level_axis_y_beats_theme_default():
@@ -181,7 +181,7 @@ def test_board_level_axis_y_beats_theme_default():
         "quantitative",
         chart_type="",
         label_authored=False,
-    ).labels.format
+    ).labels.format.spec
 
     assert board_format == "$,.3~s"
 
@@ -208,7 +208,7 @@ def test_board_axis_global_cascades():
     resolved = resolved_axis_style(
         ctx, "axis_y", "quantitative", chart_type="", label_authored=False
     )
-    assert resolved.labels.format == "$,.0f"
+    assert resolved.labels.format.spec == "$,.0f"
 
 
 def test_board_axis_quantitative_beats_board_channel():
@@ -225,7 +225,7 @@ def test_board_axis_quantitative_beats_board_channel():
     resolved = resolved_axis_style(
         ctx, "axis_y", "quantitative", chart_type="", label_authored=False
     )
-    assert resolved.labels.format == ",.1%"
+    assert resolved.labels.format.spec == ",.1%"
 
 
 def test_chart_fallback_format_beats_board_axis_y():
@@ -242,7 +242,7 @@ def test_chart_fallback_format_beats_board_axis_y():
         chart_type="",
         label_authored=False,
     )
-    assert resolved.labels.format == ",.1%"
+    assert resolved.labels.format.spec == ",.1%"
 
 
 def test_board_family_axis_y_beats_board_axis_y():

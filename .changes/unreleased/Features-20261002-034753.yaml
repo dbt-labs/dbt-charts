@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct doctor` diagnoses why `dct` can''t reach your data: it reports how dbt Charts was installed, which Python runs it, whether the project and `profiles.yml` were found, and, for each source in `dbt_charts.yml`, whether its warehouse adapter is installed. Add `--with-warehouse` to also connect to each source, and `--json` for a report you can paste into a ticket. Exits 1 when any check fails.'
+time: 2026-10-02T03:47:53.000000+00:00

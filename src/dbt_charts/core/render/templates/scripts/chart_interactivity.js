@@ -551,18 +551,13 @@
         });
     }
 
-    /*{# The color receded marks mix toward: the chart's own background, #}*/
-    /*{# read off the document rather than shipped beside it. Vega paints a #}*/
-    /*{# view's `background` as the first child <rect> of the <svg> it #}*/
-    /*{# renders, so the ground is already stacked next to the marks -- per #}*/
-    /*{# chart, which is what a chart-local background override needs. No #}*/
-    /*{# rect means no ground to mix toward, and nothing recedes. #}*/
+    /*{# The color receded marks mix toward: the chart's own opaque canvas, #}*/
+    /*{# stamped on its wrapper (`data-dbt-chart-canvas`) per chart, which is #}*/
+    /*{# what a chart-local background override needs. #}*/
     function chartBackground(mark) {
-        const view = mark.closest('svg');
-        const ground = view && view.firstElementChild;
-        if (!ground || ground.tagName.toLowerCase() !== 'rect') return null;
-        const fill = ground.getAttribute('fill');
-        return isColor(fill) ? fill : null;
+        const chartEl = mark.closest('.dbt-chart');
+        const canvas = chartEl && chartEl.getAttribute('data-dbt-chart-canvas');
+        return isColor(canvas) ? canvas : null;
     }
 
     /*{# The marks that may recede: the bars/arcs, plus each one's OWN value #}*/
@@ -798,7 +793,7 @@
     /*{# the marker vanishes into the card. Every sublayer of one datum carries #}*/
     /*{# the byte-identical aria-label, so the real color is found by scanning #}*/
     /*{# that datum's other symbol nodes for the one that is not the halo. #}*/
-    /*{# With no ground rect there is no background to tell the halo apart #}*/
+    /*{# With no canvas stamp there is no background to tell the halo apart #}*/
     /*{# from the real paint, so fall back to document order: Vega emits the #}*/
     /*{# halo first and the hover target last, so the LAST sublayer carries #}*/
     /*{# the series color. #}*/

@@ -21,14 +21,28 @@ remain universal regardless of resolution path.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Mapping
+from typing import Any, Literal
 
 from d3_format import parse as _d3_parse
 from d3_format.errors import D3FormatError
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.models.primitives import (
+    AuthoredFormat,
+    FormatAliases,
+    FormatConfig,
+    ResolvedFormat,
+    signs_before_prefix,
+)
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
+)
 from dbt_charts.core.font_measure import compose_decimal_units
-from dbt_charts.core.text.format_d3 import is_d3_si_spec, round_aware_spec
+from dbt_charts.core.text.format_d3 import (
+    SignPlacement,
+    is_d3_si_spec,
+    round_aware_spec,
+)
 from dbt_charts.core.text.numeral_scale import build_decimal_pad_table
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NUMBER_NAMES,
@@ -36,19 +50,38 @@ from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SUB_UNIT_FALLBACK,
     PREDEFINED_TIME_NAMES,
     PREDEFINED_TIME_SPECS,
+    PredefinedNumberFormat,
     si_sub_unit_floor,
 )
 
 
+def _format_raw_str(
+    format_input: AuthoredFormat
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+) -> str | None:
+    """The authored spec, before name/alias resolution; None for an affix-only input."""
+    if format_input is None:
+        return None
+    if isinstance(format_input, FormatConfig):
+        return format_input.spec or None
+    if isinstance(format_input, dict):
+        return format_input.get("spec") or None
+    return str(format_input)
+
+
 def resolve_format(
-    format_input: str | FormatConfig | dict[str, Any] | None,
-    formats: dict[str, str] | None = None,
+    format_input: AuthoredFormat
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+    formats: FormatAliases | None = None,
 ) -> str:
     """Convert format input to a d3 format string.
 
     Resolution order (three-way contract):
     1. Predefined enum member — engine-owned spec with round-aware trim.
-    2. style.formats alias — literal target spec, no trim.
+    2. style.formats alias — its preset, resolved as in 1, else its literal
+       target spec, no trim.
     3. Inline d3 passthrough — literal spec, no trim.
 
     This function itself never validates the passthrough case — compile-time
@@ -64,15 +97,8 @@ def resolve_format(
     Returns:
         D3 format string, or "" for null/empty input.
     """
-    if format_input is None:
-        return ""
-
-    if isinstance(format_input, FormatConfig):
-        format_str = format_input.spec or ""
-    elif isinstance(format_input, dict):
-        format_str = format_input.get("spec", "")
-    else:
-        format_str = str(format_input)
+    _raw = _format_raw_str(format_input)
+    format_str = _raw or ""  # type-state: silent_fallback — "" sentinel for None
 
     if not format_str:
         return ""
@@ -87,12 +113,53 @@ def resolve_format(
     if format_str in PREDEFINED_TIME_NAMES:
         return PREDEFINED_TIME_SPECS[format_str]
 
-    # Path 2: user-defined alias — native d3, no trim.
+    # Path 2: user-defined alias — its preset's house spec, else native d3.
+    if (preset := _alias_preset(format_str, formats)) is not None:
+        return resolve_format(preset)
     if formats and format_str in formats:
-        return formats[format_str]
+        aliased = formats[format_str]
+        if isinstance(aliased, FormatConfig):
+            return aliased.spec or ""  # type-state: silent_fallback — no spec authored
+        return aliased
 
     # Path 3: inline d3 string — native d3, no trim.
     return format_str
+
+
+def _alias_preset(
+    name: str | None, formats: Mapping[str, AuthoredFormat] | None
+) -> str | None:
+    """The preset an alias names, if its target is one."""
+    if not formats or name is None or name not in formats:
+        return None
+    target = formats[name]
+    spec = target.spec if isinstance(target, FormatConfig) else target
+    if spec in PREDEFINED_NUMBER_NAMES or spec in PREDEFINED_TIME_NAMES:
+        return spec
+    return None
+
+
+def _alias_target(
+    spec: str | None, formats: Mapping[str, AuthoredFormat] | None
+) -> FormatConfig | None:
+    """The ``FormatConfig`` alias target of ``spec``, if any."""
+    if formats and spec is not None and spec in formats:
+        aliased = formats[spec]
+        if isinstance(aliased, FormatConfig):
+            return aliased
+    return None
+
+
+def _alias_prefix_suffix(
+    spec: str | None, formats: Mapping[str, AuthoredFormat] | None
+) -> tuple[str, str]:
+    """The alias target's prefix/suffix, empty when it has none."""
+    aliased = _alias_target(spec, formats)
+    if aliased is None:
+        return "", ""
+    prefix = aliased.prefix or ""  # type-state: silent_fallback — no prefix
+    suffix = aliased.suffix or ""  # type-state: silent_fallback — no suffix
+    return prefix, suffix
 
 
 def tick_min_step_for_format(d3_spec: str) -> float | None:
@@ -134,108 +201,179 @@ def tick_min_step_for_format(d3_spec: str) -> float | None:
 
 
 def get_format_prefix_suffix(
-    format_input: str
-    | FormatConfig
+    format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
+    formats: Mapping[str, AuthoredFormat] | None = None,
 ) -> tuple[str, str]:
-    """Extract prefix and suffix from format configuration.
-
-    Lives here (not render/format_utils.py) because resolve_format_for_values
-    needs it internally; render still imports it from here, same as
-    resolve_format.
-    """
+    """The prefix/suffix of ``format_input``; an explicit affix wins over its alias's."""
     if format_input is None:
         return "", ""
     if isinstance(format_input, FormatConfig):
         prefix = format_input.prefix or ""  # type-state: silent_fallback — no prefix
         suffix = format_input.suffix or ""  # type-state: silent_fallback — no suffix
-        return prefix, suffix
+        if prefix or suffix:
+            return prefix, suffix
+        return _alias_prefix_suffix(format_input.spec, formats)
     if isinstance(format_input, dict):
         prefix = format_input.get("prefix", "")  # type-state: silent_fallback — unset
         suffix = format_input.get("suffix", "")  # type-state: silent_fallback — unset
-        return prefix, suffix
-    # String format has no prefix/suffix
-    return "", ""
+        if prefix or suffix:
+            return prefix, suffix
+        return _alias_prefix_suffix(format_input.get("spec"), formats)
+    return _alias_prefix_suffix(format_input, formats)
 
 
-def resolve_format_for_values(
-    format_input: str
-    | FormatConfig
+_OPTIONS = ("notation", "sign_placement", "repeat")
+
+
+def _format_options(
+    format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
-    formats: dict[str, str] | None,
-    values: Iterable[float | None],
-) -> str:
-    """Resolve a format spec once for a whole Vega-painted slot, voting from its data.
+    formats: Mapping[str, AuthoredFormat] | None,
+) -> dict[str, Any]:  # type-state: explicit_any — ResolvedFormat constructor kwargs
+    """The authored ``_OPTIONS``; an unset one follows the alias the spec names."""
+    if isinstance(format_input, FormatConfig):
+        own = {k: getattr(format_input, k) for k in _OPTIONS}
+        spec = format_input.spec
+    elif isinstance(format_input, dict):
+        own = {k: format_input.get(k) for k in _OPTIONS}
+        spec = format_input.get("spec")
+    else:
+        own = dict.fromkeys(_OPTIONS)
+        spec = format_input
+    aliased = _alias_target(spec, formats)
+    return {
+        k: getattr(aliased, k) if v is None and aliased is not None else v
+        for k, v in own.items()
+    }
 
-    ``format_value``/``format_kpi_parts`` (render/format_utils.py) apply
-    ``si_sub_unit_floor`` per value because Python paints each KPI/table cell
-    individually. Vega paints per-datum inside its own runtime, so no Python
-    code runs per value there — the floor has to be decided once, at
-    resolve, from the values the slot will actually paint, and baked into a
-    plain spec string. This is the same shape as
-    ``finalize_kpi_value_format`` (data-aware, decided once, baked before
-    render).
 
-    Per-set semantics: **any** value in ``values`` that falls in the sub-$1
-    band pulls the *whole* slot to the plain-digit fallback, even members
-    that are >= $1 — a donut's center total and its slice tooltips vote on
-    one set (pass both) so they never disagree about the same 67 cents. A
-    mixed set ($0.42 next to $3.00) paints every value in the two-decimal
-    register rather than misreading the sub-$1 member as SI milli.
+def _format_fields(
+    format_input: AuthoredFormat
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+    formats: FormatAliases | None,
+    no_format_default: str | None,
+) -> dict[str, Any]:  # type-state: explicit_any — ResolvedFormat constructor kwargs
+    if isinstance(format_input, ResolvedFormat):
+        fields = dict(format_input)
+    else:
+        prefix, suffix = get_format_prefix_suffix(format_input, formats)
+        raw = _format_raw_str(format_input)
+        options = _format_options(format_input, formats)
+        fields = {
+            "spec": resolve_format(format_input, formats),
+            "prefix": prefix,
+            "suffix": suffix,
+            **options,
+            "raw": raw if (preset := _alias_preset(raw, formats)) is None else preset,
+        }
+    has_affix = fields["prefix"] or fields["suffix"] or fields["notation"] is not None
+    if no_format_default is not None and not fields["spec"] and has_affix:
+        fields["spec"] = resolve_format(no_format_default, formats)
+        fields["raw"] = no_format_default
+    return fields
 
-    Args:
-        format_input: Format specification, as passed to resolve_format.
-        formats: Theme format alias dict (compiled_style.formats).
-        values: Every value this slot will paint (e.g. a donut's theta
-            column plus its sum, or a cartesian family's quantitative
-            channel values). Non-numeric callers filter before calling; a
-            None entry is skipped, matching format_value's own null guard.
+
+def authored_sign_placement(
+    authored: AuthoredFormat | None, formats: FormatAliases | None
+) -> SignPlacement | None:
+    """The ``sign_placement`` the author wrote, inline or via the alias the spec
+    names. A ``ResolvedFormat`` input (a synthesized column) carries another
+    surface's format, not one authored for this slot."""
+    if isinstance(authored, ResolvedFormat):
+        return None
+    placement: SignPlacement | None = _format_options(authored, formats)[
+        "sign_placement"
+    ]
+    return placement
+
+
+def check_anchored_sign(fmt: ResolvedFormat, field_path: str) -> None:
+    """Reject ``fmt`` if it signs before its prefix; call where the affix is
+    anchored."""
+    if signs_before_prefix(fmt):
+        raise CompilationError.from_code(
+            ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX, field_path=field_path
+        )
+
+
+def column_symbol_mode(
+    fmt: ResolvedFormat | None, symbol_mode: Literal["all", "anchors"]
+) -> Literal["all", "anchors"]:
+    """A table column's symbol mode: its format's ``repeat``, else the table's."""
+    if fmt is None or fmt.repeat is None:
+        return symbol_mode
+    return "anchors" if fmt.repeat == "anchor" else "all"
+
+
+def resolve_format_parts(
+    format_input: AuthoredFormat
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+    formats: FormatAliases | None = None,
+    *,
+    no_format_default: str | None,
+    spec: str | None = None,
+) -> ResolvedFormat:
+    """Resolve spec, prefix, suffix and notation; idempotent on a ``ResolvedFormat``.
+
+    ``no_format_default`` is the spec (and ``raw``) substituted when resolution
+    yields an affix but no spec; ``None`` leaves it spec-less. ``spec``, when
+    given, replaces the resolved digits (a baked tick spec).
     """
-    resolved = resolve_format(format_input, formats)
-    raw = (
-        format_input.spec
-        if isinstance(format_input, FormatConfig)
-        else format_input
-        if isinstance(format_input, str)
-        else None
-    )
-    if raw not in PREDEFINED_SUB_UNIT_FALLBACK:
-        return resolved
-    prefix, suffix = get_format_prefix_suffix(format_input)
-    floor = si_sub_unit_floor(resolved, prefix, suffix)
-    if any(v is not None and floor < abs(v) < 1.0 for v in values):
-        return PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[raw]]
-    return resolved
+    fields = _format_fields(format_input, formats, no_format_default)
+    if spec is not None:
+        fields["spec"] = spec
+    return ResolvedFormat(**fields)
+
+
+def resolve_format_parts_for_values(
+    format_input: AuthoredFormat
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+    formats: FormatAliases | None,
+    values: Iterable[float | None],
+    *,
+    no_format_default: str | None,
+) -> ResolvedFormat:
+    """Resolve a Vega-painted slot's format, voting its spec over its values.
+
+    Vega bakes one spec per slot, so any value inside the sub-unit band pulls
+    the whole slot to the preset's plain-digit sibling.
+    """
+    fields = _format_fields(format_input, formats, no_format_default)
+    raw = fields["raw"]
+    if raw in PREDEFINED_SUB_UNIT_FALLBACK:
+        floor = si_sub_unit_floor(fields["spec"], fields["prefix"], fields["suffix"])
+        if any(v is not None and floor < abs(v) < 1.0 for v in values):
+            fields["spec"] = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[raw]]
+    return ResolvedFormat(**fields)
 
 
 def resolve_label_format(
-    raw: str | FormatConfig | None,
-    formats: dict[str, str] | None,
-) -> tuple[str | None, bool]:
-    """Resolve a label/KPI format and decide whether house rules apply.
+    raw: AuthoredFormat | None,
+    formats: FormatAliases | None,
+    values: Iterable[float | None] = (),
+) -> tuple[ResolvedFormat | None, bool]:
+    """Resolve a label format over ``values``; ``(None, False)`` when it has no spec.
 
-    ``is_house`` is True when the raw value is a predefined enum member whose
-    resolved spec is SI-shaped. Predefined members are engine-owned semantics;
-    a literal d3 spec or a user alias is always a native-d3 opt-out.
-
-    Returns (resolved_spec, is_house); resolved_spec is None both when raw is
-    None and when raw is a FormatConfig with no spec (e.g. prefix/suffix only).
+    ``is_house`` is True for a predefined SI member or a spec-less affix; a
+    literal d3 spec or user alias opts out.
     """
     if raw is None:
         return None, False
-    if isinstance(raw, FormatConfig):
-        if raw.spec is None:
-            return None, False
-        raw_str = raw.spec
-    else:
-        raw_str = raw
-    if not raw_str:
+    parts = resolve_format_parts(
+        raw, formats, no_format_default=PredefinedNumberFormat.number
+    )
+    if not parts.spec:
         return None, False
-    resolved = resolve_format(raw, formats)
-    is_house = raw_str in PREDEFINED_NUMBER_NAMES and is_d3_si_spec(resolved)
-    return resolved or None, is_house
+    voted = resolve_format_parts_for_values(
+        raw, formats, values, no_format_default=PredefinedNumberFormat.number
+    )
+    return voted, parts.is_house and is_d3_si_spec(parts.spec)
 
 
 # d3's first SI prefix ("k") engages at 1000. Below it, ".2s" doesn't compact —
@@ -246,42 +384,63 @@ def resolve_label_format(
 _KPI_SI_COMPACT_THRESHOLD = 1000.0
 
 
-def finalize_kpi_value_format(
-    format_input: str | FormatConfig | None,
-    value: float | None,
-) -> FormatConfig | None:
-    """Finalize the KPI headline's number format from its cascaded style and value.
+def kpi_format_native(
+    fmt_raw: AuthoredFormat | None,
+    formats: FormatAliases | None,
+) -> bool:
+    """True when the headline's authored format is a literal d3 spec.
 
-    KPI is a hero number that the reader pauses on, so it defaults to the
-    narrative notation register (``1.5mn``) instead of the analytic register
-    (``1.5 M``) used on axis ticks and table cells. When neither spec nor
-    notation is authored, and ``value`` is large enough to actually compact
-    (``|value| >= 1000``), it also defaults to compact SI form (``".2~s"``) so
-    narrative notation shows up — notation alone is a no-op against a non-SI
-    spec. Below that threshold there is nothing to compact, so the value
-    renders its exact digits (no spec at all) rather than a misleadingly
-    rounded plain number. An explicit spec always wins over the SI default.
+    An alias, predefined name or explicit ``notation`` takes house rules; a
+    spec-less ``FormatConfig`` is never native.
+    """
+    fmt_spec = fmt_raw.spec if isinstance(fmt_raw, FormatConfig) else fmt_raw
+    if not fmt_spec:
+        return False
+    _, is_house = resolve_label_format(fmt_raw, formats)
+    if isinstance(fmt_raw, FormatConfig) and fmt_raw.notation is not None:
+        is_house = True
+    return not is_house
+
+
+def finalize_kpi_value_format(
+    format_input: AuthoredFormat | None,
+    value: float | None,
+    formats: FormatAliases | None = None,
+) -> ResolvedFormat | None:
+    """The headline's final format: narrative notation by default, and compact
+    SI (``.2~s``) when no spec is authored and ``|value| >= 1000``.
+
+    Below the threshold an unspecced value keeps its exact digits. An explicit
+    spec always wins.
     """
     compact_eligible = value is not None and abs(value) >= _KPI_SI_COMPACT_THRESHOLD
-    if isinstance(format_input, str):
-        return FormatConfig(spec=format_input, notation="narrative")
-    spec = format_input.spec if format_input is not None else None
-    notation = format_input.notation if format_input is not None else None
+    parts = (
+        resolve_format_parts(format_input, formats, no_format_default=None)
+        if format_input is not None
+        else None
+    )
+    # A predefined name stays a name: the sub-$1 money fallback keys on it.
+    spec = (parts.raw if parts.is_house else parts.spec) if parts is not None else None
+    notation = parts.notation if parts is not None else None
     if notation is None:
         notation = "narrative"
-    if spec is None and notation in ("narrative", "analytic") and compact_eligible:
+    if not spec and notation in ("narrative", "analytic") and compact_eligible:
         # 2 sig figs (the KPI precision) with trim. Not a predefined name: the
         # predefined "compact" is 3 sig figs, one more than a tile wants.
         # FormatConfig.notation above carries "narrative" so the inline spec still
         # gets narrative register.
         spec = ".2~s"
-    if format_input is None and spec is None:
+    if format_input is None and not spec:
         return None
-    return FormatConfig(
-        spec=spec,
-        prefix=format_input.prefix if format_input is not None else None,
-        suffix=format_input.suffix if format_input is not None else None,
-        notation=notation,
+    return resolve_format_parts(
+        FormatConfig(
+            spec=spec or None,
+            prefix=(parts.prefix or None) if parts is not None else None,
+            suffix=(parts.suffix or None) if parts is not None else None,
+            notation=notation,
+        ),
+        formats,
+        no_format_default=None,
     )
 
 

@@ -1,0 +1,124 @@
+title: FormatConfig sign_placement and repeat
+
+queries:
+  monthly:
+    columns: [month, net_eur, gross_eur]
+    values:
+      - ["2026-01-01", 120000, 150000]
+      - ["2026-02-01", -40000, -10000]
+      - ["2026-03-01", 80000, 95000]
+  refunds:
+    columns: [month, refund_eur]
+    values:
+      - ["2026-01-01", -120000]
+      - ["2026-02-01", -40000]
+      - ["2026-03-01", -80000]
+
+charts:
+  # A spaced prefix places the sign after it; repeat: anchor affixes one tick.
+  axis_anchor:
+    type: bar
+    query: monthly
+    x: month
+    y: net_eur
+    title: axis_y anchor — expect EUR on one tick
+    style:
+      axis_y:
+        labels:
+          format:
+            spec: ",.0f"
+            prefix: "EUR "
+            repeat: anchor
+        mirror:
+          format:
+            spec: ",.0f"
+            suffix: " net"
+            repeat: anchor
+
+  # A house format's support_table cells: the authored suffix follows the
+  # strip anchor; repeat: every puts it on every cell.
+  strip:
+    type: bar
+    query: monthly
+    x: month
+    y: net_eur
+    title: support_table — anchored and repeated affix
+    support_table:
+      entries:
+        - source: net_eur
+          label: Anchored
+          format:
+            spec: integer
+            suffix: " net"
+        - source: gross_eur
+          label: Every
+          format:
+            spec: integer
+            prefix: "EUR "
+            repeat: every
+
+  # A left-axis strip repeats a prefix by default; repeat: anchor puts it on
+  # the leftmost cell.
+  strip_left_axis:
+    type: bar
+    query: monthly
+    x: month
+    y: net_eur
+    title: support_table, left axis — anchored prefix
+    style:
+      axis_y:
+        position: left
+    support_table:
+      entries:
+        - source: net_eur
+          label: Anchored
+          format:
+            spec: integer
+            prefix: "EUR "
+            repeat: anchor
+
+  # An anchored prefix leads the sign; the other values paint a bare sign.
+  anchored_negatives:
+    type: bar
+    query: refunds
+    x: month
+    y: refund_eur
+    title: anchored prefix on negatives — expect €−, EUR −
+    style:
+      axis_y:
+        labels:
+          format:
+            spec: ",.0f"
+            prefix: "€"
+            repeat: anchor
+        mirror:
+          format:
+            spec: ",.0f"
+            prefix: "EUR "
+            repeat: anchor
+    support_table:
+      entries:
+        - source: refund_eur
+          label: Refunds
+          format:
+            spec: integer
+            prefix: "€"
+
+  # Table columns: repeat overrides the theme's symbol_mode.
+  table_cells:
+    type: table
+    query: monthly
+    title: Table — anchored and repeated prefix
+    style:
+      columns:
+        net_eur:
+          label: Net
+          format:
+            spec: ",.0f"
+            prefix: "€"
+            repeat: every
+
+rows:
+  - cols: [axis_anchor, strip]
+  - cols: [strip_left_axis, table_cells]
+  - cols: [anchored_negatives]

@@ -52,17 +52,18 @@ from d3_format import FormatSpec, parse as _d3_parse
 from d3_format.errors import D3FormatError
 from dbt_charts.core.colors import ensure_readable_ink, parse_css_color, rgb01_to_hex
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import decimal_pad_table_for, resolve_format
+from dbt_charts.core.compile.format import (
+    decimal_pad_table_for,
+)
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSort,
-    ChartSupportTable,
-    ChartSupportTableAggregate,
     ChartSupportTableAggregateOp,
-    ChartSupportTablePerSeries,
-    ChartSupportTableSource,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
-    FormatState,
+    ResolvedSupportTable,
+    ResolvedSupportTableAggregate,
+    ResolvedSupportTablePerSeries,
+    ResolvedSupportTableSource,
     effective_color_field,
 )
 from dbt_charts.core.compile.models.chart.resolved._base import (
@@ -71,7 +72,11 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import (
+    ResolvedFormat,
+    painted_sign_placement,
+    signs_before_prefix,
+)
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedAxisStyle,
     ResolvedChartDefaults,
@@ -83,6 +88,10 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
 )
 from dbt_charts.core.compile.support_table import row_height
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
+)
 from dbt_charts.core.font_measure import compose_decimal_units, get_font_measurer
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
@@ -114,12 +123,23 @@ from dbt_charts.core.render.chart.type_inference import (
     is_lex_sortable_date_like,
     temporal_edge_labels_flushed,
 )
-from dbt_charts.core.render.chart.vl_field_maps import _apply_decimal_pad
+from dbt_charts.core.render.chart.vl_field_maps import (
+    _affixed_digits_expr,
+    _apply_decimal_pad,
+)
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.errors import RenderError
-from dbt_charts.core.render.format_utils import format_value
+from dbt_charts.core.render.format_utils import (
+    _check_percent_range,
+    format_value,
+)
+from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 from dbt_charts.core.render.utils import font_style_to_mark
 from dbt_charts.core.text.case import inferred_display_name
+from dbt_charts.core.text.format_d3 import (
+    affix_signed,
+    format_d3,
+)
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     build_decimal_pad_table,
@@ -130,8 +150,8 @@ from dbt_charts.core.text.numeral_scale import (
     shared_scale_for_column,
     suffix_at_register,
     tier_distance,
+    with_symbol,
 )
-from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 from dbt_charts.core.utils import (
     VlSortOp,
     sorted_series_by_stack_order,
@@ -174,7 +194,7 @@ def _strip_height(style: SupportTableStyle, n_rows: int) -> float:
 
 
 def support_table_strip_height(
-    support_table: ChartSupportTable | None,
+    support_table: ResolvedSupportTable | None,
     style: SupportTableStyle,
     axis_offset_value: float | None,
     series_count: int = 0,
@@ -211,7 +231,7 @@ def support_table_strip_height(
         return 0.0
     n_rows = 0
     for entry in support_table.entries:
-        if isinstance(entry, ChartSupportTablePerSeries):
+        if isinstance(entry, ResolvedSupportTablePerSeries):
             if entry.by_measure:
                 n_rows += 1
             else:
@@ -242,7 +262,7 @@ def support_table_strip_height(
 
 
 def validate_support_table_against_data(
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     x_field: str | None,
     data: list[dict[str, Any]],
     x_type: str | None = None,
@@ -306,7 +326,7 @@ def validate_support_table_against_data(
     if data:
         available = set(data[0].keys())
         for entry in support_table.entries:
-            if isinstance(entry, ChartSupportTablePerSeries):
+            if isinstance(entry, ResolvedSupportTablePerSeries):
                 source_col = entry.per_series
             else:
                 source_col = entry.source
@@ -332,15 +352,15 @@ def validate_support_table_against_data(
         multi_row = any(c > 1 for c in counts.values())
         if multi_row:
             for entry in support_table.entries:
-                is_aggregate = isinstance(entry, ChartSupportTableAggregate)
+                is_aggregate = isinstance(entry, ResolvedSupportTableAggregate)
                 is_normal_per_series = (
-                    isinstance(entry, ChartSupportTablePerSeries)
+                    isinstance(entry, ResolvedSupportTablePerSeries)
                     and not entry.by_measure
                 )
                 if not is_aggregate and not is_normal_per_series:
                     source_col = (
                         entry.per_series
-                        if isinstance(entry, ChartSupportTablePerSeries)
+                        if isinstance(entry, ResolvedSupportTablePerSeries)
                         else entry.source
                     )
                     raise RenderError.from_code(
@@ -558,6 +578,12 @@ class StripAnchor:
         )
 
     @staticmethod
+    def everywhere() -> StripAnchor:
+        """Every cell declares the unit (``repeat: every``): the anchor test
+        always holds, so no window is needed."""
+        return StripAnchor("true", False)
+
+    @staticmethod
     def nowhere() -> StripAnchor:
         """No cell declares the unit — the row repeats it, as it always has.
 
@@ -622,6 +648,38 @@ class StripNumerals:
     # suffix instead, and SI's shared-magnitude bake already puts every cell
     # at one column-wide decimal depth.
     decimal_pad_table: tuple[str, ...] = ()
+    # An affix or notation a d3 spec cannot carry, composed on the anchor cell
+    # (every cell when `anchor` is nowhere). Its spec is `digit_spec`.
+    authored: ResolvedFormat | None = None
+
+    def _bare_authored_text(self, value: float, authored: ResolvedFormat) -> str:
+        """An anchored affix's non-anchor cell: the digits, no affix or symbol."""
+        text = format_d3(
+            value / self.divisor,
+            with_symbol(self.digit_spec, ""),
+            notation=authored.notation,
+        )
+        if self.decimal_pad_table:
+            text += decimal_pad_for(self.decimal_pad_table, text)
+        return text
+
+    def _compose_affixed_text(self, value: float, authored: ResolvedFormat) -> str:
+        """Route the signed scaled value through ``format_d3`` so d3 decides the sign.
+
+        Runs the percent-range guard itself, which ``format_d3`` bypasses.
+        """
+        _check_percent_range(value / self.divisor, self.digit_spec)
+        signed = format_d3(
+            value / self.divisor, self.digit_spec, notation=authored.notation
+        )
+        if self.decimal_pad_table:
+            signed += decimal_pad_for(self.decimal_pad_table, signed)
+        return affix_signed(
+            signed,
+            authored.prefix,
+            authored.suffix,
+            painted_sign_placement(authored, self.anchor.needs_drawn_index),
+        )
 
     def bare_text(self, value: float) -> str:
         """The text a cell that does NOT declare the unit paints.
@@ -631,6 +689,12 @@ class StripNumerals:
         every bare cell off the band it labels. A REPEAT row is the exception —
         there every non-zero cell paints the suffix, so it belongs in the width.
         """
+        if self.authored is not None:
+            if self.anchor.needs_drawn_index:
+                return self._bare_authored_text(value, self.authored)
+            return self._compose_affixed_text(value, self.authored)
+        if self.anchor == StripAnchor.everywhere() and (self.prefix or self.suffix):
+            return self.anchor_text(value)
         text = format_value(value / self.divisor, self.digit_spec, None)
         if self.decimal_pad_table:
             text += decimal_pad_for(self.decimal_pad_table, text)
@@ -649,13 +713,19 @@ class StripNumerals:
         land on band 2+ (when the first period is zero), so the band must be
         at least as wide as the anchor to prevent overlap with its neighbor.
         """
+        if self.authored is not None:
+            return self._compose_affixed_text(value, self.authored)
         if not (self.prefix or self.suffix):
             return self.bare_text(value)
         if self.suffix_is_magnitude:
             digits = format_value(abs(value) / self.divisor, self.digit_spec, None)
             if self.decimal_pad_table:
                 digits += decimal_pad_for(self.decimal_pad_table, digits)
-            sign = "−" if value < 0 else ""
+            # A value rounding to zero under this spec paints no sign.
+            zero_digits = format_value(0.0, self.digit_spec, None)
+            if self.decimal_pad_table:
+                zero_digits += decimal_pad_for(self.decimal_pad_table, zero_digits)
+            sign = "−" if value < 0 and digits != zero_digits else ""
             suffix = self.suffix if value != 0 else ""
             return sign + self.prefix + digits + suffix
         # Trimmed: the d3 format output already contains the affix.
@@ -672,6 +742,8 @@ class StripNumerals:
         """
         if not self.anchor.needs_drawn_index:
             return False
+        if self.authored is not None:
+            return True
         anchored = bool(self.prefix) or (bool(self.suffix) and not self.repeat_suffix)
         return anchored
 
@@ -689,6 +761,27 @@ def _strip_numerals_text_expr(value_expr: str, numerals: StripNumerals) -> str:
     ``non_compacting_tick_format`` documents, shared with the axis).
     """
     anchor_test = numerals.anchor.test
+    if numerals.authored is not None:
+        # Signed, like the Python twin _compose_affixed_text.
+        scaled_e = f"({value_expr}) / {numerals.divisor!r}"
+        affixed = _affixed_digits_expr(
+            scaled_e,
+            numerals.authored.spec,
+            numerals.authored,
+            numerals.decimal_pad_table,
+            anchored=numerals.anchor.needs_drawn_index,
+        )
+        if not numerals.anchor.needs_drawn_index:
+            return affixed
+        bare = _apply_decimal_pad(
+            numeral_vega_expr(
+                scaled_e,
+                with_symbol(numerals.digit_spec, ""),
+                numerals.authored.notation,
+            ),
+            numerals.decimal_pad_table,
+        )
+        return f"({anchor_test} ? {affixed} : {bare})"
 
     if not (numerals.prefix or numerals.suffix):
         # Nothing repeats, so nothing is declared: every cell paints the
@@ -979,7 +1072,7 @@ def strip_numerals_for_values(
 
 def _vl_format_calc(
     source: str,
-    format_spec: FormatState,
+    format_spec: ResolvedFormat | None,
     as_name: str,
     numerals: StripNumerals,
 ) -> dict[str, Any]:
@@ -1000,12 +1093,12 @@ def _vl_format_calc(
 
 
 def _default_support_table_label(
-    entry: ChartSupportTableSource | ChartSupportTableAggregate,
+    entry: ResolvedSupportTableSource | ResolvedSupportTableAggregate,
 ) -> str:
     return entry.label or inferred_display_name(entry.source, case="title")
 
 
-def _per_series_column_header(entry: ChartSupportTablePerSeries) -> str:
+def _per_series_column_header(entry: ResolvedSupportTablePerSeries) -> str:
     """Header for a grouped bar's single-column per_series entry.
 
     A grouped bar's per_series entry paints one column holding every series'
@@ -1208,7 +1301,7 @@ def _row_text_layer(
     axis_offset_value: float | None,
     spec_height: float,
     numerals: StripNumerals,
-    value_format: FormatState = None,
+    value_format: ResolvedFormat | None = None,
     sampling_step: int = 1,
     dx: float | None = None,
     value_align: Literal["left", "right"] = "right",
@@ -1229,7 +1322,7 @@ def _row_text_layer(
     a monthly-band axis). This prevents the support_table strip from rendering one
     cell per band when the axis labels are at a coarser cadence.
     """
-    is_agg = isinstance(entry, ChartSupportTableAggregate)
+    is_agg = isinstance(entry, ResolvedSupportTableAggregate)
     x_field = parent_x_enc["field"]
     # Internal field name for the formatted cell value.
     cell_name = f"__support_table_{index}"
@@ -1300,7 +1393,7 @@ def _row_text_layer(
 
 def _per_series_row_layers(
     row_start_index: int,
-    entry: ChartSupportTablePerSeries,
+    entry: ResolvedSupportTablePerSeries,
     parent_x_enc: dict[str, Any],
     color_field: str | None,
     series_order: list[str],
@@ -1311,7 +1404,7 @@ def _per_series_row_layers(
     spec_width: float | None,
     axis_label_padding: float,
     numerals: StripNumerals,
-    value_format: FormatState = None,
+    value_format: ResolvedFormat | None = None,
     sampling_step: int = 1,
     dx: float | None = None,
     label_period_filter_expr: str | None = None,
@@ -1719,7 +1812,7 @@ def _sampling_transforms(x_field: str, step: int) -> list[dict[str, Any]]:
 def attach_support_table(
     spec: dict[str, Any],
     *,
-    support_table: ChartSupportTable | None,
+    support_table: ResolvedSupportTable | None,
     style: SupportTableStyle,
     charts_style: ResolvedChartDefaults | None = None,
     axis_offset_value: float | None = None,
@@ -1845,7 +1938,7 @@ def attach_support_table(
     # to N rows (one per series); source/aggregate entries are 1 row each.
     n_visual_rows = 0
     for entry in support_table.entries:
-        if isinstance(entry, ChartSupportTablePerSeries):
+        if isinstance(entry, ResolvedSupportTablePerSeries):
             if entry.by_measure:
                 n_visual_rows += 1
             else:
@@ -1932,7 +2025,7 @@ def attach_support_table(
         row_dx = entry_dx[entry_idx] if entry_dx is not None else None
         row_numerals = entry_numerals[entry_idx]
         row_format = entry.format
-        if isinstance(entry, ChartSupportTablePerSeries):
+        if isinstance(entry, ResolvedSupportTablePerSeries):
             if entry.by_measure:
                 # by_measure: one row per entry, no series expansion needed.
                 bm_layers = _per_series_row_layers(
@@ -2219,7 +2312,7 @@ def _numeric_column(data: ChartRenderData, source: str) -> list[float]:
 
 
 def _entry_values(
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     data: ChartRenderData,
     x_field: str | None,
     color_field: str | None,
@@ -2234,13 +2327,13 @@ def _entry_values(
     """
     per_entry: list[list[float]] = []
     for entry in support_table.entries:
-        if isinstance(entry, ChartSupportTablePerSeries):
+        if isinstance(entry, ResolvedSupportTablePerSeries):
             source = entry.per_series
             if x_field is not None and color_field is not None:
                 values = _aggregate_by_x_and_color(data, source, x_field, color_field)
             else:
                 values = _numeric_column(data, source)
-        elif isinstance(entry, ChartSupportTableAggregate) and x_field is not None:
+        elif isinstance(entry, ResolvedSupportTableAggregate) and x_field is not None:
             values = _aggregate_by_x(data, entry.source, x_field, entry.aggregate)
         else:
             values = _numeric_column(data, entry.source)
@@ -2268,9 +2361,69 @@ def resolved_pad_font_family(dt_style: SupportTableStyle) -> str:
     return family
 
 
+def _entry_spec(
+    entry: ResolvedSupportTableSource
+    | ResolvedSupportTableAggregate
+    | ResolvedSupportTablePerSeries,
+) -> str:
+    return entry.format.spec if entry.format is not None else ""
+
+
+def _authored_affix_numerals(
+    entry_format: ResolvedFormat | None,
+    resolved: str,
+    font_family: str,
+    anchor: StripAnchor,
+    hang: Literal["left", "right"] = "left",
+) -> StripNumerals | None:
+    """Numerals composing an affix outside d3's "$"/"#", or None without one.
+
+    The affix declares once on ``anchor`` (the leftmost drawn cell) where a
+    house format's own symbol would, or wherever ``repeat: anchor`` asks. By
+    default a left-axis strip repeats a prefix, like the native one.
+    """
+    if entry_format is None or not entry_format.has_affix:
+        return None
+    # A spec-less affix arrives with its default spec already baked.
+    digit_spec = resolved
+    repeat = entry_format.repeat
+    house_anchors = entry_format.is_house and not (
+        hang == "right" and bool(entry_format.prefix or _d3_parse(digit_spec).symbol)
+    )
+    anchors = bool(entry_format.prefix or entry_format.suffix) and (
+        repeat == "anchor" or (repeat is None and house_anchors)
+    )
+    return StripNumerals(
+        digit_spec=digit_spec,
+        anchor=anchor if anchors else StripAnchor.nowhere(),
+        authored=entry_format,
+        hang=hang,
+        decimal_pad_table=decimal_pad_table_for(digit_spec, font_family),
+    )
+
+
+def _reject_sign_before_anchored_prefix(
+    entry_numerals: Sequence[StripNumerals],
+    chart_id: str,
+) -> None:
+    """Reject an entry whose authored prefix the strip anchors (the predicate
+    ``StripNumerals`` paints by) while its format signs before the prefix."""
+    for index, numerals in enumerate(entry_numerals):
+        if (
+            numerals.authored is not None
+            and numerals.anchor.needs_drawn_index
+            and signs_before_prefix(numerals.authored)
+        ):
+            # A chart error, so the board paints this chart's error card.
+            raise ChartDataError.from_code(
+                ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
+                chart_id=chart_id,
+                field_path=f"charts.{chart_id}.support_table.entries[{index}].format",
+            )
+
+
 def plain_numerals(
-    support_table: ChartSupportTable,
-    formats: dict[str, str] | None,
+    support_table: ResolvedSupportTable,
     font_family: str,
     entry_values: Sequence[Sequence[float]],
 ) -> list[StripNumerals]:
@@ -2292,7 +2445,13 @@ def plain_numerals(
     """
     result: list[StripNumerals] = []
     for entry, values in zip(support_table.entries, entry_values, strict=True):
-        resolved = resolve_format(entry.format, formats)
+        resolved = _entry_spec(entry)
+        authored = _authored_affix_numerals(
+            entry.format, resolved, font_family, StripAnchor.nowhere()
+        )
+        if authored is not None:
+            result.append(authored)
+            continue
         pad_table = decimal_pad_table_for(resolved, font_family)
         if not pad_table and resolved:
             try:
@@ -2312,54 +2471,53 @@ def plain_numerals(
 
 
 def _entry_numerals(
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     entry_values: list[list[float]],
-    formats: dict[str, str] | None,
     font_family: str,
     anchor: StripAnchor,
     hang: Literal["left", "right"] = "left",
 ) -> list[StripNumerals]:
-    """How each entry spells its numbers, one per entry.
+    """How each entry spells its numbers.
 
-    An entry with no ``format:`` at all still gets numerals: ``resolve_format``
-    hands back the theme's own default spec, so the row is spelled by that and
-    declares nothing — the same text it painted before.
-
-    House rules (narrative register, declare-once) apply only to engine-predefined
-    format names. A raw d3 literal or user alias opts out: the anchor is a house
-    convention layered on top of the engine's own vocabulary, not something an
-    author's own literal spec should be silently opted into. It still earns a
-    decimal_pad_table when it is a plain trim-`f` spec (``decimal_pad_table_for``
-    gates that itself) -- the raw-literal opt-out is from the SI/currency/percent
-    anchor convention, not from decimal-point alignment.
+    House rules (narrative register, declare-once) apply only to predefined
+    names; a literal d3 spec or alias opts out but keeps decimal alignment.
+    An authored affix is tried first and composes around a predefined name's
+    own symbol.
     """
     result: list[StripNumerals] = []
     for entry, values in zip(support_table.entries, entry_values, strict=True):
-        resolved = resolve_format(entry.format, formats)
-        raw_format = (
-            entry.format.spec
-            if isinstance(entry.format, FormatConfig)
-            else entry.format
+        resolved = _entry_spec(entry)
+        authored = _authored_affix_numerals(
+            entry.format, resolved, font_family, anchor, hang
         )
-        if raw_format is None or raw_format not in PREDEFINED_NUMBER_NAMES:
+        if authored is not None:
+            result.append(authored)
+            continue
+        if entry.format is not None and entry.format.is_house:
             result.append(
-                StripNumerals(
-                    digit_spec=resolved,
-                    anchor=StripAnchor.nowhere(),
-                    decimal_pad_table=decimal_pad_table_for(resolved, font_family),
+                strip_numerals_for_values(
+                    values,
+                    resolved,
+                    StripAnchor.everywhere()
+                    if entry.format.repeat == "every"
+                    else anchor,
+                    font_family=font_family,
+                    hang=hang,
                 )
             )
             continue
         result.append(
-            strip_numerals_for_values(
-                values, resolved, anchor, font_family=font_family, hang=hang
+            StripNumerals(
+                digit_spec=resolved,
+                anchor=StripAnchor.nowhere(),
+                decimal_pad_table=decimal_pad_table_for(resolved, font_family),
             )
         )
     return result
 
 
 def _entry_cell_widths(
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     values_per_entry: Sequence[Sequence[float]],
     dt_style: SupportTableStyle,
     entry_numerals: Sequence[StripNumerals],
@@ -2418,7 +2576,7 @@ def _entry_cell_widths(
 
 
 def _compute_support_table_entry_dx(
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     dt_style: SupportTableStyle,
     has_time_unit: bool,
     entry_numerals: Sequence[StripNumerals],
@@ -2956,13 +3114,13 @@ def _column_edges(
 
 
 def _column_cell_transforms(
-    entry: ChartSupportTableSource
-    | ChartSupportTableAggregate
-    | ChartSupportTablePerSeries,
+    entry: ResolvedSupportTableSource
+    | ResolvedSupportTableAggregate
+    | ResolvedSupportTablePerSeries,
     category_field: str,
     color_field: str | None,
     series_value: str | None,
-    value_format: FormatState,
+    value_format: ResolvedFormat | None,
     cell_name: str,
     numerals: StripNumerals,
 ) -> list[dict[str, Any]]:  # type-state: explicit_any — VL fragment
@@ -2981,7 +3139,7 @@ def _column_cell_transforms(
     test never fires, so no cell ever paints the affix and every cell divides by
     the shared tier with nothing naming it (e.g. a $120,588 total prints "120").
     """
-    if isinstance(entry, ChartSupportTableAggregate):
+    if isinstance(entry, ResolvedSupportTableAggregate):
         vl_op = _AGG_OP_TO_VL[entry.aggregate]
         agg_name = f"{cell_name}_val"
         transforms: list[dict[str, Any]] = [  # type-state: explicit_any — VL fragment
@@ -3001,7 +3159,7 @@ def _column_cell_transforms(
             )
         transforms.append(_vl_format_calc(agg_name, value_format, cell_name, numerals))
         return transforms
-    if isinstance(entry, ChartSupportTablePerSeries):
+    if isinstance(entry, ResolvedSupportTablePerSeries):
         if entry.by_measure:
             transforms = []
             if numerals.needs_drawn_index_window:
@@ -3194,7 +3352,7 @@ def _column_rule_layer(
 
 
 def _entry_column_widths(
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     values_per_entry: Sequence[Sequence[float]],
     dt_style: SupportTableStyle,
     entry_numerals: Sequence[StripNumerals],
@@ -3235,12 +3393,12 @@ def _entry_column_widths(
     measurer = get_font_measurer(dt_style.label.font.family, numeric=False)
     widths: list[float] = []
     for entry, value_w in zip(support_table.entries, value_widths, strict=True):
-        if isinstance(entry, ChartSupportTablePerSeries) and not entry.by_measure:
+        if isinstance(entry, ResolvedSupportTablePerSeries) and not entry.by_measure:
             if single_column_per_series:
                 headers = [_per_series_column_header(entry)]
             else:
                 headers = list(_series_names_or_empty(series_order))
-        elif isinstance(entry, ChartSupportTablePerSeries):
+        elif isinstance(entry, ResolvedSupportTablePerSeries):
             headers = [entry.label if entry.label is not None else entry.per_series]
         else:
             headers = [_default_support_table_label(entry)]
@@ -3250,7 +3408,7 @@ def _entry_column_widths(
 
 
 def _visual_column_widths_and_headers(
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     entry_widths: Sequence[float],
     series_order: list[str] | None,
     single_column_per_series: bool,
@@ -3267,7 +3425,7 @@ def _visual_column_widths_and_headers(
     widths: list[float] = []
     headers: list[str] = []
     for entry, width in zip(support_table.entries, entry_widths, strict=True):
-        if isinstance(entry, ChartSupportTablePerSeries) and not entry.by_measure:
+        if isinstance(entry, ResolvedSupportTablePerSeries) and not entry.by_measure:
             if single_column_per_series:
                 widths.append(width)
                 headers.append(_per_series_column_header(entry))
@@ -3275,7 +3433,7 @@ def _visual_column_widths_and_headers(
                 for series_value in _series_names_or_empty(series_order):
                     widths.append(width)
                     headers.append(str(series_value))
-        elif isinstance(entry, ChartSupportTablePerSeries):
+        elif isinstance(entry, ResolvedSupportTablePerSeries):
             widths.append(width)
             headers.append(entry.label if entry.label is not None else entry.per_series)
         else:
@@ -3397,7 +3555,7 @@ def _legend_is_visible(spec: VLDict) -> bool:
 
 def _mark_series_header_fills(
     spec: VLDict,
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     resolved_chart: _CartesianResolvedChartFields,
     charts_style: ResolvedChartDefaults,
 ) -> dict[int, str] | None:
@@ -3470,7 +3628,8 @@ def _mark_series_header_fills(
     result = {}
     for entry_idx, entry in enumerate(support_table.entries):
         if not (
-            isinstance(entry, ChartSupportTableSource) and entry.source in fill_by_field
+            isinstance(entry, ResolvedSupportTableSource)
+            and entry.source in fill_by_field
         ):
             continue
         fill = fill_by_field[entry.source]
@@ -3498,10 +3657,10 @@ def _mark_series_header_fills(
 def attach_support_table_columns(
     spec: dict[str, Any],  # type-state: explicit_any — VL fragment
     *,
-    support_table: ChartSupportTable,
+    support_table: ResolvedSupportTable,
     style: SupportTableStyle,
     entry_numerals: Sequence[StripNumerals],
-    value_formats: Sequence[FormatState],
+    value_formats: Sequence[ResolvedFormat | None],
     column_widths: Sequence[float],
     column_headers: Sequence[str],
     category_field: str,
@@ -3612,7 +3771,7 @@ def attach_support_table_columns(
     for entry_idx, entry in enumerate(support_table.entries):
         numerals = entry_numerals[entry_idx]
         value_format = value_formats[entry_idx]
-        if isinstance(entry, ChartSupportTablePerSeries) and not entry.by_measure:
+        if isinstance(entry, ResolvedSupportTablePerSeries) and not entry.by_measure:
             if not series_order:
                 raise RenderError.from_code(
                     ERR_INPUT_INVALID,
@@ -3971,19 +4130,17 @@ def _apply_support_table_columns_post_pass(
         _entry_numerals(
             support_table,
             entry_values,
-            charts_style.formats,
             pad_font_family,
             anchor,
             "left",
         )
         if anchor is not None
-        else plain_numerals(
-            support_table, charts_style.formats, pad_font_family, entry_values
-        )
+        else plain_numerals(support_table, pad_font_family, entry_values)
     )
+    _reject_sign_before_anchored_prefix(entry_numerals, resolved_chart.id)
 
     has_per_series = any(
-        isinstance(e, ChartSupportTablePerSeries) for e in support_table.entries
+        isinstance(e, ResolvedSupportTablePerSeries) for e in support_table.entries
     )
     # A per_series entry's column layout is implied by the chart's own series
     # layout, the same geometry-implied-by-the-chart principle the rest of
@@ -4403,16 +4560,14 @@ def apply_chart_support_table_post_pass(
         _entry_numerals(
             support_table,
             entry_values,
-            charts_style.formats,
             pad_font_family,
             anchor,
             hang,
         )
         if anchor is not None
-        else plain_numerals(
-            support_table, charts_style.formats, pad_font_family, entry_values
-        )
+        else plain_numerals(support_table, pad_font_family, entry_values)
     )
+    _reject_sign_before_anchored_prefix(entry_numerals, resolved_chart.id)
     # Per-band pixel budget: measured cell width + horizontal cell padding.
     # Drives width-aware thinning; replaces the former hardcoded per-band literal.
     max_cell_w = max(
@@ -4513,7 +4668,7 @@ def apply_chart_support_table_post_pass(
                 sampling_step = 1
     # Resolve series_order and dark_fills for per_series entries.
     has_per_series = any(
-        isinstance(e, ChartSupportTablePerSeries) for e in support_table.entries
+        isinstance(e, ResolvedSupportTablePerSeries) for e in support_table.entries
     )
     series_order: list[str] | None = None
     dark_fills: list[str] | None = None

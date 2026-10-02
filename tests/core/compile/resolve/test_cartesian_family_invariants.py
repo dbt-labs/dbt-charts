@@ -245,7 +245,7 @@ class TestMultiplesWithColorSeriesGetsTopLegend:
             **extra_kwargs,
         )
         resolved = resolve(chart, _SERIES_DATA, _board())
-        assert resolved.legend.position == "top", (
+        assert resolved.legend.position.edge == "top", (
             f"{family}: faceted color-series chart did not get a top legend "
             f"(position={resolved.legend.position!r})"
         )
@@ -366,7 +366,7 @@ class TestLogMeasureAxisWithNonPositiveDataRaises:
 
 
 def _assert_compact_top_legend(resolved: ResolvedChart, family: str) -> None:
-    assert resolved.legend.position == "top", (
+    assert resolved.legend.position.edge == "top", (
         f"{family}: tiny-width color-series chart did not fall back to a top "
         f"legend (position={resolved.legend.position!r})"
     )
@@ -424,7 +424,7 @@ class TestAuthoredLegendPositionResolvesVisible:
         chart = _BUILDERS[family](
             color="series",
             style=_STYLE_PATCHES[family].model_validate(
-                {"legend": {"position": "bottom"}}
+                {"legend": {"position": {"edge": "bottom"}}}
             ),
         )
         resolved = resolve(chart, _SERIES_DATA, _board())
@@ -432,7 +432,7 @@ class TestAuthoredLegendPositionResolvesVisible:
             f"{family}: authored legend.position resolved to an invisible legend "
             f"-- force_legend_visible is not threaded into _base_kwargs"
         )
-        assert resolved.legend.position == "bottom", (
+        assert resolved.legend.position.edge == "bottom", (
             f"{family}: authored legend.position was overridden "
             f"(position={resolved.legend.position!r})"
         )
@@ -464,11 +464,11 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
             color="series",
             multiples=MultiplesConfig(rows="facet"),
             style=_STYLE_PATCHES[family].model_validate(
-                {"legend": {"position": "bottom"}}
+                {"legend": {"position": {"edge": "bottom"}}}
             ),
         )
         resolved = resolve(chart, _SERIES_DATA, _board())
-        assert resolved.legend.position == "bottom", (
+        assert resolved.legend.position.edge == "bottom", (
             f"{family}: multiples + color series overrode the authored legend "
             f"position (position={resolved.legend.position!r})"
         )
@@ -505,11 +505,11 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
         chart = _BUILDERS[family](
             layers=[LineLayer(type="line", y="target")],
             style=_STYLE_PATCHES[family].model_validate(
-                {"legend": {"position": "bottom"}}
+                {"legend": {"position": {"edge": "bottom"}}}
             ),
         )
         resolved = resolve(chart, _LAYER_DATA, _board())
-        assert resolved.legend.position == "bottom", (
+        assert resolved.legend.position.edge == "bottom", (
             f"{family}: a layered overlay overrode the authored legend position "
             f"(position={resolved.legend.position!r})"
         )
@@ -529,11 +529,11 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
         chart = _BUILDERS[family](
             color="series",
             style=_STYLE_PATCHES[family].model_validate(
-                {"legend": {"position": "bottom"}}
+                {"legend": {"position": {"edge": "bottom"}}}
             ),
         )
         resolved = resolve(chart, _SERIES_DATA, _board(), width=_TINY_WIDTH)
-        assert resolved.legend.position == "top", (
+        assert resolved.legend.position.edge == "top", (
             f"{family}: tiny-width chart with an authored legend.position no "
             f"longer falls back to the compact top legend "
             f"(position={resolved.legend.position!r}) -- if this is now correct "
@@ -607,7 +607,7 @@ class TestTopLegendFitRule:
         distinguishes the two rungs the same way, bar-only)."""
         chart = _layered_chart(family)
         resolved = resolve(chart, _LAYER_DATA, _board(), width=_FIT_WIDTH)
-        assert resolved.legend.position == "top", (
+        assert resolved.legend.position.edge == "top", (
             f"{family}: a layered chart whose legend row fits the card did "
             f"not get a top legend (position={resolved.legend.position!r})"
         )
@@ -635,7 +635,7 @@ class TestTopLegendFitRule:
         where visibility is NOT otherwise forced."""
         chart = _layered_chart(family)
         resolved = resolve(chart, _LAYER_DATA, _board(), width=_OVERFLOW_WIDTH)
-        assert resolved.legend.position == "top", (
+        assert resolved.legend.position.edge == "top", (
             f"{family}: a layered chart whose legend row overflows but whose "
             f"wrapped legend fits the row budget did not stay at the top "
             f"(position={resolved.legend.position!r})"
@@ -680,7 +680,7 @@ class TestTopLegendFitRule:
         ]
         chart = _layered_chart(family, color="region")
         resolved = resolve(chart, data, _board(), width=_OVERFLOW_WIDTH)
-        assert resolved.legend.position == "right", (
+        assert resolved.legend.position.edge == "right", (
             f"{family}: a chart with more legend entries than the wrap "
             f"budget allows still got a top legend "
             f"(position={resolved.legend.position!r})"
@@ -710,14 +710,14 @@ class TestTopLegendFitRule:
         short_chart = _layered_chart(family, color="region", height=200.0)
         tall = resolve(tall_chart, data, _board(), width=_OVERFLOW_WIDTH)
         short = resolve(short_chart, data, _board(), width=_OVERFLOW_WIDTH)
-        assert tall.legend.position == "top", (
+        assert tall.legend.position.edge == "top", (
             f"{family}: a taller card whose wrapped legend fits its height "
             f"budget did not stay top (position={tall.legend.position!r})"
         )
         assert tall.legend.columns != 0, (
             f"{family}: a taller card's wrapped legend is not in compact-columns layout"
         )
-        assert short.legend.position == "right", (
+        assert short.legend.position.edge == "right", (
             f"{family}: a shorter card whose identical legend now exceeds "
             f"its height budget still got a top legend "
             f"(position={short.legend.position!r}) -- height, not just row "
@@ -732,7 +732,7 @@ class TestTopLegendFitRule:
         an unexplained default."""
         chart = _layered_chart("scatter")
         resolved = resolve(chart, _LAYER_DATA, _board(), width=_FIT_WIDTH)
-        assert resolved.legend.position == "right", (
+        assert resolved.legend.position.edge == "right", (
             f"scatter: a layered chart got a top legend "
             f"(position={resolved.legend.position!r}) -- scatter must never "
             f"route layers to a top legend"
@@ -744,7 +744,7 @@ class TestTopLegendFitRule:
         this policy must never touch that case."""
         chart = _scatter(color="series")
         resolved = resolve(chart, _SERIES_DATA, _board(), width=_FIT_WIDTH)
-        assert resolved.legend.position == "right"
+        assert resolved.legend.position.edge == "right"
         assert resolved.legend.direction == "vertical"
 
     def test_bar_grouped_by_a_real_color_field_also_respects_fit(self) -> None:
@@ -767,7 +767,7 @@ class TestTopLegendFitRule:
         ]
         chart = _bar(color="region")
         wide = resolve(chart, long_domain_data, _board(), width=900.0)
-        assert wide.legend.position == "top", (
+        assert wide.legend.position.edge == "top", (
             f"a grouped bar whose real color-domain legend row fits the "
             f"card did not get a top legend (position={wide.legend.position!r})"
         )
@@ -777,7 +777,7 @@ class TestTopLegendFitRule:
             f"(columns={wide.legend.columns!r})"
         )
         narrow = resolve(chart, long_domain_data, _board(), width=_OVERFLOW_WIDTH)
-        assert narrow.legend.position == "top", (
+        assert narrow.legend.position.edge == "top", (
             f"a grouped bar whose real color-domain legend row overflows "
             f"but whose wrapped legend fits the row budget did not stay top "
             f"(position={narrow.legend.position!r})"
@@ -814,7 +814,7 @@ class TestTopLegendFitRule:
         ]
         chart = _layered_chart(family, color="region")
         wide = resolve(chart, color_layer_data, _board(), width=1200.0)
-        assert wide.legend.position == "top", (
+        assert wide.legend.position.edge == "top", (
             f"{family}: a layered, colored chart whose real color-domain "
             f"legend row fits the card did not get a top legend "
             f"(position={wide.legend.position!r})"
@@ -825,7 +825,7 @@ class TestTopLegendFitRule:
             f"rung 1 (columns={wide.legend.columns!r})"
         )
         narrow = resolve(chart, color_layer_data, _board(), width=900.0)
-        assert narrow.legend.position == "top", (
+        assert narrow.legend.position.edge == "top", (
             f"{family}: a layered, colored chart whose real color-domain "
             f"legend row overflows but whose wrapped legend fits the row "
             f"budget did not stay top (position={narrow.legend.position!r}) "
@@ -845,7 +845,7 @@ class TestTopLegendFitRule:
         even at a width wide enough that a top row would easily fit."""
         chart = _layered_chart("bar", stack="zero")
         resolved = resolve(chart, _LAYER_DATA, _board(), width=_FIT_WIDTH)
-        assert resolved.legend.position == "right", (
+        assert resolved.legend.position.edge == "right", (
             f"a stacked bar with an overlay layer got a top legend "
             f"(position={resolved.legend.position!r}) -- stacking must keep "
             f"it off the top-legend fit rule regardless of layers"
@@ -893,7 +893,7 @@ class TestTopLegendFitRule:
             color="region", style=BarChartStylePatch(orientation="horizontal")
         )
         resolved_horizontal = resolve(horizontal, data, _board(), width=width)
-        assert resolved_horizontal.legend.position == "top", (
+        assert resolved_horizontal.legend.position.edge == "top", (
             f"a horizontal bar's colored legend row did not land top at all "
             f"(position={resolved_horizontal.legend.position!r})"
         )
@@ -908,7 +908,7 @@ class TestTopLegendFitRule:
             color="region", style=BarChartStylePatch(orientation="vertical")
         )
         resolved_vertical = resolve(vertical, data, _board(), width=width)
-        assert resolved_vertical.legend.position == "top", (
+        assert resolved_vertical.legend.position.edge == "top", (
             f"a vertical bar's colored legend row did not land top at all "
             f"(position={resolved_vertical.legend.position!r})"
         )
@@ -950,7 +950,7 @@ class TestTopLegendFitRule:
         long_expr = {"expr": "'Very Long Constant Category Label Text'"}
         assert resolve_with({}, 700.0).legend.columns == 0
         with_expr = resolve_with(long_expr, 700.0)
-        assert with_expr.legend.position == "top"
+        assert with_expr.legend.position.edge == "top"
         assert with_expr.legend.columns != 0
         assert resolve_with({**long_expr, "visible": False}, 700.0).legend.columns == 0
         assert resolve_with({"expr": "'x'", "max_width": 20}, 760.0).legend.columns == 0
@@ -1008,7 +1008,7 @@ class TestTopLegendFitRule:
             width: resolve(chart, data, _board(), width=width) for width in widths
         }
         positions = {
-            width: resolved.legend.position
+            width: resolved.legend.position.edge
             for width, resolved in resolved_by_width.items()
         }
         assert set(positions.values()) == {"right"}, (

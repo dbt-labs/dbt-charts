@@ -290,7 +290,7 @@ def test_clarity_scatter_legend_position_reaches_color_encoding(
     monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     reset_config()
     style = ScatterChartStylePatch(
-        legend=LegendStylePatch(position="top", direction="horizontal")
+        legend=LegendStylePatch(position={"edge": "top"}, direction="horizontal")
     )
     chart = ScatterChart(
         id="t",

@@ -9,7 +9,7 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.authored import ChartSort
-from dbt_charts.core.compile.models.primitives import FontStyle
+from dbt_charts.core.compile.models.primitives import FontStyle, FormatConfig
 from dbt_charts.core.compile.models.style.authored import (
     AxisLabelStylePatch,
     AxisTitleStylePatch,
@@ -38,22 +38,39 @@ _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 
 def _bare_axis(
-    *, tick_values: tuple[float, ...], format: str | None, align: str
+    *,
+    tick_values: tuple[float, ...],
+    format: str | None,
+    align: str,
+    tick_label: Any = None,
+    prefix: str = "",
 ) -> Any:
     """Minimal duck-typed stand-in for a ``ResolvedAxisStyle`` covering only
     the attributes ``axis_to_vl``/``measure_axis_to_vl`` read — used to drive
     the axis-mapping layer directly for states the authored/cascade pipeline
     can't reach (e.g. an explicitly-None format the theme always overrides).
+
+    ``tick_label`` accepts a real ``ResolvedTickLabel`` for the ladder-less
+    ``si_format`` measurement path — the default ``None`` matches every
+    existing caller's plain (non-ladder) shape.
     """
     from types import SimpleNamespace
 
+    from dbt_charts.core.compile.models.primitives import ResolvedFormat
+
+    resolved_format = (
+        None
+        if format is None
+        else ResolvedFormat(spec=format, prefix=prefix, sign_placement="before_prefix")
+    )
     return SimpleNamespace(
         position="right",
         labels=SimpleNamespace(
             align=align,
             font=SimpleNamespace(case="none", family="Inter", size=11.0),
             max_width=None,
-            format=format,
+            format=resolved_format,
+            expr=None,
         ),
         title=SimpleNamespace(font=SimpleNamespace()),
         ticks=SimpleNamespace(length=None),
@@ -61,7 +78,7 @@ def _bare_axis(
         line=SimpleNamespace(),
         scale=None,
         tick_values=tick_values,
-        tick_label=None,
+        tick_label=tick_label,
         ruler=None,
     )
 
@@ -326,6 +343,39 @@ class TestAxisYLabelAlignInvasion:
         assert y_axis["labelAlign"] == "left"
         assert y_axis["labelPadding"] > 0
 
+    def test_notation_on_a_non_si_spec_does_not_discard_alignment_or_padding(
+        self, make_chart
+    ):
+        """Authoring `notation` on a fixed-point spec must not compose a labelExpr byte-
+        identical to `format`.
+        """
+
+        def _spec(fmt: str | FormatConfig) -> dict:
+            chart = make_chart(
+                "line",
+                x="month",
+                y="revenue",
+                style=LineChartStylePatch(
+                    axis_y=AxisYStylePatch(
+                        position="right",
+                        labels=AxisLabelStylePatch(align="right", format=fmt),
+                    ),
+                ),
+            )
+            data = [{"month": "Jan", "revenue": 1_000_000}]
+            return generate_vega_lite_spec(chart, data)["encoding"]["y"]["axis"]
+
+        without_notation = _spec(",.0f")
+        with_notation = _spec(FormatConfig(spec=",.0f", notation="narrative"))
+
+        assert with_notation["labelAlign"] == without_notation["labelAlign"] == "right"
+        assert with_notation["labelPadding"] == pytest.approx(
+            without_notation["labelPadding"]
+        )
+        assert with_notation["labelPadding"] > 0
+        assert "labelExpr" not in with_notation
+        assert with_notation["format"] == without_notation["format"] == ",.0f"
+
     def test_measured_padding_excludes_tick_length(self, make_chart):
         """Regression: Vega-Lite already adds the axis's own tick length
         before applying ``labelPadding`` (confirmed via a direct vl-convert
@@ -573,6 +623,36 @@ class TestAxisYLabelAlignInvasion:
         d = measure_axis_to_vl(axis, [], ())
         assert "labelAlign" not in d
 
+    def test_own_side_align_si_format_arm_reads_the_ladders_own_affix(self) -> None:
+        """A ladder-less axis (``tick_label.si_format`` set) must measure the authored
+        affix carried on ``labels.format``.
+        """
+        from dbt_charts.core.compile.models.style.resolved import ResolvedTickLabel
+        from dbt_charts.core.render.chart.vl_field_maps import measure_axis_to_vl
+
+        tick_label_with_affix = ResolvedTickLabel(
+            format="d", si_format=".3~s", scientific_format="d"
+        )
+        axis_with_affix = _bare_axis(
+            tick_values=(),
+            format="d",
+            align="right",
+            tick_label=tick_label_with_affix,
+            prefix="EUR ",
+        )
+        tick_label_bare = ResolvedTickLabel(
+            format="d", si_format=".3~s", scientific_format="d"
+        )
+        axis_bare = _bare_axis(
+            tick_values=(), format="d", align="right", tick_label=tick_label_bare
+        )
+        data = [{"revenue": 5}, {"revenue": 1_500_000}]
+        with_affix = measure_axis_to_vl(axis_with_affix, data, ("revenue",))[
+            "labelPadding"
+        ]
+        bare = measure_axis_to_vl(axis_bare, data, ("revenue",))["labelPadding"]
+        assert with_affix > bare
+
     def test_own_side_align_with_label_expr_falls_back(self, make_chart):
         """An authored ``label.expr`` (labelExpr) renders in preference to
         ``format`` in Vega-Lite — measuring from the d3-format string while
@@ -769,6 +849,7 @@ class TestAxisYLabelAlignInvasion:
         """
         from types import SimpleNamespace
 
+        from dbt_charts.core.compile.models.primitives import ResolvedFormat
         from dbt_charts.core.render.chart.vl_field_maps import measure_axis_to_vl
 
         def _axis(domain: list[float] | None) -> object:
@@ -779,7 +860,8 @@ class TestAxisYLabelAlignInvasion:
                     align="right",
                     font=SimpleNamespace(case="none", family="Inter", size=11.0),
                     max_width=None,
-                    format=".0%",
+                    format=ResolvedFormat(spec=".0%"),
+                    expr=None,
                 ),
                 title=SimpleNamespace(font=SimpleNamespace()),
                 ticks=SimpleNamespace(length=None),

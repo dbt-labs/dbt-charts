@@ -201,8 +201,8 @@ def render_command(
                default is renders/ folder with board name. For json/text/yaml/data,
                default is stdout. Use "-" to force stdout. Ignored for terminal
                format (always prints to stdout).
-        format: Output format (svg, html, png, pdf, terminal, json, text,
-                text-data, yaml, data)
+        format: Output format (svg, html, png, pdf, thumbnail, terminal, json,
+                text, text-data, yaml, data)
         project: The resolved dbt charts project (injected by @with_project)
         variables: Variable values to pass to the render (key=value pairs)
         use_cache: Whether to use cached query results. False (--no-cache) skips
@@ -306,8 +306,8 @@ def render_command_from_yaml(
         output: Output file path. Binary formats and svg/html default to a
                renders/ file under project_dir; json/text/yaml/data go to stdout.
                Use "-" to force stdout. Ignored for terminal format.
-        format: Output format (svg, html, png, pdf, terminal, json, text,
-                text-data, yaml, data)
+        format: Output format (svg, html, png, pdf, thumbnail, terminal, json,
+                text, text-data, yaml, data)
         project: The resolved dbt charts project (injected by @with_project)
         variables: Variable values to pass to the render
         use_cache: Whether to use cached query results. False (--no-cache) skips
@@ -416,7 +416,7 @@ def _write_output(
 
     # Resolve output paths against output_dir (CWD / --project-dir), not project_root
     is_binary = format in ("png", "pdf")
-    output_extension = f".{format}"
+    output_extension = ".thumb.svg" if format == "thumbnail" else f".{format}"
 
     if output:
         output_path = Path(output)

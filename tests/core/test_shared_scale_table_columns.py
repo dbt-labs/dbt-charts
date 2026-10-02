@@ -945,3 +945,23 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         assert decimal_pad_for(col.decimal_pad_table, "0.25") == ""
         assert decimal_pad_for(col.decimal_pad_table, "84.3") != ""
         assert decimal_pad_for(col.decimal_pad_table, "88") != ""
+
+
+def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
+    """An alias naming a preset pads sub-$1 rows like the preset itself."""
+    rows: list[dict[str, Any]] = [{"amount": v} for v in (0.67, 1.5, 2.25)]
+
+    def pad(fmt: str, formats: dict[str, str] | None) -> tuple[str, ...]:
+        resolved = _with_resolved_scale_stops(
+            {"amount": TableColumnConfig(format=fmt)},
+            text_color=None,
+            formats=formats,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+        )
+        assert resolved is not None
+        return resolved["amount"].decimal_pad_table
+
+    direct = pad("currency", None)
+    assert direct
+    assert pad("mine", {"mine": "currency"}) == direct

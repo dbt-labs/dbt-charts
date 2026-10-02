@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from dbt_charts.core.compile.format import resolve_format_parts
 from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
 from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -20,8 +21,16 @@ from dbt_charts.core.compile.models.chart.normalized._base import (
     _GeoChartFields,
     _SharedChartFields,
 )
-from dbt_charts.core.compile.models.chart.resolved import PartitionAxis
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+from dbt_charts.core.compile.models.chart.resolved import (
+    PartitionAxis,
+    ResolvedSupportTable,
+)
+from dbt_charts.core.compile.models.primitives import (
+    AuthoredFormat,
+    FormatAliases,
+    ResolvedFontStyle,
+    ResolvedFormat,
+)
 from dbt_charts.core.compile.models.style.authored import (
     LegendStylePatch,
     PaddingStylePatch,
@@ -29,9 +38,10 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedChartDefaults
 from dbt_charts.core.compile.models.style.theme import (
-    LegendPosition,
+    LegendEdge,
     LegendStyle,
     PaddingStyle,
+    PieLegendStyle,
     SupportTableStyle,
 )
 from dbt_charts.core.compile.models.style.theme.category_colors import (
@@ -40,13 +50,16 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
 from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
 )
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    decide_legend_position,
+    merge_authored_position,
+    merge_legend,
+    validate_cartesian_position,
+)
 from dbt_charts.core.compile.resolve.style.palette import substitute_for_alias
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
-from dbt_charts.core.text.predefined_formats import (
-    PredefinedNumberFormat,
-)
 
 __all__ = [
     "AutomaticLinkCandidate",
@@ -83,7 +96,7 @@ class _LegendPositionOverridePatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    position_overridden_by_width: LegendPosition | None = None
+    position_overridden_by_width: LegendEdge | None = None
 
 
 def _bound_scales(
@@ -122,7 +135,7 @@ def _base_kwargs(
     normalized: _BaseChartFields,
     chart_style_context: ChartStyleContext,
     channels: dict[str, Any],
-    legend_patch: LegendStyle | None = None,
+    legend_patch: LegendStyle | PieLegendStyle | None = None,
     palette: list[str] | None = None,
     *,
     requested_alias_palette: str | None,
@@ -131,7 +144,9 @@ def _base_kwargs(
     suppress_legend: bool = False,
     top_legend: Literal["compact", "row", "off"] = "off",
     force_legend_visible: bool = False,
-    legend_position_overridden_by_width: LegendPosition | None = None,
+    legend_position_overridden_by_width: LegendEdge | None = None,
+    radial_legend: bool = False,
+    legendless: bool = False,
 ) -> dict[str, Any]:
     """Common kwargs for all _BaseResolvedChartFields subclasses.
 
@@ -170,7 +185,11 @@ def _base_kwargs(
     suppression -- bar's suppress_legend carries _stack_legend_should_yield,
     a plot-collapse guard the author does not get to overrule (the chart
     would raise ERR-CHART-PAINTED-NO-MARKS).
-    legend_position_overridden_by_width: the author's own position when the
+    radial_legend: True for pie and donut, whose key never overlays
+    (``decide_legend_position``'s ``radial``).
+    legendless: True for families that draw no legend; the
+    board's baked placement is left alone and never validated.
+    legend_position_overridden_by_width: the author's own edge when the
     tiny-width tier forced this legend back to top over it
     (SeriesNaming.legend_position_overridden_by_width), None otherwise. Folded
     in with _LegendPositionOverridePatch rather than LegendStylePatch like the
@@ -179,7 +198,7 @@ def _base_kwargs(
     the same merge_onto_base construction as every other legend decision here,
     not a post-hoc patch on the finished ResolvedLegendStyle.
     """
-    legend = merge_onto_base(chart_style_context.legend, legend_patch)
+    legend = merge_legend(chart_style_context.legend, legend_patch)
     if force_legend_visible:
         shown = LegendStylePatch.model_validate({"visible": True})
         legend = merge_onto_base(legend, shown)
@@ -192,17 +211,32 @@ def _base_kwargs(
         top = LegendStylePatch.model_validate(
             {
                 "visible": True,
-                "position": "top",
                 "direction": "horizontal",
                 "columns": legend.compact_columns if top_legend == "compact" else 0,
             }
         )
         legend = merge_onto_base(legend, top)
+    if not legendless:
+        authored_position = merge_authored_position(
+            chart_style_context.pre_style.charts.legend.position, legend_patch
+        )
+        # Validated before the top strip rewrites the edge: width never decides.
+        if not radial_legend:
+            validate_cartesian_position(
+                decide_legend_position(authored_position, top_strip=False),
+                normalized.id,
+            )
+        decided = decide_legend_position(
+            authored_position, top_strip=top_legend != "off", radial=radial_legend
+        )
+        legend = merge_onto_base(
+            legend, LegendStylePatch.model_validate({"position": decided.model_dump()})
+        )
     if suppress_legend:
         hidden = LegendStylePatch.model_validate({"visible": False})
         legend = merge_onto_base(legend, hidden)
     if (
-        legend.position == "top"
+        legend.position.edge == "top"
         and legend.direction == "horizontal"
         and legend.title.visible is None
     ):
@@ -295,6 +329,14 @@ def _title_font(
     return resolve_title_font(
         chart_local_style_context, width, _st.font if _st is not None else None
     )
+
+
+def _resolved_chart_format(
+    chart_format: AuthoredFormat | None, formats: FormatAliases | None
+) -> ResolvedFormat | None:
+    if chart_format is None:
+        return None
+    return resolve_format_parts(chart_format, formats, no_format_default=None)
 
 
 def _shared_kwargs(
@@ -409,38 +451,35 @@ def _resolved_support_table(
     support_table: ChartSupportTable | None,
     y: str | list[str] | None,
     data: list[dict[str, Any]],
-) -> ChartSupportTable | None:
-    """Bake the final support_table: stamp the theme's default number format
-    onto entries reading a single *numeric* string y column that carry no
-    authored format.
+    formats: FormatAliases | None,
+) -> ResolvedSupportTable | None:
+    """Bake the final support_table, entry formats included.
 
-    Single final value — every cartesian family resolver already receives
-    the same query rows render sees, so the "is y actually numeric" gate
-    (a string y column must keep format=None so the raw label renders
-    rather than a formatted "-") is decidable here instead of at render.
+    A string y column stays unformatted (its raw label renders rather than a
+    formatted "-"), so the numeric-y gate for the default ``number`` stamp is
+    decided here from the same rows render sees.
     """
-    if (
-        support_table is None
-        or not isinstance(y, str)
-        or not _column_is_numeric(data, y)
-    ):
-        return support_table
-    # Use the predefined name, not the resolved spec, so downstream callers
-    # (apply_measure_format_to_support_table) preserve the house-notation signal.
-    engine_default = str(PredefinedNumberFormat.number)
+    if support_table is None:
+        return None
     # Deferred like the one in _support_table_geometry below: support_table.py imports
     # resolve.style.axis_cascade, so a module-level import here closes a
     # support_table ↔ resolve cycle that only stays quiet while some other module
     # happens to import resolve first.
     from dbt_charts.core.compile.support_table import (  # noqa: PLC0415
-        apply_measure_format_to_support_table,
+        resolve_support_table,
     )
 
-    return apply_measure_format_to_support_table(support_table, engine_default, y)
+    return resolve_support_table(
+        support_table,
+        formats,
+        data,
+        y,
+        stamp_number=isinstance(y, str) and _column_is_numeric(data, y),
+    )
 
 
 def _support_table_geometry(
-    support_table: ChartSupportTable | None,
+    support_table: ResolvedSupportTable | None,
     chart_style_context: ChartStyleContext,
     chart_type: str,
     x_label_authored: bool,
@@ -519,7 +558,7 @@ def _cartesian_kwargs(
     ``axis_y.position``.
     """
     resolved_support_table = _resolved_support_table(
-        normalized.support_table, normalized.y, data
+        normalized.support_table, normalized.y, data, chart_style_context.formats
     )
     effective_support_table_style, support_table_axis_offset = _support_table_geometry(
         resolved_support_table,
@@ -546,7 +585,9 @@ def _cartesian_kwargs(
         "aspect_ratio": normalized.aspect_ratio,
         "min_height": normalized.min_height,
         "max_height": normalized.max_height,
-        "format": normalized.format,
+        "format": _resolved_chart_format(
+            normalized.format, chart_style_context.formats
+        ),
     }
 
 

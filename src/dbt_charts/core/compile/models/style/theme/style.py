@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from dbt_charts.core.compile.models.markers import Color, Merge, Strategy
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
+    FormatConfig,
     SpacingValues,
 )
 from dbt_charts.core.compile.models.schema_names import PaletteName
@@ -121,7 +122,7 @@ class Style(BaseModel):
     # while unredefined theme keys propagate. None is intentional here — unlike other
     # Compiled fields the theme populates, this sentinel distinguishes "no override"
     # from "empty override" across every cascade step, not just the base.
-    formats: dict[str, str] | None = Field(
+    formats: dict[str, str | FormatConfig] | None = Field(
         default=None,
         description="Format alias map; None means no aliases at this cascade level.",
     )

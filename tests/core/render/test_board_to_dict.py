@@ -224,6 +224,7 @@ _OMITTED_FROM_PROJECTION = {
     "attached_row_indices": "resolved pie companion row selection",
     "presentation_fingerprint": "resolved pie row fingerprint",
     "attached_table_placement": "resolved pie composition geometry",
+    "attached_table_align": "resolved pie composition geometry",
     "attached_table_width": "resolved pie composition geometry",
     "wheel_width": "resolved pie composition geometry",
     "attached_heading": "resolved pie companion heading",
@@ -309,3 +310,26 @@ def test_chart_fields_covers_resolved_surface() -> None:
         f"{sorted(unaccounted)}. Add them to the projection, or record why they "
         "are excluded."
     )
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({"prefix": "€"}, "−€500–€1,000"),
+        ({"prefix": "EUR "}, "EUR −500–EUR 1,000"),
+        ({"prefix": "€", "sign_placement": "after_prefix"}, "€−500–€1,000"),
+    ],
+)
+def test_y_range_display_takes_the_standalone_sign_placement(config, expected):
+    from types import SimpleNamespace
+
+    from dbt_charts.core.compile.format import resolve_format_parts
+    from dbt_charts.core.compile.models.primitives import FormatConfig
+    from dbt_charts.core.render.board_to_dict import _cartesian_y_range_display
+
+    fmt = resolve_format_parts(
+        FormatConfig(spec=",.0f", **config), None, no_format_default=None
+    )
+    chart = SimpleNamespace(y="v")
+    data = [{"v": -500}, {"v": 1000}]
+    assert _cartesian_y_range_display(chart, data, fmt, None) == expected

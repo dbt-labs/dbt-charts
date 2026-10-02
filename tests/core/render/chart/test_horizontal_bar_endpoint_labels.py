@@ -840,8 +840,8 @@ def test_categorical_axis_gutter_is_zero_when_labels_are_hidden() -> None:
         chart.y,
         has_quantitative_axis=True,
     )
-    hidden_labels = plan.ax_merged.labels.model_copy(update={"visible": False})
-    hidden = plan.ax_merged.model_copy(update={"labels": hidden_labels})
+    hidden_labels = plan.axes.x.style.labels.model_copy(update={"visible": False})
+    hidden = plan.axes.x.style.model_copy(update={"labels": hidden_labels})
     assert _categorical_axis_gutter_px(hidden, data, "row") == 0.0
 
 

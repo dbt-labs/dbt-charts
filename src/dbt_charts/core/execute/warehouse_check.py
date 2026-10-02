@@ -11,6 +11,7 @@ the SQL instead would report failures the real render never produces.
 | clickhouse       | ``DESCRIBE``  | validity + columns |
 | csv/json/parquet | ``DESCRIBE``  | columns only        |
 | bigquery         | dry run       | validity + columns |
+| sqlserver        | describe DMV  | validity + columns |
 | postgres         | ``EXPLAIN``   | validity only      |
 | redshift         | ``EXPLAIN``   | validity only      |
 | snowflake        | ``EXPLAIN``   | validity only      |
@@ -92,6 +93,13 @@ if TYPE_CHECKING:
 CheckStatus = Literal["valid", "invalid", "unchecked"]
 
 _BIGQUERY_DRY_RUN = "bigquery-dry-run"
+_SQLSERVER_DESCRIBE = "sys.dm_exec_describe_first_result_set"
+
+# The describe function's `error_type` values 3-11 (conflicting results, dynamic
+# SQL, a temp table, recursion, an unsupported statement, ...) mean it could not
+# determine the result, as opposed to 1 (misc) and 2 (syntax), where it bound the
+# statement and refused it. The former say nothing about whether the query runs.
+_SQLSERVER_DESCRIBE_LIMITS = range(3, 12)
 
 
 class _PrefixCheck(NamedTuple):
@@ -251,6 +259,26 @@ def warehouse_check(
                 ),
             )
         return _check_bigquery(
+            query,
+            board=board,
+            adapter_registry=adapter_registry,
+            variables=variables,
+            source_config=source_config,
+        )
+    if adapter_type == "sqlserver":
+        if source_config is None:
+            return WarehouseCheck(
+                status="unchecked",
+                adapter_type="sqlserver",
+                mechanism=_SQLSERVER_DESCRIBE,
+                columns_checked=False,
+                reason=(
+                    "its source falls through to dbt's own profile "
+                    "resolution, which this tier cannot describe without a "
+                    "resolved SQL Server source config"
+                ),
+            )
+        return _check_sqlserver(
             query,
             board=board,
             adapter_registry=adapter_registry,
@@ -614,6 +642,128 @@ _TRAILING_SEMICOLON_RE = re.compile(r"(?:;[ \t]*(?:--[^\n]*)?\s*)+\Z")
 
 def _strip_trailing_semicolon_for_script_join(sql: str) -> str:
     return _TRAILING_SEMICOLON_RE.sub("", sql.rstrip())
+
+
+def _check_sqlserver(
+    query: SqlQuery,
+    *,
+    board: Board,
+    adapter_registry: AdapterRegistry,
+    variables: VariableValues,
+    source_config: ResolvedSourceConfig,
+) -> WarehouseCheck:
+    """Bind the query without running it, through ``sys.dm_exec_describe_first_result_set``.
+
+    The function takes the query as a string and returns one row per result
+    column, or a single row carrying the server's error when it does not bind.
+
+    The query goes in as a string literal, so it is wrapped *after* rendering
+    (a rendered value's quotes would otherwise close the literal): the wire SQL
+    from :meth:`~AdapterRegistry.prepare_sql`, whose select-only guard has
+    already run, is wrapped and sent through
+    :meth:`~AdapterRegistry.execute_prepared`.
+    """
+    from dbt_charts.core.dialects import get_dialect
+    from dbt_charts.core.execute.adapters.base import QueryResult
+    from dbt_charts.core.execute.sql_literals import sql_string_literal
+
+    unwrappable = _unwrappable_reason(
+        query.sql, dialect="sqlserver", keyword=_SQLSERVER_DESCRIBE
+    )
+    if unwrappable is not None:
+        return WarehouseCheck(
+            status="unchecked",
+            adapter_type="sqlserver",
+            mechanism=_SQLSERVER_DESCRIBE,
+            columns_checked=False,
+            reason=unwrappable,
+        )
+    # The authored limit bounds the rows of the query; the describe's rows are
+    # its columns, so a limit here would truncate the schema.
+    prepared = adapter_registry.prepare_sql(
+        query.model_copy(update={"limit": None}),
+        board=board,
+        variables=variables,
+        source_config=source_config,
+    )
+    if isinstance(prepared, QueryResult):
+        if prepared.error:
+            return _failure(
+                str(prepared.error),
+                rejected=_is_query_defect(prepared.error.code),
+                adapter_type="sqlserver",
+                mechanism=_SQLSERVER_DESCRIBE,
+            )
+        return WarehouseCheck(
+            status="unchecked",
+            adapter_type="sqlserver",
+            mechanism=_SQLSERVER_DESCRIBE,
+            columns_checked=False,
+            reason="the query could not be prepared for a describe",
+        )
+    if prepared.setup_sql:
+        # The function binds the statement in a scope of its own, so it cannot
+        # see the temp objects a setup_sql created in the batch around it.
+        return WarehouseCheck(
+            status="unchecked",
+            adapter_type="sqlserver",
+            mechanism=_SQLSERVER_DESCRIBE,
+            columns_checked=False,
+            reason=(
+                "it relies on a setup_sql, and the describe binds the query "
+                "without the temp objects that setup creates"
+            ),
+        )
+    literal = "N" + sql_string_literal(prepared.sql, get_dialect("sqlserver"))
+    wrapped = prepared.model_copy(
+        update={
+            "sql": (
+                "SELECT name, system_type_name, error_number, error_type, "
+                f"error_message FROM sys.dm_exec_describe_first_result_set({literal}, "
+                "NULL, 0) ORDER BY column_ordinal"
+            )
+        }
+    )
+    result = adapter_registry.execute_prepared(
+        wrapped, query, source_config=source_config
+    )
+    if result.error:
+        return _failure(
+            str(result.error),
+            rejected=_is_query_defect(result.error.code),
+            adapter_type="sqlserver",
+            mechanism=_SQLSERVER_DESCRIBE,
+        )
+    for row in result.data:
+        number = row["error_number"]
+        if number is not None:
+            return _failure(
+                f"{row['error_message']} (SQL Server error {number})",
+                rejected=row["error_type"] not in _SQLSERVER_DESCRIBE_LIMITS,
+                adapter_type="sqlserver",
+                mechanism=_SQLSERVER_DESCRIBE,
+            )
+    return WarehouseCheck(
+        status="valid",
+        adapter_type="sqlserver",
+        mechanism=_SQLSERVER_DESCRIBE,
+        columns_checked=True,
+        # Lowercased to match `SqlAdapter`, which lowercases every result
+        # column before a chart sees it. An expression with no alias has no name
+        # (NULL), and the empty string is how the driver spells that.
+        columns=[
+            WarehouseCheckColumn(
+                name=(
+                    row[
+                        "name"
+                    ]  # type-state: silent_fallback — NULL is how SQL Server reports an unaliased column; "" is the driver's own spelling
+                    or ""
+                ).lower(),
+                type=row["system_type_name"],
+            )
+            for row in result.data
+        ],
+    )
 
 
 def _check_bigquery(

@@ -551,6 +551,7 @@ def test_compose_attached_table_svg_heading_draws_text_and_grows_table_height():
         heading_font_size=11.0,
         heading_font_weight="600",
         heading_color="#111111",
+        align="center",
     )
     assert "Too small to label" in composed
     assert 'font-family="Sans"' in composed
@@ -852,25 +853,87 @@ def test_choose_table_placement_right_when_wheel_region_stays_dominant():
     """A wide card with a modest table leaves a comfortably large wheel
     region — placement should be "right", decided purely from measured
     widths, not a fixed aspect-ratio literal."""
-    assert choose_table_placement(width=900.0, table_width=200.0) == "right"
+    assert choose_table_placement(900.0, 200.0, None) == ("right", None)
 
 
-def test_choose_table_placement_below_when_wheel_region_would_starve():
+def test_choose_table_placement_bottom_when_wheel_region_would_starve():
     """A narrow card can't spare half its width plus the absolute floor for
     the wheel once the table is reserved — placement falls back to
-    "below"."""
-    assert choose_table_placement(width=340.0, table_width=200.0) == "below"
+    "bottom"."""
+    assert choose_table_placement(340.0, 200.0, None) == ("bottom", None)
 
 
 def test_choose_table_placement_boundary_uses_both_thresholds() -> None:
     """The fraction and absolute-pixel floors are independent ANDed
     conditions. width=1000, table_width=700 leaves a 288px region: it
     clears the absolute floor (288 >= 280) but not the fraction floor
-    (288 < 0.5*1000=500) — placement must still fall back to "below"."""
+    (288 < 0.5*1000=500) — placement must still fall back to "bottom"."""
     pie_cfg = get_chart_rendering().pie
     assert pie_cfg.right_placement_min_width_fraction == 0.5
     assert pie_cfg.right_placement_min_width_px == 280.0
-    assert choose_table_placement(width=1000.0, table_width=700.0) == "below"
+    assert choose_table_placement(1000.0, 700.0, None) == ("bottom", None)
+
+
+@pytest.mark.parametrize("edge", ["top", "bottom"])
+def test_authored_vertical_edge_ignores_the_width_heuristic(edge) -> None:
+    assert choose_table_placement(900.0, 200.0, edge) == (edge, None)
+    assert choose_table_placement(340.0, 200.0, edge) == (edge, None)
+
+
+@pytest.mark.parametrize("edge", ["left", "right"])
+def test_authored_side_edge_holds_while_the_wheel_region_fits(edge) -> None:
+    assert choose_table_placement(900.0, 200.0, edge) == (edge, None)
+
+
+@pytest.mark.parametrize("edge", ["left", "right"])
+def test_authored_side_edge_falls_to_bottom_and_names_the_edge_when_too_narrow(
+    edge,
+) -> None:
+    assert choose_table_placement(340.0, 200.0, edge) == ("bottom", edge)
+
+
+def test_compose_attached_table_svg_left_placement_puts_the_table_first():
+    """placement="left" mirrors "right": the table is left-anchored at the card
+    edge and the donut sits after it, both top-aligned to the disk top."""
+    donut_w, table_w, gap = 500.0, 200.0, _PIE_GAP
+    donut_svg = '<g class="mark-arc role-mark"><path d="M0,0 A200,200 0 0 1 1,1"/></g>'
+    composed, outer_w, outer_h = compose_attached_table_svg(
+        donut_svg=donut_svg,
+        table_svg="<svg>TABLE</svg>",
+        donut_width=donut_w,
+        donut_height=500.0,
+        table_width=table_w,
+        table_height=120.0,
+        card_width=800.0,
+        gap=gap,
+        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
+        placement="left",
+        align="start",
+    )
+    assert (outer_w, outer_h) == (800.0, 500.0)
+    assert _group_offsets(composed) == [(table_w + gap, 0.0), (0.0, 50.0)]
+
+
+def test_compose_attached_table_svg_top_placement_drops_the_table_into_the_donuts_room():
+    """placement="top": the donut SVG already reserves the room the table fills
+    (its plot is pushed down by the table's height), so the table lands at
+    ``top_table_y`` and the outer height is the donut's alone."""
+    composed, outer_w, outer_h = compose_attached_table_svg(
+        donut_svg="<svg>DONUT</svg>",
+        table_svg="<svg>TABLE</svg>",
+        donut_width=400.0,
+        donut_height=520.0,
+        table_width=300.0,
+        table_height=100.0,
+        card_width=500.0,
+        gap=_PIE_GAP,
+        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
+        placement="top",
+        top_table_y=30.0,
+        align="center",
+    )
+    assert (outer_w, outer_h) == (500.0, 520.0)
+    assert _group_offsets(composed) == [(50.0, 0.0), (100.0, 30.0)]
 
 
 def test_compose_attached_table_svg_right_placement_left_anchored_in_card_width():
@@ -893,6 +956,7 @@ def test_compose_attached_table_svg_right_placement_left_anchored_in_card_width(
         gap=gap,
         heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
         placement="right",
+        align="start",
     )
     assert outer_w == card_width, (
         "outer SVG must span the full card width so the composed element "
@@ -934,6 +998,7 @@ def test_compose_attached_table_svg_right_placement_is_side_by_side():
         gap=gap,
         heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
         placement="right",
+        align="start",
     )
     assert outer_w == card_width
     assert outer_h == 500.0  # max(donut_height, disk_top + table_height)
@@ -945,7 +1010,7 @@ def test_compose_attached_table_svg_right_placement_is_side_by_side():
 
 
 def test_compose_attached_table_svg_below_placement_is_default_and_centered():
-    """placement defaults to "below" and keeps the stacked geometry (outer
+    """placement defaults to "bottom" and keeps the stacked geometry (outer
     height is donut + gap + table); both the donut and the table are
     horizontally CENTERED within card_width — balanced left/right margins,
     matching the plain direct-label pie's layout in the board slot."""
@@ -960,6 +1025,7 @@ def test_compose_attached_table_svg_below_placement_is_default_and_centered():
         card_width=card_width,
         gap=_PIE_GAP,
         heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
+        align="center",
     )
     assert outer_w == card_width  # outer SVG spans the full card slot
     assert outer_h == 400.0 + _PIE_GAP + 100.0
@@ -1099,3 +1165,69 @@ def test_attached_table_modes_suppress_builtin_color_legend(make_chart, model_co
         ]
     )
     assert "role-legend" not in render([(f"C{i}", 6.67) for i in range(15)])
+
+
+def _compose_aligned(placement: str, align: str) -> list[tuple[float, float]]:
+    donut_svg = '<g class="mark-arc role-mark"><path d="M0,0 A150,150 0 1 1 1,1"/></g>'
+    composed, _w, _h = compose_attached_table_svg(
+        donut_svg=donut_svg,
+        table_svg="<svg>TABLE</svg>",
+        donut_width=400.0,
+        donut_height=400.0,
+        table_width=200.0,
+        table_height=100.0,
+        card_width=800.0,
+        gap=_PIE_GAP,
+        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
+        placement=placement,
+        align=align,
+        inset_left=20.0,
+        inset_right=30.0,
+        top_table_y=10.0,
+    )
+    return _group_offsets(composed)
+
+
+@pytest.mark.parametrize(
+    ("align", "x"), [("start", 20.0), ("center", 300.0), ("end", 570.0)]
+)
+@pytest.mark.parametrize("placement", ["top", "bottom"])
+def test_a_vertical_table_aligns_across_the_card(
+    placement: str, align: str, x: float
+) -> None:
+    assert _compose_aligned(placement, align)[1][0] == x
+
+
+@pytest.mark.parametrize(
+    ("align", "y"), [("start", 50.0), ("center", 150.0), ("end", 250.0)]
+)
+@pytest.mark.parametrize("placement", ["left", "right"])
+def test_a_side_table_aligns_down_the_wheels_disk(
+    placement: str, align: str, y: float
+) -> None:
+    # disk diameter 300 in a 400-tall donut: disk top at 50, bottom at 350.
+    assert _compose_aligned(placement, align)[1][1] == y
+
+
+@pytest.mark.parametrize("align", ["center", "end"])
+@pytest.mark.parametrize("placement", ["left", "right"])
+def test_a_side_table_taller_than_the_disk_falls_back_to_the_disks_top(
+    placement: str, align: str
+) -> None:
+    donut_svg = '<g class="mark-arc role-mark"><path d="M0,0 A150,150 0 1 1 1,1"/></g>'
+    composed, _w, _h = compose_attached_table_svg(
+        donut_svg=donut_svg,
+        table_svg="<svg>TABLE</svg>",
+        donut_width=400.0,
+        donut_height=400.0,
+        table_width=200.0,
+        table_height=500.0,
+        card_width=800.0,
+        gap=_PIE_GAP,
+        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
+        placement=placement,
+        align=align,
+    )
+    # Disk top is 50: a table taller than the 300px disk starts there, never
+    # above it (the title sits up there).
+    assert _group_offsets(composed)[1][1] == 50.0

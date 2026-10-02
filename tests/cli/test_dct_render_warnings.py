@@ -22,9 +22,11 @@ from dbt_charts.cli.main import app
 from dbt_charts.core.diagnostics import WARN_REDUNDANT_ENCODING, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext
 
+from .._paths import DBT_CHARTS_DIR
+
 runner = CliRunner()
 
-_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
+_FIXTURE_DIR = DBT_CHARTS_DIR / "tests" / "fixtures"
 _FAKE_CODE = "WARN-REDUNDANT-ENCODING"
 _OTHER_CODE = "WARN-PIE-TOO-MANY-SEGMENTS"
 _REAL_ERROR_CODE = "ERR-BAR-DUPLICATE-ROWS"

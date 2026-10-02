@@ -21,6 +21,7 @@ The dbt charts core engine: YAML board compiler, query executor, renderer, HTTP 
 | `dct migrate` | Rewrite older board YAML to the latest *released* syntax (never further, even with a change in flight) |
 | `dct init` | Bootstrap a project (`skills`, `mcp`, `ci` subcommands wire up the rest) |
 | `dct cloud` | Operate dbt charts Cloud from the terminal |
+| `dct doctor [--with-warehouse]` | Diagnose install method, project, `profiles.yml`, and per-source adapters (add `--json` for a paste-able report) |
 | `dct --version` | Print version + install path; first check when output looks stale |
 
 ## Quick start
@@ -122,7 +123,7 @@ both trees — CI config, a lint sweep — are not render changes and are fine.)
 2. Call a function from `dbt_charts.agent_api`
 3. Format the result for output
 
-Any validation, path resolution, compilation, execution, or rendering in these layers is a violation. A PR that adds a new `dct <verb>` without a corresponding `agent_api` function is rejected — **except `dct cloud` verbs**, whose one call is into `dbt_charts.cloud_client` instead, never `agent_api`: `agent_api` is local-by-contract (no network, no Django) and `cloud_client` is the only module that talks to Cloud. A PR that adds business logic to a CLI command file or MCP server module is rejected.
+Any validation, path resolution, compilation, execution, or rendering in these layers is a violation. A PR that adds a new `dct <verb>` without a corresponding `agent_api` function is rejected — **except `dct cloud` verbs**, whose one call is into `dbt_charts.cloud_client` instead, never `agent_api`: `agent_api` is local-by-contract (no network, no Django) and `cloud_client` is the only module that talks to Cloud. "Local" does not mean "no warehouse": `execute_query` and the opt-in `run_doctor(..., with_warehouse=True)` probe run SQL against the user's own warehouse, which is what those verbs are for. A PR that adds business logic to a CLI command file or MCP server module is rejected.
 
 ### Module boundaries
 

@@ -84,14 +84,14 @@ def test_coarse_ladder_value_labels_keep_precision(make_chart):
     # label.format itself is untouched -- value labels inherit the theme's
     # bounded (3-sig-fig) SI default, not the ladder's tick-derived precision.
     label_fmt = resolved.style.mark.labels.format
-    assert label_fmt == ".3~s"
-    assert resolved.style.axis_y.labels.format == ".3~s"
+    assert label_fmt.spec == ".3~s"
+    assert resolved.style.axis_y.labels.format.spec == ".3~s"
     assert _text_layer_format(spec) is None, (
         "an SI-shaped format must not be handed to Vega verbatim"
     )
 
     rendered = {
-        v["revenue"]: d3_format_apply(label_fmt, v["revenue"])
+        v["revenue"]: d3_format_apply(label_fmt.spec, v["revenue"])
         for v in _COARSE_FRACTIONAL_DATA
     }
     assert rendered[0.5] == "500m"

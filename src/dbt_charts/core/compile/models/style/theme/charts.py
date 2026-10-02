@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     TitleStylePatch,
+    _LegendedChartStyleBase,
     _PaintedChartStyleBase,
 )
 from dbt_charts.core.compile.models.style.theme.area import (
@@ -120,7 +121,7 @@ class HoverEmphasisStyle(BaseModel):
     )
 
 
-class ChartsStyle(_PaintedChartStyleBase):
+class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     """Registry of all chart-type styles plus shared chart configuration.
 
     Inherits ``_PaintedChartStyleBase`` — most shared chart fields (padding,

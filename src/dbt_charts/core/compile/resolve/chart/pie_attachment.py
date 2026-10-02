@@ -10,12 +10,16 @@ from typing import Literal, NamedTuple
 from dbt_charts.core.colors import sanitize_color
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
-from dbt_charts.core.compile.models.chart.resolved import FormatState
 from dbt_charts.core.compile.models.primitives import (
-    FormatConfig,
     ResolvedFontStyle,
+    ResolvedFormat,
 )
-from dbt_charts.core.compile.models.style.theme import SliceLabelsStyle, TableChartStyle
+from dbt_charts.core.compile.models.style.theme import (
+    LegendAlign,
+    LegendEdge,
+    SliceLabelsStyle,
+    TableChartStyle,
+)
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
 )
@@ -156,17 +160,44 @@ def classify_arc_render_mode(
     return "hybrid" if min(shares) < pie_cfg.invisible_slice_share else "direct"
 
 
+class TablePlacement(NamedTuple):
+    edge: LegendEdge
+    # The author's side edge, when the card was too narrow to hold it beside
+    # the wheel and the table went below instead.
+    overridden_edge: LegendEdge | None
+
+
 def choose_table_placement(
-    width: float, table_width: float
-) -> Literal["below", "right"]:
+    width: float, table_width: float, authored_edge: LegendEdge | None
+) -> TablePlacement:
+    """Where the attached table sits: the authored edge, else the width decides.
+
+    A table beside the wheel (left or right) needs the wheel region it leaves
+    to stay wide enough; a card too narrow for that puts it below, naming the
+    side the author asked for so the swap is reported rather than silent.
+    """
     pie_cfg = get_chart_rendering().pie
     wheel_region = width - table_width - pie_cfg.attached_table_gap_px
-    if (
+    beside_fits = (
         wheel_region >= pie_cfg.right_placement_min_width_fraction * width
         and wheel_region >= pie_cfg.right_placement_min_width_px
-    ):
-        return "right"
-    return "below"
+    )
+    if authored_edge in ("top", "bottom"):
+        return TablePlacement(authored_edge, None)
+    if authored_edge is None:
+        return TablePlacement("right" if beside_fits else "bottom", None)
+    if beside_fits:
+        return TablePlacement(authored_edge, None)
+    return TablePlacement("bottom", authored_edge)
+
+
+def decide_table_align(
+    placement: LegendEdge, authored_align: LegendAlign | None
+) -> LegendAlign:
+    """Authored align, else start beside the wheel and center above or below."""
+    if authored_align is not None:
+        return authored_align
+    return "start" if placement in ("left", "right") else "center"
 
 
 class AttachmentPlan(NamedTuple):
@@ -175,7 +206,9 @@ class AttachmentPlan(NamedTuple):
     row_indices: tuple[int, ...]
     rows: list[dict[str, CellValue]]
     columns: dict[str, TableColumnConfig]
-    placement: Literal["below", "right"]
+    placement: LegendEdge
+    align: LegendAlign
+    overridden_edge: LegendEdge | None
     table_width: float
     wheel_width: float
 
@@ -187,10 +220,12 @@ def plan_attachment(
     palette: Sequence[str],
     color_field: str | None,
     theta_field: str,
-    value_format: FormatState,
+    value_format: ResolvedFormat | None,
     table_style: TableChartStyle,
     width: float,
     category_colors: tuple[CategoryColorScale, ...],
+    authored_edge: LegendEdge | None,
+    authored_align: LegendAlign | None,
 ) -> AttachmentPlan:
     """Measure the companion table and split the card between it and the wheel.
 
@@ -217,35 +252,47 @@ def plan_attachment(
     columns, natural_width = build_attached_table_columns(
         rows, value_format, table_style
     )
-    placement = choose_table_placement(width, natural_width)
-    if placement == "right":
+    placement, overridden_edge = choose_table_placement(
+        width, natural_width, authored_edge
+    )
+    align = decide_table_align(placement, authored_align)
+    if placement in ("left", "right"):
         wheel_width = min(
             width - natural_width - pie_cfg.attached_table_gap_px,
             pie_cfg.right_placement_max_wheel_px,
         )
         return AttachmentPlan(
-            row_indices, rows, columns, placement, natural_width, wheel_width
+            row_indices,
+            rows,
+            columns,
+            placement,
+            align,
+            overridden_edge,
+            natural_width,
+            wheel_width,
         )
     return AttachmentPlan(
-        row_indices, rows, columns, placement, min(natural_width, width), width
+        row_indices,
+        rows,
+        columns,
+        placement,
+        align,
+        overridden_edge,
+        min(natural_width, width),
+        width,
     )
 
 
 def _format_value_for_width(
-    value: str | int | float | bool, value_format: FormatState
+    value: str | int | float | bool, value_format: ResolvedFormat | None
 ) -> str:
     try:
         numeric = float(value)
     except (TypeError, ValueError):
         return str(value)
-    prefix = ""
-    suffix = ""
-    if isinstance(value_format, FormatConfig):
-        spec = value_format.spec
-        prefix = value_format.prefix or ""
-        suffix = value_format.suffix or ""
-    else:
-        spec = value_format if isinstance(value_format, str) else None
+    spec = value_format.raw if value_format is not None else None
+    prefix = value_format.prefix if value_format is not None else ""
+    suffix = value_format.suffix if value_format is not None else ""
     if spec == "$,.0f":
         body = f"${numeric:,.0f}"
     elif spec == ".0%":
@@ -257,7 +304,7 @@ def _format_value_for_width(
 
 def build_attached_table_columns(
     rows: list[dict[str, CellValue]],
-    value_format: FormatState,
+    value_format: ResolvedFormat | None,
     table_style: TableChartStyle,
 ) -> tuple[dict[str, TableColumnConfig], float]:
     font_family = table_style.font.family

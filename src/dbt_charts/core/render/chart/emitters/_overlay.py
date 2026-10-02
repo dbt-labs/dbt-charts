@@ -22,6 +22,7 @@ from dbt_charts.core.compile.models.chart.resolved._layer import (
     ResolvedLineLayer,
     ResolvedScatterLayer,
 )
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedLegendStyle
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
 from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
@@ -86,7 +87,12 @@ from dbt_charts.core.render.chart.type_inference import (
     infer_vega_type_from_data,
     is_date_like_string,
 )
-from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl, bar_mark_radius
+from dbt_charts.core.render.chart.vl_field_maps import (
+    axis_to_vl,
+    bar_mark_radius,
+    compose_axis_format,
+    inject_axis_numeral_expr,
+)
 from dbt_charts.core.render.chart.x_domain import rendered_x_domain
 from dbt_charts.core.render.utils import (
     normalize_data_types,
@@ -740,7 +746,7 @@ def _layer_tooltip_description(
     rows: list[_Row],
     y_field: str,
     label: str,
-    tooltip_format: str,
+    tooltip_format: ResolvedFormat,
     color_field: str | None,
     span_start: str | None,
 ) -> tuple[str, list[VLDict]]:
@@ -964,7 +970,7 @@ def render_cartesian_overlay(
     base_measure_title_suppressed: bool,
     base_orientation: Literal["vertical", "horizontal"],
     base_x_authored_temporal: bool,
-    tooltip_format: str,
+    tooltip_format: ResolvedFormat,
     canvas: str,
     single_series_fill: str,
     legend: ResolvedLegendStyle,
@@ -1540,14 +1546,30 @@ def render_cartesian_overlay(
         # for the VALUE (tooltip row + encoding.y.format), not the axis ticks
         # (layer_ay_vl["format"] below stays conditional: an un-authored axis
         # keeps VL's own default tick format, unrelated to the base's unit).
-        layer_value_format = (
-            layer_axis_y.labels.format
-            if layer_axis_y.labels is not None
-            and layer_axis_y.labels.format is not None
-            else tooltip_format
+        layer_labels_format = (
+            layer_axis_y.labels.format if layer_axis_y.labels is not None else None
         )
-        if layer_axis_y.labels is not None and layer_axis_y.labels.format is not None:
-            layer_ay_vl["format"] = layer_axis_y.labels.format
+        # encoding.y.format is a bare d3 spec with no affix slot; the tooltip
+        # row below composes the full format.
+        layer_value_format = (
+            layer_labels_format.spec or tooltip_format.spec
+            if layer_labels_format is not None
+            else tooltip_format.spec
+        )
+        layer_tooltip_format = (
+            layer_axis_y.tooltip_format or layer_labels_format or tooltip_format
+        )
+        if layer_labels_format is not None:
+            # Seeded from the base axis, so any labelExpr here is inherited and
+            # would make the layer's own composition a no-op.
+            layer_ay_vl.pop("labelExpr", None)
+            # No ladder on a layer: the guarded tick label composes first;
+            # compose_axis_format only adds the plain `format`.
+            if layer_axis_y.tick_label is not None:
+                layer_ay_vl = inject_axis_numeral_expr(
+                    layer_ay_vl, None, layer_axis_y.tick_label, layer_labels_format
+                )
+            compose_axis_format(layer_ay_vl, layer_labels_format)
 
         # #11: per-layer scale.domain sets the VL y encoding scale.
         layer_y_scale: VLDict | None = None
@@ -1564,7 +1586,7 @@ def render_cartesian_overlay(
                 rows_for_layer,
                 y_field,
                 label,
-                layer_value_format,
+                layer_tooltip_format,
                 layer.color,
                 layer.y_start if isinstance(layer, ResolvedBarLayer) else None,
             )

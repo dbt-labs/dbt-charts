@@ -56,7 +56,9 @@ from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisTicksStyle,
     ResolvedChartDefaults,
     ResolvedLegendElementStyle,
+    ResolvedLegendPosition,
     ResolvedLegendStyle,
+    ResolvedMirrorAxis,
     ResolvedRulerAxis,
     ResolvedScaleContinuousStyle,
     ResolvedScaleLogStyle,
@@ -71,7 +73,13 @@ from dbt_charts.core.compile.models.style.resolved._base import (
 from dbt_charts.core.compile.models.style.resolved._marks import (
     ResolvedAreaLineStyle,
     ResolvedAreaMarkStyle,
+    ResolvedBarLabels,
+    ResolvedBarMarkStyle,
+    ResolvedBarTotalLabel,
     ResolvedLineMarkStyle,
+    ResolvedMarkLabels,
+    ResolvedPointLabels,
+    ResolvedPointMarkStyle,
     ResolvedSeriesLabelStyle,
     ResolvedStrokeStyle,
 )
@@ -89,7 +97,11 @@ from dbt_charts.core.compile.models.style.resolved.geoshape import (
 from dbt_charts.core.compile.models.style.resolved.heatmap import ResolvedHeatmapStyle
 from dbt_charts.core.compile.models.style.resolved.kpi import ResolvedKpiStyle
 from dbt_charts.core.compile.models.style.resolved.line import ResolvedLineStyle
-from dbt_charts.core.compile.models.style.resolved.pie import ResolvedPieStyle
+from dbt_charts.core.compile.models.style.resolved.pie import (
+    ResolvedPieStyle,
+    ResolvedTotalStyle,
+    ResolvedTotalValueSlot,
+)
 from dbt_charts.core.compile.models.style.resolved.point_map import (
     ResolvedPointMapStyle,
 )
@@ -117,7 +129,9 @@ __all__ = [
     "ResolvedCalloutStyle",
     "ResolvedChartDefaults",
     "ResolvedLegendElementStyle",
+    "ResolvedLegendPosition",
     "ResolvedLegendStyle",
+    "ResolvedMirrorAxis",
     "ResolvedRulerAxis",
     "ResolvedScaleContinuousStyle",
     "ResolvedScaleLogStyle",
@@ -132,6 +146,12 @@ __all__ = [
     # _marks
     "ResolvedAreaLineStyle",
     "ResolvedAreaMarkStyle",
+    "ResolvedBarLabels",
+    "ResolvedBarMarkStyle",
+    "ResolvedBarTotalLabel",
+    "ResolvedMarkLabels",
+    "ResolvedPointLabels",
+    "ResolvedPointMarkStyle",
     "ResolvedLineMarkStyle",
     "ResolvedSeriesLabelStyle",
     "ResolvedStrokeStyle",
@@ -147,6 +167,8 @@ __all__ = [
     "ResolvedKpiStyle",
     "ResolvedLineStyle",
     "ResolvedPieStyle",
+    "ResolvedTotalStyle",
+    "ResolvedTotalValueSlot",
     "ResolvedPointMapStyle",
     "ResolvedScatterStyle",
     "ResolvedSparkBarStyle",

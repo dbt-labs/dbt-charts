@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Any, Protocol
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import resolve_format_for_values
+from dbt_charts.core.compile.format import resolve_format_parts_for_values
 from dbt_charts.core.compile.models.primitives import (
     ColorStyle,
     StaticGradientColorStyle,
@@ -22,6 +22,7 @@ from dbt_charts.core.compile.models.style.theme import (
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
 from dbt_charts.core.compile.resolve.style.typography import width_tier
+from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 __all__ = [
     "_cartesian_style_tail",
@@ -215,16 +216,17 @@ def _cartesian_style_tail(
     than duplicating it here as a second, independently-populated field.
 
     ``tooltip_format_values`` is every value the chart's own quantitative
-    measure(s) will paint — passed to resolve_format_for_values so the
+    measure(s) will paint — passed to resolve_format_parts_for_values so the
     board-default tooltip format (this function's fallback candidate)
     floors the same way the chart-authored candidate in
     ``_measure_tooltip_format`` does.
     """
     return {
-        "tooltip_format": resolve_format_for_values(
+        "tooltip_format": resolve_format_parts_for_values(
             chart_style_context.tooltip.format,
             chart_style_context.formats,
             tooltip_format_values,
+            no_format_default=PredefinedNumberFormat.number,
         ),
         "axis_x": ax,
         "axis_y": ay,

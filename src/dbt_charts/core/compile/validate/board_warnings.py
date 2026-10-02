@@ -8,6 +8,7 @@ markdown boards after their translation to YAML.
 
 from __future__ import annotations
 
+from dbt_charts.core.compile.format import resolve_format_parts
 from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -28,7 +29,6 @@ from dbt_charts.core.diagnostics import (
     RelatedLocation,
 )
 from dbt_charts.core.fonts import font_is_tabular
-from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 
 
 def detect_board_warnings(board: Board) -> list[Diagnostic]:
@@ -307,7 +307,7 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
     ctx = board.chart_style_context
     # Theme baseline: what axis_quantitative.labels.format resolves to when a
     # chart authors no per-chart format at all (e.g. "number", itself a
-    # predefined name -- see ResolvedAxisStyle.format_raw) -- a bare axis
+    # predefined name -- see ResolvedFormat.is_house) -- a bare axis
     # inheriting this default still gets forced right-aligned, so the
     # diagnostic must check it too, not just a chart-local override.
     default_format = ctx.axis_quantitative.labels.format
@@ -349,9 +349,17 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
         if not effective_tabular:
             continue
         fmt = labels.get("format")
+        # A FormatConfig dumps to a dict (model_dump() recurses): judge its spec.
+        if isinstance(fmt, dict):
+            fmt = fmt.get("spec")
         if fmt is None:
             fmt = default_format
-        if fmt is None or fmt not in PREDEFINED_NUMBER_NAMES:
+        if (
+            fmt is None
+            or not resolve_format_parts(
+                fmt, ctx.formats, no_format_default=None
+            ).is_house
+        ):
             continue
         warnings.append(
             Diagnostic.from_code(

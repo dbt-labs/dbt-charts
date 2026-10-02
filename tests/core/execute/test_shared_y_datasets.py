@@ -6,7 +6,10 @@ from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.execute.chart_resolution import collect_shared_y_datasets
+from dbt_charts.core.execute.chart_resolution import (
+    collect_layer_datasets,
+    collect_shared_y_datasets,
+)
 from dbt_charts.core.execute.executor import Executor
 
 
@@ -72,3 +75,36 @@ def test_collects_a_right_axis_span_layer_query() -> None:
     datasets = collect_shared_y_datasets(chart, [], executor, {})
 
     assert datasets["side_query"] == side_rows
+
+
+def test_a_right_axis_layer_query_is_executed_only_when_read() -> None:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "layered",
+            "type": "line",
+            "x": "month",
+            "y": "actual",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "actual_query",
+            "layers": [
+                {
+                    "type": "line",
+                    "y": "benchmark",
+                    "query": "right_query",
+                    "axis_y": {"position": "right"},
+                },
+            ],
+        }
+    )
+    right_rows = [{"month": "2024-01", "benchmark": 0.5}]
+    executor = MagicMock(spec=Executor)
+    executor.execute_query.return_value = right_rows
+
+    datasets = collect_layer_datasets(chart, [], executor, {})
+
+    assert "right_query" in datasets
+    assert "other" not in datasets
+    executor.execute_query.assert_not_called()
+    assert datasets["right_query"] == right_rows
+    assert datasets["right_query"] == right_rows
+    executor.execute_query.assert_called_once_with("right_query", {})

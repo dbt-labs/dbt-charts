@@ -405,7 +405,6 @@ def test_default_numeric_column_decimal_aligns_with_no_authored_format():
     numerals = _entry_numerals(
         resolved_chart.support_table,
         [[row["revenue"] for row in data]],
-        formats=None,
         font_family=font_family,
         anchor=StripAnchor.by_drawn_index_data_order(),
     )[0]
@@ -460,7 +459,6 @@ def test_si_suffix_column_with_a_genuine_tier_mix_bakes_no_pad():
     numerals = _entry_numerals(
         resolved_chart.support_table,
         [[row["revenue"] for row in data]],
-        formats=None,
         font_family=font_family,
         anchor=StripAnchor.by_drawn_index_data_order(),
     )[0]

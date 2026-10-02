@@ -72,11 +72,16 @@ def validate_declarations(registry: MigrationRegistry) -> None:
                 f"Move source path {_format_path(move.old_path)!r} is absent from "
                 f"{move.source_schema}"
             )
+        if move.value_map is not None and move.expansion is not None:
+            raise MigrationError(
+                f"Move {_format_path(move.old_path)!r} declares both a value_map "
+                "and an expansion; they are mutually exclusive"
+            )
         if move.old_path == move.new_path:
-            if move.value_map is None:
+            if move.value_map is None and move.expansion is None:
                 raise MigrationError(
                     f"Move {_format_path(move.old_path)!r} has old_path == "
-                    "new_path with no value_map; it would rewrite nothing. "
+                    "new_path with no value_map or expansion; it would rewrite nothing. "
                     "An identity-path Move only makes sense as a value remap "
                     "on a key that survives the transition unrenamed -- give "
                     "it a value_map, or remove the declaration."

@@ -27,6 +27,13 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSeriesLabelStyle,
     ResolvedTableStyle,
 )
+from dbt_charts.core.compile.models.primitives import ResolvedFormat, resolved_as
+from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedPointLabels,
+    ResolvedPointMarkStyle,
+    ResolvedTotalStyle,
+    ResolvedTotalValueSlot,
+)
 
 # Ink palette slot 0 from the default resolved theme.
 # This is rcs.single_series_palette[0] for the built-in theme.
@@ -95,7 +102,7 @@ def _bake_axes(chart_type: str, x_type: str, y_type: str):
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -103,19 +110,15 @@ def _bake_axes(chart_type: str, x_type: str, y_type: str):
         y_type,
         AxisOverrides(),
     )
-    return (
+    return tuple(
         build_resolved_axis(
-            ax_merged,
-            band_position=ax_band_position,
+            axis.style,
+            band_position=axis.band_position,
             chart_id="fixture",
-            format_raw=None,
-        ),
-        build_resolved_axis(
-            ay_merged,
-            band_position=ay_band_position,
-            chart_id="fixture",
-            format_raw=None,
-        ),
+            format=axis.format,
+            formats=None,
+        )
+        for axis in (baked.x, baked.y)
     )
 
 
@@ -128,15 +131,15 @@ def bar_style() -> ResolvedBarStyle:
     production — a quantitative-x bar with an unauthored size reads them
     unconditionally (``continuous_bar_size_prop``).
     """
-    from dbt_charts.core.compile.models.style.theme import BarMarkStyle
+    from dbt_charts.core.compile.models.style.resolved import ResolvedBarMarkStyle
 
     ax, ay = _bake_axes("bar", "ordinal", "quantitative")
     return ResolvedBarStyle(
         series_label=_series_label(),
-        mark=BarMarkStyle(gap=3.0, min_size=4.0, max_size=20.0),
+        mark=ResolvedBarMarkStyle(gap=3.0, min_size=4.0, max_size=20.0),
         endpoint_labels=_endpoint_labels(),
         single_series_fill=SINGLE_SERIES_FILL,
-        tooltip_format="",
+        tooltip_format=ResolvedFormat(spec=""),
         label_font_size=11.0,
         label_usable_ratio=0.8,
         axis_x=ax,
@@ -149,11 +152,9 @@ def line_style() -> ResolvedLineStyle:
     """Minimal valid ResolvedLineStyle with all required fields populated."""
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedLineMarkStyle,
+        ResolvedPointLabels,
+        ResolvedPointMarkStyle,
         ResolvedStrokeStyle,
-    )
-    from dbt_charts.core.compile.models.style.theme import (
-        PointLabelsStyle,
-        PointMarkStyle,
     )
 
     ax, ay = _bake_axes("line", "temporal", "quantitative")
@@ -163,12 +164,12 @@ def line_style() -> ResolvedLineStyle:
             stroke=ResolvedStrokeStyle(width=2.0),
             halo_multiplier=2.0,
             curve=None,
-            labels=PointLabelsStyle(),
+            labels=ResolvedPointLabels(),
         ),
-        point_mark=PointMarkStyle(),
+        point_mark=ResolvedPointMarkStyle(),
         endpoint_labels=_endpoint_labels(),
         single_series_fill=SINGLE_SERIES_FILL,
-        tooltip_format="",
+        tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,
         dashes=[],
         axis_x=ax,
@@ -182,11 +183,9 @@ def area_style() -> ResolvedAreaStyle:
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedAreaLineStyle,
         ResolvedAreaMarkStyle,
+        ResolvedPointLabels,
+        ResolvedPointMarkStyle,
         ResolvedStrokeStyle,
-    )
-    from dbt_charts.core.compile.models.style.theme import (
-        PointLabelsStyle,
-        PointMarkStyle,
     )
 
     ax, ay = _bake_axes("area", "temporal", "quantitative")
@@ -196,12 +195,12 @@ def area_style() -> ResolvedAreaStyle:
         line_mark=ResolvedAreaLineStyle(
             stroke=ResolvedStrokeStyle(width=2.0),
             halo_multiplier=2.0,
-            labels=PointLabelsStyle(),
+            labels=ResolvedPointLabels(),
         ),
-        point_mark=PointMarkStyle(),
+        point_mark=ResolvedPointMarkStyle(),
         endpoint_labels=_endpoint_labels(),
         single_series_fill=SINGLE_SERIES_FILL,
-        tooltip_format="",
+        tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,
         dashes=[],
         axis_x=ax,
@@ -212,13 +211,13 @@ def area_style() -> ResolvedAreaStyle:
 @pytest.fixture
 def scatter_style() -> ResolvedScatterStyle:
     """Minimal valid ResolvedScatterStyle for test injection."""
-    from dbt_charts.core.compile.models.style.theme import PointMarkStyle
+    from dbt_charts.core.compile.models.style.resolved import ResolvedPointMarkStyle
 
     ax, ay = _bake_axes("scatter", "quantitative", "quantitative")
     return ResolvedScatterStyle(
-        point_mark=PointMarkStyle(),
+        point_mark=ResolvedPointMarkStyle(),
         single_series_fill=SINGLE_SERIES_FILL,
-        tooltip_format="",
+        tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,
         axis_x=ax,
         axis_y=ay,
@@ -234,7 +233,7 @@ def heatmap_style() -> ResolvedHeatmapStyle:
     return ResolvedHeatmapStyle(
         color_gradient=None,
         rect_mark=RectMarkStyle(),
-        tooltip_format="",
+        tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,
         axis_x=ax,
         axis_y=ay,
@@ -262,8 +261,14 @@ def pie_style() -> ResolvedPieStyle:
     return ResolvedPieStyle(
         inner_radius=0.0,
         slice_mark=slice_mark,
-        tooltip_format=resolve_format(rcs.tooltip.format, rcs.formats),
-        total_style=rcs.pie.total,
+        tooltip_format=ResolvedFormat(
+            spec=resolve_format(rcs.tooltip.format, rcs.formats)
+        ),
+        total_style=resolved_as(
+            ResolvedTotalStyle,
+            rcs.pie.total,
+            value=resolved_as(ResolvedTotalValueSlot, rcs.pie.total.value, format=None),
+        ),
     )
 
 
@@ -316,7 +321,13 @@ def point_map_style() -> ResolvedPointMapStyle:
     rcs = resolve_chart_style_context(get_theme_style())
     return ResolvedPointMapStyle(
         point_map=rcs.point_map,
-        point_mark=rcs.point_map.marks.point,
+        point_mark=resolved_as(
+            ResolvedPointMarkStyle,
+            rcs.point_map.marks.point,
+            labels=resolved_as(
+                ResolvedPointLabels, rcs.point_map.marks.point.labels, format=None
+            ),
+        ),
         tooltip_format=resolve_format(rcs.tooltip.format, rcs.formats),
         single_series_fill=rcs.single_series_palette[0],
     )
@@ -334,3 +345,13 @@ def chart_pane(spec: dict[str, Any]) -> dict[str, Any]:
     if "vconcat" in spec:
         return spec["vconcat"][1]
     return spec
+
+
+def baked_format(style, raw=None):
+    """The ``ResolvedFormat`` a merged axis style's resolved spec stands for, as
+    ``BakedAxis.format`` would carry it (``None`` when unset).
+    """
+    from dbt_charts.core.compile.models.primitives import ResolvedFormat
+
+    spec = style.labels.format
+    return None if spec is None else ResolvedFormat(spec=spec, raw=raw)

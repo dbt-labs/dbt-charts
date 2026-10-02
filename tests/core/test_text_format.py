@@ -801,6 +801,136 @@ rows:
 
         assert "revenue: $80–$120" in output
 
+    def test_cartesian_numeric_range_uses_axis_y_format_config_prefix(self) -> None:
+        """An affixed FormatConfig on axis_y.labels.format (not just a plain
+        d3/predefined string) still reaches the text render's y-range display.
+        """
+        from dbt_charts.core.compile import compile as compile_board
+
+        board_yaml = """\
+title: Probe
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      axis_y:
+        labels:
+          format:
+            spec: ",.0f"
+            prefix: "€"
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - c
+"""
+        result = compile_board(board_yaml)
+        assert result.success and result.board is not None, result.errors
+
+        data = [
+            {"month": "Jan", "revenue": -41500},
+            {"month": "Feb", "revenue": 168000},
+        ]
+        executor = _make_compiled_executor(result, data)
+
+        output = render(result.board, executor, format="text").output
+
+        assert "revenue: −€41,500–€168,000" in output
+
+    def test_cartesian_numeric_range_uses_style_formats_alias_format_config(
+        self,
+    ) -> None:
+        """A ``style.formats`` alias whose value is itself a ``FormatConfig``
+        (``number_format.
+        """
+        from dbt_charts.core.compile import compile as compile_board
+
+        board_yaml = """\
+title: Probe
+style:
+  formats:
+    eur:
+      spec: ",.0f"
+      prefix: "€"
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      number_format: eur
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - c
+"""
+        result = compile_board(board_yaml)
+        assert result.success and result.board is not None, result.errors
+
+        data = [
+            {"month": "Jan", "revenue": 80},
+            {"month": "Feb", "revenue": 120},
+        ]
+        executor = _make_compiled_executor(result, data)
+
+        output = render(result.board, executor, format="text").output
+
+        assert "revenue: €80–€120" in output
+
+    def test_cartesian_numeric_range_uses_inline_number_format_object(self) -> None:
+        """The inline ``style.number_format`` object form (a ``FormatConfig``
+        authored directly, neither via ``axis_y.labels.format`` nor a
+        ``style.formats`` alias) still carries its affix to the text
+        render's y-range display.
+
+        axis_cascade.py's chart-format-fallback layer (Layer 10) used to
+        collapse ``format_authored_raw`` to the bare resolved spec string,
+        losing the affix this specific shape has nowhere else to ride on --
+        the other two forms above (a direct axis_y.labels.format, and an
+        alias) were each already pinned by a test; this inline-object form
+        was the one gap.
+        """
+        from dbt_charts.core.compile import compile as compile_board
+
+        board_yaml = """\
+title: Probe
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      number_format:
+        spec: ",.0f"
+        prefix: "EUR "
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - c
+"""
+        result = compile_board(board_yaml)
+        assert result.success and result.board is not None, result.errors
+
+        data = [
+            {"month": "Jan", "revenue": 80},
+            {"month": "Feb", "revenue": 120},
+        ]
+        executor = _make_compiled_executor(result, data)
+
+        output = render(result.board, executor, format="text").output
+
+        assert "revenue: EUR 80–EUR 120" in output
+
     def test_kpi_temporal_value_matches_svg_date_format(self, make_chart):
         """A temporal KPI value renders through the same date_short path as
         SVG, not its raw str() form.

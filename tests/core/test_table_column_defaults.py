@@ -176,8 +176,8 @@ class TestColumnDefaultsMaterializedAtResolve:
             data=[{"c1": 1, "c2": 2}],
         )
         assert resolved.columns is not None
-        assert resolved.columns["c1"].format == ",.0f"
-        assert resolved.columns["c2"].format == "$,.2f"
+        assert resolved.columns["c1"].format.spec == ",.0f"
+        assert resolved.columns["c2"].format.spec == "$,.2f"
 
     def test_explicit_column_order_preserved(self) -> None:
         """Authored columns order is honored in the resolved mapping."""

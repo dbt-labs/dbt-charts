@@ -35,7 +35,10 @@ from dbt_charts.core.execute.adapters.base import (
     plain_error,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+from dbt_charts.core.execute.adapters.dbt_utils import (
+    DbtRefResolver,
+    source_target_path,
+)
 from dbt_charts.core.execute.sqlite_utils import sqlite_ro_uri as _sqlite_ro_uri
 from dbt_charts.core.project import is_absolute_any_os
 
@@ -139,7 +142,9 @@ class SqliteAdapter(BaseAdapter):
         from dbt_charts.core.dialects import get_dialect
 
         try:
-            sql, resolved_relations = self._dbt_refs.resolve(query.sql)
+            sql, resolved_relations = self._dbt_refs.resolve(
+                query.sql, source_target_path(source_config)
+            )
         except DbtChartsError as e:
             return handle_adapter_error("dbt ref resolution", e)
         sqlite_dialect = get_dialect("sqlite")

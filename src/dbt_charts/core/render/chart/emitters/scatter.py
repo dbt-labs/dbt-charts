@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     category_scale_for,
@@ -55,6 +56,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     bake_tick_ladder,
     compose_axis_label_expr,
     emit_resolved_scale_vl,
+    inject_axis_numeral_expr,
     measure_axis_to_vl,
 )
 from dbt_charts.core.render.utils import normalize_data_types
@@ -128,8 +130,8 @@ def _emit_wide_scatter(
     if y_scale:
         y_enc["scale"] = y_scale
     fmt = chart.style.tooltip_format
-    if fmt:
-        y_enc["format"] = fmt
+    if fmt.spec:
+        y_enc["format"] = fmt.spec
 
     # wide.color's own encoding-level "title" is deliberately null -- any
     # non-null value here leaks into the legend's own swatch heading, since
@@ -154,8 +156,8 @@ def _emit_wide_scatter(
         "type": "quantitative",
         "title": xy.y_title,
     }
-    if fmt:
-        value_tooltip["format"] = fmt
+    if fmt.spec:
+        value_tooltip["format"] = fmt.spec
     tooltip.append(value_tooltip)
     tooltip.append({"field": wide.label_field, "type": "nominal", "title": "Series"})
 
@@ -212,6 +214,10 @@ class ScatterEmitter:
             if infer_vega_type_from_data(data, chart.x) == "quantitative":
                 x_type = "quantitative"
                 x_axis = axis_to_vl(ax)
+                # Composes innermost, as in resolve_cartesian_x.
+                x_axis = inject_axis_numeral_expr(
+                    x_axis, ax.ruler, ax.tick_label, ax.labels.format
+                )
                 if ax.labels.angle is None:
                     x_axis["labelAngle"] = 0.0
                 # Authored tick cadence still applies: this branch skips
@@ -325,7 +331,7 @@ class ScatterEmitter:
                 # temporal y has no such sibling to point at, so it falls
                 # through to the gate's own time-spec remedy instead.
                 gate_label_format(
-                    y_fmt,
+                    ResolvedFormat(spec=y_fmt),
                     chart.y,
                     data,
                     y_type,
@@ -370,8 +376,8 @@ class ScatterEmitter:
             # Tooltip format goes on the measure encoding only: a numeric format on a
             # categorical y coerces its category strings to NaN in the tooltip.
             fmt = chart.style.tooltip_format
-            if fmt and y_type == "quantitative":
-                y_enc["format"] = fmt
+            if fmt.spec and y_type == "quantitative":
+                y_enc["format"] = fmt.spec
 
             encoding["y"] = y_enc
 

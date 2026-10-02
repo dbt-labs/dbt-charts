@@ -44,8 +44,8 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
 from dbt_charts.core.diagnostics import WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS, Diagnostic
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart.emitters.pie import pie_hole_radius_px
+from dbt_charts.core.render.format_utils import format_value
 from dbt_charts.core.render.warnings.base import WarningContext
-from dbt_charts.core.text.format_d3 import format_d3
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
@@ -114,12 +114,10 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             and not isinstance(row[theta_field], bool)
         )
 
-        # A donut (inner_radius > 0, guarded above) always resolves a format --
-        # _resolve_pie defaults it to the integer preset when the cascade left
-        # it unset, so this slot is never None in production.
+        # A donut always resolves a format (the integer preset by default).
         fmt = chart.style.total_style.value.format
-        assert isinstance(fmt, str), type(fmt)
-        formatted = format_d3(theta_sum, fmt)
+        assert fmt is not None
+        formatted = format_value(theta_sum, fmt)
 
         font = chart.style.total_style.value.font
         # font.size is guaranteed non-None by the theme cascade (_base.yaml:754-758).

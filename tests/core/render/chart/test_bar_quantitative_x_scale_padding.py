@@ -19,11 +19,11 @@ from typing import Any
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
-from dbt_charts.core.compile.models.style.resolved import ResolvedScaleStyle
-from dbt_charts.core.compile.models.style.theme import (
-    BarMarkStyle,
-    PaddingStyle,
+from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedBarMarkStyle,
+    ResolvedScaleStyle,
 )
+from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.chart._axes import _bake_cartesian_axes
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -34,7 +34,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 from dbt_charts.core.render.chart.emitters.bar import BarEmitter
 from dbt_charts.core.render.chart.spec import RenderBox
 
-from ...conftest import fixture_chart_for_type
+from ...conftest import baked_format, fixture_chart_for_type
 
 _DEFAULT_BOX = RenderBox(width=300.0, height=300.0)
 
@@ -50,7 +50,7 @@ def _hires_data() -> list[dict[str, Any]]:
 def _quantitative_bar_axes():
     """Bake axis_x/axis_y for a bar chart with a quantitative x channel."""
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("bar"),
         "bar",
@@ -58,18 +58,27 @@ def _quantitative_bar_axes():
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     return (
         build_resolved_axis(
             ax_merged,
+            format=baked_format(ax_merged),
             band_position=ax_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
         build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged),
             band_position=ay_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
     )
 
@@ -115,7 +124,7 @@ def test_quantitative_x_bar_gets_half_bar_width_padding(bar_style) -> None:
     """
     band_px = 20.0
     bar_style = bar_style.model_copy(
-        update={"mark": BarMarkStyle(size=band_px, band_width=0.8, padding=0.0)}
+        update={"mark": ResolvedBarMarkStyle(size=band_px, band_width=0.8, padding=0.0)}
     )
     chart = _build_chart(bar_style)
 
@@ -138,7 +147,7 @@ def test_quantitative_x_bar_reserves_padding_against_max_size_when_no_bar_size(
     max_px = 20.0
     bar_style = bar_style.model_copy(
         update={
-            "mark": BarMarkStyle(
+            "mark": ResolvedBarMarkStyle(
                 gap=3.0, min_size=4.0, max_size=max_px, band_width=0.8, padding=0.0
             )
         }
@@ -157,7 +166,7 @@ def test_quantitative_x_bar_larger_authored_padding_wins(bar_style) -> None:
     is preserved, not shrunk to the geometric floor."""
     band_px = 20.0
     bar_style = bar_style.model_copy(
-        update={"mark": BarMarkStyle(size=band_px, band_width=0.8, padding=0.0)}
+        update={"mark": ResolvedBarMarkStyle(size=band_px, band_width=0.8, padding=0.0)}
     )
     default_ax, _ = _quantitative_bar_axes()
     ax = dataclasses.replace(default_ax, scale=ResolvedScaleStyle(padding=50.0))
@@ -175,7 +184,7 @@ def test_quantitative_x_bar_smaller_authored_padding_is_raised_to_floor(
     is raised to the geometric floor — bars must not overhang regardless."""
     band_px = 20.0
     bar_style = bar_style.model_copy(
-        update={"mark": BarMarkStyle(size=band_px, band_width=0.8, padding=0.0)}
+        update={"mark": ResolvedBarMarkStyle(size=band_px, band_width=0.8, padding=0.0)}
     )
     default_ax, _ = _quantitative_bar_axes()
     ax = dataclasses.replace(default_ax, scale=ResolvedScaleStyle(padding=2.0))

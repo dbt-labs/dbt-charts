@@ -28,6 +28,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedScatterStyle,
     ResolvedStyleChannel,
 )
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
@@ -43,6 +44,8 @@ from dbt_charts.core.render.chart.features.baseline import BaselineFeature
 from dbt_charts.core.render.chart.features.endpoint_labels import EndpointLabelFeature
 from dbt_charts.core.render.chart.features.value_labels import ValueLabelFeature
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
+
+from ...conftest import baked_format
 
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 
@@ -206,7 +209,7 @@ def _scatter(scatter_style: ResolvedScatterStyle) -> ResolvedScatterChart:
     from ...conftest import fixture_chart_for_type
 
     _rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         _rcs,
         fixture_chart_for_type("scatter"),
         "scatter",
@@ -214,19 +217,28 @@ def _scatter(scatter_style: ResolvedScatterStyle) -> ResolvedScatterChart:
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     ax = build_resolved_axis(
         ax_merged,
+        format=baked_format(ax_merged),
         band_position=ax_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     ay = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
         is_quantitative=True,
         zero_anchored=True,
+        formats=None,
     )
     return ResolvedScatterChart(
         panel_axes=(),
@@ -320,7 +332,7 @@ def _baked_axes_for(chart_type: str) -> tuple[Any, Any]:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         rcs,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -328,18 +340,27 @@ def _baked_axes_for(chart_type: str) -> tuple[Any, Any]:
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     return (
         build_resolved_axis(
             ax_merged,
+            format=baked_format(ax_merged),
             band_position=ax_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
         build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged),
             band_position=ay_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
     )
 
@@ -707,7 +728,7 @@ def test_baseline_percent_format_area_fires_both_zero_and_unity_rules(
         chart_type="area",
         x="date",
         y="value",
-        format=".0%",
+        format=ResolvedFormat(spec=".0%", raw=".0%"),
         stack=None,
         style=area_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
@@ -752,7 +773,9 @@ def test_unity_baseline_applies_to_format_alias_line(
     The baked axis_y.labels.format ('.0%') is the resolved D3 spec and is the canonical
     signal so the 100% rule fires for NRR-style percent line charts.
     """
-    pct_labels = dataclasses.replace(line_style.axis_y.labels, format=".0%")
+    pct_labels = dataclasses.replace(
+        line_style.axis_y.labels, format=ResolvedFormat(spec=".0%")
+    )
     pct_axis_y = dataclasses.replace(line_style.axis_y, labels=pct_labels)
     pct_style = line_style.model_copy(update={"axis_y": pct_axis_y})
     chart = ResolvedLineChart(
@@ -844,7 +867,7 @@ def test_unity_baseline_apply_appends_styled_rule_at_one(
     # Data reaches 1.0 so the unity rule's domain gate passes (the zero rule
     # fires independently); isolate and assert the styled unity rule.
     data = [{"date": "2024-01", "value": 0.5}, {"date": "2024-02", "value": 1.1}]
-    _chart = _area(area_style, format=".0%")
+    _chart = _area(area_style, format=ResolvedFormat(spec=".0%", raw=".0%"))
     result = BaselineFeature().apply(
         _spec("area"), _chart, _DEFAULT_BOX, {_chart.query_name: data}
     )
@@ -1327,7 +1350,7 @@ def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -
     overrides = AxisOverrides(
         x=AxisXStylePatch.model_validate({"time_unit": "yearquarter"})
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         rcs,
         fixture_chart_for_type("line"),
         "line",
@@ -1335,17 +1358,26 @@ def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -
         "quantitative",
         overrides,
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     ax = build_resolved_axis(
         ax_merged,
+        format=baked_format(ax_merged),
         band_position=ax_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     ay = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     chart = ResolvedLineChart(
         panel_axes=(),
@@ -1470,17 +1502,14 @@ def test_endpoint_label_line_always_uses_raw_positions_no_stack_concept(
 def test_baseline_unity_rule_fires_for_format_config_percent(
     area_style: ResolvedAreaStyle,
 ) -> None:
-    """Unity rule must fire for FormatConfig(spec='.0%'), not just plain str formats.
-    isinstance(fmt, str) gate misses FormatConfig objects."""
-    from dbt_charts.core.compile.models.primitives import FormatConfig
-
+    """Unity rule must fire for a percent spec authored as a FormatConfig."""
     chart = ResolvedAreaChart(
         panel_axes=(),
         id="a1",
         chart_type="area",
         x="date",
         y="pct",
-        format=FormatConfig(spec=".0%"),
+        format=ResolvedFormat(spec=".0%", raw=".0%"),
         style=area_style,
         **_C,
     )
@@ -1526,13 +1555,7 @@ def test_heatmap_emitter_color_ignores_chart_color_fallback() -> None:
     from ...conftest import fixture_chart_for_type
 
     _rcs = resolve_chart_style_context(get_theme_style())
-    (
-        _hm_ax_merged,
-        _hm_ay_merged,
-        _hm_ax_band_position,
-        _hm_ay_band_position,
-        _,
-    ) = _bake_cartesian_axes(
+    _hm_baked = _bake_cartesian_axes(
         _rcs,
         fixture_chart_for_type("heatmap"),
         "heatmap",
@@ -1540,17 +1563,25 @@ def test_heatmap_emitter_color_ignores_chart_color_fallback() -> None:
         "nominal",
         AxisOverrides(),
     )
+    _hm_ax_merged, _hm_ay_merged, _hm_ax_band_position, _hm_ay_band_position = (
+        _hm_baked.x.style,
+        _hm_baked.y.style,
+        _hm_baked.x.band_position,
+        _hm_baked.y.band_position,
+    )
     _hm_ax = build_resolved_axis(
         _hm_ax_merged,
+        format=baked_format(_hm_ax_merged),
         band_position=_hm_ax_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     _hm_ay = build_resolved_axis(
         _hm_ay_merged,
+        format=baked_format(_hm_ay_merged),
         band_position=_hm_ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     chart = ResolvedHeatmapChart(
         panel_axes=(),
@@ -1786,7 +1817,7 @@ def _baked_bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         rcs,
         fixture_chart_for_type("bar"),
         "bar",
@@ -1794,17 +1825,26 @@ def _baked_bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     ax = build_resolved_axis(
         ax_merged,
+        format=baked_format(ax_merged),
         band_position=ax_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     ay = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     return ResolvedBarChart(
         panel_axes=(),
@@ -1986,13 +2026,15 @@ def test_zero_baseline_area_with_bar_layer_rule_renders_on_top(
     fallback that inserted the rule one position before the LAST layer —
     i.e. before the bar overlay, so the bar painted over the rule."""
     from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedBarLayer
-    from dbt_charts.core.compile.models.style.theme import BarMarkStyle
+    from dbt_charts.core.compile.models.style.resolved import ResolvedBarMarkStyle
     from dbt_charts.core.render.chart.emitters import get_emitter
 
     chart = _baked_area(area_style).model_copy(
         update={
             "layers": (
-                ResolvedBarLayer(type="bar", bar_mark=BarMarkStyle(), y="actual"),
+                ResolvedBarLayer(
+                    type="bar", bar_mark=ResolvedBarMarkStyle(), y="actual"
+                ),
             )
         }
     )
@@ -2029,10 +2071,10 @@ def test_zero_baseline_fires_for_area_with_bar_layer_despite_scale_zero_false(
     rendered axis — "0 is clearly on the axis" but no rule ever fired."""
     from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedBarLayer
     from dbt_charts.core.compile.models.style.resolved import (
+        ResolvedBarMarkStyle,
         ResolvedScaleContinuousStyle,
         ResolvedScaleStyle,
     )
-    from dbt_charts.core.compile.models.style.theme import BarMarkStyle
     from dbt_charts.core.render.chart.emitters import get_emitter
 
     base_chart = _baked_area(area_style)
@@ -2044,7 +2086,9 @@ def test_zero_baseline_fires_for_area_with_bar_layer_despite_scale_zero_false(
         update={
             "style": base_chart.style.model_copy(update={"axis_y": zeroless_axis_y}),
             "layers": (
-                ResolvedBarLayer(type="bar", bar_mark=BarMarkStyle(), y="actual"),
+                ResolvedBarLayer(
+                    type="bar", bar_mark=ResolvedBarMarkStyle(), y="actual"
+                ),
             ),
         }
     )

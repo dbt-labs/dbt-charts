@@ -58,6 +58,7 @@ def _mock_dbt_adapter(execute_side_effect: Any) -> MagicMock:
     adapter.connection_named.return_value.__enter__ = lambda self: None
     adapter.connection_named.return_value.__exit__ = MagicMock(return_value=False)
     adapter.execute.side_effect = execute_side_effect
+    adapter.connections.get_thread_connection.return_value.state = "open"
     return adapter
 
 

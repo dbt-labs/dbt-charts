@@ -295,6 +295,7 @@ rows:
             variables={"region": "EMEA"},
             available_width=80,
             available_height=20,
+            formats=None,
         )
         assert "EMEA revenue" in output
         assert "{{ region }}" not in output

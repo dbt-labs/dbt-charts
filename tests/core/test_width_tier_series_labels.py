@@ -133,7 +133,7 @@ def test_tiny_width_swaps_endpoint_labels_for_top_legend(
     assert resolved.style.endpoint_labels.visible is False
     assert resolved.legend.visible is True
     assert resolved.style.axis_y.position == "right"
-    assert resolved.legend.position == "top"
+    assert resolved.legend.position.edge == "top"
     assert resolved.legend.direction == "horizontal"
     assert resolved.legend.columns == 7
     assert resolved.legend.title.visible is False
@@ -159,7 +159,7 @@ def test_tiny_width_owns_legend_position_when_endpoint_labels_are_disabled(
         color="series",
         style={
             "endpoint_labels": {"visible": False},
-            "legend": {"position": "right", "direction": "vertical"},
+            "legend": {"position": {"edge": "right"}, "direction": "vertical"},
         },
     )
     resolved = resolve(
@@ -171,7 +171,7 @@ def test_tiny_width_owns_legend_position_when_endpoint_labels_are_disabled(
 
     assert isinstance(resolved, ResolvedLineChart)
     assert resolved.style.endpoint_labels.visible is False
-    assert resolved.legend.position == "top"
+    assert resolved.legend.position.edge == "top"
     assert resolved.legend.direction == "horizontal"
 
 
@@ -193,7 +193,7 @@ def test_top_horizontal_legend_title_defaults_hidden_with_explicit_opt_in(
         color="series",
         style={
             "legend": {
-                "position": "top",
+                "position": {"edge": "top"},
                 "direction": "horizontal",
                 "title": title,
             }
@@ -219,7 +219,7 @@ def test_top_horizontal_legend_preserves_board_level_title_opt_in(
         {
             "charts": {
                 "legend": {
-                    "position": "top",
+                    "position": {"edge": "top"},
                     "direction": "horizontal",
                     "title": {"visible": True},
                 }

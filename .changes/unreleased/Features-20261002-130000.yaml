@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct render --format thumbnail` produces an abstracted board thumbnail: an SVG of the same size with every piece of text replaced by a placeholder, axes and legends removed, and tables redrawn as per-column blocks and value bars.'
+time: 2026-10-02T13:00:00.000000-07:00

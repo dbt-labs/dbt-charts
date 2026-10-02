@@ -7,7 +7,8 @@ from typing import Any
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     finalize_kpi_value_format,
-    resolve_label_format,
+    kpi_format_native,
+    resolve_format_parts,
 )
 from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -18,9 +19,10 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCalloutChart,
     ResolvedKpiChart,
+    ResolvedKpiSupportConfig,
     ResolvedSparkBarChart,
 )
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import resolved_as
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedCalloutStyle,
@@ -68,22 +70,7 @@ def _resolve_kpi(
     channels = _channels_for(normalized, data)
     _tf = _title_font(normalized, chart_local_style_context, width)
     formats = chart_style_context.formats
-    # Alias-membership gate: a format that is a theme alias → house narrative;
-    # a literal d3 spec → format_native=True, routed to format_kpi_parts'
-    # native split (KPI is custom-SVG, not Vega — there is no Vega text.format
-    # escape hatch on this path). An explicit notation field on a FormatConfig
-    # always forces house rules (author named the register explicitly).
-    # Gate on the *spec string* being present, not merely the FormatConfig object
-    # existing: FormatConfig(prefix="$") has no spec and must not flip native.
-    fmt_raw = kpi.value.format  # merged result; pre-resolve, safe for alias check
-    fmt_spec = fmt_raw.spec if isinstance(fmt_raw, FormatConfig) else fmt_raw
-    if fmt_spec:
-        _, is_house = resolve_label_format(fmt_raw, formats)
-        if isinstance(fmt_raw, FormatConfig) and fmt_raw.notation is not None:
-            is_house = True
-        format_native = not is_house
-    else:
-        format_native = False
+    format_native = kpi_format_native(kpi.value.format, formats)
     return ResolvedKpiChart(
         **_base_kwargs(
             normalized,
@@ -97,14 +84,29 @@ def _resolve_kpi(
             requested_alias_palette=chart_style_context.requested_alias_palette,
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=kpi.padding,
+            legendless=True,
         ),
         chart_type="kpi",
         value=normalized.value,
         label=_resolve_text(normalized.label, variables),
-        support=normalized.support,
+        support=(
+            None
+            if normalized.support is None
+            else resolved_as(
+                ResolvedKpiSupportConfig,
+                normalized.support,
+                format=(
+                    None
+                    if normalized.support.format is None
+                    else resolve_format_parts(
+                        normalized.support.format, formats, no_format_default=None
+                    )
+                ),
+            )
+        ),
         variant=normalized.variant,
         format=finalize_kpi_value_format(
-            kpi.value.format, _headline_numeric_value(normalized.value, data)
+            kpi.value.format, _headline_numeric_value(normalized.value, data), formats
         ),
         format_native=format_native,
         # chart_local_style_context.title is build_chart_style_context()'s own
@@ -170,6 +172,7 @@ def _resolve_spark_bar(
             requested_alias_palette=chart_style_context.requested_alias_palette,
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=spark_bar.padding,
+            legendless=True,
         ),
         **_shared_kwargs(normalized, variables, chart_local_style_context),
         chart_type="spark_bar",

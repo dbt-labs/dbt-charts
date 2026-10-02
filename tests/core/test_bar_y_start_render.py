@@ -8,6 +8,7 @@ labels, the shared domain with a bar layer, and the data rules that need rows.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 from typing import Any
 
@@ -231,6 +232,63 @@ class TestValueLabels:
         # A row that starts at zero prints its plain value.
         assert "datum['start_value'] == 0" in expr
 
+    def test_span_label_honors_an_authored_prefix_affix(self):
+        """A FormatConfig prefix (outside d3's own $/# vocabulary) on a
+        span's value labels must not crash (issue #27 widened labels.format
+        to accept it) and must compose sign-first: the rise/fall indicator
+        goes before the currency symbol, never split by it."""
+        spec = _spec(
+            _BRIDGE,
+            x="step",
+            y="end_value",
+            y_start="start_value",
+            style={
+                "marks": {
+                    "bar": {
+                        "labels": {
+                            "visible": True,
+                            "format": {"spec": ",.0f", "prefix": "€"},
+                        }
+                    }
+                }
+            },
+        )
+        expr = self._label_expr(spec)
+        prefix_json = json.dumps("€")
+        # Sign-first, within the changed (start != 0) branch.
+        sign_pos = expr.index("? '+' : '\\u2212'")
+        prefix_pos = expr.index(prefix_json, sign_pos)
+        digits_pos = expr.index("format(abs(", prefix_pos)
+        assert sign_pos < prefix_pos < digits_pos
+
+    def test_span_label_honors_an_authored_suffix_affix(self):
+        """A FormatConfig suffix renders trailing (sign, digits, suffix), matching the
+        pinned rule.
+        """
+        spec = _spec(
+            _BRIDGE,
+            x="step",
+            y="end_value",
+            y_start="start_value",
+            style={
+                "marks": {
+                    "bar": {
+                        "labels": {
+                            "visible": True,
+                            "format": {"spec": ",.0f", "suffix": " €"},
+                        }
+                    }
+                }
+            },
+        )
+        expr = self._label_expr(spec)
+        suffix_json = json.dumps(" €")
+        # Suffix trails the digits, within the changed (start != 0) branch --
+        # it never sits between the sign and the digits it decorates.
+        digits_pos = expr.index("format(abs(")
+        suffix_pos = expr.index(suffix_json, digits_pos)
+        assert digits_pos < suffix_pos
+
     def test_labels_field_still_overrides(self):
         spec = _spec(
             _BRIDGE,
@@ -355,6 +413,22 @@ class TestTooltips:
     def test_bars_that_only_rise_report_a_range(self):
         (desc,) = _descriptions(_spec(_RANGES))
         assert "Range: " in desc and "Change: " not in desc
+
+    def test_span_change_honors_an_affixed_number_format(self):
+        """A y_start bar with an affixed ``number_format`` must not crash the
+        whole board (issue #27 widened ``tooltip_format`` to accept a
+        ``FormatConfig``) and its Change row must show the affix."""
+        (desc,) = _descriptions(
+            _spec(
+                _BRIDGE,
+                x="step",
+                y="end_value",
+                y_start="start_value",
+                style={"number_format": {"spec": ",.0f", "prefix": "EUR "}},
+            )
+        )
+        assert "Change: " in desc
+        assert json.dumps("EUR ") in desc
 
     def test_date_span_reports_readable_dates_and_a_duration(self):
         (desc,) = _descriptions(
@@ -657,3 +731,44 @@ def test_dot_plot_takes_a_span_layer():
     )
     (enc,) = _bar_encodings(spec)
     assert enc["y2"] == {"field": "low"}
+
+
+def _painted(spec: dict[str, Any]) -> list[str]:
+    import html
+    import re
+
+    import vl_convert as vlc
+
+    svg = vlc.vegalite_to_svg(spec)
+    texts = [html.unescape(t) for t in re.findall(r"<text[^>]*>([^<]*)</text>", svg)]
+    labels = [html.unescape(a) for a in re.findall(r'aria-label="([^"]*)"', svg)]
+    return texts + labels
+
+
+@pytest.mark.parametrize(
+    ("prefix", "gain", "loss"),
+    [("EUR ", "EUR +28", "EUR −22"), ("€", "+€28", "−€22")],
+)
+def test_span_label_and_tooltip_place_the_sign_by_the_prefix(prefix, gain, loss):
+    from dbt_charts.core.compile.format import resolve_format_parts
+    from dbt_charts.core.compile.models.primitives import FormatConfig
+    from dbt_charts.core.render.chart.features.value_labels import (
+        painted_span_label_text,
+    )
+
+    fmt = {"spec": ",.0f", "prefix": prefix}
+    spec = _spec(
+        _BRIDGE,
+        x="step",
+        y="end_value",
+        y_start="start_value",
+        style={
+            "number_format": fmt,
+            "marks": {"bar": {"labels": {"visible": True, "format": fmt}}},
+        },
+    )
+    painted = _painted(spec)
+    assert gain in painted and loss in painted, painted
+    assert any(f"Change: {loss}" in t for t in painted), painted
+    resolved = resolve_format_parts(FormatConfig(**fmt), None, no_format_default=None)
+    assert painted_span_label_text(126, 148, resolved, False) == loss

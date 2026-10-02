@@ -25,6 +25,7 @@ dev = [
     "dbt-trino==1.10.2",  # Trino adapter tests
     "dbt-athena==1.10.2",  # Athena adapter tests
     "dbt-clickhouse==1.10.3",  # ClickHouse adapter tests
+    "dbt-sqlserver==1.10.1",  # SQL Server adapter tests (1.11+ needs dbt-adapters>=1.24.1)
     "google-cloud-bigquery>=3.33.0",  # BigQuery warehouse-check tests
     "markdown>=3.0",  # Markdown reference and fence tests
     "mcp>=1.0.0,<2",  # MCP server tests
@@ -192,6 +193,13 @@ athena = [
 
 clickhouse = [
     "dbt-clickhouse>=1.10,<2.0",
+]
+
+# dbt-sqlserver 1.12 made its drivers extras, and its default backend is
+# pyodbc, so the bare package fails at connect. The host also needs Microsoft
+# ODBC Driver 17 or 18, which pip cannot install.
+sqlserver = [
+    "dbt-sqlserver[pyodbc]>=1.10,<2.0",
 ]
 
 mcp = [

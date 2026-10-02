@@ -13,6 +13,8 @@ from typer.testing import CliRunner
 from dbt_charts.cli.main import app
 from dbt_charts.core.diagnostics import Diagnostic
 
+from .._paths import DBT_CHARTS_DIR
+
 runner = CliRunner()
 
 _BOARD_YAML = """
@@ -130,7 +132,7 @@ class TestDftDescribeProjectDir:
     """dct describe --project-dir resolves the board path relative to the project root."""
 
     def test_describe_with_project_dir_flag(self, tmp_path: Path) -> None:
-        fixture = Path(__file__).parent.parent / "fixtures" / "single-query-board"
+        fixture = DBT_CHARTS_DIR / "tests" / "fixtures" / "single-query-board"
         shutil.copytree(fixture, tmp_path / "project")
         (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
 
@@ -344,7 +346,7 @@ class TestDftDescribeJsonMalformed:
     def test_malformed_yaml_json_envelope_is_structured_error(
         self, tmp_path: Path
     ) -> None:
-        fixture = Path(__file__).parent.parent / "fixtures" / "malformed-board"
+        fixture = DBT_CHARTS_DIR / "tests" / "fixtures" / "malformed-board"
         shutil.copytree(fixture, tmp_path / "project")
         (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
 

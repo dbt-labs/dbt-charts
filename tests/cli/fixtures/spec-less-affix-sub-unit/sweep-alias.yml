@@ -1,0 +1,75 @@
+title: milli next to currency sweep — alias variant
+style:
+  formats:
+    gbp: {prefix: "£"}
+queries:
+  q:
+    columns: [channel, v]
+    values: [[A, 0.67], [B, 0.18], [C, 0.42]]
+  s:
+    columns: [channel, seg, v]
+    values: [[A, x, 0.30], [A, y, 0.37], [B, x, 0.10], [B, y, 0.08]]
+  t:
+    columns: [v]
+    values: [[0.67]]
+charts:
+  lbl:
+    type: bar
+    query: q
+    x: channel
+    y: v
+    title: value labels
+    style:
+      number_format: gbp
+      marks:
+        bar:
+          labels:
+            visible: true
+  stk:
+    type: bar
+    query: s
+    x: channel
+    y: v
+    color: seg
+    title: stack totals
+    style:
+      stack: zero
+      marks:
+        bar:
+          total_label:
+            visible: true
+            format: gbp
+  st:
+    type: bar
+    query: q
+    x: channel
+    y: v
+    title: support table
+    support_table:
+      entries:
+        - source: v
+          label: V
+          format: gbp
+  dn:
+    type: donut
+    query: q
+    color: channel
+    theta: v
+    title: donut total
+    total:
+      label: T
+    style:
+      total:
+        value:
+          format: gbp
+  kp:
+    type: kpi
+    query: t
+    value: v
+    label: kpi
+    style:
+      value:
+        format: gbp
+rows:
+  - cols: [lbl, stk]
+  - cols: [st, dn, kp]

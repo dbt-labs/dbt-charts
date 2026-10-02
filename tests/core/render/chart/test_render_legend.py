@@ -22,6 +22,8 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
 )
 from dbt_charts.core.render.chart.spec import RenderBox
 
+from ...conftest import baked_format
+
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 _ZERO_PADDING = PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0)
 
@@ -63,7 +65,7 @@ def _baked_bar_axes() -> tuple[Any, Any]:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("bar"),
         "bar",
@@ -71,18 +73,27 @@ def _baked_bar_axes() -> tuple[Any, Any]:
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     return (
         build_resolved_axis(
             ax_merged,
+            format=baked_format(ax_merged),
             band_position=ax_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
         build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged),
             band_position=ay_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
     )
 

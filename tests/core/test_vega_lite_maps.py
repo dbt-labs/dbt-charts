@@ -1046,7 +1046,9 @@ class TestMapTerminalFallback:
             {"state_code": "TX", "population": 29000000},
         ]
 
-        result = render_chart_terminal(chart, data, "", width=80, height=20)
+        result = render_chart_terminal(
+            chart, data, "", width=80, height=20, formats=None
+        )
 
         # Should render as table with data values
         assert "CA" in result or "state_code" in result

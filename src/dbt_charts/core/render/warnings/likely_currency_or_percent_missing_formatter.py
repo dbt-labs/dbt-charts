@@ -49,12 +49,14 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
     _CartesianResolvedChartFields,
 )
 from dbt_charts.core.compile.models.chart.resolved._layer import LayeredResolvedChart
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
 from dbt_charts.core.diagnostics import (
     WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
     Diagnostic,
 )
 from dbt_charts.core.render.warnings.base import WarningContext
+from dbt_charts.core.utils import _UNIT_SUFFIXES
 
 # Cartesian chart types whose y-axis renders and may need a format. Overlay
 # layers ride on one of these base types, so they need no entry of their own.
@@ -104,6 +106,10 @@ _PERCENT_BARE_NAMES: frozenset[str] = frozenset(
     {"pct", "percent", "percentage", "share"}
 )
 
+# Trailing "_<code>" tokens whose symbol the fix suggestion names (from
+# core/utils.py's _UNIT_SUFFIXES). "usd" is excluded: the dollar spec fits.
+_CURRENCY_CODE_TOKENS = ("eur", "gbp")
+
 
 def _classify(field_name: str) -> str | None:
     """Return 'currency', 'percent', or None for the given field name.
@@ -123,20 +129,34 @@ def _classify(field_name: str) -> str | None:
     return None
 
 
-def _format_suits_kind(fmt: str | None, kind: str) -> bool:
-    """Whether a resolved d3 number-format string renders ``kind`` sanely.
+def _format_suits_kind(fmt: ResolvedFormat | None, kind: str) -> bool:
+    """Whether a resolved number format renders ``kind`` sanely.
 
-    Every format source (chart-root ``format:``, authored ``style.axis_y.labels.format``,
-    the theme default, and whole-chart ``style.number_format``) is baked into the
-    single ``style.axis_y.labels.format`` by the resolved boundary, so authored-vs-default
-    can't be read off the resolved chart — but the effective format can. The
-    generic SI default (``.3~s``) suits neither kind: a 0–1 percent renders as
-    milli-units and currency loses its symbol. A percent format carries ``%``; a
-    currency format carries ``$``.
+    The generic SI default suits neither kind. A percent format carries ``%``,
+    a currency format ``$``; an authored affix ("€") counts as currency, and
+    only a ``%`` in it as percent.
     """
-    if not fmt:
+    if fmt is None:
         return False
-    return "%" in fmt if kind == "percent" else "$" in fmt
+    affix = fmt.prefix + fmt.suffix
+    if kind == "currency" and affix:
+        return True
+    if kind == "percent" and "%" in affix:
+        return True
+    if not fmt.spec:
+        return False
+    return "%" in fmt.spec if kind == "percent" else "$" in fmt.spec
+
+
+def _currency_format_hint(field: str) -> str:
+    """The ``{currency_format}`` of the fix suggestion: the field's "_<code>"
+    currency (``revenue_eur`` -> "€"), else the dollar spec."""
+    tokens = field.lower().split("_")
+    code = tokens[-1] if len(tokens) > 1 else ""
+    if code not in _CURRENCY_CODE_TOKENS:
+        return "a currency format (e.g. `$,.2f`)"
+    symbol = _UNIT_SUFFIXES[code].strip("()")
+    return f"a `,.2f` format with `prefix: {symbol!r}`"
 
 
 def _warn(
@@ -145,6 +165,12 @@ def _warn(
     """``layer`` is the index of the layer whose own axis needs the format, if any."""
     axis = "style.axis_y" if layer is None else f"layers.{layer}.axis_y"
     key = "style.axis_y" if layer is None else f"layers[{layer}].axis_y"
+    format_key = f"{key}.labels.format"
+    currency_format = (
+        _currency_format_hint(field)
+        if kind == "currency"
+        else "a currency format (e.g. `$,.2f`)"
+    )
     return Diagnostic.from_code(
         WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
         chart=chart_id,
@@ -159,12 +185,14 @@ def _warn(
             chart_id=chart_id, field=field, kind=kind, format=axis_format
         ),
         fix=WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.fix_template.format(
-            format_key=f"{key}.labels.format"
+            format_key=format_key, currency_format=currency_format
         ),
     )
 
 
-def _y_axis_checks(chart: ResolvedChart) -> list[tuple[str, str | None, int | None]]:
+def _y_axis_checks(
+    chart: ResolvedChart,
+) -> list[tuple[str, ResolvedFormat | None, int | None]]:
     """``(y field, the format its axis renders with, own-axis layer index)`` per y field.
 
     Mirrors the overlay emitter: a layer's own ``axis_y`` is rendered only when
@@ -190,7 +218,7 @@ def _y_axis_checks(chart: ResolvedChart) -> list[tuple[str, str | None, int | No
             # Heatmap is the only remaining family that can still carry a
             # list y (its own multi-measure render path, not the fold).
             fields.extend(chart.y if isinstance(chart.y, list) else [chart.y])
-    checks: list[tuple[str, str | None, int | None]] = [
+    checks: list[tuple[str, ResolvedFormat | None, int | None]] = [
         (field, base_format, None) for field in fields
     ]
     if isinstance(chart, LayeredResolvedChart):
@@ -221,6 +249,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         for field, axis_format, layer in _y_axis_checks(chart):
             kind = _classify(field)
             if kind is not None and not _format_suits_kind(axis_format, kind):
-                warnings.append(_warn(chart_id, field, kind, axis_format, layer))
+                spec = axis_format.spec if axis_format is not None else None
+                warnings.append(_warn(chart_id, field, kind, spec, layer))
 
     return warnings

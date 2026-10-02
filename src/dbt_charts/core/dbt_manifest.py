@@ -14,8 +14,8 @@ board author sees ERR-DBT-REF-UNKNOWN-NODE / ERR-DBT-SOURCE-UNKNOWN-TABLE
 naming the ref they wrote rather than a KeyError.
 
 Public symbols:
-  MANIFEST_CANDIDATES             tuple of candidate relpaths, in order
-  load_manifest(project)          -> LoadedManifest | None
+  manifest_relpath(project, target_path)  -> project-relative manifest path
+  load_manifest(project, target_path)     -> LoadedManifest | None
   load_manifest_at(project, rel)  -> LoadedManifest
   ref_index(loaded)               -> RefIndex
 """
@@ -23,26 +23,31 @@ Public symbols:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
+from pathlib import PureWindowsPath
+from posixpath import normpath
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_MANIFEST_UNREADABLE
+import yaml
+
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_DBT_MANIFEST_UNREADABLE,
+    ERR_DBT_TARGET_PATH_INVALID,
+)
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import Project
 
-# Candidate paths, checked in this order. `dbt parse`/`dbt compile`/`dbt run`
-# all write target/manifest.json; there is no committed-snapshot fallback —
-# a project without one is manifest-missing.
-MANIFEST_CANDIDATES: tuple[str, ...] = ("target/manifest.json",)
+_DEFAULT_TARGET_PATH = "target"
 
 # Node kinds ref() addresses.
 _REFABLE_RESOURCE_TYPES = frozenset({"model", "seed", "snapshot"})
 
 # Per-process memo: (relpath, file_version) → LoadedManifest.
 # FIFO-evicting at _MEMO_MAXSIZE; relpath in key avoids collisions when two
-# candidates share identical content.
+# manifests share identical content.
 _MEMO_MAXSIZE = 16
 _memo: dict[tuple[str, str], LoadedManifest] = {}
 
@@ -55,7 +60,7 @@ class LoadedManifest:
              consumers. dbt 1.11.x mashumaro union types ALL test nodes as
              SingularTest, so test_metadata is inaccessible on typed nodes;
              raw dict access is the only reliable path.
-    relpath: Which candidate path was used to load this manifest.
+    relpath: Which project-relative path this manifest was loaded from.
     version: ``project.file_version(relpath)`` at load time — the stable
              identity downstream memos key on (``id(raw)`` can be reused
              after GC, silently serving one manifest's derivation for
@@ -83,21 +88,82 @@ class RefIndex:
     available_sources: list[str]
 
 
-def load_manifest(project: Project) -> LoadedManifest | None:
+def manifest_relpath(project: Project | None, target_path: str | None = None) -> str:
+    """Project-relative path of the manifest a ref() resolves against.
+
+    Precedence is dbt's own for ``--target-path``: the source's authored
+    ``target_path`` (the flag's stand-in), then ``DBT_TARGET_PATH``, then
+    ``dbt_project.yml``'s ``target-path:``, then ``target``. ``project=None``
+    (a host with no project to read) skips the ``dbt_project.yml`` step, so
+    the path is only ever named in errors.
+
+    Raises ExecutionError (ERR-DBT-TARGET-PATH-INVALID) when the directory is
+    absolute, escapes the project, or is an unrendered template.
+    """
+    directory, origin = target_path, "the source's target_path"
+    if not directory:
+        directory, origin = (
+            os.environ.get("DBT_TARGET_PATH"),  # noqa: TID251 — dbt-convention parity
+            "DBT_TARGET_PATH",
+        )
+    if not directory and project is not None:
+        directory, origin = (
+            _project_target_path(project.manifest_project()),
+            "target-path in dbt_project.yml",
+        )
+    directory = directory or _DEFAULT_TARGET_PATH
+    if "{{" in directory:
+        detail = "it is an unrendered Jinja template"
+    elif "\\" in directory or PureWindowsPath(directory).anchor:
+        detail = "it is not a relative POSIX path"
+    elif normpath(directory).startswith(".."):
+        detail = "it escapes the dbt project"
+    else:
+        return f"{directory.rstrip('/')}/manifest.json"
+    raise ExecutionError.from_code(
+        ERR_DBT_TARGET_PATH_INVALID, origin=origin, detail=f"{directory!r}: {detail}"
+    )
+
+
+def _project_target_path(manifest_project: Project) -> str | None:
+    if not manifest_project.exists("dbt_project.yml"):
+        return None
+    try:
+        config = manifest_project.read_yaml("dbt_project.yml")
+    except yaml.YAMLError as exc:
+        raise ExecutionError.from_code(
+            ERR_DBT_TARGET_PATH_INVALID,
+            origin="dbt_project.yml",
+            detail=f"dbt_project.yml is not valid YAML: {exc}",
+        ) from exc
+    if not isinstance(config, dict):
+        return None
+    value = config.get("target-path")
+    return str(value) if value else None
+
+
+def load_manifest(
+    project: Project, target_path: str | None = None, *, optional: bool = False
+) -> LoadedManifest | None:
     """Load and parse the project's dbt manifest through the Project seam.
 
-    Checks candidates in order, returns the first one that exists. Returns
-    None when no candidate exists.
+    Returns None when the manifest does not exist at ``manifest_relpath``.
+    ``optional=True`` is for readers that only enrich their output: an unusable
+    target path then reads as no manifest instead of raising.
 
-    Raises ExecutionError (ERR-DBT-MANIFEST-UNREADABLE) when a candidate
-    exists but is unreadable or corrupt.
+    Raises ExecutionError (ERR-DBT-MANIFEST-UNREADABLE) when it exists but is
+    unreadable or corrupt.
     """
     manifest_project = project.manifest_project()
-    for relpath in MANIFEST_CANDIDATES:
-        if not manifest_project.exists(relpath):
-            continue
-        return load_manifest_at(manifest_project, relpath)
-    return None
+    try:
+        relpath = manifest_relpath(project, target_path)
+    except ExecutionError as exc:
+        if optional and exc.code is ERR_DBT_TARGET_PATH_INVALID:
+            return None
+        raise
+    if not manifest_project.exists(relpath):
+        return None
+    return load_manifest_at(manifest_project, relpath)
 
 
 def ref_index(loaded: LoadedManifest) -> RefIndex:
@@ -149,8 +215,7 @@ def load_manifest_at(project: Project, relpath: str) -> LoadedManifest:
     """Load and parse a manifest from a specific project-relative path.
 
     Memoized per process on project.file_version(relpath). Use this when
-    a caller needs to load a specific path independently of which candidate
-    was used for the dev load.
+    a caller needs to load a specific path rather than the resolved one.
 
     Raises ExecutionError (ERR-DBT-MANIFEST-UNREADABLE) on an unreadable file
     or corrupt JSON.

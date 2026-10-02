@@ -639,7 +639,7 @@ Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
 | `variables` | [VariablesStyle](#variablesstyle) | Variable controls chrome style. |
 | `footer` | [FooterStyle](#footerstyle) | Page footer chrome visibility. |
 | `timestamp` | [TimestampStyle](#timestampstyle) | Data-freshness chrome: visibility, placement, format, and font. |
-| `formats` | dict[str, str] | Format alias map; None means no aliases at this cascade level. |
+| `formats` | dict[str, str \| [FormatConfig](#formatconfig)] | Format alias map; None means no aliases at this cascade level. |
 | `palettes` | dict[str, one of: 'category-6-tonal-blue', 'category-6-tonal-blue.dark', 'category-6-tonal-blue.deep', 'category-6-tonal-blue.light', 'category-6-tonal-blue.pale', 'category-6-tonal-brown', 'category-6-tonal-brown.dark', 'category-6-tonal-brown.deep', 'category-6-tonal-brown.light', 'category-6-tonal-brown.pale', 'category-6-tonal-green', 'category-6-tonal-green.dark', 'category-6-tonal-green.deep', 'category-6-tonal-green.light', 'category-6-tonal-green.pale', 'category-6-tonal-orange', 'category-6-tonal-orange.dark', 'category-6-tonal-orange.deep', 'category-6-tonal-orange.light', 'category-6-tonal-orange.pale', 'category-6-tonal-purple', 'category-6-tonal-purple.dark', 'category-6-tonal-purple.deep', 'category-6-tonal-purple.light', 'category-6-tonal-purple.pale', 'dbt-creams', 'dbt-div-blue-red', 'dbt-div-blue-red-dark', 'dbt-div-coolwarm', 'dbt-div-coolwarm-dark', 'dbt-div-crimson-green', 'dbt-div-crimson-green-dark', 'dbt-div-orange-teal', 'dbt-div-orange-teal-dark', 'dbt-div-sunset', 'dbt-div-sunset-dark', 'dbt-grays', 'dbt-seq-amber', 'dbt-seq-amber-dark', 'dbt-seq-blue', 'dbt-seq-blue-dark', 'dbt-seq-brown', 'dbt-seq-brown-dark', 'dbt-seq-gray', 'dbt-seq-gray-dark', 'dbt-seq-green', 'dbt-seq-green-dark', 'dbt-seq-purple', 'dbt-seq-purple-dark', 'dbt-seq-rust', 'dbt-seq-rust-dark', 'dbt-seq-teal', 'dbt-seq-teal-dark', 'editorial-10', 'editorial-10.dark', 'editorial-10.deep', 'editorial-10.light', 'editorial-10.pale', 'hero-6', 'hero-6.dark', 'hero-6.deep', 'hero-6.light', 'hero-6.pale', 'info', 'negative', 'positive', 'tableau', 'tableau.dark', 'tableau.deep', 'tableau.light', 'tableau.pale', 'vivid-10', 'vivid-10.dark', 'vivid-10.deep', 'vivid-10.light', 'vivid-10.pale', 'warning'] | Theme palette role assignments: open dict mapping role name to palette file name. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge. |
 | `tones` | [KpiTonesStyle](#kpitonesstyle) | Semantic tone color palette (positive/negative/warning/info) for KPI support rows, table conditional glyphs, and spark negative_color. |
 | `roles` | dict[str, str] | Optional top-level theme role aliases: bare name → role.alias. e.g. ink: chrome.heading |
@@ -712,6 +712,7 @@ Authored overlay for BarChartStyle. Bar chart style: chart-level fields + marks 
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -719,13 +720,12 @@ Authored overlay for BarChartStyle. Bar chart style: chart-level fields + marks 
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `axis` | [BaseAxisStyle](#baseaxisstyle) | Override applied to both x and y axes; None inherits the global axis at render. |
 | `axis_x` | [AxisXStyle](#axisxstyle) | Per-chart-type x-axis style overrides; None inherits the global axis_x at render. |
 | `axis_y` | [AxisYStyle](#axisystyle) | Per-chart-type y-axis style overrides; None inherits the global axis_y at render. |
 | `axis_band` | [BandAxisStyle](#bandaxisstyle) | Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render. |
-| `number_format` | str \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
+| `number_format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `orientation` | enum: "horizontal", "vertical", "auto" | Preferred bar orientation; None behaves like 'auto', which picks horizontal for a categorical x and vertical for a continuous one (temporal, quantitative, or date-like). Never remaps x/y. |
@@ -831,6 +831,7 @@ Authored overlay for LineChartStyle. Line chart style: chart-level fields + mark
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -838,13 +839,12 @@ Authored overlay for LineChartStyle. Line chart style: chart-level fields + mark
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `axis` | [BaseAxisStyle](#baseaxisstyle) | Override applied to both x and y axes; None inherits the global axis at render. |
 | `axis_x` | [AxisXStyle](#axisxstyle) | Per-chart-type x-axis style overrides; None inherits the global axis_x at render. |
 | `axis_y` | [AxisYStyle](#axisystyle) | Per-chart-type y-axis style overrides; None inherits the global axis_y at render. |
 | `axis_band` | [BandAxisStyle](#bandaxisstyle) | Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render. |
-| `number_format` | str \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
+| `number_format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed at the end of each line instead of in a legend. |
@@ -857,6 +857,7 @@ Authored overlay for AreaChartStyle. Area chart style: chart-level fields + mark
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -864,13 +865,12 @@ Authored overlay for AreaChartStyle. Area chart style: chart-level fields + mark
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `axis` | [BaseAxisStyle](#baseaxisstyle) | Override applied to both x and y axes; None inherits the global axis at render. |
 | `axis_x` | [AxisXStyle](#axisxstyle) | Per-chart-type x-axis style overrides; None inherits the global axis_x at render. |
 | `axis_y` | [AxisYStyle](#axisystyle) | Per-chart-type y-axis style overrides; None inherits the global axis_y at render. |
 | `axis_band` | [BandAxisStyle](#bandaxisstyle) | Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render. |
-| `number_format` | str \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
+| `number_format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `stack` | enum: "none", "zero", "normalize", "center" | Default stack mode for area charts: 'none', 'zero', 'normalize', or 'center'. |
@@ -885,6 +885,7 @@ Authored overlay for ScatterChartStyle. Scatter chart style: chart-level fields 
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -892,13 +893,12 @@ Authored overlay for ScatterChartStyle. Scatter chart style: chart-level fields 
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `axis` | [BaseAxisStyle](#baseaxisstyle) | Override applied to both x and y axes; None inherits the global axis at render. |
 | `axis_x` | [AxisXStyle](#axisxstyle) | Per-chart-type x-axis style overrides; None inherits the global axis_x at render. |
 | `axis_y` | [AxisYStyle](#axisystyle) | Per-chart-type y-axis style overrides; None inherits the global axis_y at render. |
 | `axis_band` | [BandAxisStyle](#bandaxisstyle) | Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render. |
-| `number_format` | str \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
+| `number_format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `marks` | [ScatterChartMarksStyle](#scatterchartmarksstyle) | Scatter-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
@@ -909,6 +909,7 @@ Authored overlay for HeatmapChartStyle. Heatmap chart style.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -916,13 +917,12 @@ Authored overlay for HeatmapChartStyle. Heatmap chart style.
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `axis` | [BaseAxisStyle](#baseaxisstyle) | Override applied to both x and y axes; None inherits the global axis at render. |
 | `axis_x` | [AxisXStyle](#axisxstyle) | Per-chart-type x-axis style overrides; None inherits the global axis_x at render. |
 | `axis_y` | [AxisYStyle](#axisystyle) | Per-chart-type y-axis style overrides; None inherits the global axis_y at render. |
 | `axis_band` | [BandAxisStyle](#bandaxisstyle) | Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render. |
-| `number_format` | str \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
+| `number_format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `cell_padding` | float | Padding between heatmap cells in pixels. |
@@ -943,6 +943,7 @@ Authored overlay for PieChartStyle. Pie/donut chart style: geometry + total (fla
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `legend` | [PieLegendStyle](#pielegendstyle) | Pie key style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -950,7 +951,6 @@ Authored overlay for PieChartStyle. Pie/donut chart style: geometry + total (fla
 | `aspect_ratio` | float | Aspect ratio (width/height) of the pie chart viewport. |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `inner_radius` | float | Hole-to-disk ratio 0–1 (inner radius / outer radius). None = solid pie; `type: donut` overrides this with a chart-local 0.6 patch, beating a theme value. |
 | `total` | [TotalStyle](#totalstyle) | Donut center total paint (value and label). |
@@ -1050,6 +1050,7 @@ Authored overlay for PointMapChartStyle. Point map chart style.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -1057,7 +1058,6 @@ Authored overlay for PointMapChartStyle. Point map chart style.
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Geo color: static paint or gradient scale only (no categorical arm). |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. |
 | `border` | [BorderStyle](#borderstyle) | Chart card border style. |
@@ -1071,6 +1071,7 @@ Authored overlay for GeoshapeChartStyle. Geoshape (choropleth) chart style.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -1078,7 +1079,6 @@ Authored overlay for GeoshapeChartStyle. Geoshape (choropleth) chart style.
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Geo color: static paint or gradient scale only (no categorical arm). |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. |
 | `border` | [BorderStyle](#borderstyle) | Chart card border style. |
@@ -1252,6 +1252,7 @@ Authored overlay for ChartsStyle. Registry of all chart-type styles plus shared 
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. |
 | `background` | str | Chart canvas background; None inherits from the board background via apply_inherit. Falls back to [`style.background`](#style). |
@@ -1259,7 +1260,6 @@ Authored overlay for ChartsStyle. Registry of all chart-type styles plus shared 
 | `aspect_ratio` | float | Chart aspect ratio (width/height). |
 | `min_height` | float | Minimum chart height in pixels. |
 | `max_height` | float | Maximum chart height in pixels. |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. Unset fields fall back to [`style.font`](#style). |
 | `border` | [BorderStyle](#borderstyle) | Chart card border style. |
@@ -1351,6 +1351,19 @@ Authored overlay for TimestampStyle. Authored data-freshness chrome: visibility,
 | `y` | float | Y-coordinate for top-positioned timestamp in pixels. |
 | `font` | [FontStyle](#fontstyle) | Timestamp font style overrides (size, color, weight, ...). |
 
+<a id="formatconfig"></a>
+## FormatConfig
+Format configuration for value display.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `spec` | str | D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern. |
+| `prefix` | str | Text placed before the formatted value (e.g., '$'). |
+| `suffix` | str | Text placed after the formatted value (e.g., ' USD', '%'). |
+| `notation` | enum: "analytic", "narrative" | Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn). |
+| `sign_placement` | enum: "before_prefix", "after_prefix" | Where a negative sign sits against the prefix: 'before_prefix' (−€500) or 'after_prefix' (EUR −500). Unset: after_prefix when the prefix ends in a space or paints on one value only, else before_prefix. Table columns keep the sign with the digits and reject it. |
+| `repeat` | enum: "every", "anchor" | Whether the prefix/suffix paints on 'every' value of an axis, table column or support_table row, or on one 'anchor' value. Unset keeps each surface's default. Single-value slots ignore it. |
+
 <a id="kpitonesstyle"></a>
 ## KpiTonesStyle
 Authored overlay for KpiTonesStyle. Semantic tone palette shared by the KPI support row and table conditional glyphs.
@@ -1439,24 +1452,12 @@ Authored overlay for QuantitativeAxisStyle. Scale-type overlay for quantitative 
 | `title` | [AxisTitleStyle](#axistitlestyle) | Axis title style. |
 | `scale` | [BaseScaleStyle](#basescalestyle) | Per-axis scale overrides; None means no override. |
 
-<a id="paddingstyle"></a>
-## PaddingStyle
-Authored overlay for PaddingStyle. Per-chart padding inset (px). All 4 sides required; theme YAML supplies defaults.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `left` | float | Left padding in pixels. |
-| `right` | float | Right padding in pixels. |
-| `top` | float | Top padding in pixels. |
-| `bottom` | float | Bottom padding in pixels. |
-
 <a id="legendstyle"></a>
 ## LegendStyle
 Authored overlay for LegendStyle.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `position` | enum: "left", "right", "top", "bottom", "top-left", "top-right", "bottom-left", "bottom-right" | Legend position (VL legend orient). |
 | `direction` | enum: "horizontal", "vertical" | Legend layout direction. |
 | `columns` | int | Legend entry columns. Zero keeps the renderer default; positive values set Vega-Lite legend columns. |
 | `compact_columns` | int | Entry columns for an automatic compact top-horizontal legend. |
@@ -1467,6 +1468,18 @@ Authored overlay for LegendStyle.
 | `values` | list[str] | Explicit legend entry order/filter; each entry resolves against the real legend domain by its rendered text or its column/measure name (case/separator-insensitive). None lets the renderer infer order from the data. |
 | `symbol_shape` | str | Override the legend glyph shape; maps to VL legend.symbolType. None uses the mark-aware glyph derived from the chart's mark type. |
 | `symbol_fill` | bool | When False, emits symbolFillColor='transparent' to produce a hollow legend glyph. None uses Vega-Lite's default (filled symbol). |
+| `position` | [LegendPositionStyle](#legendpositionstyle) | Legend placement: edge, align along the edge, overlay or reserve. |
+
+<a id="paddingstyle"></a>
+## PaddingStyle
+Authored overlay for PaddingStyle. Per-chart padding inset (px). All 4 sides required; theme YAML supplies defaults.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `left` | float | Left padding in pixels. |
+| `right` | float | Right padding in pixels. |
+| `top` | float | Top padding in pixels. |
+| `bottom` | float | Bottom padding in pixels. |
 
 <a id="colorstyle"></a>
 ## ColorStyle
@@ -1656,6 +1669,24 @@ Authored overlay for HeatmapChartMarksStyle. Heatmap-family mark overrides.
 | `rect` | [RectMarkStyle](#rectmarkstyle) | Rect mark overrides; inherits from global. |
 | `text` | [TextMarkStyle](#textmarkstyle) | Text mark overrides; None inherits global. |
 
+<a id="pielegendstyle"></a>
+## PieLegendStyle
+Authored overlay for PieLegendStyle.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `direction` | enum: "horizontal", "vertical" | Legend layout direction. |
+| `columns` | int | Legend entry columns. Zero keeps the renderer default; positive values set Vega-Lite legend columns. |
+| `compact_columns` | int | Entry columns for an automatic compact top-horizontal legend. |
+| `label` | [LegendLabelStyle](#legendlabelstyle) | Legend label style. |
+| `title` | [LegendTitleStyle](#legendtitlestyle) | Legend title style. |
+| `visible` | bool | Show the legend. None = legend visible; False = explicitly suppressed. |
+| `symbol_limit` | int | Maximum number of legend entries to display; maps to VL symbolLimit. None uses Vega-Lite's default (no cap). Set to a positive integer to prevent legend overflow on high-cardinality series. |
+| `values` | list[str] | Explicit legend entry order/filter; each entry resolves against the real legend domain by its rendered text or its column/measure name (case/separator-insensitive). None lets the renderer infer order from the data. |
+| `symbol_shape` | str | Override the legend glyph shape; maps to VL legend.symbolType. None uses the mark-aware glyph derived from the chart's mark type. |
+| `symbol_fill` | bool | When False, emits symbolFillColor='transparent' to produce a hollow legend glyph. None uses Vega-Lite's default (filled symbol). |
+| `position` | [PiePositionStyle](#piepositionstyle) | Pie key placement: edge and align along it. |
+
 <a id="totalstyle"></a>
 ## TotalStyle
 Authored overlay for TotalStyle. Donut center total paint: value (the number) and label (the caption).
@@ -1695,17 +1726,6 @@ A single conditional formatting rule.
 | `glyph` | str | Text shown before the cell value when the rule matches. |
 | `glyph_color` | str | Color for the glyph when the rule matches. Requires glyph to be set. |
 | `tone` | enum: "positive", "negative", "warning", "info" | Semantic tone (positive\|negative\|warning\|info) that colors the glyph via the theme's tone palette; the preferred, theme-adaptive alternative to a raw glyph_color. Requires glyph. Explicit glyph_color wins. |
-
-<a id="formatconfig"></a>
-## FormatConfig
-Format configuration for value display.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `spec` | str | D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern. |
-| `prefix` | str | Text placed before the formatted value (e.g., '$'). |
-| `suffix` | str | Text placed after the formatted value (e.g., ' USD', '%'). |
-| `notation` | enum: "analytic", "narrative" | Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn). |
 
 <a id="fontstyle"></a>
 ## FontStyle
@@ -2156,6 +2176,7 @@ Authored overlay for HistogramChartStyle. Histogram chart style.
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
@@ -2163,13 +2184,12 @@ Authored overlay for HistogramChartStyle. Histogram chart style.
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
-| `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `axis` | [BaseAxisStyle](#baseaxisstyle) | Override applied to both x and y axes; None inherits the global axis at render. |
 | `axis_x` | [AxisXStyle](#axisxstyle) | Per-chart-type x-axis style overrides; None inherits the global axis_x at render. |
 | `axis_y` | [AxisYStyle](#axisystyle) | Per-chart-type y-axis style overrides; None inherits the global axis_y at render. |
 | `axis_band` | [BandAxisStyle](#bandaxisstyle) | Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render. |
-| `number_format` | str \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
+| `number_format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `bin_maxbins` | int | Maximum number of bins for auto-binning. |
@@ -2329,7 +2349,7 @@ Authored overlay for AxisLabelStyle. Axis label: font + padding + VL-passthrough
 | `bound` | bool \| float | Hide labels that overflow the axis range; None uses Vega-Lite's default. |
 | `flush` | bool \| float | Align first/last label flush with the scale range; None uses Vega-Lite's default. |
 | `offset` | float | Pixel offset of the label from its tick anchor; None uses Vega-Lite's default. |
-| `format` | str \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Tick value format string; None uses auto-format. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Tick value format string; None uses auto-format. |
 
 <a id="axistitlestyle"></a>
 ## AxisTitleStyle
@@ -2376,6 +2396,16 @@ Authored overlay for LegendTitleStyle.
 | `font` | [FontStyle](#fontstyle) | Legend element font style overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
 | `padding` | float | Padding between legend symbol and element text in pixels. |
 | `visible` | bool | Show the legend title; None = shown, False = suppressed (VL legend.title: null). |
+
+<a id="legendpositionstyle"></a>
+## LegendPositionStyle
+Authored overlay for LegendPositionStyle. Cartesian and geo legend placement: edge, align along it, overlay or reserve.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `edge` | enum: "left", "right", "top", "bottom" | Side of the plot the legend sits on. None = the engine decides. |
+| `align` | enum: "start", "center", "end" | Position along the edge. None = the engine decides. |
+| `overlay` | bool | True floats the legend over the plot, reserving no space; False reserves a strip for it. None = the engine decides. |
 
 <a id="scaletargetconfig"></a>
 ## ScaleTargetConfig
@@ -2434,7 +2464,7 @@ Authored overlay for DimensionLabelStyle. AxisLabelStyle + dimension-axis-only l
 | `bound` | bool \| float | Hide labels that overflow the axis range; None uses Vega-Lite's default. |
 | `flush` | bool \| float | Align first/last label flush with the scale range; None uses Vega-Lite's default. |
 | `offset` | float | Pixel offset of the label from its tick anchor; None uses Vega-Lite's default. |
-| `format` | str \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Tick value format string; None uses auto-format. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Tick value format string; None uses auto-format. |
 | `time_unit` | enum: "auto", "year", "yearquarter", "yearmonth", "yearweek", "yearmonthdate", "monthofyear", "dayofweek", "dayofmonth", "dayofyear", "hourofday", "none" | Label cadence for temporal axes; None inherits from the parent axis time_unit. |
 | `clock` | one of: 24, 12 | Sub-day clock register for a continuous temporal x-axis: 24 for the unambiguous, meridiem-free 24-hour clock, or 12 for the 12-hour clock with the Noon/Midnight word vocabulary. None leaves the value to the theme cascade. |
 | `tilt_increments` | list[float] | Descending tilt angles for label overlap resolution on discrete x-axes; None disables tilt. |
@@ -2461,7 +2491,7 @@ Per-edge label override for the mirrored ``axis_y.mirror`` ghost axis.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `format` | str \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Tick value format string for the mirrored edge; None reuses the primary axis's format. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Tick value format string for the mirrored edge; None reuses the primary axis's format. |
 | `expr` | str | Custom Vega expression for the mirrored edge's label text; None reuses the primary axis's label expression. |
 
 <a id="rulestyle"></a>
@@ -2547,7 +2577,7 @@ Per-layer y-axis tick-label format patch.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `format` | str \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | d3 format string for this layer's y-axis tick labels. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | d3 format string for this layer's y-axis tick labels. |
 
 <a id="linemarkstyle"></a>
 ## LineMarkStyle
@@ -2615,6 +2645,15 @@ Authored overlay for RectMarkStyle. Rect mark opacity and stroke.
 |-------|------|-------------|
 | `opacity` | float | Mark opacity (0–1); None means not overridden at this level. |
 | `stroke` | [StrokeStyle](#strokestyle) | Mark stroke style; None means not overridden at this level. |
+
+<a id="piepositionstyle"></a>
+## PiePositionStyle
+Authored overlay for PiePositionStyle. Pie key placement: edge and align, never overlay.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `edge` | enum: "left", "right", "top", "bottom" | Side of the wheel the key (legend or attached table) sits on. None = the engine decides. |
+| `align` | enum: "start", "center", "end" | Position of the key along that edge. None = the engine decides. |
 
 <a id="totalvalueslotstyle"></a>
 ## TotalValueSlotStyle
@@ -2921,7 +2960,7 @@ Authored overlay for BarLabelsStyle. Bar mark value-label config. Extends MarkLa
 |-------|------|-------------|
 | `visible` | bool | Show numeric value labels on each mark; False by default. |
 | `field` | str | Column to source label text from; None uses the chart's y-field. |
-| `format` | str \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Number format string for value labels. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Number format string for value labels. |
 | `dx` | int | Horizontal pixel offset for value labels; overrides the position default. |
 | `dy` | int | Vertical pixel offset for value labels; overrides the position default. |
 | `font` | [FontStyle](#fontstyle) | Value label font style (color, size, family, etc.). |
@@ -2934,7 +2973,7 @@ Authored overlay for BarTotalLabelStyle. Stack total label style for bar marks.
 | Field | Type | Description |
 |-------|------|-------------|
 | `visible` | bool | Show stack total labels above each bar stack. Only takes effect on stacked bar charts; ignored otherwise. |
-| `format` | str \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Number format string for stack total labels. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Number format string for stack total labels. |
 | `dx` | int | Horizontal pixel offset for stack total labels. |
 | `dy` | int | Vertical pixel offset for stack total labels. |
 | `font` | [FontStyle](#fontstyle) | Stack total label font style overrides; cascade fills missing fields from charts.font. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
@@ -2959,7 +2998,7 @@ Authored overlay for PointLabelsStyle. Point/line mark value-label config. Used 
 |-------|------|-------------|
 | `visible` | bool | Show numeric value labels on each mark; False by default. |
 | `field` | str | Column to source label text from; None uses the chart's y-field. |
-| `format` | str \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Number format string for value labels. |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Number format string for value labels. |
 | `dx` | int | Horizontal pixel offset for value labels; overrides the position default. |
 | `dy` | int | Vertical pixel offset for value labels; overrides the position default. |
 | `font` | [FontStyle](#fontstyle) | Value label font style (color, size, family, etc.). |
@@ -3409,6 +3448,7 @@ Reference to a dbt profile.
 | `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
 | `target` | str | dbt target to use; defaults to the profile's default target. |
 | `profiles_dir` | str | Directory containing profiles.yml, relative to the linked dbt project directory (see --dbt-project-dir). Use when profiles.yml is in a subdirectory (e.g. services/dbt). Resolution order: profiles_dir → $DBT_PROFILES_DIR → linked dbt project → ~/.dbt. |
+| `target_path` | str | Directory holding the manifest.json built for this target, relative to the linked dbt project directory; same meaning as dbt's --target-path. ref() and source() resolve against &lt;target_path&gt;/manifest.json. Build it with `dbt parse --target &lt;target&gt; --target-path &lt;target_path&gt;`. Defaults to dbt's own resolution: $DBT_TARGET_PATH → dbt_project.yml target-path → target. |
 
 # dbt charts Project Config Reference: execution settings
 

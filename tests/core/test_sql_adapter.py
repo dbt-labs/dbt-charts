@@ -1272,3 +1272,34 @@ class TestDbtProfileSourceCallsiteUsesDbpProjectPath:
         # With the fix it resolves to DuckDBSourceConfig.
         assert result is not None
         assert result.type == "duckdb"
+
+
+class TestExecutePrepared:
+    def test_sends_the_substituted_wire_sql(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A check that wraps rendered SQL (SQL Server's describe) swaps
+        ``prepared.sql`` and still runs on the real execute path: nothing is
+        rendered or guarded a second time."""
+        from unittest.mock import MagicMock, patch
+
+        from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
+
+        adapter = _sql(local_project, profile_type="sqlserver")
+        source = DbtTargetSourceConfig(type="sqlserver", host="h")
+        query = SqlQuery(sql="SELECT 1 AS n", source="sqlserver")
+        prepared = adapter.prepare_sql(query, source_config=source)
+        assert not isinstance(prepared, QueryResult)
+
+        table = MagicMock()
+        table.column_names = ["N"]
+        table.rows = [(1,)]
+        pool = MagicMock()
+        pool.execute.return_value = table
+        # A placeholder-shaped literal that a second render would corrupt.
+        wrapped = prepared.model_copy(update={"sql": "SELECT '{{ x }}' AS wrapped"})
+        with patch.object(adapter, "_get_source_pool", return_value=pool):
+            result = adapter.execute_prepared(wrapped, query, source)
+
+        assert pool.execute.call_args.args[0] == "SELECT '{{ x }}' AS wrapped"
+        assert result.data == [{"n": 1}]

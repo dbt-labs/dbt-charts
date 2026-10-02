@@ -175,6 +175,13 @@ def register_temporarily() -> Iterator[Callable[[DiagnosticCode], None]]:
 
 
 @pytest.fixture(autouse=True)
+def unset_dbt_target_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DBT_TARGET_PATH moves where manifests are read from; a developer's shell
+    value must not reach a test that expects dbt's default location."""
+    monkeypatch.delenv("DBT_TARGET_PATH", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def isolate_resolve_style_cache() -> Iterator[None]:
     """Clear the resolve_style cache around every test.
 

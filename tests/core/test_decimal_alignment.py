@@ -14,6 +14,10 @@ trimmed-decimal column has equal rendered advance.
 
 from __future__ import annotations
 
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
+
+from .conftest import baked_format
+
 # ---------------------------------------------------------------------------
 # decimal_reservation_pad unit tests
 # ---------------------------------------------------------------------------
@@ -172,7 +176,7 @@ class TestAxisDecimalAlignment:
 
         ticks = (1.0, 1.5, 2.0, 2.5)
         labels = quantitative_tick_labels(
-            ticks, ",.1~f", ruler=None, tick_label=tick_label
+            ticks, ResolvedFormat(spec=",.1~f"), ruler=None, tick_label=tick_label
         )
 
         widths = self._measure(labels)
@@ -200,7 +204,7 @@ class TestAxisDecimalAlignment:
 
         ticks = (-2.5, -2.0, -1.5, -1.0)
         labels = quantitative_tick_labels(
-            ticks, ",.1~f", ruler=None, tick_label=tick_label
+            ticks, ResolvedFormat(spec=",.1~f"), ruler=None, tick_label=tick_label
         )
 
         widths = self._measure(labels)
@@ -228,7 +232,7 @@ class TestAxisDecimalAlignment:
 
         ticks = (1.5, 2.5, 3.5, 4.5)
         labels = quantitative_tick_labels(
-            ticks, ",.1~f", ruler=None, tick_label=tick_label
+            ticks, ResolvedFormat(spec=",.1~f"), ruler=None, tick_label=tick_label
         )
 
         # All should contain the decimal point (no trimming happened)
@@ -265,6 +269,7 @@ class TestAxisDecimalAlignment:
         ruler = ResolvedRulerAxis(
             exponent=6,
             mode=SuffixMode.ANCHOR,
+            register="analytic",
             reserve=True,
             prefix_repeats=False,
             prefix="",
@@ -275,7 +280,9 @@ class TestAxisDecimalAlignment:
         )
         # exponent=6: scaled values are 1/1.5/2/2.5 -- exactly the alignment case
         ticks = (1_000_000.0, 1_500_000.0, 2_000_000.0, 2_500_000.0)
-        labels = quantitative_tick_labels(ticks, "$.3~s", ruler=ruler)
+        labels = quantitative_tick_labels(
+            ticks, ResolvedFormat(spec="$.3~s"), ruler=ruler
+        )
 
         # Verify visual alignment: all labels should have equal measured advance
         # (the suffix and reservation each have a fixed advance, so total label
@@ -507,10 +514,10 @@ class TestResolveBakeDecision:
 
         ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
         chart = LineChart(id="fixture", type="line")
-        _, ay_merged, _, ay_band_pos, _ = _bake_cartesian_axes(
+        baked = _bake_cartesian_axes(
             ctx, chart, "line", "temporal", "quantitative", AxisOverrides()
         )
-        return ay_merged, ay_band_pos
+        return baked.y.style, baked.y.band_position
 
     def test_axis_cascade_mixed_depth_gets_nonempty_pad_table(self) -> None:
         """0/0.5/1/1.5/2 under the theme's SI format (.3~s default) give
@@ -525,12 +532,13 @@ class TestResolveBakeDecision:
         ay, ay_band_pos = self._merged_ay()
         result = build_resolved_axis(
             ay,
+            format=baked_format(ay, raw="number"),
             band_position=ay_band_pos,
             tick_values=(0.0, 0.5, 1.0, 1.5, 2.0),
             column_forming=True,
-            format_raw="number",
             is_quantitative=True,
             chart_id="test",
+            formats=None,
         )
         assert result.tick_label is not None
         assert result.tick_label.decimal_pad_table, (
@@ -552,12 +560,13 @@ class TestResolveBakeDecision:
         ay, ay_band_pos = self._merged_ay()
         result = build_resolved_axis(
             ay,
+            format=baked_format(ay, raw="number"),
             band_position=ay_band_pos,
             tick_values=(0.0, 1.0, 2.0, 3.0),
             column_forming=True,
-            format_raw="number",
             is_quantitative=True,
             chart_id="test",
+            formats=None,
         )
         assert result.tick_label is not None
         assert result.tick_label.decimal_pad_table == (), (
@@ -681,11 +690,16 @@ class TestVegaDecimalPadExpr:
 
         pad_table = decimal_pad_table_for(",.1~f", DBT_SANS_TABULAR_FONT_FAMILY)
         tick_label = ResolvedTickLabel(format=",.1~f", decimal_pad_table=pad_table)
-        out_with_pad = inject_axis_numeral_expr({}, ruler=None, tick_label=tick_label)
+        out_with_pad = inject_axis_numeral_expr(
+            {}, ruler=None, tick_label=tick_label, fmt=ResolvedFormat(spec=",.1~f")
+        )
 
         tick_label_no_pad = ResolvedTickLabel(format=",.1~f", decimal_pad_table=())
         out_without_pad = inject_axis_numeral_expr(
-            {}, ruler=None, tick_label=tick_label_no_pad
+            {},
+            ruler=None,
+            tick_label=tick_label_no_pad,
+            fmt=ResolvedFormat(spec=",.1~f"),
         )
 
         expr_with = out_with_pad.get("labelExpr", "")
@@ -725,9 +739,13 @@ class TestVegaDecimalPadExpr:
 
         import dataclasses
 
-        out_with = inject_axis_numeral_expr({}, ruler=ruler_with_pad, tick_label=None)
+        out_with = inject_axis_numeral_expr(
+            {}, ruler=ruler_with_pad, tick_label=None, fmt=ResolvedFormat(spec=".2~s")
+        )
         ruler_no_pad = dataclasses.replace(ruler_with_pad, decimal_pad_table=())
-        out_without = inject_axis_numeral_expr({}, ruler=ruler_no_pad, tick_label=None)
+        out_without = inject_axis_numeral_expr(
+            {}, ruler=ruler_no_pad, tick_label=None, fmt=ResolvedFormat(spec=".2~s")
+        )
 
         expr_with = out_with.get("labelExpr", "")
         expr_without = out_without.get("labelExpr", "")
@@ -930,9 +948,10 @@ class TestDecimalPadForEdgeCases:
 
         ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
         chart = LineChart(id="fixture", type="line")
-        _, ay_merged, _, ay_band_pos, _ = _bake_cartesian_axes(
+        baked = _bake_cartesian_axes(
             ctx, chart, "line", "temporal", "quantitative", AxisOverrides()
         )
+        ay_merged, ay_band_pos = baked.y.style, baked.y.band_position
 
         # column_forming=False disables the start-anchor path; force it by
         # passing column_forming=True but with the axis positioned on the right
@@ -947,12 +966,13 @@ class TestDecimalPadForEdgeCases:
         # since the guard is `column_forming AND NOT start_anchored`).
         result_non_column_forming = build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged, raw="number"),
             band_position=ay_band_pos,
             tick_values=(0.0, 0.5, 1.0, 1.5, 2.0),  # mixed depth
             column_forming=False,
-            format_raw="number",
             is_quantitative=True,
             chart_id="test",
+            formats=None,
         )
         assert result_non_column_forming.tick_label is not None
         assert result_non_column_forming.tick_label.decimal_pad_table == (), (

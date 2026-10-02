@@ -535,6 +535,86 @@ class TestCheckModelColumns:
         assert result.errors == []
         assert result.warnings == []
 
+    def test_columns_derive_from_the_sources_target_path_manifest(self, tmp_path):
+        """The default manifest's `orders` lacks customer_id; the prod one has it.
+        A source authored with target_path is judged against prod, not drift."""
+        _project_with_manifest(
+            tmp_path,
+            {"model.p.orders": _model("orders", "SELECT id AS user_id FROM r")},
+        )
+        (tmp_path / "dbt_charts.yml").write_text(
+            "name: p\n"
+            "sources:\n"
+            "  s:\n"
+            "    type: dbt_profile\n"
+            "    profile: p\n"
+            "    target_path: target/prod\n"
+        )
+        (tmp_path / "target" / "prod").mkdir()
+        (tmp_path / "target" / "prod" / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "metadata": {"adapter_type": "postgres"},
+                    "nodes": {
+                        "model.p.orders": _model(
+                            "orders", "SELECT id AS customer_id FROM r"
+                        )
+                    },
+                }
+            )
+        )
+        result = _compile("SELECT customer_id FROM {{ ref('orders') }}")
+
+        check_model_columns(result, FilesystemProject(tmp_path))
+        assert result.errors == []
+
+        (tmp_path / "dbt_charts.yml").write_text(
+            "name: p\nsources:\n  s:\n    type: dbt_profile\n    profile: p\n"
+        )
+        drifted = _compile("SELECT customer_id FROM {{ ref('orders') }}")
+
+        check_model_columns(drifted, FilesystemProject(tmp_path))
+        assert [e.code for e in drifted.errors] == ["ERR-DBT-MODEL-COLUMN-MISSING"]
+
+    def test_unusable_default_target_path_is_not_a_fault_without_ref(
+        self, tmp_path, monkeypatch
+    ):
+        """dbt accepts an absolute DBT_TARGET_PATH; a board that never calls ref()
+        has no manifest to read and must keep validating."""
+        monkeypatch.setenv("DBT_TARGET_PATH", "/ci/target")
+        (tmp_path / "dbt_charts.yml").write_text("name: p\n")
+        result = _compile("SELECT 1 AS x")
+
+        check_model_columns(result, FilesystemProject(tmp_path))
+
+        assert result.errors == []
+
+    def test_unusable_default_target_path_is_not_read_when_every_ref_query_authors_one(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("DBT_TARGET_PATH", "/ci/target")
+        _project_with_manifest(tmp_path, {})
+        (tmp_path / "dbt_charts.yml").write_text(
+            "name: p\nsources:\n  s:\n    type: dbt_profile\n"
+            "    profile: p\n    target_path: target\n"
+        )
+        result = _compile("SELECT 1 AS x FROM {{ ref('orders') }}")
+
+        check_model_columns(result, FilesystemProject(tmp_path))
+
+        assert result.errors == []
+
+    def test_unusable_default_target_path_is_reported_for_ref(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("DBT_TARGET_PATH", "/ci/target")
+        (tmp_path / "dbt_charts.yml").write_text("name: p\n")
+        result = _compile("SELECT 1 AS x FROM {{ ref('orders') }}")
+
+        check_model_columns(result, FilesystemProject(tmp_path))
+
+        assert [e.code for e in result.errors] == ["ERR-DBT-TARGET-PATH-INVALID"]
+
     def test_corrupt_manifest_is_reported_not_swallowed(self, tmp_path):
         """check_manifest_refs only loads the manifest when a query carries a
         ref() call — a bare-table board with a corrupt manifest would

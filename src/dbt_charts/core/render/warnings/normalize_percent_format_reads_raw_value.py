@@ -82,7 +82,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         if chart.stack != "normalize":
             continue
         measure_format = chart.style.axis_y.labels.format
-        if measure_format is None or "%" not in measure_format:
+        if measure_format is None or "%" not in measure_format.spec:
             continue
         if chart_id not in ctx.chart_results:
             continue

@@ -21,18 +21,19 @@ from typing import Any, Literal
 
 from dbt_charts.core.colors import sanitize_color
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format import resolve_format, resolve_format_parts
 from dbt_charts.core.compile.models.chart.authored import (
     ConditionalRule,
-    KpiSupportConfig,
     match_predicate,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
-    FormatState,
     ResolvedKpiChart,
+    ResolvedKpiSupportConfig,
     ResolvedStyleChannel,
 )
 from dbt_charts.core.compile.models.primitives import (
+    FormatAliases,
+    ResolvedFormat,
     SpacingValues,
     ToneLiteral,
 )
@@ -297,11 +298,12 @@ def _resolve_value(raw: str, row: dict[str, Any], chart_id: str) -> tuple[Any, s
 
 def _format_value_parts(
     cell: Any,
-    format_input: FormatState,
+    format_input: ResolvedFormat | None,
     chart_id: str,
     formats: dict[str, Any] | None = None,
     native: bool = False,
     format_may_be_cascaded: bool = False,
+    keep_affix_gaps: bool = False,
 ) -> tuple[str, str, str, bool]:
     """Format a KPI cell into ``(prefix, number_str, suffix, is_numeric)``.
 
@@ -324,8 +326,13 @@ def _format_value_parts(
     """
     if is_temporal_value(cell):
         resolved = resolve_format(format_input, formats)
+        date_prefix = date_suffix = ""
         if not resolved or is_time_format(resolved):
             spec = resolved or PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
+            authored = resolve_format_parts(
+                format_input, formats, no_format_default=None
+            )
+            date_prefix, date_suffix = authored.prefix, authored.suffix
         elif format_may_be_cascaded:
             spec = PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
         else:
@@ -333,7 +340,8 @@ def _format_value_parts(
                 ERR_KPI_FORMAT_KIND_MISMATCH, chart_id=chart_id, spec=resolved
             )
         try:
-            return "", format_temporal_value(cell, spec), "", False
+            date_text = format_temporal_value(cell, spec)
+            return "", f"{date_prefix}{date_text}{date_suffix}", "", False
         except ValueError as e:
             raise ChartDataError.from_code(
                 ERR_KPI_TEMPORAL_FORMAT_INVALID,
@@ -348,7 +356,12 @@ def _format_value_parts(
         text = "" if cell is None else str(cell)
         return "", text, "", False
     prefix, number_str, suffix = format_kpi_parts(
-        numeric, format_input, formats, native=native
+        numeric,
+        format_input,
+        formats,
+        native=native,
+        keep_affix_gaps=keep_affix_gaps,
+        sign_in_prefix=True,
     )
     return prefix, number_str, suffix, True
 
@@ -763,11 +776,11 @@ def _resolve_kpi_layout(
 
 def _resolve_kpi_colors(
     row: dict[str, Any],
-    main_format: FormatState,
+    main_format: ResolvedFormat | None,
     kpi_config: KpiChartStyle,
     resolved_channels: dict[str, ResolvedStyleChannel],
     chart_background: str | None,
-    formats: dict[str, str] | None = None,
+    formats: FormatAliases | None = None,
     *,
     board_style: ResolvedStyle,
 ) -> _KpiColors:
@@ -844,13 +857,38 @@ def _resolve_kpi_colors(
     )
 
 
+def kpi_value_text(
+    cell: Any,  # type-state: explicit_any — a query cell, dynamically typed
+    format_input: ResolvedFormat | None,
+    chart_id: str,
+    formats: FormatAliases | None,
+    *,
+    native: bool = False,
+    format_may_be_cascaded: bool = False,
+) -> str:
+    """A KPI value as one flat string, for a caller with no per-lane kerning.
+
+    A flat string has no lane kerning, so lanes keep an affix's whitespace.
+    """
+    prefix, number_str, suffix, _ = _format_value_parts(
+        cell,
+        format_input,
+        chart_id,
+        formats,
+        native=native,
+        format_may_be_cascaded=format_may_be_cascaded,
+        keep_affix_gaps=True,
+    )
+    return f"{prefix}{number_str}{suffix}"
+
+
 def _resolve_support_row(
-    support: KpiSupportConfig | None,
+    support: ResolvedKpiSupportConfig | None,
     row: dict[str, Any],
     tones: KpiTonesStyle,
     muted: str,
     chart_id: str,
-    formats: dict[str, str] | None = None,
+    formats: FormatAliases | None = None,
 ) -> _SupportRow | None:
     """Resolve the support row's text and colors. Returns None when the row
     is absent or carries no content to emit."""
@@ -862,13 +900,7 @@ def _resolve_support_row(
     # Support keeps the BI default register — its dense numeric form
     # belongs alongside axis ticks and table cells, not the hero number
     # above it.
-    s_prefix, s_number_str, s_suffix, _ = _format_value_parts(
-        s_cell, support.format, chart_id, formats
-    )
-    if s_prefix or s_suffix:
-        value_str = f"{s_prefix}{s_number_str}{s_suffix}"
-    else:
-        value_str = s_number_str
+    value_str = kpi_value_text(s_cell, support.format, chart_id, formats)
 
     glyph = support.glyph or ""
     explainer = support.label or ""
@@ -894,7 +926,7 @@ def _render_kpi_svg_core(
     chart_background: str | None,
     kpi_config: KpiChartStyle,
     title_style: TitleStyle,
-    formats: dict[str, str] | None,
+    formats: FormatAliases | None,
     board_style: ResolvedStyle,
     width: float | None,
     height: float | None,

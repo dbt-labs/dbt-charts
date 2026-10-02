@@ -52,7 +52,9 @@ from dbt_charts.core.execute.adapters.base import (
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    SUPPORTED_ADAPTER_TYPES,
     ConnectionSetupFailed,
+    import_adapter_module,
     open_connection,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
@@ -180,8 +182,10 @@ def _read_target_dict(
     connection = {k: v for k, v in target.items() if k not in {"threads", "type"}}
 
     # Everything dbt can reject about a target arrives as ValueError, which is what
-    # all three callers guard on: an unknown adapter type, a duplicated alias
-    # (project *and* database), or a schema violation.
+    # both callers guard on: an unknown adapter type, a duplicated alias
+    # (project *and* database), or a schema violation. The exception is a mapped
+    # adapter whose package is missing: AdapterNotInstalledError, so callers that
+    # keep coded DbtChartsErrors surface its install command.
     #
     # Validation needs dbt's canonical spelling AND its rendered values — dbt renders
     # Jinja first, so validating the raw YAML would reject an env_var() in any field
@@ -200,6 +204,11 @@ def _read_target_dict(
             f"{exc.message}"
         ) from exc
     except DbtRuntimeError as exc:
+        # load_plugin's "Could not find adapter type" names no fix; for a type
+        # dbt Charts maps, re-import it ourselves so a missing package raises
+        # ERR-ADAPTER-NOT-INSTALLED with the install command instead.
+        if typename.lower() in SUPPORTED_ADAPTER_TYPES:
+            import_adapter_module(typename)
         raise ValueError(
             f"Profile '{profile_name}' target '{resolved_target}': {exc}"
         ) from exc
@@ -433,6 +442,7 @@ class DbtAdapter(BaseAdapter):
                 profile_name was provided.
             ValueError: dbt_project.yml has no 'profile:' key, or the
                 resolved profile/target is missing or invalid.
+            AdapterNotInstalledError: the target's adapter package is missing.
         """
         return str(self._resolve_target_dict()["type"])
 

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from dbt_charts._install_hint import install_hint
 from dbt_charts.core.compile.models.source import (
     BigQuerySourceConfig,
     DuckDBSourceConfig,
@@ -358,8 +359,10 @@ def test_missing_google_cloud_raises_install_hint(
         raise AssertionError(f"unexpected module import: {name}")
 
     monkeypatch.setattr("importlib.import_module", _fake_import)
-    with pytest.raises(ImportError, match=r"dbt-charts\[bigquery\]"):
+    with pytest.raises(ImportError) as exc_info:
         build_bigquery_client("my-project")
+    # The installer-aware command: a uv-tool install must not be told to pip.
+    assert install_hint("bigquery") in str(exc_info.value)
 
 
 def test_missing_google_oauth_raises_install_hint(

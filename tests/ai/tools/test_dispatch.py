@@ -12,9 +12,9 @@ from dbt_charts.agent_api import ProjectSession
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.ai.tools import TOOL_HANDLERS, dispatch_tool_call, handle_tool_call
 
-_FIXTURE_PROJECT_SCAFFOLD = (
-    Path(__file__).parent.parent.parent / "fixtures" / "project-scaffold"
-)
+from ..._paths import DBT_CHARTS_DIR
+
+_FIXTURE_PROJECT_SCAFFOLD = DBT_CHARTS_DIR / "tests" / "fixtures" / "project-scaffold"
 
 _INLINE_BOARD_YAML = (
     "title: T\nqueries:\n  q:\n    columns: [v]\n    values:\n      - [1]\n"

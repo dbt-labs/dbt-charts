@@ -263,6 +263,43 @@ rows: [grid]
 """,
                 id="pivot-table",
             ),
+            pytest.param(
+                """
+source: test
+charts:
+  rev:
+    query: {sql: "SELECT 1 AS m, 2 AS v"}
+    type: bar
+    x: m
+    y: v
+    support_table:
+      - source: v
+        format: ",.0f"
+      - source: v
+        aggregate: sum
+        format:
+          spec: ",.0f"
+          prefix: "EUR "
+rows: [rev]
+""",
+                id="support-table-formats",
+            ),
+            pytest.param(
+                """
+source: test
+charts:
+  card:
+    query: {sql: "SELECT 1 AS v, 2 AS s"}
+    type: kpi
+    value: v
+    support:
+      value: s
+      format:
+        prefix: "EUR "
+rows: [card]
+""",
+                id="kpi-formats",
+            ),
         ],
     )
     def test_round_trip_compiles_across_families(self, source_yaml):
@@ -279,6 +316,7 @@ rows: [grid]
         assert compiled.board is not None, [e.message for e in compiled.errors]
 
         executor = _make_executor([{"m": 1, "v": 2}])
+        executor.execute_query.return_value = [{"m": 1, "v": 2}]
         result = render(compiled.board, executor, format="yaml").output
 
         recompiled = compile(result)
@@ -441,3 +479,59 @@ def test_safe_dump_rejects_a_type_clean_value_does_not_normalize(make_chart):
 
     with pytest.raises(yaml.representer.RepresenterError):
         render_board_yaml(board, executor, {})
+
+
+def test_round_trip_renders_a_decided_sign_placement_as_unauthored():
+    """A sign placement resolve decided is not written back as authored: the
+    recompiled board renders the same anchored prefix, with no error."""
+    from ._svg_render import render_board_to_svg
+
+    source = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: "2026-01-01", net: 120000}
+      - {month: "2026-02-01", net: -40000}
+charts:
+  c:
+    query: q
+    type: line
+    x: month
+    y: net
+    style:
+      axis_y:
+        ticks:
+          count: 5
+        labels:
+          format:
+            spec: number
+            prefix: "€"
+    support_table:
+      entries:
+        - source: net
+          format:
+            spec: integer
+            prefix: "€"
+rows:
+  - c
+"""
+    from pathlib import Path
+
+    from dbt_charts.cli.filesystem_project import FilesystemProject
+    from dbt_charts.core.compile import compile
+    from dbt_charts.core.execute.adapters import build_adapter_registry
+
+    compiled = compile(source)
+    assert compiled.board is not None
+    executor = Executor(
+        compiled.board,
+        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        query_registry=compiled.query_registry,
+    )
+    round_tripped = render(compiled.board, executor, format="yaml").output
+    assert "sign_placement" not in round_tripped, round_tripped
+    for svg in (render_board_to_svg(source), render_board_to_svg(round_tripped)):
+        assert "ERR-" not in svg, svg
+        assert ">€120,000<" in svg, svg

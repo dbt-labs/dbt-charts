@@ -17,6 +17,8 @@ from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.chart import resolved as _resolved_pkg
 
+from ..conftest import baked_format
+
 
 def _bake_test_axes(chart_type: str):
     """Return (ax, ay) baked for the given chart type using the default theme."""
@@ -31,7 +33,7 @@ def _bake_test_axes(chart_type: str):
     from ..conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -39,18 +41,27 @@ def _bake_test_axes(chart_type: str):
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     return (
         build_resolved_axis(
             ax_merged,
+            format=baked_format(ax_merged),
             band_position=ax_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
         build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged),
             band_position=ay_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
     )
 
@@ -249,14 +260,14 @@ def test_resolved_area_line_style_construction():
     """ResolvedAreaLineStyle must construct with all required non-None fields."""
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedAreaLineStyle,
+        ResolvedPointLabels,
         ResolvedStrokeStyle,
     )
-    from dbt_charts.core.compile.models.style.theme import PointLabelsStyle
 
     mark = ResolvedAreaLineStyle(
         stroke=ResolvedStrokeStyle(width=1.5),
         halo_multiplier=2.0,
-        labels=PointLabelsStyle(),
+        labels=ResolvedPointLabels(),
     )
     assert mark.stroke.width == 1.5
     assert mark.halo_multiplier == 2.0
@@ -266,15 +277,15 @@ def test_resolved_line_mark_style_construction():
     """ResolvedLineMarkStyle must construct with all required non-None fields."""
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedLineMarkStyle,
+        ResolvedPointLabels,
         ResolvedStrokeStyle,
     )
-    from dbt_charts.core.compile.models.style.theme import PointLabelsStyle
 
     mark = ResolvedLineMarkStyle(
         stroke=ResolvedStrokeStyle(width=1.5),
         halo_multiplier=2.0,
         curve=None,
-        labels=PointLabelsStyle(),
+        labels=ResolvedPointLabels(),
     )
     assert mark.stroke.width == 1.5
     assert mark.halo_multiplier == 2.0
@@ -287,19 +298,17 @@ def test_resolved_area_style_uses_resolved_mark_types():
         ResolvedAreaLineStyle,
         ResolvedAreaMarkStyle,
         ResolvedAreaStyle,
+        ResolvedPointLabels,
+        ResolvedPointMarkStyle,
         ResolvedSeriesLabelStyle,
         ResolvedStrokeStyle,
-    )
-    from dbt_charts.core.compile.models.style.theme import (
-        PointLabelsStyle,
-        PointMarkStyle,
     )
 
     area_mark = ResolvedAreaMarkStyle(opacity=0.3, backdrop=True)
     line_mark = ResolvedAreaLineStyle(
         stroke=ResolvedStrokeStyle(width=1.5),
         halo_multiplier=2.0,
-        labels=PointLabelsStyle(),
+        labels=ResolvedPointLabels(),
     )
     ax, ay = _bake_test_axes("area")
     style = ResolvedAreaStyle(
@@ -313,7 +322,7 @@ def test_resolved_area_style_uses_resolved_mark_types():
         ),
         area_mark=area_mark,
         line_mark=line_mark,
-        point_mark=PointMarkStyle(),
+        point_mark=ResolvedPointMarkStyle(),
         endpoint_labels=EndpointLabelsConfig(
             visible=False, label_offset=8.0, height=20.0
         ),
@@ -334,19 +343,17 @@ def test_resolved_line_style_uses_resolved_mark_type():
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedLineMarkStyle,
         ResolvedLineStyle,
+        ResolvedPointLabels,
+        ResolvedPointMarkStyle,
         ResolvedSeriesLabelStyle,
         ResolvedStrokeStyle,
-    )
-    from dbt_charts.core.compile.models.style.theme import (
-        PointLabelsStyle,
-        PointMarkStyle,
     )
 
     line_mark = ResolvedLineMarkStyle(
         stroke=ResolvedStrokeStyle(width=1.5),
         halo_multiplier=2.0,
         curve=None,
-        labels=PointLabelsStyle(),
+        labels=ResolvedPointLabels(),
     )
     ax, ay = _bake_test_axes("line")
     style = ResolvedLineStyle(
@@ -359,7 +366,7 @@ def test_resolved_line_style_uses_resolved_mark_type():
             gap_px=18.2,
         ),
         line_mark=line_mark,
-        point_mark=PointMarkStyle(),
+        point_mark=ResolvedPointMarkStyle(),
         endpoint_labels=EndpointLabelsConfig(
             visible=False, label_offset=8.0, height=20.0
         ),

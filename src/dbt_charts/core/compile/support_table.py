@@ -15,19 +15,44 @@ helpers) live there too.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.format import (
+    resolve_format_parts,
+    resolve_format_parts_for_values,
+)
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTable,
+    ChartSupportTableAggregate,
     ChartSupportTablePerSeries,
 )
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.chart.authored._support_table import (
+    ChartSupportTableEntry,
+)
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedSupportTable,
+    ResolvedSupportTableAggregate,
+    ResolvedSupportTableEntry,
+    ResolvedSupportTablePerSeries,
+    ResolvedSupportTableSource,
+)
+from dbt_charts.core.compile.models.primitives import (
+    AuthoredFormat,
+    FormatAliases,
+    ResolvedFormat,
+    resolved_as,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme import SupportTableStyle
+from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
 from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
 from dbt_charts.core.diagnostics.codes_compile import ERR_SUPPORT_TABLE_POSITION_INVALID
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_SUB_UNIT_FALLBACK,
+    PredefinedNumberFormat,
+)
 
 # Row geometry. These are the compiler's constants — they live here rather
 # than on the style model because they are emitter mechanics, not user-facing
@@ -164,7 +189,7 @@ def resolve_support_table_position(
 
 
 def apply_measure_format_to_support_table(
-    support_table: ChartSupportTable, measure_format: str | FormatConfig, y_field: str
+    support_table: ChartSupportTable, measure_format: AuthoredFormat, y_field: str
 ) -> ChartSupportTable:
     """Inherit measure_format into support_table entries reading y_field with no authored format.
 
@@ -186,3 +211,63 @@ def apply_measure_format_to_support_table(
             entry = entry.model_copy(update={"format": measure_format})
         resolved_entries.append(entry)
     return support_table.model_copy(update={"entries": resolved_entries})
+
+
+def resolve_support_table(
+    support_table: ChartSupportTable,
+    formats: FormatAliases | None,
+    data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
+    y: str | list[str] | None,
+    *,
+    stamp_number: bool,
+) -> ResolvedSupportTable:
+    """Bake every entry's format.
+
+    A sub-$1-floor or spec-less-affix format votes its spec over the entry's
+    values and then reads as native digits, not house. With ``stamp_number``,
+    an entry reading ``y`` with no format takes the engine's ``number``.
+    """
+    entries: list[ResolvedSupportTableEntry] = []
+    for entry in support_table.entries:
+        column = (
+            entry.per_series
+            if isinstance(entry, ChartSupportTablePerSeries)
+            else entry.source
+        )
+        # A per_series entry votes over the chart's y column(s), not its own.
+        voted_columns = y if isinstance(entry, ChartSupportTablePerSeries) else column
+        fmt: ResolvedFormat | None = None
+        if entry.format is not None:
+            fmt = resolve_format_parts(entry.format, formats, no_format_default=None)
+            if fmt.is_spec_less_affix or fmt.raw in PREDEFINED_SUB_UNIT_FALLBACK:
+                fields = (
+                    voted_columns
+                    if isinstance(voted_columns, list)
+                    else [voted_columns]
+                    if voted_columns is not None
+                    else []
+                )
+                voted = resolve_format_parts_for_values(
+                    entry.format,
+                    formats,
+                    [v for f in fields for v in _column_numeric_values(data, f)],
+                    no_format_default=PredefinedNumberFormat.number,
+                )
+                if voted.spec != fmt.spec:
+                    fmt = voted.model_copy(update={"raw": None})
+        elif stamp_number and column == y:
+            fmt = resolve_format_parts(
+                PredefinedNumberFormat.number, formats, no_format_default=None
+            )
+        entries.append(_with_resolved_format(entry, fmt))
+    return ResolvedSupportTable(entries=entries)
+
+
+def _with_resolved_format(
+    entry: ChartSupportTableEntry, fmt: ResolvedFormat | None
+) -> ResolvedSupportTableEntry:
+    if isinstance(entry, ChartSupportTablePerSeries):
+        return resolved_as(ResolvedSupportTablePerSeries, entry, format=fmt)
+    if isinstance(entry, ChartSupportTableAggregate):
+        return resolved_as(ResolvedSupportTableAggregate, entry, format=fmt)
+    return resolved_as(ResolvedSupportTableSource, entry, format=fmt)

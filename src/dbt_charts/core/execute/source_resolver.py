@@ -265,10 +265,13 @@ class DefaultSourceResolver:
         except (FileNotFoundError, ValueError) as exc:
             raise ExecutionError(str(exc)) from exc
 
-        # The authored attribution rides the dbt charts source entry, not the dbt
+        # Attribution and target_path ride the dbt charts source entry, not the dbt
         # target — profiles.yml belongs to dbt and rejects keys it doesn't know — so
-        # carry it across the expansion or it is lost for every dbt_profile source.
-        return DbtTargetSourceConfig(**target_dict, attribution=cfg.attribution)
+        # carry them across the expansion or they are lost for every dbt_profile
+        # source.
+        return DbtTargetSourceConfig(
+            **target_dict, attribution=cfg.attribution, target_path=cfg.target_path
+        )
 
 
 def _summarize_inline_source(source_dict: dict[str, Any]) -> str:

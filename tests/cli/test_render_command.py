@@ -17,9 +17,11 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.cli.main import app
 from dbt_charts.core.diagnostics import Diagnostic
 
+from .._paths import DBT_CHARTS_DIR
+
 runner = CliRunner()
 
-_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
+_FIXTURE_DIR = DBT_CHARTS_DIR / "tests" / "fixtures"
 
 
 class TestRenderCommandDiagnosticErrors:
@@ -859,7 +861,10 @@ class TestDftRenderFormatChoice:
         result = runner.invoke(app, ["render", "--help"])
         assert result.exit_code == 0
         combined = result.output + result.stderr
-        assert "[svg|html|png|pdf|terminal|json|text|text-data|yaml|data]" in combined
+        assert (
+            "[svg|html|png|pdf|thumbnail|terminal|json|text|text-data|yaml|data]"
+            in combined
+        )
 
 
 class TestDftRenderPrintsOutputPathToStdout:
@@ -1183,6 +1188,33 @@ class TestDftRenderFormatInference:
         renders_dir = tmp_path / "project" / "renders"
         svgs = list(renders_dir.glob("*.svg"))
         assert svgs, "expected an .svg file in renders/"
+
+    def test_thumbnail_default_output_does_not_overwrite_the_svg_render(
+        self, tmp_path: Path
+    ) -> None:
+        """Both formats are .svg; their default paths must differ."""
+        shutil.copytree(_FIXTURE_DIR / "no-warehouse-board", tmp_path / "project")
+        (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
+        for fmt in ("svg", "thumbnail"):
+            result = runner.invoke(
+                app,
+                [
+                    "render",
+                    "charts/board.yml",
+                    "--format",
+                    fmt,
+                    "--project-dir",
+                    str(tmp_path / "project"),
+                ],
+            )
+            assert result.exit_code == 0, result.output + (result.stderr or "")
+        renders_dir = tmp_path / "project" / "renders"
+        assert sorted(p.name for p in renders_dir.glob("*.svg")) == [
+            "board.svg",
+            "board.thumb.svg",
+        ]
+        assert "<text" in (renders_dir / "board.svg").read_text()
+        assert "<text" not in (renders_dir / "board.thumb.svg").read_text()
 
     def test_render_no_project_dir_and_no_marker_in_cwd_raises_clean_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -5,22 +5,15 @@ TDD: these tests are written before the model exists.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import yaml
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.palette import Palette
 
-_PALETTES_DIR = (
-    Path(__file__).parent.parent.parent
-    / "src"
-    / "dbt_charts"
-    / "core"
-    / "defaults"
-    / "palettes"
-)
+from .._paths import DBT_CHARTS_PKG_DIR
+
+_PALETTES_DIR = DBT_CHARTS_PKG_DIR / "core" / "defaults" / "palettes"
 
 
 class TestPaletteModel:

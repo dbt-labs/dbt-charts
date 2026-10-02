@@ -21,6 +21,11 @@ from dbt_charts.core.render.chart.spec import RenderBox
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
 from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
+from dbt_charts.core.compile.models.primitives import ResolvedFormat, resolved_as
+from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedTotalStyle,
+    ResolvedTotalValueSlot,
+)
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
@@ -28,6 +33,11 @@ from dbt_charts.core.render.chart.emitters.pie import PieEmitter
 from dbt_charts.core.render.errors import RenderError
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
+
+def _resolved_total(total, fmt=None):
+    value = resolved_as(ResolvedTotalValueSlot, total.value, format=fmt)
+    return resolved_as(ResolvedTotalStyle, total, value=value)
 
 
 def _make_pie_style() -> Any:
@@ -134,7 +144,7 @@ def test_pie_emitter_uses_finalized_labels(pie_style: Any) -> None:
         inner_radius=0.0,
         slice_mark=slice_mark,
         tooltip_format="",
-        total_style=board.pie.total,
+        total_style=_resolved_total(board.pie.total),
     )
     data = [
         {"segment": "A", "value": 76880},
@@ -427,9 +437,7 @@ def test_pie_emitter_total_emits_joinaggregate_layer(pie_style: Any) -> None:
             "labels": slice_mark.labels.model_copy(update={"template": "{{ value }}"})
         }
     )
-    total_style = board.pie.total.model_copy(
-        update={"value": board.pie.total.value.model_copy(update={"format": "$,.0f"})}
-    )
+    total_style = _resolved_total(board.pie.total, ResolvedFormat(spec="$,.0f"))
     rs = ResolvedPieStyle(
         inner_radius=0.62,
         slice_mark=slice_mark,
@@ -489,7 +497,7 @@ def test_pie_emitter_total_label_layer_emitted(pie_style: Any) -> None:
         inner_radius=0.62,
         slice_mark=slice_mark,
         tooltip_format="",
-        total_style=board.pie.total,
+        total_style=_resolved_total(board.pie.total),
     )
     data = [{"segment": "A", "value": 100}]
     chart = ResolvedPieChart(
@@ -543,7 +551,7 @@ def test_pie_emitter_no_leader_labels_when_labels_none() -> None:
         inner_radius=0.62,
         slice_mark=slice_mark,
         tooltip_format="",
-        total_style=board.pie.total,
+        total_style=_resolved_total(board.pie.total),
     )
     data = [{"segment": "A", "value": 100}, {"segment": "B", "value": 50}]
     chart = ResolvedPieChart(

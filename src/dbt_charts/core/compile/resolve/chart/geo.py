@@ -7,7 +7,10 @@ from typing import Any
 
 from dbt_charts.core.compile.config import get_config
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import resolve_format_for_values
+from dbt_charts.core.compile.format import (
+    resolve_format_parts,
+    resolve_format_parts_for_values,
+)
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     GeoshapeChart,
@@ -43,6 +46,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _geo_kwargs,
     _title_font,
 )
+from dbt_charts.core.compile.resolve.chart._marks import _resolved_point_mark
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_requested_alias_palette,
     _effective_single_series_fill,
@@ -50,6 +54,9 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
+)
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FORMAT_AFFIX_GEO_TOOLTIP_UNSUPPORTED,
 )
 
 __all__ = [
@@ -302,6 +309,26 @@ def _with_baked_color_gradient(
     )
 
 
+def _reject_geo_tooltip_affix(
+    chart_style_context: ChartStyleContext, chart_id: str, chart_type: str
+) -> None:
+    """Raise when the tooltip format carries an affix a geo painter cannot compose.
+
+    Geo charts use a VL-native ``encoding.tooltip`` whose ``format`` is a plain
+    d3 string. ``style.tooltip.format`` is chart-type-agnostic, so only resolve
+    knows the consuming chart type.
+    """
+    fmt = chart_style_context.tooltip.format
+    if resolve_format_parts(
+        fmt, chart_style_context.formats, no_format_default=None
+    ).has_affix:
+        raise CompilationError.from_code(
+            ERR_FORMAT_AFFIX_GEO_TOOLTIP_UNSUPPORTED,
+            field_path=f"charts.{chart_id}.style.tooltip.format",
+            chart_type=chart_type,
+        )
+
+
 def _resolve_geoshape(
     normalized: GeoshapeChart,
     data: list[dict[str, Any]],
@@ -310,6 +337,7 @@ def _resolve_geoshape(
     automatic_link_candidate: AutomaticLinkCandidate,
     variables: ChartTextVariables = _EMPTY_CHART_TEXT_VARIABLES,
 ) -> ResolvedGeoshapeChart:
+    _reject_geo_tooltip_affix(chart_style_context, normalized.id, "geoshape")
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
@@ -341,11 +369,12 @@ def _resolve_geoshape(
         style=ResolvedGeoshapeStyle(
             geoshape=_with_baked_color_gradient(geoshape),
             scatter=chart_style_context.scatter,
-            tooltip_format=resolve_format_for_values(
+            tooltip_format=resolve_format_parts_for_values(
                 chart_style_context.tooltip.format,
                 chart_style_context.formats,
                 tooltip_format_values,
-            ),
+                no_format_default=None,
+            ).spec,
             title_font=_tf,
         ),
     )
@@ -359,6 +388,7 @@ def _resolve_point_map(
     automatic_link_candidate: AutomaticLinkCandidate,
     variables: ChartTextVariables,
 ) -> ResolvedPointMapChart:
+    _reject_geo_tooltip_affix(chart_style_context, normalized.id, "point_map")
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
@@ -467,18 +497,21 @@ def _resolve_point_map(
             # from the same Style.charts.marks global default but also picks
             # up point_map-family and chart-local overrides, which the
             # scatter family's unmerged slot does not.
-            point_mark=point_map.marks.point,
+            point_mark=_resolved_point_mark(
+                point_map.marks.point, chart_style_context.formats
+            ),
             # Geo families are not slot-eligible in single_series_allocation
             # (that walk is cartesian-only), so they always take the first
             # single-series stop rather than a rhythm slot.
             single_series_fill=_effective_single_series_fill(
                 chart_style_context, primary
             ),
-            tooltip_format=resolve_format_for_values(
+            tooltip_format=resolve_format_parts_for_values(
                 chart_style_context.tooltip.format,
                 chart_style_context.formats,
                 tooltip_format_values,
-            ),
+                no_format_default=None,
+            ).spec,
             title_font=_tf,
         ),
     )

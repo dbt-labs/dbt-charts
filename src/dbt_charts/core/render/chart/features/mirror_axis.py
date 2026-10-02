@@ -19,10 +19,11 @@ from dbt_charts.core.compile.models.chart.resolved.heatmap import (
     ResolvedHeatmapChart,
 )
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from dbt_charts.core.compile.models.style.resolved._base import ResolvedTickLabel
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
     _CartesianResolvedStyle,
 )
-from dbt_charts.core.compile.models.style.theme.axis import AxisMirrorStyle
 from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
 from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -43,7 +44,11 @@ from dbt_charts.core.render.chart.type_inference import (
     HEATMAP_FORMAT_REMEDY,
     gate_label_format,
 )
-from dbt_charts.core.render.chart.vl_field_maps import compose_axis_label_expr
+from dbt_charts.core.render.chart.vl_field_maps import (
+    compose_axis_format,
+    compose_axis_label_expr,
+    inject_axis_numeral_expr,
+)
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE_NAMES
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
@@ -163,89 +168,62 @@ class MirrorAxisFeature:
         # scale (resolve.axis.y = independent below) — only the label changes.
         # Applied BEFORE the align-invasion check below so a mirror.format
         # override is what gets measured, not the (possibly stale) primary format.
-        mirror = chart.style.axis_y.mirror
-        if isinstance(mirror, AxisMirrorStyle):
-            if mirror.format is not None:
-                # mirror.format is authored-only (no theme default) and never
-                # passes through axis_to_vl — this is the one place that
-                # would otherwise paint $NaN over a categorical shared scale
-                # with no diagnostic, the same failure gate_label_format
-                # already refuses on the primary axis.
-                #
-                # Read both keys rather than indexing: a histogram emits a
-                # `{aggregate: "count"}` y with no `field` at all (see the
-                # y=None note above). That axis is quantitative, which the
-                # gate no-ops on anyway, so the miss is "nothing to gate" —
-                # not a suppressed diagnostic.
-                y_field = main_y.get("field")
-                y_vl_type = main_y.get("type")
-                if isinstance(y_field, str) and isinstance(y_vl_type, str):
-                    # `orientation: horizontal` flips the VL channels, never
-                    # the authored ones, so a
-                    # bar's measure stays style.axis_y in both orientations;
-                    # a scatter dot plot is the one family whose measure is
-                    # axis_x, its y being the category; a heatmap has no
-                    # measure axis at all — the value is on color. Naming the
-                    # wrong one routes the author into this same error code.
-                    move_it_to = (
-                        HEATMAP_FORMAT_REMEDY
-                        if isinstance(chart, ResolvedHeatmapChart)
-                        else (
-                            "Remove axis_y.mirror.format; to format the "
-                            "measure instead, author it on "
-                            + (
-                                "style.axis_x.labels.format."
-                                if isinstance(chart, ResolvedScatterChart)
-                                else "style.axis_y.labels.format."
-                            )
-                        )
-                    )
-                    gate_label_format(
-                        mirror.format,
-                        y_field,
-                        chart_rows(chart, datasets).all_rows(),
-                        y_vl_type,
-                        setting="axis_y.mirror.format",
-                        # Temporal takes the gate's own text: it names a time
-                        # spec / style.time_format, which is right on every
-                        # family, where this channel-swap advice would assert
-                        # the scale is categorical when it is a date.
-                        remedy=(
-                            "axis_y.mirror.format relabels the shared y-scale "
-                            "on the opposite edge, and that scale is "
-                            "categorical here — it can't carry a number "
-                            f"format. {move_it_to}"
-                        )
-                        if y_vl_type in ("nominal", "ordinal")
-                        else None,
-                    )
-                ghost_axis["format"] = mirror.format
-                # The primary may carry a labelExpr (style.axis_y.labels.expr),
-                # which VL prefers over format — drop the inherited copy so the
-                # explicit per-edge format actually takes effect.
-                ghost_axis.pop("labelExpr", None)
-            if mirror.expr is not None:
-                ghost_axis["labelExpr"] = mirror.expr
-        # The ghost inherited the primary's labelExpr verbatim above
-        # (dict(primary_axis)). When that labelExpr is the engine's own
-        # ruler composition, it was built for the PRIMARY's own resolved
-        # anchoring -- and the ghost's own anchoring, on the opposite
-        # orient, is not always the same (an authored labels.align can make
-        # either edge either anchoring). build_resolved_axis already bakes
-        # the ghost's own mechanism for this exact case
-        # (ResolvedAxisStyle.mirror_ruler), through the same tabular-font
-        # guard the primary's ruler went through -- read it rather than
-        # re-deriving the ghost's anchoring here and rebuilding a ruler for
-        # it at render. The rebuild goes through compose_axis_label_expr --
-        # the same numeral+case+values-filter chain, in the same order, that
-        # a primary axis's own build calls. Composing the numeral producer
-        # alone here would drop the wrappers the primary carries, so the two
-        # edges of one axis would render different label text.
         axis_y = chart.style.axis_y
-        if axis_y.mirror_ruler is not None:
-            ghost_axis["labelExpr"] = compose_axis_label_expr(
-                {}, axis_y.mirror_ruler, axis_y
-            )["labelExpr"]
+        mirror = axis_y.mirror
+        assert mirror is not None  # applies_to
+        if mirror.format is not None:
+            # mirror.format never passes through axis_to_vl; gate it like the
+            # primary so a categorical shared scale can't paint $NaN. A
+            # histogram's count y has no `field`: nothing to gate.
+            y_field = main_y.get("field")
+            y_vl_type = main_y.get("type")
+            if isinstance(y_field, str) and isinstance(y_vl_type, str):
+                # The measure axis is axis_y (axis_x on a scatter dot plot); a
+                # heatmap has none.
+                move_it_to = (
+                    HEATMAP_FORMAT_REMEDY
+                    if isinstance(chart, ResolvedHeatmapChart)
+                    else (
+                        "Remove axis_y.mirror.format; to format the "
+                        "measure instead, author it on "
+                        + (
+                            "style.axis_x.labels.format."
+                            if isinstance(chart, ResolvedScatterChart)
+                            else "style.axis_y.labels.format."
+                        )
+                    )
+                )
+                gate_label_format(
+                    mirror.format,
+                    y_field,
+                    chart_rows(chart, datasets).all_rows(),
+                    y_vl_type,
+                    setting="axis_y.mirror.format",
+                    # Temporal takes the gate's own remedy text.
+                    remedy=(
+                        "axis_y.mirror.format relabels the shared y-scale "
+                        "on the opposite edge, and that scale is "
+                        "categorical here — it can't carry a number "
+                        f"format. {move_it_to}"
+                    )
+                    if y_vl_type in ("nominal", "ordinal")
+                    else None,
+                )
+            # VL prefers an inherited labelExpr over format: drop it.
+            ghost_axis.pop("labelExpr", None)
+            if mirror.tick_label is not None:
+                ghost_axis = inject_axis_numeral_expr(
+                    ghost_axis, None, mirror.tick_label, mirror.format
+                )
+            compose_axis_format(ghost_axis, mirror.format)
+        if mirror.expr is not None:
+            ghost_axis["labelExpr"] = mirror.expr
+        # The ghost inherited the primary's labelExpr, built for the primary's
+        # anchoring; `mirror.ruler` is baked for the ghost's own.
+        if mirror.ruler is not None:
+            ghost_axis["labelExpr"] = compose_axis_label_expr({}, mirror.ruler, axis_y)[
+                "labelExpr"
+            ]
         # An authored label.align that is safe on the primary edge invades the
         # plot on the opposite-orient ghost (and vice versa) — no explicit
         # align is safe on both edges at once. Same own-side invasion
@@ -259,91 +237,50 @@ class MirrorAxisFeature:
         # dict(primary_axis) above — see authored_unmeasurable below.
         ghost_align = ghost_axis.get("labelAlign")
         if ghost_align in (opposite, "center"):
-            ghost_format = ghost_axis.get("format")
-            ghost_si_format: str | None = None
-            ghost_scientific_format: str | None = None
-            # Whether the ghost's rendered string is something dbt charts can
-            # introspect and re-measure, decided from resolved fields rather
-            # than sniffing "labelExpr" out of the VL dict (the ghost may
-            # *inherit* a labelExpr from the primary that isn't authored at
-            # all -- it's the engine's own ruler composition, copied via
-            # ``dict(primary_axis)`` above; mistaking that for an authored,
-            # unmeasurable override is the mirror + compacting-ladder bug).
-            # An explicit ``mirror.expr`` is always authored and unmeasurable.
-            # ``mirror.format`` replaces the ghost's paint with a literal
-            # spec (ruler doesn't apply -- it was baked for the primary's own
-            # format, not this override). Otherwise the ghost paints exactly
-            # what the primary paints: unmeasurable only if the primary's own
-            # ``label.expr`` is authored; if not, ``axis_y.mirror_ruler``
-            # (None or set) already answers whether the ghost's own paint is
-            # the literal format or the ruler composition -- the mechanism
-            # that actually reaches this edge, not the primary's.
-            mirror_expr_override = (
-                isinstance(mirror, AxisMirrorStyle) and mirror.expr is not None
-            )
-            mirror_format_override = (
-                isinstance(mirror, AxisMirrorStyle) and mirror.format is not None
-            )
-            if mirror_expr_override:
+            ghost_tick_label: ResolvedTickLabel | None = None
+            # Whether the ghost's text is re-measurable: `mirror.expr` never is;
+            # `mirror.format` replaces the primary's paint; otherwise it paints
+            # what the primary does, unless the primary's `label.expr` is authored.
+            ghost_fmt: ResolvedFormat | None
+            if mirror.expr is not None:
                 authored_unmeasurable = True
                 ghost_ruler = None
-            elif mirror_format_override:
+                ghost_fmt = None
+            elif mirror.format is not None:
                 authored_unmeasurable = False
                 ghost_ruler = None
+                ghost_fmt = mirror.format
+                # Its own tick label: the primary's decimal_pad_table fits the
+                # primary's spec, not the mirror's.
+                ghost_tick_label = mirror.tick_label
             else:
-                # inject_axis_label_case runs on the PRIMARY axis (e.g.
-                # line.py, after measure_axis_to_vl), and the ghost is
-                # dict(primary_axis) -- so it inherits an upper(...)/
-                # lower(...)-wrapped labelExpr too, not just an authored
-                # label.expr. Both make the ghost's paint un-introspectable:
-                # quantitative_tick_labels has no case-folding of its own, so
-                # measuring un-cased strings while Vega paints upper(...)
-                # under-measures the gutter by the case width delta.
+                # The ghost inherits the primary's case-wrapped labelExpr too,
+                # which quantitative_tick_labels cannot fold.
                 authored_unmeasurable = axis_y.labels.expr is not None or (
                     axis_y.labels.font.case in ("upper", "lower")
                 )
-                ghost_ruler = axis_y.mirror_ruler
-                # tick_label (ruler's non-compacting sibling) never reaches
-                # the emitted `format` -- inject_axis_numeral_expr composes
-                # it into labelExpr instead, exactly like ruler, so the
-                # ghost's inherited `format` still holds the untouched
-                # label.format. Read the resolved field directly here too,
-                # mirroring ghost_ruler just above, so the gutter measures
-                # the plain-digit text that actually paints, not the SI
-                # spec Vega no longer uses for this axis's ticks. Unlike
-                # ruler, tick_label has no per-edge mirror variant -- it is
-                # the same primary-authored spec on both edges. si_format/
-                # scientific_format (set only for a ladder-less axis) mirror
-                # the exact per-tick guard inject_axis_numeral_expr composes
-                # -- see estimated_quantitative_tick_labels's own docstring.
-                if axis_y.tick_label is not None:
-                    ghost_format = axis_y.tick_label.format
-                    ghost_si_format = axis_y.tick_label.si_format
-                    ghost_scientific_format = axis_y.tick_label.scientific_format
+                ghost_ruler = mirror.ruler
+                ghost_fmt = axis_y.labels.format
+                ghost_tick_label = axis_y.tick_label
             # A PREDEFINED_NATIVE format name (e.g. "percent_number") bypasses
             # d3 entirely -- quantitative_tick_labels/
             # estimated_quantitative_tick_labels call d3_format() directly,
             # which raises on a bare name like this. Same guard as
             # vl_field_maps.py's measure_axis_to_vl.
-            if ghost_format is not None and ghost_format in PREDEFINED_NATIVE_NAMES:
-                ghost_format = None
+            if ghost_fmt is not None and ghost_fmt.spec in PREDEFINED_NATIVE_NAMES:
+                ghost_fmt = None
             labels: list[str] = []
             if (
                 ghost_align == opposite
                 and not authored_unmeasurable
-                and ghost_format is not None
+                and ghost_fmt is not None
             ):
                 if axis_y.tick_values:
                     labels = quantitative_tick_labels(
                         tuple(axis_y.tick_values),
-                        ghost_format,
+                        ghost_fmt,
                         ruler=ghost_ruler,
-                        # mirror.format has its own precision -- the primary's
-                        # decimal_pad_table was built for the primary's spec, so
-                        # passing it here would silently mis-pad the ghost labels.
-                        tick_label=None
-                        if mirror_format_override
-                        else axis_y.tick_label,
+                        tick_label=ghost_tick_label,
                     )
                 elif isinstance(chart.y, str):
                     _ay_cont_m = (
@@ -369,9 +306,8 @@ class MirrorAxisFeature:
                         )
                     labels = estimated_quantitative_tick_labels(
                         values,
-                        ghost_format,
-                        si_format=ghost_si_format,
-                        scientific_format=ghost_scientific_format,
+                        ghost_fmt,
+                        tick_label=ghost_tick_label,
                     )
             if labels:
                 padding = measured_label_padding(

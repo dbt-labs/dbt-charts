@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'A source whose warehouse adapter is not installed now fails with `ERR-ADAPTER-NOT-INSTALLED`, naming the extra to install (`uv tool install "dbt-charts[snowflake]"` or `pip install "dbt-charts[snowflake]"`, matching how dbt Charts was installed). Before, a `type: dbt_profile` source reported an internal error (`Could not find adapter type snowflake!`), and a direct source reported a connection failure that pointed at credentials. `dct init` now prints the same hint when the detected dbt profile needs a missing adapter.'
+time: 2026-10-01T23:55:00.000000+00:00

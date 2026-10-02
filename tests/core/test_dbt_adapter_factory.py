@@ -28,17 +28,21 @@ class TestBuildAdapter:
         with pytest.raises(ValueError, match="Unsupported"):
             build_adapter({"type": "oracle"})
 
-    def test_missing_dbt_package_raises_import_error(self, monkeypatch) -> None:
-        """Missing dbt adapter package raises ImportError with install hint."""
+    def test_missing_dbt_package_raises_adapter_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing dbt adapter package raises the coded error naming the extra."""
         import sys
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            AdapterNotInstalledError,
+            build_adapter,
+        )
 
-        # Force ImportError regardless of what's installed in the test environment
         monkeypatch.setitem(sys.modules, "dbt.adapters.postgres", None)
-        monkeypatch.setitem(sys.modules, "dbt.adapters.postgres.connections", None)
 
-        with pytest.raises(ImportError, match="dbt-postgres"):
+        with pytest.raises(AdapterNotInstalledError) as exc_info:
             build_adapter(
                 {
                     "type": "postgres",
@@ -49,6 +53,144 @@ class TestBuildAdapter:
                     "port": 5432,
                 }
             )
+        assert exc_info.value.code is ERR_ADAPTER_NOT_INSTALLED
+        assert "dbt-charts[postgresql]" in str(exc_info.value)
+
+
+class TestImportAdapterModule:
+    """import_adapter_module: the one place a missing adapter becomes an error."""
+
+    @pytest.mark.parametrize(
+        ("adapter_type", "module", "extra_spec"),
+        [
+            ("snowflake", "dbt.adapters.snowflake", "dbt-charts[snowflake]"),
+            ("postgres", "dbt.adapters.postgres", "dbt-charts[postgresql]"),
+            ("postgresql", "dbt.adapters.postgres", "dbt-charts[postgresql]"),
+            ("BigQuery", "dbt.adapters.bigquery", "dbt-charts[bigquery]"),
+        ],
+    )
+    def test_missing_adapter_names_the_extra(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        adapter_type: str,
+        module: str,
+        extra_spec: str,
+    ) -> None:
+        import sys
+
+        from dbt_charts._install_hint import install_hint
+        from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            AdapterNotInstalledError,
+            import_adapter_module,
+        )
+
+        monkeypatch.setitem(sys.modules, module, None)
+        with pytest.raises(AdapterNotInstalledError) as exc_info:
+            import_adapter_module(adapter_type)
+        assert exc_info.value.code is ERR_ADAPTER_NOT_INSTALLED
+        assert extra_spec in str(exc_info.value)
+        extra = extra_spec.removeprefix("dbt-charts[").removesuffix("]")
+        assert install_hint(extra) in str(exc_info.value)
+
+    def test_duckdb_names_a_plain_reinstall(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """dbt-duckdb is a core dependency, so there is no extra to name."""
+        import sys
+
+        from dbt_charts._install_hint import install_hint
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            AdapterNotInstalledError,
+            import_adapter_module,
+        )
+
+        monkeypatch.setitem(sys.modules, "dbt.adapters.duckdb", None)
+        with pytest.raises(AdapterNotInstalledError) as exc_info:
+            import_adapter_module("duckdb")
+        assert install_hint() in str(exc_info.value)
+        assert "[" not in install_hint()
+
+    def test_unsupported_type_raises_value_error(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            import_adapter_module,
+        )
+
+        with pytest.raises(ValueError, match="Unsupported adapter type 'oracle'"):
+            import_adapter_module("oracle")
+
+    def test_error_is_both_an_import_error_and_a_dbt_charts_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both ImportError handlers and coded-error boundaries must catch it."""
+        import sys
+
+        from dbt_charts.core.diagnostics.base import DbtChartsError
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            import_adapter_module,
+        )
+
+        monkeypatch.setitem(sys.modules, "dbt.adapters.snowflake", None)
+        with pytest.raises(ImportError):
+            import_adapter_module("snowflake")
+        with pytest.raises(DbtChartsError):
+            import_adapter_module("snowflake")
+
+    def test_broken_dependency_of_installed_adapter_is_not_relabeled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Installing the extra can't fix a driver that fails inside it."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            AdapterNotInstalledError,
+            import_adapter_module,
+        )
+
+        def _broken(_name: str) -> object:
+            raise ModuleNotFoundError(
+                "No module named 'snowflake.connector'", name="snowflake.connector"
+            )
+
+        monkeypatch.setattr("importlib.import_module", _broken)
+        with pytest.raises(ModuleNotFoundError) as exc_info:
+            import_adapter_module("snowflake")
+        assert not isinstance(exc_info.value, AdapterNotInstalledError)
+
+    @pytest.mark.parametrize(
+        ("missing", "relabeled"),
+        [
+            ("dbt", True),
+            ("dbt.adapters", True),
+            ("dbt.adapters.snowflake", True),
+            ("dbt.adapters.snow", False),
+        ],
+    )
+    def test_only_the_adapter_or_its_parents_count_as_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch, missing: str, relabeled: bool
+    ) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            AdapterNotInstalledError,
+            import_adapter_module,
+        )
+
+        def _missing(_name: str) -> object:
+            raise ModuleNotFoundError(f"No module named {missing!r}", name=missing)
+
+        monkeypatch.setattr("importlib.import_module", _missing)
+        with pytest.raises(ImportError) as exc_info:
+            import_adapter_module("snowflake")
+        assert isinstance(exc_info.value, AdapterNotInstalledError) is relabeled
+
+    def test_every_named_extra_is_a_real_extra(self) -> None:
+        """A typo'd extra would hand users an install command that installs nothing."""
+        from importlib.metadata import metadata
+
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            _ADAPTER_TYPE_MAP,
+        )
+
+        provided = set(metadata("dbt-charts").get_all("Provides-Extra") or [])
+        named = {entry[3] for entry in _ADAPTER_TYPE_MAP.values()} - {None}
+        assert named <= provided
 
 
 class TestTrinoAdapter:
@@ -69,6 +211,7 @@ class TestTrinoAdapter:
             "dbt.adapters.trino",
             "TrinoAdapter",
             "TrinoCredentialsFactory",
+            "trino",
         )
 
     def test_build_adapter_selects_none_credentials(self) -> None:
@@ -127,6 +270,7 @@ class TestAthenaAdapter:
             "dbt.adapters.athena",
             "AthenaAdapter",
             "AthenaCredentials",
+            "athena",
         )
 
     def test_build_adapter_constructs_athena_credentials(self) -> None:
@@ -229,7 +373,7 @@ class TestBigQueryMethodInference:
         monkeypatch.setitem(
             dbt_adapter_factory._ADAPTER_TYPE_MAP,
             "bigquery",
-            ("dbt.adapters.bigquery", "BigQueryAdapter", "BigQueryCredentials"),
+            ("dbt.adapters.bigquery", "BigQueryAdapter", "BigQueryCredentials", None),
         )
         monkeypatch.setattr(
             dbt_adapter_factory, "_bootstrap_macros", lambda adapter, t: None
@@ -329,7 +473,7 @@ class TestProfileAliases:
         monkeypatch.setitem(
             dbt_adapter_factory._ADAPTER_TYPE_MAP,
             "fakewh",
-            ("dbt.adapters.fakewh", "FakeAdapter", "FakeCreds"),
+            ("dbt.adapters.fakewh", "FakeAdapter", "FakeCreds", None),
         )
         # FakeAdapter doesn't implement dbt-core's macro API; this test only
         # exercises the credentials-translation path before adapter construction.
@@ -405,6 +549,7 @@ class TestSchemaDefault:
                 "dbt.adapters.snowflake",
                 "SnowflakeAdapter",
                 "SnowflakeCredentials",
+                None,
             ),
         )
         monkeypatch.setattr(
@@ -714,7 +859,12 @@ class TestNativeAttributionCredential:
         monkeypatch.setitem(
             dbt_adapter_factory._ADAPTER_TYPE_MAP,
             "snowflake",
-            ("dbt.adapters.snowflake", "SnowflakeAdapter", "SnowflakeCredentials"),
+            (
+                "dbt.adapters.snowflake",
+                "SnowflakeAdapter",
+                "SnowflakeCredentials",
+                None,
+            ),
         )
         monkeypatch.setattr(
             dbt_adapter_factory, "_bootstrap_macros", lambda adapter, t: None
@@ -960,6 +1110,7 @@ class TestClickHouseAdapter:
             "dbt.adapters.clickhouse",
             "ClickHouseAdapter",
             "ClickHouseCredentials",
+            "clickhouse",
         )
 
     def test_build_adapter_selects_clickhouse_credentials(self) -> None:
@@ -998,3 +1149,176 @@ class TestClickHouseAdapter:
             {**self._SOURCE, "threads": 4, "driver": "http"}, register_macros=False
         )
         assert adapter.config.credentials.driver == "http"
+
+
+class _FakeOdbcCursor:
+    """Just enough of a pyodbc cursor for dbt-sqlserver's ``execute``."""
+
+    def __init__(self, handle: "_FakeOdbcHandle") -> None:
+        self._handle = handle
+        self.description: list[tuple[str, ...]] | None = None
+        self.rowcount = -1
+
+    def execute(self, sql: str) -> None:
+        self._handle.sent.append(sql)
+        if self._handle.closed:
+            raise RuntimeError("Attempt to use a closed connection.")
+        if "slow_table" in sql:
+            raise RuntimeError(
+                "('HYT00', '[HYT00] [Microsoft][ODBC Driver 18 for SQL Server]"
+                "Query timeout expired (0) (SQLExecDirectW)')"
+            )
+        if "no_such_col" in sql:
+            raise RuntimeError("[42S22] Invalid column name 'no_such_col'. (207)")
+        self.description = [("v", "int")]
+
+    def fetchall(self) -> list[tuple[int]]:
+        return [(1,)]
+
+    def fetchmany(self, size: int) -> list[tuple[int]]:
+        return [(1,)][:size]
+
+    def nextset(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeOdbcHandle:
+    def __init__(self, sent: list[str]) -> None:
+        self.sent = sent
+        self.closed = False
+
+    def cursor(self) -> _FakeOdbcCursor:
+        return _FakeOdbcCursor(self)
+
+    def close(self) -> None:
+        self.closed = True
+
+    def rollback(self) -> None:
+        pass
+
+
+class TestSQLServerAdapter:
+    """SQL Server wires through the generic dbt-sqlserver seam (dbt-sqlserver installed).
+
+    Offline: dbt-sqlserver opens the ODBC connection lazily, so build_adapter with
+    register_macros=False constructs the real SQLServerAdapter and lets us assert
+    on the credentials the factory selected, with no live server.
+    """
+
+    _SOURCE = {
+        "type": "sqlserver",
+        "host": "sql.example.com",
+        "port": 1433,
+        "database": "analytics",
+        "schema": "dbo",
+        "user": "reader",
+        "password": "secret",
+        "driver": "ODBC Driver 18 for SQL Server",
+    }
+
+    def test_map_entry_names_dbt_sqlserver(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            _ADAPTER_TYPE_MAP,
+        )
+
+        assert _ADAPTER_TYPE_MAP["sqlserver"] == (
+            "dbt.adapters.sqlserver",
+            "SQLServerAdapter",
+            "SQLServerCredentials",
+            "sqlserver",
+        )
+
+    def test_build_adapter_selects_sqlserver_credentials(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(self._SOURCE, register_macros=False)
+        creds = adapter.config.credentials
+        assert type(creds).__name__ == "SQLServerCredentials"
+        assert creds.type == "sqlserver"
+        assert creds.host == "sql.example.com"
+        assert creds.database == "analytics"
+        assert creds.UID == "reader"
+
+    def test_profile_extras_do_not_break_construction(self) -> None:
+        """A dbt_profile target carries threads and the like; from_dict drops them."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter({**self._SOURCE, "threads": 4}, register_macros=False)
+        assert adapter.config.credentials.host == "sql.example.com"
+
+    def test_dbt_events_stay_off_stdout(
+        self, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """dbt-sqlserver raises behavior-change warnings on every build, and
+        dbt writes them to stdout, which breaks `dct query --json`."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        build_adapter(self._SOURCE, register_macros=False)
+        captured = capfd.readouterr()
+        assert captured.out == ""
+        assert "dbt_sqlserver_use_native_string_types" in captured.err
+
+    def test_a_rejected_query_is_sent_once(self) -> None:
+        """dbt-sqlserver releases the connection on any database error. The
+        pool must still read the rejection as a rejection, not a dead session."""
+        from unittest.mock import patch
+
+        from dbt.adapters.contracts.connection import ConnectionState
+        from dbt.adapters.sqlserver.sqlserver_connections import (
+            SQLServerConnectionManager,
+        )
+
+        from dbt_charts.core.execute.adapters.sql_adapter import _SourcePool
+
+        sent: list[str] = []
+
+        def _open(cls: type, connection: object) -> object:
+            connection.handle = _FakeOdbcHandle(sent)  # type: ignore[attr-defined]
+            connection.state = ConnectionState.OPEN  # type: ignore[attr-defined]
+            return connection
+
+        with patch.object(SQLServerConnectionManager, "open", classmethod(_open)):
+            pool = _SourcePool(self._SOURCE, max_workers=1, timeout_seconds=120)
+            with pytest.raises(Exception, match="Invalid column name"):
+                pool.execute("SELECT no_such_col FROM t", setup_sql=None)
+            # The rebuilt connection serves the next query.
+            table = pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert sum("no_such_col" in s for s in sent) == 1
+        assert table.rows[0][0] == 1
+
+    def test_the_query_after_a_timeout_runs(self) -> None:
+        """A timeout releases the connection too, so the next query on the
+        worker must not fail on the closed handle and read as a rejection."""
+        from unittest.mock import patch
+
+        from dbt.adapters.contracts.connection import ConnectionState
+        from dbt.adapters.sqlserver.sqlserver_connections import (
+            SQLServerConnectionManager,
+        )
+
+        from dbt_charts.core.execute.adapters.sql_adapter import (
+            _QueryDurationExceeded,
+            _SourcePool,
+        )
+
+        sent: list[str] = []
+
+        def _open(cls: type, connection: object) -> object:
+            connection.handle = _FakeOdbcHandle(sent)  # type: ignore[attr-defined]
+            connection.state = ConnectionState.OPEN  # type: ignore[attr-defined]
+            return connection
+
+        with patch.object(SQLServerConnectionManager, "open", classmethod(_open)):
+            pool = _SourcePool(self._SOURCE, max_workers=1, timeout_seconds=2)
+            with pytest.raises(_QueryDurationExceeded):
+                pool.execute("SELECT * FROM slow_table", setup_sql=None)
+            table = pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert sum("slow_table" in s for s in sent) == 1
+        assert table.rows[0][0] == 1

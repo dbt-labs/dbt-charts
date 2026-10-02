@@ -52,6 +52,7 @@ __all__ = [
     "board_title_metrics",
     "chart_title_metrics",
     "row_title_shifts",
+    "vega_title_block_height",
 ]
 
 
@@ -138,20 +139,34 @@ def chart_title_metrics(
         )
     if chart.chart_type not in PAINTS_MARKS:
         return None
-    offset = chart.title_style.position.offset
     ascent = title_ascent(size)
+    return TitleMetrics(
+        ascent=inset_top + ascent, tail=vega_title_block_height(chart) - ascent
+    )
+
+
+def vega_title_block_height(chart: ResolvedChart) -> float:
+    """Height of a Vega-Lite title block down to the plot, padding excluded.
+
+    The title's font size, one subtitle line (its font size plus Vega's default
+    subtitle padding) and ``title.offset``. Zero for an untitled chart.
+    """
+    assert isinstance(chart, _SharedResolvedChartFields)
+    if not chart.title:
+        return 0.0
+    title_font = chart.style.title_font
+    assert title_font is not None, "a titled chart resolves its title font"
+    offset = chart.title_style.position.offset
     # One subtitle line: its font size plus Vega's default subtitle padding.
     subtitle = 0.0
     if chart.subtitle:
         subtitle_size = chart.title_style.subtitle.font.size
         assert subtitle_size is not None, "the cascade fills the subtitle font size"
         subtitle = float(subtitle_size) + VEGA_SUBTITLE_PADDING
-    return TitleMetrics(
-        ascent=inset_top + ascent,
-        tail=size
+    return (
+        float(title_font.size)
         + subtitle
         + (VEGA_TITLE_OFFSET if offset is None else offset)
-        - ascent,
     )
 
 

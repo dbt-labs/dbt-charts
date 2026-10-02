@@ -256,7 +256,7 @@ class MarkLabelsStyle(BaseModel):
     # axis_quantitative is a sparse authored-only overlay (SkipInheritSlots), so
     # the correct per-chart value only exists post-cascade, not as an inherit-
     # graph input.
-    format: Annotated[FormatAlias | str | None, Format()] = Field(
+    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
         description="Number format string for value labels.",
     )
@@ -303,7 +303,7 @@ class BarTotalLabelStyle(BaseModel):
     )
     # None here means "fall back to the resolved measure-axis format" — filled
     # at resolve time from the already-baked ResolvedAxisStyle.format.
-    format: Annotated[FormatAlias | str | None, Format()] = Field(
+    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
         description="Number format string for stack total labels.",
     )

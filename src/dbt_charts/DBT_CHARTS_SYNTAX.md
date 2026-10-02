@@ -778,11 +778,12 @@ The family slots:
 #### Number format aliases
 
 `number_format`, `style.value.format`, table column `format`, and
-`support.format` accept a D3 format string or a named alias (engine-owned
-specs shown). The three *native* aliases at the bottom are Python-formatted
-and valid only in KPI value/support and table-cell `format` slots —
-`number_format` (a Vega-painted slot) rejects them with
-`ERR-FORMAT-NATIVE-IN-VEGA-SLOT`:
+`support.format` accept a D3 format string, a named alias (engine-owned
+specs shown), or an object with `spec`, `prefix`, `suffix` and `notation`
+keys (see "Currency and other affixes" below). The three *native* aliases at
+the bottom are Python-formatted and valid only in KPI value/support and
+table-cell `format` slots; `number_format` (a Vega-painted slot) rejects them
+with `ERR-FORMAT-NATIVE-IN-VEGA-SLOT`:
 
 | Alias | Spec | Renders like |
 |-------|------|--------------|
@@ -800,6 +801,38 @@ and valid only in KPI value/support and table-cell `format` slots —
 | `percentage_points_delta` | native | `1.8` → `+1.8 pts`. **Input is whole points, not a fraction**; a fraction delta (`0.018`) renders `+0.0 pts`, so multiply by 100 in the query. Native — not valid in `number_format` |
 | `delta` | `+,d` | `+1,234` |
 | `year` | `d` | `2026` |
+
+#### Currency and other affixes
+
+Any format slot above also accepts an object instead of a bare string, for a
+symbol/unit d3 itself can't produce (d3's own grammar only knows `$`/`#`):
+
+```yaml
+style:
+  axis_y:
+    labels:
+      format:
+        spec: ",.0f"     # any spec or alias target above; omit to use the engine default
+        prefix: "€"      # or "EUR "; leads the digits, after the sign
+        suffix: " USD"   # trails the digits
+        notation: narrative  # or analytic; SI (~s) specs only, otherwise a no-op
+```
+
+The sign leads: a prefix reads `−€500` (sign, then prefix, then digits); a
+suffix trails the digits unaffected: `−500 USD`. A table column keeps the sign
+against the digits (`€−500`) because its prefix lane is shared down the column.
+`style.formats` aliases work the same way: an entry can name an object with
+the same keys instead of a bare spec string, and every slot above resolves it
+identically to writing the object inline.
+Pairing a prefix with a spec that already carries its own native `$`/`#`
+composes around it (a `$,.0f` spec with prefix `"US "` paints `US $154,500`),
+including a spec that is both SI-shaped and native-symbol-bearing (the
+`currency` preset, `$.3~s`, plus prefix `"US "` paints `US $12.4 M`).
+
+An authored `labels.expr` on an axis always wins over `labels.format`
+outright, object or string; it renders exactly as written, with no affix or
+notation composed in. Write the symbol into the expression itself (e.g.
+`"'EUR ' + datum.label"`) if you need one there.
 
 `time_format` takes D3 time specs or `date_short` (`%-d %b %Y` → `5 Mar 2026`).
 

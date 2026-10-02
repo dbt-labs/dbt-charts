@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
 from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
 
 from ._base import ResolvedAxisStyle
@@ -44,7 +44,7 @@ class _CartesianResolvedStyle(BaseModel):
     axis_y: ResolvedAxisStyle = Field(
         description="Baked y-axis style, after the full style cascade.",
     )
-    tooltip_format: str = Field(
+    tooltip_format: ResolvedFormat = Field(
         description="Resolved d3 tooltip number format ('' = VL default).",
     )
     title_font: ResolvedFontStyle | None = Field(

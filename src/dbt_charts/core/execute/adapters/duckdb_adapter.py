@@ -75,7 +75,10 @@ from dbt_charts.core.execute.adapters.base import (
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
-from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+from dbt_charts.core.execute.adapters.dbt_utils import (
+    DbtRefResolver,
+    source_target_path,
+)
 from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
 
 # Relative read_csv()/read_parquet() paths resolve against data_dir via a
@@ -615,7 +618,9 @@ class DuckDBAdapter(BaseAdapter):
 
         sql = query.sql
         try:
-            sql, resolved_relations = self._dbt_refs.resolve(sql)
+            sql, resolved_relations = self._dbt_refs.resolve(
+                sql, source_target_path(source_config)
+            )
         except DbtChartsError as e:
             return handle_adapter_error("dbt ref resolution", e)
 

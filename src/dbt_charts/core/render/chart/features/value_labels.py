@@ -30,13 +30,14 @@ from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
-from dbt_charts.core.compile.models.style.theme import (
-    BarLabelsStyle,
-    BarTotalLabelStyle,
-    MarkLabelsStyle,
-    PointLabelsStyle,
-    font_weight_as_css,
+from dbt_charts.core.compile.models.primitives import ResolvedFormat, resolved_as
+from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedBarLabels,
+    ResolvedBarTotalLabel,
+    ResolvedMarkLabels,
+    ResolvedPointLabels,
 )
+from dbt_charts.core.compile.models.style.theme import font_weight_as_css
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_LABELS_FIELD_NOT_FOUND,
@@ -51,13 +52,17 @@ from dbt_charts.core.render.chart.emitters._tooltip import (
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.step_band import STEP_BAND_EDGE_FIELD, is_band_step
+from dbt_charts.core.render.chart.vl_field_maps import (
+    _affixed_digits_expr,
+    sign_affixed_expr,
+)
 from dbt_charts.core.render.chart.x_domain import rendered_x_domain
 from dbt_charts.core.render.numeral_expr import (
     numeral_vega_expr,
     sub_unit_guarded_vega_expr,
 )
 from dbt_charts.core.render.utils import DomainValue, ordered_distinct_values
-from dbt_charts.core.text.format_d3 import format_d3
+from dbt_charts.core.text.format_d3 import Notation, format_d3, sign_affixed
 from dbt_charts.core.text.numeral_scale import (
     SUB_UNIT_SCIENTIFIC_FLOOR,
     sub_unit_digit_format,
@@ -232,7 +237,8 @@ def _datum_ref(field: str) -> str:
 
 
 def apply_label_font(
-    mark_dict: dict[str, Any], labels: BarLabelsStyle | PointLabelsStyle
+    mark_dict: dict[str, Any],  # type-state: explicit_any — Vega-Lite mark properties
+    labels: ResolvedBarLabels | ResolvedPointLabels,
 ) -> None:
     """Merge labels.font props into mark_dict in place (mirrors v1 oracle)."""
     if labels.font is None:
@@ -248,14 +254,14 @@ def apply_label_font(
 
 
 def label_size_encoding(
-    labels: BarLabelsStyle | PointLabelsStyle,
+    labels: ResolvedBarLabels | ResolvedPointLabels,
 ) -> dict[str, Any] | None:
     if labels.font is not None and labels.font.size is not None:
         return {"value": labels.font.size}
     return None
 
 
-def labels_draw_text(labels: MarkLabelsStyle, rows: Rows) -> bool:
+def labels_draw_text(labels: ResolvedMarkLabels, rows: Rows) -> bool:
     """Whether this label slot draws text rather than a formatted number.
 
     True only when ``labels.field`` names a non-numeric column. An unset
@@ -296,30 +302,45 @@ def labels_draw_text(labels: MarkLabelsStyle, rows: Rows) -> bool:
     return not all(is_vega_numeric_value(v) for v in values)
 
 
+_NO_FORMAT = ResolvedFormat(spec="")
+
+
+def _label_notation(parts: ResolvedFormat, is_house: bool) -> Notation | None:
+    """The authored notation, else the narrative register under house rules."""
+    if parts.notation is None and is_house:
+        return "narrative"
+    return parts.notation
+
+
 def painted_label_text(
-    value: int | float, format_spec: str | None, is_house: bool
+    value: int | float, format_input: ResolvedFormat | None, is_house: bool
 ) -> str:
     """The string a value label paints for one row's value.
 
-    Python-side mirror of `_house_register_text_encoding`: the narrative
-    register under the house register (sub-1 values in digits, see
-    `_house_register_expr`), the bare d3 spec otherwise, through the same d3
-    engine. With no format the text is Python's ``str`` of the value, which
-    can differ from Vega's default number printing.
+    Python mirror of `_house_register_text_encoding`: the measured text must
+    equal the painted text. With no format it is Python's ``str`` of the
+    value, which can differ from Vega's default number printing.
     """
-    if format_spec is None:
-        return format_d3(value, "")
+    parts = _NO_FORMAT if format_input is None else format_input
+    affix = (parts.prefix, parts.suffix)
+    sign = parts.placement
     if not is_house:
-        return format_d3(value, format_spec)
+        return format_d3(value, parts.spec, *affix, parts.notation, sign)
+    notation = _label_notation(parts, is_house)
     if abs(value) >= 1:
-        return format_d3(value, format_spec, notation="narrative")
+        return format_d3(value, parts.spec, *affix, notation, sign)
     if value != 0 and abs(value) < SUB_UNIT_SCIENTIFIC_FLOOR:
-        return format_d3(value, sub_unit_scientific_format(format_spec))
-    return format_d3(value, sub_unit_digit_format(format_spec))
+        return format_d3(
+            value, sub_unit_scientific_format(parts.spec), *affix, None, sign
+        )
+    return format_d3(value, sub_unit_digit_format(parts.spec), *affix, None, sign)
 
 
 def painted_span_label_text(
-    end: int | float, start: int | float, format_spec: str | None, is_house: bool
+    end: int | float,
+    start: int | float,
+    format_input: ResolvedFormat | None,
+    is_house: bool,
 ) -> str:
     """Python-side mirror of `_span_label_text_expr`'s painted text.
 
@@ -327,25 +348,42 @@ def painted_span_label_text(
     the plain end value, except when the span starts at zero.
     """
     if start == 0:
-        return painted_label_text(end, format_spec, is_house)
+        return painted_label_text(end, format_input, is_house)
     sign = "+" if end >= start else "\u2212"
-    return sign + painted_label_text(abs(end - start), format_spec, is_house)
+    magnitude = painted_label_text(abs(end - start), format_input, is_house)
+    if format_input is None:
+        return sign + magnitude
+    return sign_affixed(sign, magnitude, format_input.prefix, format_input.placement)
 
 
-def _house_register_expr(value_expr: str, format_spec: str) -> str:
-    """The house register's Vega text for one value: narrative SI from 1 up,
-    digits below 1. d3's milli/micro prefixes are not house suffixes, so 0.67
-    paints "0.67", not "670m" -- the same split a ladder-less axis uses."""
+def _label_value_expr(value_expr: str, fmt: ResolvedFormat) -> str:
+    """The Vega text for one value: affixed, notation-registered, or plain d3."""
+    if fmt.prefix or fmt.suffix:
+        return _affixed_digits_expr(value_expr, fmt.spec, fmt, anchored=False)
+    if fmt.notation is not None:
+        return numeral_vega_expr(value_expr, fmt.spec, fmt.notation)
+    return f"format({value_expr}, {_json.dumps(fmt.spec)})"
+
+
+def _house_register_expr(value_expr: str, fmt: ResolvedFormat) -> str:
+    """The house register's Vega text: narrative notation from 1 up, digits
+    below ("0.67", not "670m"), like a ladder-less axis."""
+
+    def with_(spec: str, notation: Notation | None) -> ResolvedFormat:
+        return resolved_as(ResolvedFormat, fmt, spec=spec, notation=notation)
+
     return sub_unit_guarded_vega_expr(
         value_expr,
-        sub_unit_digit_format(format_spec),
-        sub_unit_scientific_format(format_spec),
-        numeral_vega_expr(value_expr, format_spec, "narrative"),
+        _label_value_expr(value_expr, with_(sub_unit_digit_format(fmt.spec), None)),
+        _label_value_expr(
+            value_expr, with_(sub_unit_scientific_format(fmt.spec), None)
+        ),
+        _label_value_expr(value_expr, with_(fmt.spec, _label_notation(fmt, True))),
     )
 
 
 def _house_register_text_encoding(
-    labels: MarkLabelsStyle | BarTotalLabelStyle,
+    labels: ResolvedMarkLabels | ResolvedBarTotalLabel,
     label_field: str,
     calc_field: str,
     is_house: bool,
@@ -359,33 +397,26 @@ def _house_register_text_encoding(
     ``NaN`` — Vega coerces the string to a number to apply the format, and all
     three routes did it their own way.
 
-    Otherwise branches on ``is_house`` alone -- the SI-shape check already happened
-    upstream, in ``resolve_label_format`` (``compile/format.py``), which only
-    ever sets ``is_house`` True for an SI-shaped alias.
+    Otherwise branches on ``is_house`` alone (``resolve_label_format`` decided
+    SI shape upstream). House: the register fires (``1.2mn``, ``0.67``) via a
+    ``calculate`` transform. Not house: the spec goes verbatim to Vega's
+    ``text.format`` (``1.2M``). An authored affix composes a ``calculate``
+    either way, since ``text.format`` cannot hold it.
 
-    When ``is_house`` is True, the house register fires (``1.2mn``, ``0.67``;
-    see ``_house_register_expr``) via a ``calculate`` transform -- Vega, not Python, paints datum-driven text, so
-    format_d3's post-process never runs on values Vega formats itself from a
-    bare d3 spec.
-
-    When ``is_house`` is False (a literal d3 spec, or any non-SI format —
-    currency, percent, ... — regardless of provenance), the format is handed
-    verbatim to Vega (``text.format``), producing raw d3 output (``1.2M``).
-
-    Returns ``(text_encoding, transforms)`` -- ``transforms`` is empty unless
-    the narrative branch fires, in which case it holds the one ``calculate``
-    transform the caller must splice into its transform list.
+    Returns ``(text_encoding, transforms)``; ``transforms`` is empty only for
+    the plain ``text.format`` route.
     """
     if label_is_text:
         return {"field": label_field, "type": "nominal"}, []
     if labels.format is None:
         return {"field": label_field, "type": "quantitative"}, []
-    if not is_house:
-        return (
-            {"field": label_field, "type": "quantitative", "format": labels.format},
-            [],
-        )
-    expr = _house_register_expr(f"datum[{label_field!r}]", labels.format)
+    parts = labels.format
+    if is_house:
+        expr = _house_register_expr(f"datum[{label_field!r}]", parts)
+    elif parts.prefix or parts.suffix or parts.notation is not None:
+        expr = _label_value_expr(f"datum[{label_field!r}]", parts)
+    else:
+        return {"field": label_field, "type": "quantitative", "format": parts.spec}, []
     return (
         {"field": calc_field, "type": "nominal"},
         [{"calculate": expr, "as": calc_field}],
@@ -452,7 +483,7 @@ _FIT_TESTED_POSITIONS = _INSIDE_BAR_POSITIONS - {"middle_aligned"}
 
 
 def _build_bar_text_layer(
-    labels: BarLabelsStyle,
+    labels: ResolvedBarLabels,
     y_field: str,
     is_horizontal: bool,
     is_stacked: bool,
@@ -658,25 +689,27 @@ _SPAN_CENTERED_HORIZONTAL: VLDict = {"align": "center", "dx": 0}
 
 
 def _span_label_text_expr(
-    labels: BarLabelsStyle, y_field: str, start_field: str, is_house: bool
+    labels: ResolvedBarLabels, y_field: str, start_field: str, is_house: bool
 ) -> str:
     """The signed change ``y - y_start`` (``+$28``, ``−$22``), or plain ``y``
     on a row that starts at zero, as a Vega expression."""
     end, start = f"datum[{y_field!r}]", f"datum[{start_field!r}]"
 
     def fmt(value: str) -> str:
-        if is_house and labels.format is not None:
-            return _house_register_expr(value, labels.format)
-        if labels.format is not None:
-            return f"format({value}, {_json.dumps(labels.format)})"
-        return f"format({value}, {_json.dumps('')})"
+        if labels.format is None:
+            return f"format({value}, {_json.dumps('')})"
+        parts = labels.format
+        if is_house:
+            return _house_register_expr(value, parts)
+        return _label_value_expr(value, parts)
 
     sign = f"({end} >= {start} ? '+' : '\\u2212')"
-    return f"{start} == 0 ? {fmt(end)} : {sign} + {fmt(f'abs({end} - {start})')}"
+    change = sign_affixed_expr(sign, fmt(f"abs({end} - {start})"), labels.format)
+    return f"{start} == 0 ? {fmt(end)} : {change}"
 
 
 def _build_bar_span_text_layer(
-    labels: BarLabelsStyle,
+    labels: ResolvedBarLabels,
     y_field: str,
     start_field: str,
     is_horizontal: bool,
@@ -1039,7 +1072,7 @@ def _fit_hide_test(
 
 
 def _build_bar_total_label_layer(
-    total_label: BarTotalLabelStyle,
+    total_label: ResolvedBarTotalLabel,
     y_field: str,
     x_field: str,
     is_horizontal: bool,
@@ -1129,7 +1162,7 @@ def _build_bar_total_label_layer(
 
 
 def _build_point_text_layer(
-    labels: PointLabelsStyle,
+    labels: ResolvedPointLabels,
     y_field: str,
     is_house: bool,
     label_is_text: bool,
@@ -1168,7 +1201,7 @@ def _build_point_text_layer(
 
 
 def _build_line_text_layer(
-    labels: PointLabelsStyle,
+    labels: ResolvedPointLabels,
     y_field: str,
     is_house: bool,
     label_is_text: bool,
@@ -1207,7 +1240,7 @@ def _build_line_text_layer(
 
 
 def build_line_text_layers(
-    labels: PointLabelsStyle,
+    labels: ResolvedPointLabels,
     y_field: str,
     is_house: bool,
     label_is_text: bool,
@@ -1280,16 +1313,16 @@ def text_layer_spec(text_layer: VLDict) -> ChartSpec:
 
 
 @overload
-def _layer_label_slots(layer: ResolvedBarLayer) -> tuple[BarLabelsStyle]: ...
+def _layer_label_slots(layer: ResolvedBarLayer) -> tuple[ResolvedBarLabels]: ...
 @overload
 def _layer_label_slots(
     layer: ResolvedLineLayer,
-) -> tuple[PointLabelsStyle, PointLabelsStyle]: ...
+) -> tuple[ResolvedPointLabels, ResolvedPointLabels]: ...
 @overload
-def _layer_label_slots(layer: ResolvedAreaLayer) -> tuple[PointLabelsStyle]: ...
+def _layer_label_slots(layer: ResolvedAreaLayer) -> tuple[ResolvedPointLabels]: ...
 @overload
-def _layer_label_slots(layer: ResolvedScatterLayer) -> tuple[PointLabelsStyle]: ...
-def _layer_label_slots(layer: ResolvedLayer) -> tuple[MarkLabelsStyle, ...]:
+def _layer_label_slots(layer: ResolvedScatterLayer) -> tuple[ResolvedPointLabels]: ...
+def _layer_label_slots(layer: ResolvedLayer) -> tuple[ResolvedMarkLabels, ...]:
     """The label-carrying mark-style slots for one overlay layer.
 
     Mirrors ``_build_layer_label_specs``'s per-family dispatch
@@ -1297,9 +1330,9 @@ def _layer_label_slots(layer: ResolvedLayer) -> tuple[MarkLabelsStyle, ...]:
     layer's ``line_mark.labels``/``point_mark.labels`` alias pair, an area
     layer's ``line_mark.labels``, else (scatter) ``point_mark.labels``. The
     overloads let each concrete-layer call site (``_build_layer_label_specs``)
-    keep the narrower ``BarLabelsStyle``/``PointLabelsStyle`` types its
+    keep the narrower ``ResolvedBarLabels``/``ResolvedPointLabels`` types its
     builders require; a call on the ``ResolvedLayer`` union (validation's own
-    per-layer loop) falls back to the shared ``MarkLabelsStyle`` base, which
+    per-layer loop) falls back to the shared ``ResolvedMarkLabels`` base, which
     is all ``.field`` access needs.
     """
     if isinstance(layer, ResolvedBarLayer):
@@ -1411,7 +1444,7 @@ class ValueLabelFeature:
         are in play, and "names a column not present" alone leaves the
         author hunting for which one fired.
         """
-        slots: list[MarkLabelsStyle]
+        slots: list[ResolvedMarkLabels]
         if isinstance(chart, ResolvedBarChart):
             slots = [chart.style.mark.labels]
         elif isinstance(chart, ResolvedLineChart):
@@ -1660,7 +1693,7 @@ class ValueLabelFeature:
         line_labels = chart.style.line_mark.labels
         point_labels = chart.style.point_mark.labels
         use_line = line_labels.visible is True
-        labels: PointLabelsStyle = line_labels if use_line else point_labels
+        labels: ResolvedPointLabels = line_labels if use_line else point_labels
         if labels.visible is not True:
             return spec
         if chart.wide_measures:

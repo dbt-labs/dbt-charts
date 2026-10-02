@@ -1183,7 +1183,7 @@ def test_missing_series_at_x_is_omitted_not_a_placeholder_mark():
 def test_bar_sub_dollar_tooltip_paints_plain_digits_not_si_milli():
     """A bar with format: currency and sub-$1 values must not misread as SI
     milli in its tooltip -- $0.42 painting "$420m" is a nine-orders-of-
-    magnitude misread, not a rounding nit (see resolve_format_for_values)."""
+    magnitude misread, not a rounding nit (see resolve_format_parts_for_values)."""
     chart = BarChart(id="t", type="bar", x="day_name", y="cents", format="currency")
     data = [
         {"day_name": "Mon", "cents": 0.42},
@@ -1240,6 +1240,25 @@ def test_scatter_x_measure_votes_too_not_just_y():
     assert not any("420m" in lb for lb in labels), labels
 
 
+def test_scatter_x_row_does_not_paint_the_y_affix():
+    """_scatter_roles's shared style.tooltip_format is derived from the y measure."""
+    chart = ScatterChart(
+        id="t",
+        type="scatter",
+        x="widgets",
+        y="revenue",
+        style={"axis_y": {"labels": {"format": {"spec": ",.0f", "prefix": "EUR "}}}},
+    )
+    data = [
+        {"widgets": 10.0, "revenue": 100.0},
+        {"widgets": 32.0, "revenue": 200.0},
+    ]
+    labels = _render(chart, data)
+    row = next(lb for lb in labels if "revenue: EUR 100" in lb)
+    assert "widgets: 10" in row, row
+    assert "widgets: EUR" not in row, row
+
+
 def test_combo_dual_axis_base_carries_tooltip_order_through_nested_zero_rule():
     """A bar base with a `color:` split, ALL-POSITIVE data (so the base
     stays a bare mark and gains its own nested zero rule via
@@ -1269,3 +1288,64 @@ def test_combo_dual_axis_base_carries_tooltip_order_through_nested_zero_rule():
     base_rows = [lb for lb in labels if ROLE_SERIES in lb and "Target" not in lb]
     assert base_rows, labels
     assert all(ROLE_ORDER in lb for lb in base_rows), base_rows
+
+
+def test_tooltip_carries_the_same_affix_the_axis_paints():
+    """An authored FormatConfig affix on `style.number_format` must reach the tooltip
+    the same way it reaches the axis.
+    """
+    chart = LineChart(
+        id="t",
+        type="line",
+        x="month",
+        y="revenue",
+        style={"number_format": {"spec": ",.0f", "prefix": "EUR "}},
+    )
+    labels = _render(chart, _SINGLE_SERIES_LINE_DATA)
+    assert any("EUR 1,235" in lb for lb in labels), labels
+
+
+def test_combo_overlay_layer_own_affix_reaches_its_tooltip_row():
+    """An overlay layer's own authored axis_y.labels.format affix must reach ITS OWN
+    tooltip row, not just its own axis.
+    """
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="day_name",
+        y="count",
+        color="kind",
+        style=BarChartStylePatch.model_validate({"stack": "zero"}),
+        layers=[
+            {
+                "type": "line",
+                "y": "target",
+                "label": "Target",
+                "axis_y": {
+                    "position": "right",
+                    "labels": {"format": {"spec": ",.0f", "prefix": "EUR "}},
+                },
+            }
+        ],
+    )
+    labels = _render(chart, _COMBO_STACKED_BASE_DATA)
+    assert any("EUR " in lb and "Target" in lb for lb in labels), labels
+
+
+def test_combo_overlay_layer_falls_through_to_base_tooltip_affix():
+    """An overlay layer authoring no format of its own falls back to the base chart's
+    tooltip_format.
+    """
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="day_name",
+        y="count",
+        color="kind",
+        style=BarChartStylePatch.model_validate(
+            {"stack": "zero", "number_format": {"spec": ",.0f", "prefix": "EUR "}}
+        ),
+        layers=[{"type": "line", "y": "target", "label": "Target"}],
+    )
+    labels = _render(chart, _COMBO_STACKED_BASE_DATA)
+    assert any("EUR " in lb and "Target" in lb for lb in labels), labels

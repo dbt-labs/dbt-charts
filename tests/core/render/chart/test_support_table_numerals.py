@@ -13,10 +13,12 @@ from typing import Literal
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.authored import (
-    ChartSupportTable,
-    ChartSupportTableSource,
+from dbt_charts.core.compile.format import resolve_format_parts
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedSupportTable,
+    ResolvedSupportTableSource,
 )
+from dbt_charts.core.compile.models.primitives import FormatConfig, ResolvedFormat
 from dbt_charts.core.render.chart.support_table_attachment import (
     CARRIES_FIELD,
     StripAnchor,
@@ -103,8 +105,14 @@ def _transform_ops(spec, index: int = 0) -> list[str]:
 
 
 def _goal_table(fmt: str = "$,.3s"):
-    return ChartSupportTable(
-        entries=[ChartSupportTableSource(source="goal", format=fmt, label="Goal")]
+    return ResolvedSupportTable(
+        entries=[
+            ResolvedSupportTableSource(
+                source="goal",
+                format=resolve_format_parts(fmt, None, no_format_default=None),
+                label="Goal",
+            )
+        ]
     )
 
 
@@ -173,9 +181,7 @@ def test_no_shared_scale_leaves_the_cell_formatting_untouched():
     calc = _cell_calc(
         _attach(
             table,
-            entry_numerals=plain_numerals(
-                table, None, "Inter", [[]] * len(table.entries)
-            ),
+            entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         )
     )
 
@@ -202,9 +208,7 @@ def test_plain_trim_format_appends_a_decimal_pad_to_the_cell_expression():
     calc = _cell_calc(
         _attach(
             table,
-            entry_numerals=plain_numerals(
-                table, None, "Inter", [[]] * len(table.entries)
-            ),
+            entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         )
     )
 
@@ -317,7 +321,7 @@ def test_si_column_below_compaction_still_decimal_aligns_on_observed_depth():
     si_table = _goal_table(fmt="number")
     values = [85.0, 93.46]
     si_numerals = _entry_numerals(
-        si_table, [values], formats=None, font_family="Inter", anchor=_DRAWN
+        si_table, [values], font_family="Inter", anchor=_DRAWN
     )
     strip = si_numerals[0]
     assert strip.digit_spec == ".3~s", "digit_spec stays the author's own spec"
@@ -345,7 +349,7 @@ def test_below_compaction_but_single_real_tier_still_decimal_aligns():
     si_table = _goal_table(fmt="number")
     values = [1200.0, 3000.0, 5600.0]
     si_numerals = _entry_numerals(
-        si_table, [values], formats=None, font_family="Inter", anchor=_DRAWN
+        si_table, [values], font_family="Inter", anchor=_DRAWN
     )
     strip = si_numerals[0]
     assert strip.divisor == 1.0, "below the compaction floor -- no shared magnitude"
@@ -373,7 +377,7 @@ def test_genuine_tier_mix_bakes_no_decimal_pad_at_all():
     si_table = _goal_table(fmt="number")
     values = [12_100.0, 900.0]
     si_numerals = _entry_numerals(
-        si_table, [values], formats=None, font_family="Inter", anchor=_DRAWN
+        si_table, [values], font_family="Inter", anchor=_DRAWN
     )
     strip = si_numerals[0]
     assert strip.divisor == 1.0, "no shared magnitude -- nothing to divide by"
@@ -395,7 +399,7 @@ def test_a_non_finite_cell_does_not_veto_the_rest_of_the_columns_pad():
     for bad in (float("inf"), float("nan")):
         values = [30.0, 84.3, 128.0, bad]
         si_numerals = _entry_numerals(
-            si_table, [values], formats=None, font_family="Inter", anchor=_DRAWN
+            si_table, [values], font_family="Inter", anchor=_DRAWN
         )
         strip = si_numerals[0]
         assert strip.decimal_pad_table, f"non-finite value {bad} must not veto the pad"
@@ -408,13 +412,13 @@ def test_currency_and_percent_columns_get_no_decimal_pad():
     """
     currency_table = _goal_table(fmt="currency_full")
     currency_numerals = plain_numerals(
-        currency_table, None, "Inter", [[]] * len(currency_table.entries)
+        currency_table, "Inter", [[]] * len(currency_table.entries)
     )
     assert currency_numerals[0].decimal_pad_table == ()
 
     percent_table = _goal_table(fmt="percent")
     percent_numerals = plain_numerals(
-        percent_table, None, "Inter", [[]] * len(percent_table.entries)
+        percent_table, "Inter", [[]] * len(percent_table.entries)
     )
     assert percent_numerals[0].decimal_pad_table == ()
 
@@ -429,10 +433,10 @@ def test_plain_numerals_si_column_pads_a_homogeneous_tier_but_not_a_genuine_mix(
     """
     si_table = _goal_table(fmt="number")
 
-    same_tier = plain_numerals(si_table, None, "Inter", [[1.2e6, 3.0e6, 5.0e6]])
+    same_tier = plain_numerals(si_table, "Inter", [[1.2e6, 3.0e6, 5.0e6]])
     assert same_tier[0].decimal_pad_table != ()
 
-    mixed_tier = plain_numerals(si_table, None, "Inter", [[12_100.0, 900.0]])
+    mixed_tier = plain_numerals(si_table, "Inter", [[12_100.0, 900.0]])
     assert mixed_tier[0].decimal_pad_table == ()
 
 
@@ -454,9 +458,7 @@ def test_si_shared_scale_column_gets_a_decimal_pad_on_its_digit_portion():
 
     table = _goal_table(fmt="number")
     values = [[845.0e6, 44.6e6, 932.0e6]]
-    numerals = _entry_numerals(
-        table, values, formats=None, font_family="Inter", anchor=_DRAWN
-    )
+    numerals = _entry_numerals(table, values, font_family="Inter", anchor=_DRAWN)
     strip = numerals[0]
 
     assert strip.digit_spec == ",.1~f"
@@ -512,10 +514,10 @@ def test_anchor_index_is_numbered_after_the_label_period_filter():
 
 def test_each_row_anchors_independently():
     """A goal row and an actual row each declare their own magnitude."""
-    table = ChartSupportTable(
+    table = ResolvedSupportTable(
         entries=[
-            ChartSupportTableSource(source="goal", format="$,.3s", label="Goal"),
-            ChartSupportTableSource(source="actual", format="$,.3s", label="Actual"),
+            ResolvedSupportTableSource(source="goal", format="$,.3s", label="Goal"),
+            ResolvedSupportTableSource(source="actual", format="$,.3s", label="Actual"),
         ]
     )
     spec = _attach(table, entry_numerals=[_MILLIONS, _MILLIONS])
@@ -687,15 +689,17 @@ def test_derived_decimal_depth_is_trimmed_but_authored_depth_is_not():
 
 
 def _per_series_spec(entry_numerals):
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     charts_style = _charts_style()
     spec = _base_spec()
     spec["encoding"]["color"] = {"field": "category", "type": "nominal"}
     return attach_support_table(
         spec,
-        support_table=ChartSupportTable(
-            entries=[ChartSupportTablePerSeries(per_series="goal", format="$,.3s")]
+        support_table=ResolvedSupportTable(
+            entries=[ResolvedSupportTablePerSeries(per_series="goal", format="$,.3s")]
         ),
         style=get_theme_style().charts.support_table,
         charts_style=charts_style,
@@ -959,11 +963,128 @@ def test_raw_d3_spec_does_not_anchor():
     values = [[441e6, 448e6, 456e6]]
     for hang in ("left", "right"):
         numerals = _entry_numerals(
-            table, values, formats=None, font_family="Inter", anchor=_DRAWN, hang=hang
+            table, values, font_family="Inter", anchor=_DRAWN, hang=hang
         )
         assert numerals[0].anchor == StripAnchor.nowhere(), (
             f"a raw d3 spec must not anchor (hang={hang!r})"
         )
+
+
+def test_authored_prefix_on_a_literal_spec_composes_on_every_cell():
+    """A FormatConfig prefix/suffix cannot be embedded in the d3 spec at all."""
+    from dbt_charts.core.render.chart.support_table_attachment import _entry_numerals
+
+    table = ResolvedSupportTable(
+        entries=[
+            ResolvedSupportTableSource(
+                source="goal",
+                format=FormatConfig(spec=",.0f", prefix="EUR "),
+                label="Goal",
+            )
+        ]
+    )
+    numerals = _entry_numerals(
+        table,
+        [[168000.0, 28000.0, -41500.0]],
+        font_family="Inter",
+        anchor=_DRAWN,
+    )
+    strip = numerals[0]
+
+    assert strip.authored is not None
+    assert strip.anchor_text(168000.0) == "EUR 168,000"
+    # Every cell composes the affix, not just the anchor -- a literal spec
+    # opts out of the declare-once convention (test_raw_d3_spec_does_not_anchor).
+    assert strip.bare_text(28000.0) == "EUR 28,000"
+    # A spaced prefix leads the sign.
+    assert strip.anchor_text(-41500.0) == "EUR −41,500"
+
+
+def test_authored_affix_anchor_text_suppresses_sign_when_value_rounds_to_zero():
+    """A negative value that rounds to zero under the digit spec must not paint a sign."""
+    from dbt_charts.core.render.chart.support_table_attachment import _entry_numerals
+
+    table = ResolvedSupportTable(
+        entries=[
+            ResolvedSupportTableSource(
+                source="goal",
+                format=FormatConfig(spec=",.0f", prefix="EUR "),
+                label="Goal",
+            )
+        ]
+    )
+    numerals = _entry_numerals(
+        table,
+        [[168000.0, -0.4]],
+        font_family="Inter",
+        anchor=_DRAWN,
+    )
+    strip = numerals[0]
+
+    assert strip.anchor_text(-0.4) == "EUR 0"
+
+
+def test_strip_numerals_text_expr_composes_the_affix_on_every_cell() -> None:
+    """``_strip_numerals_text_expr`` -- the Vega ``calculate`` expression every cell
+    actually paints from.
+    """
+    import re
+
+    import vl_convert as vlc
+
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        _strip_numerals_text_expr,
+    )
+
+    numerals = StripNumerals(
+        digit_spec=",.0f",
+        anchor=StripAnchor.nowhere(),
+        authored=ResolvedFormat(
+            spec=",.0f", prefix="EUR ", sign_placement="before_prefix"
+        ),
+    )
+    expr = _strip_numerals_text_expr("datum.value", numerals)
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {"values": [{"value": 168000.0}, {"value": -41500.0}]},
+        "transform": [{"calculate": expr, "as": "label"}],
+        "mark": "text",
+        "encoding": {"text": {"field": "label"}},
+    }
+    svg = vlc.vegalite_to_svg(spec)
+    texts = re.findall(r"<text[^>]*>([^<]+)</text>", svg)
+    assert any("EUR 168,000" in t for t in texts), texts
+    assert any("EUR 41,500" in t and t.startswith("−") for t in texts), texts
+
+
+def test_strip_numerals_text_expr_suppresses_sign_when_value_rounds_to_zero() -> None:
+    """A negative value that rounds to zero under the digit spec must not paint a sign."""
+    import re
+
+    import vl_convert as vlc
+
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        _strip_numerals_text_expr,
+    )
+
+    numerals = StripNumerals(
+        digit_spec=",.0f",
+        anchor=StripAnchor.nowhere(),
+        authored=ResolvedFormat(
+            spec=",.0f", prefix="EUR ", sign_placement="before_prefix"
+        ),
+    )
+    expr = _strip_numerals_text_expr("datum.value", numerals)
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {"values": [{"value": -0.4}]},
+        "transform": [{"calculate": expr, "as": "label"}],
+        "mark": "text",
+        "encoding": {"text": {"field": "label"}},
+    }
+    svg = vlc.vegalite_to_svg(spec)
+    texts = re.findall(r"<text[^>]*>([^<]+)</text>", svg)
+    assert texts == ["EUR 0"], texts
 
 
 # --- Fix 2: predefined-name formats now anchor on left-oriented axes too ---
@@ -982,7 +1103,7 @@ def test_predefined_prefix_free_si_format_anchors_on_left_axis():
     table = _goal_table(fmt="number")
     values = [[441e6, 448e6, 456e6]]
     numerals = _entry_numerals(
-        table, values, formats=None, font_family="Inter", anchor=_DRAWN, hang="right"
+        table, values, font_family="Inter", anchor=_DRAWN, hang="right"
     )
     assert numerals[0].suffix == "mn", "prefix-free SI format must anchor on left axis"
     assert numerals[0].hang == "right"
@@ -1004,7 +1125,7 @@ def test_prefix_carrying_format_left_axis_routes_to_nowhere():
     table = _goal_table(fmt="currency")
     values = [[441e6, 448e6, 456e6]]
     numerals = _entry_numerals(
-        table, values, formats=None, font_family="Inter", anchor=_DRAWN, hang="right"
+        table, values, font_family="Inter", anchor=_DRAWN, hang="right"
     )
     assert numerals[0].anchor == StripAnchor.nowhere(), (
         "currency prefix format must route to nowhere on left-axis"
@@ -1022,7 +1143,7 @@ def test_left_axis_currency_prefix_routes_to_nowhere_expression():
     table = _goal_table(fmt="currency")
     values = [[441e6, 448e6, 456e6]]
     numerals_left = _entry_numerals(
-        table, values, formats=None, font_family="Inter", anchor=_DRAWN, hang="right"
+        table, values, font_family="Inter", anchor=_DRAWN, hang="right"
     )
     calc = _cell_calc(
         _attach(table, entry_numerals=numerals_left, axis_y_orient="left")
@@ -1179,7 +1300,7 @@ def test_trimmed_hang_right_suffix_only_anchor_arm_uses_bare_plus_suffix():
     table = _goal_table(fmt="percent")
     values = [[0.041, 0.055, 0.062]]
     numerals = _entry_numerals(
-        table, values, formats=None, font_family="Inter", anchor=_DRAWN, hang="right"
+        table, values, font_family="Inter", anchor=_DRAWN, hang="right"
     )
     spec = _attach(
         _goal_table("percent"), entry_numerals=numerals, axis_y_orient="left"
@@ -1218,9 +1339,151 @@ def test_time_format_name_on_support_table_does_not_reach_strip_numerals_for_val
     numerals = _entry_numerals(
         table,
         [[1.0, 2.0]],
-        formats=None,
         font_family="Inter",
         anchor=_DRAWN,
         hang="left",
     )
     assert numerals[0].anchor == StripAnchor.nowhere()
+
+
+def _house_affix_numerals(
+    hang: Literal["left", "right"] = "left", spec: str = "currency_whole", **config
+):
+    return _house_affix_numerals_values(
+        [168000.0, -41500.0], hang=hang, spec=spec, **config
+    )
+
+
+def _house_affix_numerals_values(
+    values: list[float],
+    hang: Literal["left", "right"] = "left",
+    spec: str = "currency_whole",
+    **config,
+):
+    from dbt_charts.core.render.chart.support_table_attachment import _entry_numerals
+
+    table = ResolvedSupportTable(
+        entries=[
+            ResolvedSupportTableSource(
+                source="goal",
+                format=resolve_format_parts(
+                    FormatConfig(spec=spec, **config),
+                    None,
+                    no_format_default=None,
+                ),
+                label="Goal",
+            )
+        ]
+    )
+    return _entry_numerals(
+        table, [values], font_family="Inter", anchor=_DRAWN, hang=hang
+    )[0]
+
+
+def _paint(numerals: StripNumerals, values: list[float]) -> list[str]:
+    import re
+
+    import vl_convert as vlc
+
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        CARRIES_FIELD,
+        DRAWN_INDEX_FIELD,
+        _strip_numerals_text_expr,
+    )
+
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {
+            "values": [
+                {"value": v, CARRIES_FIELD: 1, DRAWN_INDEX_FIELD: i + 1}
+                for i, v in enumerate(values)
+            ]
+        },
+        "transform": [
+            {"calculate": _strip_numerals_text_expr("datum.value", numerals), "as": "t"}
+        ],
+        "mark": "text",
+        "encoding": {
+            "text": {"field": "t"},
+            "y": {"field": DRAWN_INDEX_FIELD, "type": "ordinal", "axis": None},
+        },
+    }
+    svg = vlc.vegalite_to_svg(spec)
+    return re.findall(r"<text[^>]*>([^<]*(?:EUR|\d)[^<]*)</text>", svg)
+
+
+def test_authored_affix_on_a_house_format_follows_the_native_anchor():
+    strip = _house_affix_numerals(prefix="EUR ")
+    assert strip.anchor == _DRAWN
+    assert strip.needs_drawn_index_window
+    assert strip.anchor_text(168000.0) == "EUR $168,000"
+    assert strip.bare_text(-41500.0) == "−41,500"
+    assert _paint(strip, [168000.0, -41500.0]) == ["EUR $168,000", "−41,500"]
+
+
+def test_repeat_every_composes_the_authored_affix_on_every_cell():
+    strip = _house_affix_numerals(suffix=" EUR", repeat="every")
+    assert strip.anchor == StripAnchor.nowhere()
+    assert strip.bare_text(-41500.0) == "−$41,500 EUR"
+
+
+def test_repeat_every_on_a_house_format_repeats_the_native_symbol():
+    from dbt_charts.core.render.chart.support_table_attachment import _entry_numerals
+
+    table = ResolvedSupportTable(
+        entries=[
+            ResolvedSupportTableSource(
+                source="goal",
+                format=resolve_format_parts(
+                    FormatConfig(spec="currency_whole", repeat="every"),
+                    None,
+                    no_format_default=None,
+                ),
+                label="Goal",
+            )
+        ]
+    )
+    strip = _entry_numerals(
+        table, [[168000.0, 28000.0]], font_family="Inter", anchor=_DRAWN
+    )[0]
+    assert strip.anchor == StripAnchor.everywhere()
+    assert strip.bare_text(28000.0) == "$28,000"
+    assert _paint(strip, [168000.0, 28000.0]) == ["$168,000", "$28,000"]
+
+
+def test_a_right_hanging_strip_repeats_an_authored_prefix():
+    strip = _house_affix_numerals(hang="right", prefix="EUR ")
+    assert strip.anchor == StripAnchor.nowhere()
+
+
+def test_a_right_hanging_strip_anchors_an_authored_suffix():
+    strip = _house_affix_numerals(hang="right", spec="integer", suffix=" EUR")
+    assert strip.anchor == _DRAWN
+    assert _paint(strip, [168000.0, -41500.0]) == ["168,000 EUR", "−41,500"]
+
+
+def test_a_right_hanging_strip_anchors_an_explicit_repeat_anchor_prefix():
+    strip = _house_affix_numerals(hang="right", prefix="EUR ", repeat="anchor")
+    assert strip.anchor == _DRAWN
+    painted = _paint(strip, [168000.0, -41500.0])
+    assert painted == ["EUR $168,000", "−41,500"]
+    assert painted == [strip.anchor_text(168000.0), strip.bare_text(-41500.0)]
+
+
+def test_repeat_every_on_a_house_si_format_keeps_the_house_vocabulary():
+    def numerals(**config):
+        return _house_affix_numerals_values([1.2e9, 2.5e9], spec="number", **config)
+
+    unset, every = numerals(), numerals(repeat="every")
+    assert unset.anchor_text(1.2e9) == "1.2bn"
+    assert [every.bare_text(v) for v in (1.2e9, 2.5e9)] == ["1.2bn", "2.5bn"]
+    assert _paint(every, [1.2e9, 2.5e9]) == ["1.2bn", "2.5bn"]
+
+
+def test_repeat_every_on_an_affixless_house_format_paints_plain_digits():
+    strip = _house_affix_numerals_values(
+        [168000.0, -41500.0], spec="integer", repeat="every"
+    )
+    assert [strip.bare_text(v) for v in (168000.0, -41500.0)] == ["168,000", "−41,500"]
+    assert strip.anchor_text(168000.0) == "168,000"
+    assert _paint(strip, [168000.0, -41500.0]) == ["168,000", "−41,500"]

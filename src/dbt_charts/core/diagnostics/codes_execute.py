@@ -350,14 +350,19 @@ ERR_DBT_MANIFEST_MISSING = REGISTRY.register(
         title="SQL uses a dbt macro but no manifest is available",
         message_template=(
             "SQL uses {kind} but no dbt manifest was found (looked for {paths}). "
-            "Build one with `dbt parse`."
+            "Build one with `dbt parse` "
+            "(`dbt parse --target <target> --target-path <dir>` for a source "
+            "that sets `target_path:`)."
         ),
         doc=(
             "Fired when a query's SQL calls `ref()` or `source()` but the project "
             "has no dbt manifest to resolve the call against. The manifest is what "
             "maps a model name to its warehouse relation, so without it dbt charts "
             "cannot know which table the query means. Run `dbt parse` (or any "
-            "command that writes `target/manifest.json`) in the dbt project."
+            "command that writes `target/manifest.json`) in the dbt project. A "
+            "`dbt_profile` source that sets `target_path:` resolves against "
+            "`<target_path>/manifest.json` instead: build it with "
+            "`dbt parse --target <target> --target-path <target_path>`."
         ),
         docs_topic="queries",
     )
@@ -381,6 +386,33 @@ ERR_DBT_MANIFEST_UNREADABLE = REGISTRY.register(
             "dbt charts reads the manifest as plain JSON rather than through "
             "dbt's typed contract, so a manifest written by a different "
             "dbt version still resolves refs normally."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_DBT_TARGET_PATH_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DBT-TARGET-PATH-INVALID",
+        domain="execute",
+        title="dbt target path is not usable",
+        message_template=(
+            "The dbt target path from {origin} is not usable: {detail}. Use a "
+            "relative directory inside the dbt project, e.g. `target_path: "
+            "target/prod` on the source."
+        ),
+        summary="Fired when the directory holding the dbt manifest is not usable.",
+        doc=(
+            "Fired when the directory the manifest is read from (the source's "
+            "`target_path:`, `DBT_TARGET_PATH`, or `target-path:` in "
+            "`dbt_project.yml`) is absolute, climbs out of the dbt project, "
+            "contains an unrendered Jinja template, or sits in a "
+            "`dbt_project.yml` that is not valid YAML. Manifests are read "
+            "through the project, so the directory must be relative to the dbt "
+            "project root. Fix it where the message says it came from, or set "
+            "a relative `target_path:` on the `dbt_profile` source, which wins "
+            "over `DBT_TARGET_PATH` and `target-path:`. Only checked where a "
+            "manifest is needed: a query calling `ref()` or `source()`."
         ),
         docs_topic="queries",
     )
@@ -622,6 +654,32 @@ ERR_WAREHOUSE_CONNECTION = REGISTRY.register(
     )
 )
 
+ERR_ADAPTER_NOT_INSTALLED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ADAPTER-NOT-INSTALLED",
+        domain="execute",
+        title="Warehouse adapter is not installed",
+        message_template=(
+            "dbt Charts needs the {package} adapter to query {adapter_type!r} "
+            "sources, and it is not installed in this Python environment. "
+            "Install it with: {install}"
+        ),
+        doc=(
+            "Fired when a source needs a dbt adapter package that is not "
+            "installed. It applies to a direct warehouse source in "
+            "`dbt_charts.yml` and to a `type: dbt_profile` source whose "
+            "profiles.yml target names the warehouse. Each "
+            "warehouse adapter ships as a dbt Charts extra, so the fix is to "
+            "install the extra into the same environment `dct` runs from, e.g. "
+            '`uv tool install "dbt-charts[snowflake]"` for a uv tool install, or '
+            '`pip install "dbt-charts[snowflake]"` for a pip/venv install. The '
+            "message names the command that matches how this dbt Charts was "
+            "installed. Raised before any connection is attempted."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_QUERY_DURATION_EXCEEDED = REGISTRY.register(
     ErrorCode(
         code="ERR-QUERY-DURATION-EXCEEDED",
@@ -791,11 +849,12 @@ WARN_DBT_MANIFEST_MISSING = REGISTRY.register(
             "refs were not validated."
         ),
         doc=(
-            "Fired once per validate run and once per board render when one or "
-            "more queries call ref() or source() but no manifest is present at "
-            "any of the looked-for paths. "
+            "Fired once per manifest path, per validate run and per board render, "
+            "when one or more queries call ref() or source() but no manifest is "
+            "present at that path. "
             "The refs were not checked against the manifest. Run 'dbt parse' to "
-            "generate target/manifest.json."
+            "generate target/manifest.json; a source that sets `target_path:` "
+            "is looked up at `<target_path>/manifest.json`."
         ),
         docs_topic="queries",
     )

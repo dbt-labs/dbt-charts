@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.render.chart.spec import RenderBox
 
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
@@ -757,6 +758,33 @@ class TestFormatExplicit:
         assert lyr is not None
         assert lyr["encoding"]["text"].get("format") == "$,.2f"
 
+    def test_explicit_affix_composes_a_calculate_transform(self, make_chart):
+        """A FormatConfig prefix on labels.format has nowhere to ride inside
+        VL's native `text.format` (a plain d3 spec string, per
+        `_house_register_text_encoding`'s own docstring) -- it must instead
+        compose a `calculate` transform (sign, prefix, digits, suffix), the
+        same pattern the axis's `compose_axis_format` uses for its
+        `labelExpr`."""
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        board_rs, board_ctx = _board_with_bar_labels(
+            {"format": FormatConfig(spec=",.0f", prefix="EUR ")}
+        )
+        chart = make_chart("bar", x="month", y="revenue")
+        resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        lyr = _get_text_layer(spec)
+        assert lyr is not None
+        text_field = lyr["encoding"]["text"]["field"]
+        calc = next(
+            t["calculate"]
+            for t in spec.get("transform", [])
+            if t.get("as") == text_field
+        )
+        assert "EUR" in calc, calc
+
 
 class TestFormatNullInherit:
     def test_null_format_inherits_axis_quantitative(self, make_chart):
@@ -792,7 +820,7 @@ class TestFormatNullInherit:
         )
         chart = make_chart("bar", x="month", y="revenue")
         resolved = resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
-        assert resolved.style.mark.labels.format == "~s"
+        assert resolved.style.mark.labels.format.spec == "~s"
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
@@ -821,10 +849,13 @@ class TestFormatNullInherit:
         )  # format stays None
         chart = make_chart("bar", x="month", y="revenue")
         resolved = resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
-        assert resolved.style.axis_y.labels.format is not None, (
-            "V2 precondition: axis_y.labels.format must be resolved (non-null) in editorial theme"
+        assert resolved.style.axis_y.labels.format.spec is not None, (
+            "V2 precondition: axis_y.labels.format.spec must be resolved (non-null) in editorial theme"
         )
-        assert resolved.style.mark.labels.format == resolved.style.axis_y.labels.format
+        assert (
+            resolved.style.mark.labels.format.spec
+            == resolved.style.axis_y.labels.format.spec
+        )
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
@@ -864,7 +895,7 @@ class TestFormatTracksEffectiveAxis:
         assert lyr is not None
         return (
             lyr["encoding"]["text"].get("format"),
-            resolved.style.axis_y.labels.format,
+            resolved.style.axis_y.labels.format.spec,
         )
 
     def test_chart_format_flows_to_label(self, make_chart):
@@ -912,8 +943,11 @@ class TestFormatTracksEffectiveAxis:
         board_rs, board_ctx = _board_with_bar_labels({})
         chart = make_chart("bar", x="month", y="revenue")
         resolved = resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
-        assert resolved.style.mark.labels.format == resolved.style.axis_y.labels.format
-        assert resolved.style.mark.labels.format == ".3~s"
+        assert (
+            resolved.style.mark.labels.format.spec
+            == resolved.style.axis_y.labels.format.spec
+        )
+        assert resolved.style.mark.labels.format.spec == ".3~s"
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
@@ -921,7 +955,7 @@ class TestFormatTracksEffectiveAxis:
         assert lyr is not None
         assert lyr["encoding"]["text"].get("format") is None
         text_field = lyr["encoding"]["text"]["field"]
-        expected = _house_register_expr("datum['revenue']", ".3~s")
+        expected = _house_register_expr("datum['revenue']", ResolvedFormat(spec=".3~s"))
         calc = next(
             (t for t in spec.get("transform", []) if t.get("as") == text_field), None
         )
@@ -937,7 +971,8 @@ class TestFormatTracksEffectiveAxis:
         lyr = _get_text_layer(spec)
         assert lyr is not None
         assert (
-            lyr["encoding"]["text"].get("format") == resolved.style.axis_y.labels.format
+            lyr["encoding"]["text"].get("format")
+            == resolved.style.axis_y.labels.format.spec
         )
         assert lyr["encoding"]["text"].get("format") == ",.0f"
 
@@ -953,7 +988,8 @@ class TestFormatTracksEffectiveAxis:
         lyr = _get_text_layer(spec)
         assert lyr is not None
         assert (
-            lyr["encoding"]["text"].get("format") == resolved.style.axis_y.labels.format
+            lyr["encoding"]["text"].get("format")
+            == resolved.style.axis_y.labels.format.spec
         )
         assert lyr["encoding"]["text"].get("format") == ",.0f"
 
@@ -2364,7 +2400,7 @@ class TestHouseRegister:
         )
         text_field = lyr["encoding"]["text"]["field"]
         # "number" resolves to ".3~s" (trim already set; round_aware_spec is no-op).
-        expected = _house_register_expr("datum['revenue']", ".3~s")
+        expected = _house_register_expr("datum['revenue']", ResolvedFormat(spec=".3~s"))
         calc = next(
             (t for t in spec.get("transform", []) if t.get("as") == text_field), None
         )
@@ -2434,6 +2470,74 @@ class TestHouseRegister:
         rendered = _render_texts(spec)[0]
         expected = format_d3(1_200_000.0, ".3~s", notation="narrative")
         assert rendered == expected == "1.2mn"
+
+    def test_authored_analytic_notation_overrides_the_narrative_default(
+        self, make_chart
+    ) -> None:
+        """A house predefined name normally paints the narrative register ('1.2mn', see
+        the class docstring's default).
+        """
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        board_rs, board_ctx = _board_with_bar_labels(
+            {"format": FormatConfig(spec="number", notation="analytic")}
+        )
+        chart = make_chart(
+            "bar", x="month", y="revenue", style={"bar": {"orientation": "vertical"}}
+        )
+        resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, _MILLIONS_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        texts = _render_texts(spec)
+        assert "1.2 M" in texts, f"expected analytic '1.2 M' in rendered texts: {texts}"
+        assert "1.2mn" not in texts, (
+            f"narrative default must not override an authored analytic "
+            f"notation: {texts}"
+        )
+
+    def test_authored_analytic_notation_overrides_narrative_with_an_affix(
+        self, make_chart
+    ) -> None:
+        """Same override, through the affix-composing branch
+        (_affixed_digits_expr) rather than the bare numeral_vega_expr one."""
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        board_rs, board_ctx = _board_with_bar_labels(
+            {"format": FormatConfig(spec="number", prefix="€", notation="analytic")}
+        )
+        chart = make_chart(
+            "bar", x="month", y="revenue", style={"bar": {"orientation": "vertical"}}
+        )
+        resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, _MILLIONS_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        texts = _render_texts(spec)
+        assert "€1.2 M" in texts, f"expected analytic '€1.2 M': {texts}"
+        assert "€1.2mn" not in texts, f"narrative must not override: {texts}"
+
+
+def test_affixed_digits_expr_suppresses_sign_when_value_rounds_to_zero() -> None:
+    """A negative value that rounds to zero under the digit spec must not paint a sign.
+    ``(<v> < 0 ? sign.
+    """
+    from dbt_charts.core.compile.models.primitives import ResolvedFormat
+    from dbt_charts.core.render.chart.vl_field_maps import _affixed_digits_expr
+
+    fmt = ResolvedFormat(spec=",.0f", prefix="€", sign_placement="before_prefix")
+    expr = _affixed_digits_expr("datum.value", fmt.spec, fmt, anchored=False)
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {"values": [{"value": -0.4}]},
+        "transform": [{"calculate": expr, "as": "label"}],
+        "mark": "text",
+        "encoding": {"text": {"field": "label", "type": "nominal"}},
+    }
+    rendered = _render_texts(spec)[0]
+    assert rendered == "€0", (
+        f"expected no sign on a zero-rounded value, got {rendered!r}"
+    )
 
 
 # =============================================================================
@@ -6344,3 +6448,28 @@ class TestDualAxisValueLabelPhantomAxis:
             assert not keyed, (
                 f"shared-scale label sublayers must not carry an axis key: {keyed}"
             )
+
+
+def test_house_register_paints_and_measures_the_sign_after_a_spaced_prefix() -> None:
+    from dbt_charts.core.compile.format import resolve_format_parts
+    from dbt_charts.core.compile.models.primitives import FormatConfig
+    from dbt_charts.core.render.chart.features.value_labels import (
+        _house_register_expr,
+        painted_label_text,
+    )
+
+    fmt = resolve_format_parts(
+        FormatConfig(spec="number", prefix="EUR "), None, no_format_default=None
+    )
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {"values": [{"value": -1_200_000.0}, {"value": -0.5}]},
+        "transform": [
+            {"calculate": _house_register_expr("datum.value", fmt), "as": "label"}
+        ],
+        "mark": "text",
+        "encoding": {"text": {"field": "label", "type": "nominal"}},
+    }
+    assert sorted(_render_texts(spec)) == ["EUR −0.5", "EUR −1.2mn"]
+    assert painted_label_text(-1_200_000.0, fmt, is_house=True) == "EUR −1.2mn"
+    assert painted_label_text(-0.5, fmt, is_house=True) == "EUR −0.5"

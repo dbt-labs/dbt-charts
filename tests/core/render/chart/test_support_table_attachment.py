@@ -15,11 +15,11 @@ from dbt_charts.core.compile.config import (
     get_chart_rendering,
     get_theme_style,
 )
-from dbt_charts.core.compile.models.chart.authored import (
-    ChartSupportTable,
-    ChartSupportTableAggregate,
-    ChartSupportTablePerSeries,
-    ChartSupportTableSource,
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedSupportTable,
+    ResolvedSupportTableAggregate,
+    ResolvedSupportTablePerSeries,
+    ResolvedSupportTableSource,
 )
 from dbt_charts.core.compile.models.primitives import RuleStyle
 from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
@@ -43,7 +43,7 @@ def _attach(
         spec,
         support_table=support_table,
         entry_numerals=plain_numerals(
-            support_table, None, "Inter", [[]] * len(support_table.entries)
+            support_table, "Inter", [[]] * len(support_table.entries)
         )
         if support_table
         else (),
@@ -70,7 +70,7 @@ def _attach_per_series(
         spec,
         support_table=support_table,
         entry_numerals=plain_numerals(
-            support_table, None, "Inter", [[]] * len(support_table.entries)
+            support_table, "Inter", [[]] * len(support_table.entries)
         )
         if support_table
         else (),
@@ -229,7 +229,7 @@ def _per_series_spec():
 
 
 def _table(entries):
-    return ChartSupportTable.model_validate({"entries": entries})
+    return ResolvedSupportTable.model_validate({"entries": entries})
 
 
 def _temporal_spec():
@@ -252,8 +252,8 @@ def test_attach_returns_untouched_when_support_table_is_none():
 
 
 def test_attach_is_idempotent_on_empty_entries():
-    # ChartSupportTable forbids empty lists at validation time, but defensively:
-    # caller passing a non-ChartSupportTable None-equivalent should still no-op.
+    # ResolvedSupportTable forbids empty lists at validation time, but defensively:
+    # caller passing a non-ResolvedSupportTable None-equivalent should still no-op.
     spec = _base_spec()
     out = _attach(spec, None)
     assert "layer" not in out or out.get("layer") == spec.get("layer")
@@ -261,7 +261,7 @@ def test_attach_is_idempotent_on_empty_entries():
 
 def test_attach_source_row_emits_text_layer_with_shared_x():
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
     out = _attach(spec, table)
     # Attachment converts the base spec into a layered composition. The base
     # mark/encoding becomes the first layer; attached rows follow.
@@ -283,7 +283,7 @@ def test_attach_source_row_emits_text_layer_with_shared_x():
 
 def test_attach_source_row_emits_format_calculate_transform():
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
     tl = text_layers[0]
@@ -298,7 +298,7 @@ def test_attach_source_row_emits_format_calculate_transform():
 
 def test_attach_source_row_format_calculate_renders_invalid_values_as_dash():
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
     tl = text_layers[0]
@@ -310,7 +310,7 @@ def test_attach_source_row_format_calculate_renders_invalid_values_as_dash():
 
 def test_attach_source_row_without_format_uses_raw_value():
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="sample_size")])
+    table = _table([ResolvedSupportTableSource(source="sample_size")])
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
     tl = text_layers[0]
@@ -323,7 +323,7 @@ def test_attach_source_row_without_format_uses_raw_value():
 
 def test_attach_source_row_with_non_identifier_source_uses_bracket_access():
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="acted upon")])
+    table = _table([ResolvedSupportTableSource(source="acted upon")])
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
     tl = text_layers[0]
@@ -337,7 +337,7 @@ def test_attach_source_row_with_non_identifier_source_uses_bracket_access():
 
 def test_attach_source_row_without_label_uses_source_display_name():
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="successful_launches")])
+    table = _table([ResolvedSupportTableSource(source="successful_launches")])
     out = _attach(spec, table)
     stub_layers = [
         layer
@@ -353,7 +353,11 @@ def test_attach_source_row_without_label_uses_source_display_name():
 def test_attach_aggregate_row_emits_aggregate_transform_grouped_by_x():
     spec = _base_spec()
     table = _table(
-        [ChartSupportTableAggregate(aggregate="sum", source="revenue", format="$.2s")]
+        [
+            ResolvedSupportTableAggregate(
+                aggregate="sum", source="revenue", format="$.2s"
+            )
+        ]
     )
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
@@ -371,7 +375,11 @@ def test_attach_aggregate_row_emits_aggregate_transform_grouped_by_x():
 def test_attach_aggregate_row_format_calculate_renders_invalid_values_as_dash():
     spec = _base_spec()
     table = _table(
-        [ChartSupportTableAggregate(aggregate="sum", source="revenue", format="$.2s")]
+        [
+            ResolvedSupportTableAggregate(
+                aggregate="sum", source="revenue", format="$.2s"
+            )
+        ]
     )
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
@@ -385,7 +393,7 @@ def test_attach_aggregate_row_format_calculate_renders_invalid_values_as_dash():
 def test_attach_aggregate_row_without_label_uses_source_display_name():
     spec = _base_spec()
     table = _table(
-        [ChartSupportTableAggregate(aggregate="sum", source="total_mass_kg")]
+        [ResolvedSupportTableAggregate(aggregate="sum", source="total_mass_kg")]
     )
     out = _attach(spec, table)
     stub_layers = [
@@ -403,7 +411,7 @@ def test_attach_aggregate_translates_avg_to_mean_at_lowering_layer():
     # Spec G4: authoring surface is exact (`avg`). lowering.md §3: compiler
     # translates avg → Vega mean. Authors never see `mean`.
     spec = _base_spec()
-    table = _table([ChartSupportTableAggregate(aggregate="avg", source="revenue")])
+    table = _table([ResolvedSupportTableAggregate(aggregate="avg", source="revenue")])
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
     transforms = text_layers[0]["transform"]
@@ -414,7 +422,7 @@ def test_attach_aggregate_translates_avg_to_mean_at_lowering_layer():
 def test_attach_aggregate_translates_count_distinct_to_distinct():
     spec = _base_spec()
     table = _table(
-        [ChartSupportTableAggregate(aggregate="count_distinct", source="user_id")]
+        [ResolvedSupportTableAggregate(aggregate="count_distinct", source="user_id")]
     )
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
@@ -425,7 +433,7 @@ def test_attach_aggregate_translates_count_distinct_to_distinct():
 
 def test_attach_emits_divider_rule_when_width_positive():
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     style = _dt_style(divider=RuleStyle(width=1.5, continuous=True))
     out = _attach(spec, table, style=style)
     rule_layers = [
@@ -449,7 +457,7 @@ def test_attach_divider_rule_explicitly_nulls_x_to_avoid_stray_domain_entry():
     uses for yOffset/color elsewhere.
     """
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     style = _dt_style(divider=RuleStyle(width=1.5, continuous=True))
     out = _attach(spec, table, style=style)
     rule_layers = [
@@ -470,7 +478,7 @@ def test_attach_divider_rule_is_not_announced_to_screen_readers():
     Vega-Lite's default field-derived accessibility description entirely.
     """
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     style = _dt_style(divider=RuleStyle(width=1.5, continuous=True))
     out = _attach(spec, table, style=style)
     rule_layers = [
@@ -485,7 +493,7 @@ def test_attach_divider_rule_is_not_announced_to_screen_readers():
 
 def test_attach_omits_divider_rule_when_width_zero():
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     style = _dt_style(divider=RuleStyle(width=0.0, continuous=True))
     out = _attach(spec, table, style=style)
     rule_layers = [
@@ -500,7 +508,7 @@ def test_attach_row_text_font_style_reaches_mark():
     """font.style authored on support_table.font reaches the row-value text
     mark as VL's fontStyle, mirroring family/size/weight/color."""
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", label="Revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue", label="Revenue")])
     base = _dt_style()
     style = _dt_style(font=base.font.model_copy(update={"style": "italic"}))
     out = _attach(spec, table, style=style)
@@ -512,7 +520,7 @@ def test_attach_label_stub_font_style_reaches_mark():
     """font.style authored on support_table.label.font reaches the row-label
     text mark as VL's fontStyle, mirroring family/size/weight/color."""
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", label="Revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue", label="Revenue")])
     base = _dt_style()
     style = base.model_copy(
         update={
@@ -530,8 +538,8 @@ def test_attach_preserves_base_chart_as_first_layer():
     spec = _base_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="revenue"),
-            ChartSupportTableAggregate(aggregate="sum", source="revenue"),
+            ResolvedSupportTableSource(source="revenue"),
+            ResolvedSupportTableAggregate(aggregate="sum", source="revenue"),
         ]
     )
     out = _attach(spec, table)
@@ -545,9 +553,9 @@ def test_attach_multiple_rows_emits_one_layer_per_row():
     spec = _base_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="a"),
-            ChartSupportTableSource(source="b"),
-            ChartSupportTableAggregate(aggregate="sum", source="a"),
+            ResolvedSupportTableSource(source="a"),
+            ResolvedSupportTableSource(source="b"),
+            ResolvedSupportTableAggregate(aggregate="sum", source="a"),
         ]
     )
     out = _attach(spec, table)
@@ -560,9 +568,9 @@ def test_attach_label_stub_layer_defaults_from_source_when_label_is_omitted():
     spec = _base_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="a", label="A"),
-            ChartSupportTableSource(source="b"),  # label defaults from source
-            ChartSupportTableSource(source="c", label="C"),
+            ResolvedSupportTableSource(source="a", label="A"),
+            ResolvedSupportTableSource(source="b"),  # label defaults from source
+            ResolvedSupportTableSource(source="c", label="C"),
         ]
     )
     out = _attach(spec, table)
@@ -587,7 +595,7 @@ def test_attach_does_not_mutate_spec_padding():
     # truth in render_standard_vega_spec). The attachment leaves padding alone.
     spec = _base_spec()
     spec["padding"] = {"top": 5, "bottom": 10, "left": 5, "right": 5}
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     out = _attach(spec, table)
     assert out["padding"] == {"top": 5, "bottom": 10, "left": 5, "right": 5}
 
@@ -613,7 +621,7 @@ def test_attach_text_layer_uses_pixel_value_y():
     # is the form that places marks in absolute pixel space regardless of position.
     # RJ's chart-lab references (e.g. area-multi-2-base.vl.json) use this form.
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     # Use explicit position=bottom so the test is position-independent.
     style = _dt_style(position="bottom")
     out = _attach(spec, table, style=style, axis_offset_value=0.0)
@@ -640,7 +648,7 @@ def test_attach_synthesizes_height_when_width_present_but_height_missing():
         },
         "width": 400,
     }
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     out = _attach(spec, table)
     assert isinstance(out["height"], (int, float))
     assert out["height"] > 0
@@ -658,7 +666,7 @@ def test_attach_requires_explicit_spec_width_when_height_missing():
             "y": {"field": "revenue", "type": "quantitative"},
         },
     }
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     with pytest.raises(RenderError, match="explicit width") as excinfo:
         _attach(spec, table)
     assert excinfo.value.code is not None
@@ -679,14 +687,12 @@ def test_attach_requires_explicit_spec_width_when_right_cap_label():
         },
         "height": 300,
     }
-    table = _table([ChartSupportTableSource(source="a", label="A")])
+    table = _table([ResolvedSupportTableSource(source="a", label="A")])
     with pytest.raises(RenderError, match="explicit width") as excinfo:
         attach_support_table(
             spec,
             support_table=table,
-            entry_numerals=plain_numerals(
-                table, None, "Inter", [[]] * len(table.entries)
-            ),
+            entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
             style=get_theme_style().charts.support_table,
             charts_style=_charts_style(),
             axis_label_padding=_axis_label_padding(_charts_style()),
@@ -702,14 +708,12 @@ def test_attach_requires_charts_style_when_support_table_present():
     from dbt_charts.core.render.errors import RenderError
 
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     with pytest.raises(RenderError, match="charts_style") as excinfo:
         attach_support_table(
             spec,
             support_table=table,
-            entry_numerals=plain_numerals(
-                table, None, "Inter", [[]] * len(table.entries)
-            ),
+            entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
             style=get_theme_style().charts.support_table,
             charts_style=None,
             axis_label_padding=0.0,
@@ -722,18 +726,18 @@ def test_attach_requires_charts_style_when_support_table_present():
 def test_per_series_requires_series_order():
     # Per_series entries need the caller-resolved, ordered series list — the
     # attachment cannot invent stack order from the color encoding domain alone.
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
     from dbt_charts.core.render.errors import RenderError
 
     spec = _per_series_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     with pytest.raises(RenderError, match="series_order") as excinfo:
         attach_support_table(
             spec,
             support_table=table,
-            entry_numerals=plain_numerals(
-                table, None, "Inter", [[]] * len(table.entries)
-            ),
+            entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
             style=get_theme_style().charts.support_table,
             charts_style=_charts_style(),
             axis_label_padding=_axis_label_padding(_charts_style()),
@@ -747,19 +751,19 @@ def test_per_series_requires_series_order():
 def test_per_series_row_layers_requires_explicit_spec_width_when_right_cap_label():
     # Per_series right-cap label positioning is pixel-literal against
     # spec.width; without it there's no anchor for the label column.
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
     from dbt_charts.core.render.errors import RenderError
 
     spec = _per_series_spec()
     del spec["width"]
-    table = _table([ChartSupportTablePerSeries(per_series="revenue", label="A")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue", label="A")])
     with pytest.raises(RenderError, match="explicit.*width") as excinfo:
         attach_support_table(
             spec,
             support_table=table,
-            entry_numerals=plain_numerals(
-                table, None, "Inter", [[]] * len(table.entries)
-            ),
+            entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
             style=get_theme_style().charts.support_table,
             charts_style=_charts_style(),
             axis_label_padding=_axis_label_padding(_charts_style()),
@@ -773,18 +777,18 @@ def test_per_series_row_layers_requires_explicit_spec_width_when_right_cap_label
 def test_per_series_requires_color_encoding():
     # Per_series row layers key off the parent chart's color field; without
     # one there is no series to slice rows by.
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
     from dbt_charts.core.render.errors import RenderError
 
     spec = _base_spec()  # no color encoding
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     with pytest.raises(RenderError, match="color") as excinfo:
         attach_support_table(
             spec,
             support_table=table,
-            entry_numerals=plain_numerals(
-                table, None, "Inter", [[]] * len(table.entries)
-            ),
+            entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
             style=get_theme_style().charts.support_table,
             charts_style=_charts_style(),
             axis_label_padding=_axis_label_padding(_charts_style()),
@@ -823,9 +827,9 @@ def test_attach_multiple_rows_each_use_distinct_pixel_y():
     spec = _base_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="a"),
-            ChartSupportTableSource(source="b"),
-            ChartSupportTableSource(source="c"),
+            ResolvedSupportTableSource(source="a"),
+            ResolvedSupportTableSource(source="b"),
+            ResolvedSupportTableSource(source="c"),
         ]
     )
     # Use explicit position=bottom to keep this test position-independent.
@@ -848,9 +852,9 @@ def test_attach_emits_row_rule_layer_between_rows_when_width_positive():
     spec = _base_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="a"),
-            ChartSupportTableSource(source="b"),
-            ChartSupportTableSource(source="c"),
+            ResolvedSupportTableSource(source="a"),
+            ResolvedSupportTableSource(source="b"),
+            ResolvedSupportTableSource(source="c"),
         ]
     )
     # Disable the strip-top divider so we can identify inter-row rules
@@ -886,7 +890,7 @@ def test_attach_row_rule_explicitly_nulls_x_to_avoid_stray_domain_entry():
     """
     spec = _base_spec()
     table = _table(
-        [ChartSupportTableSource(source="a"), ChartSupportTableSource(source="b")]
+        [ResolvedSupportTableSource(source="a"), ResolvedSupportTableSource(source="b")]
     )
     style = _dt_style(
         row=_dt_style().row.model_copy(
@@ -910,7 +914,7 @@ def test_attach_row_rule_is_not_announced_to_screen_readers():
     opt out of Vega-Lite's default field-derived accessibility description."""
     spec = _base_spec()
     table = _table(
-        [ChartSupportTableSource(source="a"), ChartSupportTableSource(source="b")]
+        [ResolvedSupportTableSource(source="a"), ResolvedSupportTableSource(source="b")]
     )
     style = _dt_style(
         row=_dt_style().row.model_copy(
@@ -931,7 +935,7 @@ def test_attach_row_rule_is_not_announced_to_screen_readers():
 def test_attach_omits_row_rule_layers_when_width_zero():
     spec = _base_spec()
     table = _table(
-        [ChartSupportTableSource(source="a"), ChartSupportTableSource(source="b")]
+        [ResolvedSupportTableSource(source="a"), ResolvedSupportTableSource(source="b")]
     )
     out = _attach(spec, table)  # default style: divider.width=0 + row.rule.width=0
     rule_layers = [
@@ -950,11 +954,11 @@ def test_attach_label_left_orient_anchors_at_negative_axis_padding():
     # row.padding.horizontal (inside the plot).
 
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="a", label="A")])
+    table = _table([ResolvedSupportTableSource(source="a", label="A")])
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -983,7 +987,7 @@ def test_attach_label_right_orient_uses_pixel_literal_x():
     # (spec.width + axis_y.labels.padding), not a data-bound x with window filter.
     # Old behavior placed it at last-bar centroid + dx, which collided with y-axis ticks.
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="a", label="A")])
+    table = _table([ResolvedSupportTableSource(source="a", label="A")])
     # Default axis_y_orient="right" (dbt charts convention)
     out = _attach(spec, table)
     # New shape: inline data {"values": [{"__label": ...}]}, text: {"field": "__label"}
@@ -1017,7 +1021,7 @@ def test_default_axis_y_orient_emits_right_cap_no_left_edge_collision():
     # so the label sits at spec_width + axis_y.labels.padding — never at
     # row.padding.horizontal (inside the plot).
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="a", label="Revenue")])
+    table = _table([ResolvedSupportTableSource(source="a", label="Revenue")])
     # Default axis_y_orient="right" — no override needed.
     out = _attach(spec, table)
     stub_layers = [
@@ -1037,7 +1041,7 @@ def test_default_axis_y_orient_emits_right_cap_no_left_edge_collision():
     out_left = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1138,14 +1142,14 @@ def test_attach_sampling_step_gt1_adds_window_filter_to_text_layers():
     # transform chain. The bar/line base layer must NOT have the transform.
 
     spec = _temporal_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     step = math.ceil(
         97 / get_chart_rendering().support_table.chart_support_table_max_x_ticks
     )
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1174,11 +1178,11 @@ def test_attach_sampling_step_gt1_adds_window_filter_to_text_layers():
 def test_attach_sampling_step_1_does_not_add_window_filter():
     # sampling_step=1 (default) must not add any window/filter to text layers.
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1243,14 +1247,14 @@ def test_attach_aggregate_sampling_places_window_after_aggregate():
     # of multi-row-per-x data, producing silently wrong cell values.
 
     spec = _temporal_spec()
-    table = _table([ChartSupportTableAggregate(aggregate="sum", source="revenue")])
+    table = _table([ResolvedSupportTableAggregate(aggregate="sum", source="revenue")])
     step = math.ceil(
         80 / get_chart_rendering().support_table.chart_support_table_max_x_ticks
     )
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1279,12 +1283,12 @@ def test_ordinal_x_strip_text_includes_dx_for_band_centering():
     # table.py: number_x = band_center + max_w / 2).
 
     spec = _base_spec()  # ordinal x
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
     dx_per_entry = [8.0]  # half of some measured max width
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1307,11 +1311,11 @@ def test_attach_entry_dx_none_omits_dx_from_mark():
     # supply widths (e.g. tests that don't have data).
 
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1327,10 +1331,14 @@ def test_attach_entry_dx_none_omits_dx_from_mark():
 
 def test_per_series_expands_to_n_text_layers():
     """One per_series entry with 3 series expands to 3 text layers."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     spec = _per_series_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue", format="$,.0f")])
+    table = _table(
+        [ResolvedSupportTablePerSeries(per_series="revenue", format="$,.0f")]
+    )
     series = ["Apparel", "Electronics", "Home"]
     out = _attach_per_series(spec, table, series_order=series)
     text_layers = [
@@ -1345,10 +1353,14 @@ def test_per_series_expands_to_n_text_layers():
 
 def test_per_series_format_calculate_renders_invalid_values_as_dash():
     """Normal per_series rows must share the same missing-cell formatter."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     spec = _per_series_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue", format="$,.0f")])
+    table = _table(
+        [ResolvedSupportTablePerSeries(per_series="revenue", format="$,.0f")]
+    )
     out = _attach_per_series(spec, table, series_order=["Apparel"])
     text_layers = [
         layer
@@ -1367,10 +1379,12 @@ def test_per_series_format_calculate_renders_invalid_values_as_dash():
 
 def test_per_series_no_format_calculate_renders_invalid_values_as_dash():
     """Normal per_series rows without format must still guard missing cells."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     spec = _per_series_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     out = _attach_per_series(spec, table, series_order=["Apparel"])
     text_layers = [
         layer
@@ -1389,17 +1403,19 @@ def test_per_series_no_format_calculate_renders_invalid_values_as_dash():
 
 def test_per_series_layers_in_stack_order():
     """Row layers appear in the provided series_order (stack order)."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     spec = _per_series_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     # Provide explicit stack order (reverse alpha = VL's default stacked bar order).
     # Use explicit position=bottom so ordering direction (y ascending) is deterministic.
     series = ["Home", "Electronics", "Apparel"]
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=_dt_style(position="bottom"),
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1422,12 +1438,14 @@ def test_per_series_layers_in_stack_order():
 
 def test_by_measure_format_calculate_renders_invalid_values_as_dash():
     """by_measure rows must not bypass the shared missing-cell formatter."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     spec = _per_series_spec()
     table = _table(
         [
-            ChartSupportTablePerSeries(
+            ResolvedSupportTablePerSeries(
                 per_series="quarterly_revenue", by_measure=True, format="$,.0f"
             )
         ]
@@ -1450,10 +1468,12 @@ def test_by_measure_format_calculate_renders_invalid_values_as_dash():
 
 def test_per_series_each_layer_has_filter_transform_for_its_series():
     """Each per_series row layer must have a filter that selects its series."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     spec = _per_series_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     series = ["Apparel", "Electronics"]
     out = _attach_per_series(spec, table, series_order=series)
     text_layers = [
@@ -1476,10 +1496,12 @@ def test_per_series_each_layer_has_filter_transform_for_its_series():
 
 def test_per_series_layer_has_groupby_aggregate_transform():
     """per_series rows must aggregate groupby [x, color] to avoid double-counting."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     spec = _per_series_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     series = ["Apparel", "Electronics"]
     out = _attach_per_series(spec, table, series_order=series)
     text_layers = [
@@ -1509,10 +1531,12 @@ def test_per_series_label_layers_have_colored_fill():
     this only exercises that the already-resolved colors it's handed land on
     the right label layer, in order.
     """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
     spec = _per_series_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     series = ["Apparel", "Electronics"]
     dark_fills = ["#111111", "#222222"]
     out = _attach_per_series(spec, table, series_order=series, dark_fills=dark_fills)
@@ -1535,9 +1559,11 @@ def test_per_series_label_layers_have_colored_fill():
 def test_per_series_right_orient_label_emits_right_cap():
     """Per_series rows with axis_y_orient=right emit series-name labels at the
     right-cap x position (spec_width + axis_y.labels.padding)."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
-    table = ChartSupportTable.model_validate({"entries": [{"per_series": "revenue"}]})
+    table = ResolvedSupportTable.model_validate(
+        {"entries": [{"per_series": "revenue"}]}
+    )
     spec = {
         "mark": {"type": "bar"},
         "encoding": {
@@ -1552,7 +1578,7 @@ def test_per_series_right_orient_label_emits_right_cap():
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=cs,
         axis_label_padding=_axis_label_padding(cs),
@@ -1582,7 +1608,7 @@ def test_per_series_emits_inter_row_rules_within_block():
     branch must emit a rule between each pair of expanded series rows,
     not just at the trailing seam — otherwise rule-on themes show gaps
     where rules should be drawn within the per_series block."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     base_style = _dt_style()
     style_with_rules = base_style.model_copy(
@@ -1592,7 +1618,9 @@ def test_per_series_emits_inter_row_rules_within_block():
             )
         }
     )
-    table = ChartSupportTable.model_validate({"entries": [{"per_series": "revenue"}]})
+    table = ResolvedSupportTable.model_validate(
+        {"entries": [{"per_series": "revenue"}]}
+    )
     spec = {
         "mark": {"type": "bar"},
         "encoding": {
@@ -1606,7 +1634,7 @@ def test_per_series_emits_inter_row_rules_within_block():
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=style_with_rules,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1634,9 +1662,11 @@ def test_per_series_sampling_consistent_across_series():
     (x, series) cross-product where ties on x have unspecified row-number
     order, so series A could keep x1/x3/x5 while series B keeps x2/x4/x6.
     Pin the transform order so the per-series filter runs first."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
-    table = ChartSupportTable.model_validate({"entries": [{"per_series": "revenue"}]})
+    table = ResolvedSupportTable.model_validate(
+        {"entries": [{"per_series": "revenue"}]}
+    )
     spec = {
         "mark": {"type": "bar"},
         "encoding": {
@@ -1650,7 +1680,7 @@ def test_per_series_sampling_consistent_across_series():
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=_dt_style(),
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1696,14 +1726,16 @@ def test_per_series_label_stub_layers_have_color_none_in_encoding():
     to the categorical domain for layers whose own data lacks the series field,
     and shifts palette[0] to null — causing dark-companion off-by-one.
     """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     spec = _per_series_layered_spec()
-    table = ChartSupportTable.model_validate({"entries": [{"per_series": "revenue"}]})
+    table = ResolvedSupportTable.model_validate(
+        {"entries": [{"per_series": "revenue"}]}
+    )
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1731,14 +1763,16 @@ def test_per_series_label_stub_layers_have_color_none_in_encoding():
 
 def test_per_series_label_stub_left_orient_has_color_none():
     """Left-orient label stubs (axis_y_orient=left) must also carry encoding.color=None."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     spec = _per_series_layered_spec()
-    table = ChartSupportTable.model_validate({"entries": [{"per_series": "revenue"}]})
+    table = ResolvedSupportTable.model_validate(
+        {"entries": [{"per_series": "revenue"}]}
+    )
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1769,10 +1803,10 @@ def test_aggregate_cell_layers_have_color_none_in_encoding():
     color field), adds null to the categorical domain, and shifts palette[0]
     to null — causing endpoint label and support-table dark-companion off-by-one.
     """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     spec = _per_series_layered_spec()
-    table = ChartSupportTable.model_validate(
+    table = ResolvedSupportTable.model_validate(
         {
             "entries": [
                 {
@@ -1786,7 +1820,7 @@ def test_aggregate_cell_layers_have_color_none_in_encoding():
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1822,19 +1856,19 @@ def test_attached_layers_have_description_none_in_encoding():
     value fields off it, rendering a phantom "undefined NaN" row in the
     x-unified tooltip on hover.
     """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     spec = _per_series_layered_spec()
     spec["encoding"]["description"] = {
         "value": {"expr": "'⁡' + datum.month + ';⁢' + datum.series"}
     }
-    table = ChartSupportTable.model_validate(
+    table = ResolvedSupportTable.model_validate(
         {"entries": [{"aggregate": "sum", "source": "revenue", "label": "Total"}]}
     )
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1876,16 +1910,16 @@ def test_multi_layer_base_chart_keeps_its_own_description_untouched():
     its OWN explicit description (a combo overlay -- see
     ``translate.py``'s ``_translate_layer``) keeps that value verbatim.
     """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     spec = _multi_base_layer_spec()
-    table = ChartSupportTable.model_validate(
+    table = ResolvedSupportTable.model_validate(
         {"entries": [{"aggregate": "sum", "source": "revenue", "label": "Total"}]}
     )
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1920,11 +1954,11 @@ def test_multi_layer_base_chart_keeps_its_own_description_untouched():
 def test_right_orient_label_anchors_at_spec_width_plus_axis_padding():
     """Right-oriented axis: row label x = spec_width + axis_y.labels.padding, align=left."""
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", label="Revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue", label="Revenue")])
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1954,11 +1988,11 @@ def test_right_orient_label_anchors_at_spec_width_plus_axis_padding():
 def test_left_orient_label_anchors_at_negative_axis_padding():
     """Left-oriented axis: row label x = -axis_y.labels.padding, align=right."""
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", label="Revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue", label="Revenue")])
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -1992,11 +2026,11 @@ def test_right_orient_label_sets_mark_limit():
     )
 
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", label="Revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue", label="Revenue")])
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -2025,11 +2059,11 @@ def test_left_orient_label_sets_mark_limit():
     )
 
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue", label="Revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue", label="Revenue")])
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -2064,11 +2098,11 @@ def test_default_card_padding_right_cap_label_is_readable():
     )
 
     spec = _base_spec()  # spec_width = 600
-    table = _table([ChartSupportTableSource(source="revenue", label="Revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue", label="Revenue")])
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -2091,9 +2125,11 @@ def test_default_card_padding_right_cap_label_is_readable():
 
 def test_per_series_right_orient_label_anchors_at_right_cap():
     """Per-series labels with axis_y_orient=right emit right-cap x >= spec_width."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
-    table = ChartSupportTable.model_validate({"entries": [{"per_series": "revenue"}]})
+    table = ResolvedSupportTable.model_validate(
+        {"entries": [{"per_series": "revenue"}]}
+    )
     spec = {
         "mark": {"type": "bar"},
         "encoding": {
@@ -2107,7 +2143,7 @@ def test_per_series_right_orient_label_anchors_at_right_cap():
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -2131,9 +2167,11 @@ def test_per_series_right_orient_label_anchors_at_right_cap():
 
 def test_per_series_left_orient_label_anchors_at_left_gutter():
     """Per-series labels with axis_y_orient=left emit negative x (left gutter)."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
-    table = ChartSupportTable.model_validate({"entries": [{"per_series": "revenue"}]})
+    table = ResolvedSupportTable.model_validate(
+        {"entries": [{"per_series": "revenue"}]}
+    )
     spec = {
         "mark": {"type": "bar"},
         "encoding": {
@@ -2147,7 +2185,7 @@ def test_per_series_left_orient_label_anchors_at_left_gutter():
     out = attach_support_table(
         spec,
         support_table=table,
-        entry_numerals=plain_numerals(table, None, "Inter", [[]] * len(table.entries)),
+        entry_numerals=plain_numerals(table, "Inter", [[]] * len(table.entries)),
         style=get_theme_style().charts.support_table,
         charts_style=_charts_style(),
         axis_label_padding=_axis_label_padding(_charts_style()),
@@ -2193,7 +2231,7 @@ def test_attach_layered_spec_falls_back_to_first_layer_x():
             },
         ],
     }
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
     out = _attach(spec, table)
     text_layers = _cell_text_layers(out)
     assert len(text_layers) == 1
@@ -2215,7 +2253,7 @@ def test_attach_layered_spec_with_no_x_anywhere_raises_chart_data_error():
             },
         ],
     }
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
     with pytest.raises(ChartDataError, match="x-encoding"):
         _attach(spec, table)
 
@@ -2248,7 +2286,7 @@ def test_attach_layered_spec_with_disagreeing_layer_x_raises_chart_data_error():
             },
         ],
     }
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
     with pytest.raises(ChartDataError, match="per-layer"):
         _attach(spec, table)
 
@@ -2281,7 +2319,7 @@ def test_attach_layered_spec_with_independent_x_scale_raises_chart_data_error():
             },
         ],
     }
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
     with pytest.raises(ChartDataError, match="independent"):
         _attach(spec, table)
 
@@ -2290,7 +2328,7 @@ def test_bottom_position_row_y_is_below_spec_height():
     # position: bottom must keep the current behavior: strip below the plot.
     # Row y > spec_height (300 from _base_spec) is the invariant.
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     style = _dt_style(position="bottom")
     out = _attach(spec, table, style=style, axis_offset_value=0.0)
     text_layers = _cell_text_layers(out)
@@ -2305,7 +2343,7 @@ def test_bottom_position_row_y_is_below_spec_height():
 def test_top_position_row_y_is_above_plot():
     # position: top must place every row ABOVE the plot (negative y in spec coords).
     spec = _base_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     style = _dt_style(position="top")
     out = _attach(spec, table, style=style)
     text_layers = [
@@ -2326,9 +2364,9 @@ def test_top_position_multiple_rows_have_distinct_pixel_y():
     spec = _base_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="a"),
-            ChartSupportTableSource(source="b"),
-            ChartSupportTableSource(source="c"),
+            ResolvedSupportTableSource(source="a"),
+            ResolvedSupportTableSource(source="b"),
+            ResolvedSupportTableSource(source="c"),
         ]
     )
     style = _dt_style(position="top")
@@ -2389,7 +2427,11 @@ def test_value_cells_align_toward_label_column():
     """Value alignment mirrors the label side: labels on the left (axis_y orient
     left) lean values left toward them; labels on the right lean values right."""
     table = _table(
-        [ChartSupportTableAggregate(source="revenue", aggregate="sum", format="$,.0f")]
+        [
+            ResolvedSupportTableAggregate(
+                source="revenue", aggregate="sum", format="$,.0f"
+            )
+        ]
     )
     left_cell = _cell_text_layers(_attach(_base_spec(), table, axis_y_orient="left"))[0]
     right_cell = _cell_text_layers(_attach(_base_spec(), table, axis_y_orient="right"))[
@@ -2400,9 +2442,13 @@ def test_value_cells_align_toward_label_column():
 
 
 def test_per_series_value_cells_align_toward_label_column():
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
-    table = _table([ChartSupportTablePerSeries(per_series="revenue", format="$,.0f")])
+    table = _table(
+        [ResolvedSupportTablePerSeries(per_series="revenue", format="$,.0f")]
+    )
     left = _cell_text_layers(
         _attach_per_series(
             _per_series_spec(), table, series_order=["Apparel"], axis_y_orient="left"
@@ -2412,9 +2458,11 @@ def test_per_series_value_cells_align_toward_label_column():
 
 
 def test_per_series_labels_emitted_by_default():
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     out = _attach_per_series(
         _per_series_spec(), table, series_order=["Apparel", "Home"]
     )
@@ -2424,9 +2472,11 @@ def test_per_series_labels_emitted_by_default():
 def test_per_series_labels_suppressed_when_redundant():
     """When the chart already shows series names (legend / endpoints), the
     per_series row labels duplicate them and must be omitted — cells stay."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     out = _attach_per_series(
         _per_series_spec(),
         table,
@@ -2438,9 +2488,13 @@ def test_per_series_labels_suppressed_when_redundant():
 
 
 def test_by_measure_label_suppressed_when_redundant():
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
 
-    table = _table([ChartSupportTablePerSeries(per_series="revenue", by_measure=True)])
+    table = _table(
+        [ResolvedSupportTablePerSeries(per_series="revenue", by_measure=True)]
+    )
     out = _attach_per_series(
         _per_series_spec(),
         table,
@@ -2455,7 +2509,11 @@ def test_aggregate_label_not_suppressed_by_series_label_flag():
     """suppress_series_labels only gates per_series (series-name) labels.
     Aggregate/source labels are metric names absent from any legend — kept."""
     table = _table(
-        [ChartSupportTableAggregate(source="revenue", aggregate="sum", label="Total")]
+        [
+            ResolvedSupportTableAggregate(
+                source="revenue", aggregate="sum", label="Total"
+            )
+        ]
     )
     out = _attach(_base_spec(), table, suppress_series_labels=True)
     assert len(_label_layers(out)) == 1
@@ -2469,14 +2527,14 @@ def test_support_table_strip_height_scales_with_row_count():
     style = _dt_style()
     cs = _charts_style()
     one = support_table_strip_height(
-        _table([ChartSupportTableSource(source="a")]), style, cs
+        _table([ResolvedSupportTableSource(source="a")]), style, cs
     )
     three = support_table_strip_height(
         _table(
             [
-                ChartSupportTableSource(source="a"),
-                ChartSupportTableSource(source="b"),
-                ChartSupportTableSource(source="c"),
+                ResolvedSupportTableSource(source="a"),
+                ResolvedSupportTableSource(source="b"),
+                ResolvedSupportTableSource(source="c"),
             ]
         ),
         style,
@@ -2496,7 +2554,7 @@ def test_support_table_strip_height_includes_axis_offset_for_bottom():
 
     style = _dt_style(position="bottom")
     cs = _charts_style()
-    table = _table([ChartSupportTableSource(source="a")])
+    table = _table([ResolvedSupportTableSource(source="a")])
     h = support_table_strip_height(
         table, style, axis_offset(cs, style, x_label_authored=False, chart_type="")
     )
@@ -2518,9 +2576,9 @@ def test_per_series_height_budget_counts_n_rows():
     three_source = support_table_strip_height(
         _table(
             [
-                ChartSupportTableSource(source="a"),
-                ChartSupportTableSource(source="b"),
-                ChartSupportTableSource(source="c"),
+                ResolvedSupportTableSource(source="a"),
+                ResolvedSupportTableSource(source="b"),
+                ResolvedSupportTableSource(source="c"),
             ]
         ),
         style,
@@ -2529,7 +2587,7 @@ def test_per_series_height_budget_counts_n_rows():
 
     # 1 per_series entry that expands to 3 rows.
     one_per_series = support_table_strip_height(
-        _table([ChartSupportTablePerSeries(per_series="revenue")]),
+        _table([ResolvedSupportTablePerSeries(per_series="revenue")]),
         style,
         cs,
         series_count=3,
@@ -2548,7 +2606,7 @@ def test_per_series_height_raises_without_series_count():
 
     style = _dt_style()
     cs = _charts_style()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     with pytest.raises(RenderError, match="series_count"):
         support_table_strip_height(table, style, cs)
     with pytest.raises(RenderError, match="series_count"):
@@ -2562,7 +2620,7 @@ def test_bottom_position_strip_height_drives_padding_bottom():
 
     style = _dt_style(position="bottom")
     cs = _charts_style()
-    table = _table([ChartSupportTableSource(source="a")])
+    table = _table([ResolvedSupportTableSource(source="a")])
     h = support_table_strip_height(
         table, style, axis_offset(cs, style, x_label_authored=False, chart_type="")
     )
@@ -2584,7 +2642,7 @@ def test_top_position_strip_height_excludes_axis_offset():
     style = _dt_style(position="top")
     cs = _charts_style()
     bottom_style = _dt_style(position="bottom")
-    table = _table([ChartSupportTableSource(source="a")])
+    table = _table([ResolvedSupportTableSource(source="a")])
     h = support_table_strip_height(table, style, None)
     # Must equal strip_height alone — no axis_offset contribution.
     assert h == _strip_height(style, 1)
@@ -2611,7 +2669,7 @@ def test_strip_height_and_row_y_use_label_max_lines():
     # Explicitly use position=bottom since label_max_lines only affects bottom placement.
     style_2 = _dt_style(position="bottom")
     style_1 = style_2.model_copy(update={"label_max_lines": 1})
-    table = _table([ChartSupportTableSource(source="a")])
+    table = _table([ResolvedSupportTableSource(source="a")])
     spec_height = 300.0
 
     height_2 = support_table_strip_height(
@@ -2677,7 +2735,7 @@ def test_validate_temporal_over_40_returns_step_and_does_not_raise():
     )
 
     data = _big_temporal_data(97)
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     step = validate_support_table_against_data(table, "date", data, x_type="temporal")
     assert step == math.ceil(
         97 / get_chart_rendering().support_table.chart_support_table_max_x_ticks
@@ -2692,7 +2750,7 @@ def test_validate_quantitative_over_40_returns_step_and_does_not_raise():
     )
 
     data = _big_quant_data(80)
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     step = validate_support_table_against_data(
         table, "x_val", data, x_type="quantitative"
     )
@@ -2710,7 +2768,7 @@ def test_validate_ordinal_over_40_still_raises():
     from dbt_charts.core.render.errors import RenderError
 
     data = _big_ordinal_data(50)
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     with pytest.raises(RenderError, match="40") as excinfo:
         validate_support_table_against_data(table, "month", data, x_type="ordinal")
     assert excinfo.value.code is not None
@@ -2725,7 +2783,7 @@ def test_validate_no_x_type_over_40_still_raises():
     from dbt_charts.core.render.errors import RenderError
 
     data = _big_ordinal_data(50)
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     with pytest.raises(RenderError, match="40") as excinfo:
         validate_support_table_against_data(table, "month", data)
     assert excinfo.value.code is not None
@@ -2739,7 +2797,7 @@ def test_validate_temporal_exactly_41_returns_step_2():
     )
 
     data = _big_temporal_data(41)
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     step = validate_support_table_against_data(table, "date", data, x_type="temporal")
     assert step == 2
 
@@ -2751,7 +2809,7 @@ def test_validate_temporal_exactly_40_returns_step_1():
     )
 
     data = _big_temporal_data(40)
-    table = _table([ChartSupportTableSource(source="revenue")])
+    table = _table([ResolvedSupportTableSource(source="revenue")])
     step = validate_support_table_against_data(table, "date", data, x_type="temporal")
     assert step == 1
 
@@ -2766,7 +2824,7 @@ def test_validate_temporal_over_40_still_checks_source_column_existence():
 
     data = _big_temporal_data(97)  # 97 rows, sampling fires
     # Source column is "revenu" (typo) — not in the data dict.
-    table = _table([ChartSupportTableSource(source="revenu")])
+    table = _table([ResolvedSupportTableSource(source="revenu")])
     with pytest.raises(RenderError, match="revenu") as excinfo:
         validate_support_table_against_data(table, "date", data, x_type="temporal")
     assert excinfo.value.code is not None
@@ -2790,7 +2848,9 @@ def test_validate_temporal_over_40_still_checks_multi_row_ambiguity():
         d = (start + datetime.timedelta(days=30 * i)).isoformat()
         data.append({"date": d, "revenue": float(i), "segment": "A"})
         data.append({"date": d, "revenue": float(i) + 1, "segment": "B"})
-    table = _table([ChartSupportTableSource(source="revenue")])  # bare source, not agg
+    table = _table(
+        [ResolvedSupportTableSource(source="revenue")]
+    )  # bare source, not agg
     with pytest.raises(RenderError, match="ambiguous") as excinfo:
         validate_support_table_against_data(table, "date", data, x_type="temporal")
     assert excinfo.value.code is not None
@@ -2803,7 +2863,9 @@ def test_validate_by_measure_raises_on_multi_row_per_x():
     # for each x (one mark per data row, all at the same y pixel). The
     # ambiguous-aggregation guard must reject this — by_measure is NOT exempt from
     # the multi-row check.
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTablePerSeries,
+    )
     from dbt_charts.core.render.chart.support_table_attachment import (
         validate_support_table_against_data,
     )
@@ -2814,7 +2876,9 @@ def test_validate_by_measure_raises_on_multi_row_per_x():
         {"month": "Jan", "revenue": 200.0},  # two rows for same x → ambiguous
         {"month": "Feb", "revenue": 150.0},
     ]
-    table = _table([ChartSupportTablePerSeries(per_series="revenue", by_measure=True)])
+    table = _table(
+        [ResolvedSupportTablePerSeries(per_series="revenue", by_measure=True)]
+    )
     with pytest.raises(RenderError, match="ambiguous") as excinfo:
         validate_support_table_against_data(table, "month", data)
     assert excinfo.value.code is not None

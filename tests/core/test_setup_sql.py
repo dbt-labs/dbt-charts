@@ -263,6 +263,7 @@ class TestSetupSqlConnectionSharing:
         mock_ctx.__exit__ = MagicMock(return_value=False)
         mock_adapter.connection_named.return_value = mock_ctx
         mock_adapter.execute.return_value = (None, mock_table)
+        mock_adapter.connections.get_thread_connection.return_value.state = "open"
 
         with patch(
             "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",

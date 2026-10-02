@@ -3,6 +3,8 @@
 import dataclasses
 import re
 
+import pytest
+
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
@@ -303,6 +305,69 @@ class TestAnchorsMode:
         # Count $ tspans — should be 2 (first row + total row)
         dollar_count = svg.count(">$<")
         assert dollar_count == 2, f"Expected 2 $ tspans, got {dollar_count}"
+
+    @staticmethod
+    def _anchors_svg(make_chart, fmt, revenues, symbol_mode="anchors"):
+        from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
+        from dbt_charts.core.compile.models.style.authored import (
+            TableChartStylePatch,
+        )
+        from dbt_charts.core.render.chart.table import render_table_svg
+
+        chart = make_chart("table", x=None, y=None)
+        chart.style = TableChartStylePatch(
+            columns={
+                "company": TableColumnConfig(),
+                "revenue": TableColumnConfig(format=fmt),
+            }
+        )
+        es = resolve_chart_style_context(get_theme_style())
+        es = dataclasses.replace(
+            es, table=es.table.model_copy(update={"symbol_mode": symbol_mode})
+        )
+        data = [
+            {"company": name, "revenue": value}
+            for name, value in zip("ABC", revenues, strict=True)
+        ]
+        chart = resolve(chart, [], chart_style_context=es)
+        return render_table_svg(chart, data, width=600, board_style=_BOARD_STYLE)
+
+    @pytest.mark.parametrize("unit", ["EUR", "GBP", "USD", "MXN", "PLN"])
+    def test_anchors_shows_an_authored_currency_suffix_once(self, make_chart, unit):
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        svg = self._anchors_svg(
+            make_chart,
+            FormatConfig(spec=",.0f", suffix=f" {unit}"),
+            [1500, 2500, 3500],
+        )
+        assert svg.count(f">{unit}<") == 1
+
+    @pytest.mark.parametrize(
+        ("symbol_mode", "repeat", "count"),
+        [("anchors", "every", 3), ("all", "anchor", 1)],
+    )
+    def test_format_repeat_overrides_symbol_mode(
+        self, make_chart, symbol_mode, repeat, count
+    ):
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        svg = self._anchors_svg(
+            make_chart,
+            FormatConfig(spec=",.0f", prefix="EUR ", repeat=repeat),
+            [1500, -2500, 3500],
+            symbol_mode,
+        )
+        assert svg.count(">EUR<") == count
+        assert ">−2,500<" in svg
+
+    def test_anchors_keeps_a_magnitude_suffix_on_every_row(self, make_chart):
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        svg = self._anchors_svg(
+            make_chart, FormatConfig(spec=".3~s"), [1_500_000, 2_500_000, 3_500_000]
+        )
+        assert svg.count(">M<") == 3
 
 
 class TestAllSymbolsMode:

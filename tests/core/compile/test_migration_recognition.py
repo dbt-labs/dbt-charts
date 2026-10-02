@@ -631,6 +631,14 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
     identity_moves = [move for move in registry.moves if move.old_path == move.new_path]
     assert identity_moves, "no identity-path Move declared — this would pass vacuously"
     for move in identity_moves:
+        if move.expansion is not None:
+            # An expansion's current value is the mapping it expands into.
+            document = cast(JsonObject, _nest(move.old_path, {"edge": "top"}))
+            assert not any(move_source_locations(document, move, catalog)), (
+                f"identity-path expansion for {move.old_path!r} fired on a "
+                "current mapping -- it must gate on a retired scalar"
+            )
+            continue
         assert move.value_map is not None, (
             f"identity-path Move for {move.old_path!r} has no value_map -- "
             "validate_declarations should have already rejected this"

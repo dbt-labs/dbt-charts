@@ -352,13 +352,13 @@ class LayeredSchemaResolver:
     def _all_manifest_relationships(self) -> list[dict[str, str]]:
         """Every forward FK declared in this project's dbt manifest.
 
-        Loaded once per resolver instance, directly from
-        ``target/manifest.json`` — no dbt adapter required. This is what
+        Loaded once per resolver instance, directly from the manifest file —
+        no dbt adapter required. This is what
         lets the cache-hit short-circuit attach ``referenced_by`` /
         ``linked_via`` without paying for an adapter build.
         """
         if self._manifest_relationships is None:
-            loaded = load_manifest(self.project)
+            loaded = load_manifest(self.project, optional=True)
             self._manifest_relationships = extract_all_relationships(
                 loaded.raw if loaded else None
             )

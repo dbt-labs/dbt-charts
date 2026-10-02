@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -25,10 +26,13 @@ from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
 )
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.theme import AxisXStyle, AxisYStyle
 from dbt_charts.core.compile.resolve.chart._axes import (
+    BakedAxis,
+    BakedCartesianAxes,
     _bake_cartesian_axes,
     _edge_or_none,
     _extract_axis_overrides,
@@ -47,6 +51,9 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import build_resolved_axis
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FORMAT_AFFIX_NATIVE_TOOLTIP_UNSUPPORTED,
+)
 
 __all__ = [
     "CartesianPlan",
@@ -61,7 +68,7 @@ def quantitative_channel_values(
 ) -> list[float]:
     """Every value a cartesian family's own y measure(s) will paint.
 
-    Feeds the per-chart sub-$1 format vote (resolve_format_for_values) at
+    Feeds the per-chart sub-$1 format vote (resolve_format_parts_for_values) at
     both tooltip-format candidates: the chart-authored one
     (_measure_tooltip_format) and the board-default fallback
     (_cartesian_style_tail). A multi-metric line's list of y fields votes as
@@ -96,7 +103,7 @@ _PlanChart = BarChart | LineChart | AreaChart | ScatterChart | HeatmapChart
 class _StyleTail(TypedDict):
     """The ``ResolvedXxxStyle`` kwargs every cartesian family splats in verbatim."""
 
-    tooltip_format: str
+    tooltip_format: ResolvedFormat
     axis_x: ResolvedAxisStyle
     axis_y: ResolvedAxisStyle
 
@@ -125,11 +132,7 @@ class CartesianPlan:
 
     primary: Any
     channels: dict[str, ResolvedStyleChannel]
-    ax_merged: AxisXStyle
-    ay_merged: AxisYStyle
-    ax_band_position: float | None
-    ay_band_position: float | None
-    ay_format_raw: str | None
+    axes: BakedCartesianAxes
 
 
 def plan_cartesian(
@@ -167,13 +170,7 @@ def plan_cartesian(
         else None
     )
     axis_overrides = _extract_axis_overrides(primary, quantitative)
-    (
-        ax_merged,
-        ay_merged,
-        ax_band_position,
-        ay_band_position,
-        ay_format_raw,
-    ) = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         normalized,
         chart_type,
@@ -183,34 +180,73 @@ def plan_cartesian(
         multiples=multiples,
         y=y,
     )
-    return CartesianPlan(
-        primary=primary,
-        channels=channels,
-        ax_merged=ax_merged,
-        ay_merged=ay_merged,
-        ax_band_position=ax_band_position,
-        ay_band_position=ay_band_position,
-        ay_format_raw=ay_format_raw,
-    )
+    return CartesianPlan(primary=primary, channels=channels, axes=baked)
+
+
+def has_structured_tooltip(
+    chart: BarChart | LineChart | AreaChart | ScatterChart | HeatmapChart,
+    *,
+    heatmap_color_field: str | None = None,
+) -> bool:
+    """Whether ``StructuredTooltipFeature.applies_to`` will give this chart a
+    structured tooltip; ``heatmap_color_field`` is the heatmap's color channel.
+    """
+    if chart.multiples is not None:
+        return False
+    if isinstance(chart, ScatterChart):
+        return (
+            isinstance(chart.x, str) and isinstance(chart.y, str) and not chart.layers
+        )
+    if isinstance(chart, HeatmapChart):
+        return (
+            isinstance(chart.x, str)
+            and isinstance(chart.y, str)
+            and heatmap_color_field is not None
+        )
+    return chart.y is not None
+
+
+def _reject_unstructured_tooltip_affix(
+    chart_id: str,
+    chart_type: str,
+    tooltip_format: ResolvedFormat,
+    structured_tooltip_eligible: bool,
+    *,
+    field_path: str,
+) -> None:
+    """Raise when a chart without a structured tooltip authors an affix.
+
+    Such a chart falls back to Vega-Lite's native ``format``, a plain d3 spec
+    that cannot compose a prefix/suffix/notation. ``field_path`` is the
+    caller's, since only it knows which key the winning format came from.
+    """
+    if structured_tooltip_eligible:
+        return
+    if tooltip_format.has_affix:
+        raise CompilationError.from_code(
+            ERR_FORMAT_AFFIX_NATIVE_TOOLTIP_UNSUPPORTED,
+            field_path=field_path,
+            chart_id=chart_id,
+            chart_type=chart_type,
+        )
 
 
 def build_cartesian_axes(
     chart_id: str,
+    chart_type: str,
     chart_style_context: ChartStyleContext,
-    ax_merged: AxisXStyle,
-    ay_merged: AxisYStyle,
-    ax_band_position: float | None,
-    ay_band_position: float | None,
+    x: BakedAxis[AxisXStyle],
+    y: BakedAxis[AxisYStyle],
     ax_edge: Literal["left", "right"] | None,
     ticks: _CartesianTickResolution,
     column_forming: bool,
-    measure_tooltip_format: str | None,
+    measure_tooltip_format: ResolvedFormat | None,
     tooltip_format_values: Iterable[float | None],
+    structured_tooltip_eligible: bool,
     zero_anchor: bool,
     endpoint_rail_may_discard_domain: bool,
     ax_is_quantitative: bool,
     ay_is_quantitative: bool,
-    ay_format_raw: str | None,
     ay_quantitative_for_alignment: bool | None = None,
     *,
     ay_floors_tick_step: bool,
@@ -221,20 +257,8 @@ def build_cartesian_axes(
     ``style_tail["axis_x"]`` below, and every call site already reads that
     off the tail rather than the axis object directly.
 
-    ``ax_merged``/``ay_merged`` are the family's own local variables: each
-    family's final axes, after whatever family-specific mutation
-    (orientation, zero-anchor, log-domain) it ran. This function takes no
-    ``CartesianPlan``, so no frozen-struct attribute is in reach here. The
-    caller's ``plan`` is still live at the call site, though, so passing
-    ``plan.ay_merged`` stays expressible and type-clean: each family unpacks
-    the merged axes once below ``plan_cartesian()`` and reads them from that
-    local thereafter. That single unpack is a convention, not a guarantee the
-    signature can enforce.
-
-    ``ax_band_position``/``ay_band_position`` come straight off
-    ``CartesianPlan`` at every call site: no family mutates them after the
-    bake, so there is no local variable guarding a stale read the way
-    ``ax_merged``/``ay_merged`` need one.
+    ``x``/``y`` are the plan's baked axes (``replace(plan.axes.y, style=...)``
+    after a y-style mutation); heatmap and histogram pass ``as_literal()`` axes.
 
     ``measure_tooltip_format`` folds the two spellings every family used to
     apply separately (a conditional override in bar/line/area, an
@@ -257,7 +281,7 @@ def build_cartesian_axes(
     ``zero_anchor`` is the same bool each family already computed to call
     ``_resolve_cartesian_ticks`` with (bar's ``bar_zero``, line's
     ``zero_anchored_line``, ...) — passed again here rather than re-derived,
-    because ``ay_merged.scale.continuous.zero`` does not always carry it: a
+    because ``y.style.scale.continuous.zero`` does not always carry it: a
     single-metric line/area/bar anchors at zero via ``BaselineFeature``'s
     render-time ``datum: 0`` rule, not a resolve-time bake, so the scale
     field alone would under-detect the zero-anchored case.
@@ -290,31 +314,26 @@ def build_cartesian_axes(
     tick step (``build_resolved_axis``'s ``floor_tick_step``). False where the
     paint format is overridden -- a ``stack: normalize`` axis always paints
     percent -- or the y axis is not a measure. Required, never defaulted.
-
-    ``ay_format_raw`` is the cascade's raw pre-resolve value-axis format
-    (``CartesianPlan.ay_format_raw``, see ``_bake_cartesian_axes``), passed
-    straight to ``build_resolved_axis`` to decide house-vs-literal (and
-    stored verbatim on the resolved axis). Heatmap, histogram, and ``ax``
-    pass ``None`` explicitly: none of those axes carry a real
-    cascade-authored format to offer.
     """
+    measure_values = tuple(tooltip_format_values)
     ax = build_resolved_axis(
-        ax_merged,
-        band_position=ax_band_position,
+        x.style,
+        band_position=x.band_position,
         edge=ax_edge,
-        format_raw=None,
+        format=x.format,
         is_quantitative=ax_is_quantitative,
         chart_id=chart_id,
         y_gridline_caps_bottom=_y_gridline_caps_bottom(
-            ay_merged, ticks, zero_anchor, endpoint_rail_may_discard_domain
+            y.style, ticks, zero_anchor, endpoint_rail_may_discard_domain
         ),
+        formats=chart_style_context.formats,
     )
     ay = build_resolved_axis(
-        ay_merged,
-        band_position=ay_band_position,
-        edge=_edge_or_none(ay_merged.position),
+        y.style,
+        band_position=y.band_position,
+        edge=_edge_or_none(y.style.position),
         tick_values=ticks.ticks,
-        format_raw=ay_format_raw,
+        format=y.format,
         is_quantitative=ay_is_quantitative,
         quantitative_for_alignment=ay_quantitative_for_alignment,
         zero_anchored=zero_anchor,
@@ -325,11 +344,26 @@ def build_cartesian_axes(
         # The tick-stub geometry rule resolves only on the x-axis (see the
         # `ax` build above) -- axis_y's own `ticks.visible` is never "auto".
         y_gridline_caps_bottom=None,
+        formats=chart_style_context.formats,
         floor_tick_step=ay_floors_tick_step,
+        measure_values=[v for v in measure_values if v is not None],
     )
-    tail = _cartesian_style_tail(chart_style_context, ax, ay, tooltip_format_values)
+    tail = _cartesian_style_tail(chart_style_context, ax, ay, measure_values)
+    final_tooltip_format = measure_tooltip_format or tail["tooltip_format"]
+    _reject_unstructured_tooltip_affix(
+        chart_id,
+        chart_type,
+        final_tooltip_format,
+        structured_tooltip_eligible,
+        field_path=(
+            f"charts.{chart_id}.style.number_format"
+            if measure_tooltip_format is not None
+            # style.tooltip is board-level only: no chart_id prefix.
+            else "style.charts.tooltip.format"
+        ),
+    )
     style_tail: _StyleTail = {
-        "tooltip_format": measure_tooltip_format or tail["tooltip_format"],
+        "tooltip_format": final_tooltip_format,
         "axis_x": tail["axis_x"],
         "axis_y": tail["axis_y"],
     }

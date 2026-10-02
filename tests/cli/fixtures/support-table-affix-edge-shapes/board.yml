@@ -1,0 +1,80 @@
+title: support_table/donut affix edge shapes that must not crash or misrender
+
+style:
+  formats:
+    eur:
+      prefix: "EUR "
+
+queries:
+  revenue:
+    columns: [channel, revenue_eur]
+    values:
+      - [Web, 168000]
+      - [Refunds, -41500]
+  total:
+    columns: [revenue_eur]
+    values: [[154500]]
+  positive:
+    columns: [channel, revenue_eur]
+    values:
+      - [Web, 168000]
+      - [Store, 28000]
+
+charts:
+  support_table_no_spec:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: spec-less affix — no crash, prefix reaches the cell
+    support_table:
+      entries:
+        - source: revenue_eur
+          label: Revenue
+          format:
+            prefix: "EUR "
+
+  support_table_alias_no_spec:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: alias spelling of the same spec-less affix — must render, same digits as inline
+    support_table:
+      entries:
+        - source: revenue_eur
+          label: Revenue
+          format: eur
+
+  support_table_accounting:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: accounting sign flag on a negative row must survive affix composition
+    support_table:
+      entries:
+        - source: revenue_eur
+          label: Revenue
+          format:
+            spec: "(,.0f"
+            suffix: " EUR"
+
+  donut_total_no_spec:
+    type: donut
+    query: positive
+    color: channel
+    theta: revenue_eur
+    title: donut center total, spec-less affix — no crash
+    total:
+      label: Net
+    style:
+      total:
+        value:
+          format:
+            prefix: "EUR "
+
+rows:
+  - cols: [support_table_no_spec, support_table_alias_no_spec]
+  - cols: [support_table_accounting]
+  - cols: [donut_total_no_spec]

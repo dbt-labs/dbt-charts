@@ -51,6 +51,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedTableChart,
     ResolvedTableStyle,
 )
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
@@ -948,7 +949,7 @@ def test_resolve_point_map_keeps_explicit_projection() -> None:
 
 def test_geoshape_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
     """geoshape's tooltip votes on its color measure -- a sub-$1 color
-    column must not misread as SI milli (see resolve_format_for_values)."""
+    column must not misread as SI milli (see resolve_format_parts_for_values)."""
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.models.style.authored import StylePatch
     from dbt_charts.core.compile.resolve import resolve
@@ -1016,7 +1017,7 @@ def test_geoshape_value_field_spelling_votes_not_color_channel() -> None:
 
 def test_resolve_point_map_sub_dollar_size_measure_tooltip_avoids_si_milli() -> None:
     """point_map's tooltip votes on its size measure -- a sub-$1 size
-    column must not misread as SI milli (see resolve_format_for_values)."""
+    column must not misread as SI milli (see resolve_format_parts_for_values)."""
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.models.style.authored import StylePatch
     from dbt_charts.core.compile.resolve import resolve
@@ -1154,7 +1155,7 @@ def test_heatmap_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedHeatmapChart)
     assert isinstance(resolved.style, ResolvedHeatmapStyle)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
 
 
 def test_faceted_scatter_x_never_votes_since_the_facet_tooltip_never_paints_it() -> (
@@ -1194,7 +1195,7 @@ def test_faceted_scatter_x_never_votes_since_the_facet_tooltip_never_paints_it()
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedScatterChart)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"]
 
 
 def test_layered_scatter_x_never_votes_since_the_layer_tooltip_never_paints_it() -> (
@@ -1230,7 +1231,7 @@ def test_layered_scatter_x_never_votes_since_the_layer_tooltip_never_paints_it()
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedScatterChart)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"]
 
 
 def test_resolve_point_map_style_marks_point_override_propagates() -> None:
@@ -1568,7 +1569,12 @@ def test_kpi_format_config_preserved_through_resolve() -> None:
     )
     resolved = resolve(compiled, [], _default_board_style())
     assert isinstance(resolved, ResolvedKpiChart)
-    expected = FormatConfig(spec=",.2f", prefix="$", notation="narrative")
+    expected = ResolvedFormat(
+        spec=",.2f",
+        prefix="$",
+        notation="narrative",
+        raw=",.2f",
+    )
     assert resolved.format == expected, (
         f"FormatConfig was silently dropped; got {resolved.format!r}"
     )
@@ -1593,7 +1599,7 @@ def test_bar_resolve_format_reaches_resolved() -> None:
     compiled = _bar_compiled(format="$0.0a")
     resolved = resolve(compiled, _BAR_DATA, _default_board_style())
     assert isinstance(resolved, ResolvedBarChart)
-    assert resolved.format == "$0.0a", (
+    assert resolved.format == ResolvedFormat(spec="$0.0a", raw="$0.0a"), (
         f"format was silently dropped; got {resolved.format!r}"
     )
 
@@ -1604,12 +1610,8 @@ def test_bar_resolve_format_reaches_resolved() -> None:
 
 
 def test_cartesian_resolved_accepts_format_config(bar_style: ResolvedBarStyle) -> None:
-    """_CartesianResolvedChartFields.format must be FormatState (str | FormatConfig | None),
-    not str | None — compiled format is FormatState and resolve forwards it verbatim."""
-    from dbt_charts.core.compile.models.primitives import FormatConfig
-
-    fmt = FormatConfig(spec="$,.2f")
-    # Pydantic raises ValidationError if the field type is too narrow
+    """_CartesianResolvedChartFields.format carries an affix-bearing ResolvedFormat."""
+    fmt = ResolvedFormat(spec="$,.2f", suffix=" USD")
     resolved = ResolvedBarChart(
         panel_axes=(),
         id="b",
@@ -1621,7 +1623,7 @@ def test_cartesian_resolved_accepts_format_config(bar_style: ResolvedBarStyle) -
         **_C,
     )
     assert resolved.format == fmt, (
-        f"FormatConfig was coerced or dropped; got {resolved.format!r}"
+        f"ResolvedFormat was coerced or dropped; got {resolved.format!r}"
     )
 
 
@@ -1748,7 +1750,7 @@ def test_scatter_resolve_style_slice_is_resolved_scatter_style() -> None:
     assert isinstance(resolved, ResolvedScatterChart)
     assert isinstance(resolved.style, ResolvedScatterStyle)
     # tooltip_format is a resolved string (may be non-empty from theme)
-    assert isinstance(resolved.style.tooltip_format, str)
+    assert isinstance(resolved.style.tooltip_format, ResolvedFormat)
     assert resolved.style.single_series_fill.startswith("#")
     # Needed by resolve_axis_x_overlap (via resolve_cartesian_x) so a
     # temporal scatter x gets the same categorical-axis overlap heuristic as
@@ -1977,7 +1979,7 @@ def test_heatmap_resolve_style_slice_is_resolved_heatmap_style() -> None:
     resolved = resolve(compiled, _NUMERIC_DATA, _default_board_style())
     assert isinstance(resolved, ResolvedHeatmapChart)
     assert isinstance(resolved.style, ResolvedHeatmapStyle)
-    assert isinstance(resolved.style.tooltip_format, str)
+    assert isinstance(resolved.style.tooltip_format, ResolvedFormat)
     assert resolved.style.label_usable_ratio > 0
 
 
@@ -2310,3 +2312,72 @@ def test_bar_chart_local_bracket_role_token_resolves_per_theme() -> None:
             f"chart-local bracket token must follow the {theme} theme's "
             f"category role, dark variant; got {list(resolved.palette)!r}"
         )
+
+
+_BEYOND_FLOAT = 10**400
+
+
+def _currency_tooltip_style() -> Any:
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+
+    return resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()),
+        StylePatch.model_validate({"charts": {"tooltip": {"format": "currency"}}}),
+    )
+
+
+def test_format_vote_skips_an_int_beyond_float_range() -> None:
+    from dbt_charts.core.compile.resolve.chart._plan import (
+        quantitative_channel_values,
+    )
+
+    data: list[dict[str, Any]] = [
+        {"v": _BEYOND_FLOAT},
+        {"v": 0.42},
+        {"v": 0.25},
+        {"v": "n/a"},
+    ]
+    assert quantitative_channel_values(data, "v") == [0.42, 0.25]
+    assert quantitative_channel_values(data, ["v", "v"]) == [0.42, 0.25] * 2
+
+
+def test_heatmap_tooltip_vote_ignores_an_int_beyond_float_range() -> None:
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    compiled = HeatmapChart(id="h3", type="heatmap", x="day", y="hour", color="cents")
+    data = [
+        {"day": "Mon", "hour": "9", "cents": _BEYOND_FLOAT},
+        {"day": "Tue", "hour": "10", "cents": 0.42},
+        {"day": "Wed", "hour": "11", "cents": 0.25},
+    ]
+    resolved = resolve(compiled, data, _currency_tooltip_style())
+    assert isinstance(resolved, ResolvedHeatmapChart)
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
+
+
+def test_geoshape_tooltip_vote_ignores_an_int_beyond_float_range() -> None:
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    compiled = GeoshapeChart(
+        id="g4",
+        type="geoshape",
+        query=_sql(),
+        query_name="q",
+        geo="geo_field",
+        lookup="id",
+        color="cents",
+    )
+    data = [
+        {"id": "TX", "cents": _BEYOND_FLOAT},
+        {"id": "CA", "cents": 0.42},
+        {"id": "NY", "cents": 0.25},
+    ]
+    resolved = resolve(compiled, data, _currency_tooltip_style())
+    assert isinstance(resolved, ResolvedGeoshapeChart)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]

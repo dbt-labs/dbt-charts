@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field
 
-from dbt_charts.core.compile.models.style.theme import PointMarkStyle
-
 from ._cartesian import _CartesianResolvedStyle
+from ._marks import ResolvedPointMarkStyle
 
 
 class ResolvedScatterStyle(_CartesianResolvedStyle):
@@ -17,7 +16,7 @@ class ResolvedScatterStyle(_CartesianResolvedStyle):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    point_mark: PointMarkStyle = Field(
+    point_mark: ResolvedPointMarkStyle = Field(
         description="Cascade-merged point mark geometry."
     )
     single_series_fill: str = Field(

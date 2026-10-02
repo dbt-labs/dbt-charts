@@ -16,6 +16,7 @@ from __future__ import annotations
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedLegendElementStyle,
+    ResolvedLegendPosition,
     ResolvedLegendStyle,
 )
 from dbt_charts.core.render.chart.emitters._channels import (
@@ -48,7 +49,7 @@ def _legend_with_values(values: list[str]) -> ResolvedLegendStyle:
     construction-final, never copied-with-update (compile/models/AGENTS.md)."""
     elem = _legend_element_style()
     return ResolvedLegendStyle(
-        position="right",
+        position=ResolvedLegendPosition(edge="right", align="start", overlay=False),
         direction="vertical",
         columns=0,
         compact_columns=1,

@@ -19,7 +19,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSort,
-    ChartSupportTable,
     FieldConditionalFormatting,
     MultiplesConfig,
 )
@@ -27,7 +26,13 @@ from dbt_charts.core.compile.models.chart.resolved import (
     PartitionAxis,
     ResolvedStyleChannel,
 )
-from dbt_charts.core.compile.models.primitives import FormatConfig, VariableDependencies
+from dbt_charts.core.compile.models.chart.resolved._support_table import (
+    ResolvedSupportTable,
+)
+from dbt_charts.core.compile.models.primitives import (
+    ResolvedFormat,
+    VariableDependencies,
+)
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedLegendStyle,
@@ -211,7 +216,7 @@ class _CartesianResolvedChartFields(_SharedResolvedChartFields):
             "rather than re-deriving the partition from ``multiples`` itself."
         ),
     )
-    support_table: ChartSupportTable | None = Field(
+    support_table: ResolvedSupportTable | None = Field(
         default=None,
         description=(
             "Attached support-table config, final: entries reading a single "
@@ -219,9 +224,9 @@ class _CartesianResolvedChartFields(_SharedResolvedChartFields):
             "the theme's default number format stamped on."
         ),
     )
-    format: str | FormatConfig | None = Field(
+    format: ResolvedFormat | None = Field(
         default=None,
-        description="D3-format string, FormatConfig, or None for primary numeric axis.",
+        description="Authored chart-level measure format, resolved; None when unauthored.",
     )
     aspect_ratio: float | None = Field(
         default=None, description="Width:height aspect ratio."

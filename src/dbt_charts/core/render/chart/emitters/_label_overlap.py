@@ -50,9 +50,9 @@ def authored_time_format(axis: ResolvedAxisStyle) -> str | None:
     measurement: ``cadence_label_text``.
     """
     fmt = axis.labels.format
-    if fmt is None or not is_time_format(fmt):
+    if fmt is None or not is_time_format(fmt.spec):
         return None
-    return fmt
+    return fmt.spec
 
 
 class AxisLabelLayout(NamedTuple):
@@ -437,7 +437,11 @@ def _pinned_angle_block_height(
         elif authored_format is not None:
             values = _generic_temporal_labels(sorted(values), "", "", authored_format)
     if axis.labels.expr is None:
-        label_format = axis.labels.format if raw_type != "temporal" else None
+        label_format = (
+            axis.labels.format.spec
+            if raw_type != "temporal" and axis.labels.format is not None
+            else None
+        )
         values = [category_label_text(v, label_format, font.case) for v in values]
     measurer = get_font_measurer(font.family)
     max_width = max(measurer.measure(value, font.size) for value in values)
@@ -900,7 +904,8 @@ def resolve_axis_x_overlap(
     measurer = get_font_measurer(font.family)
     labels = _ordinal_label_texts(values, authored_time_format(axis))
     if axis.labels.expr is None:
-        labels = [category_label_text(v, axis.labels.format, font.case) for v in labels]
+        spec = axis.labels.format.spec if axis.labels.format is not None else None
+        labels = [category_label_text(v, spec, font.case) for v in labels]
     widths = [measurer.measure(value, font.size) for value in labels]
     gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(" ", font.size)
     widths = [width + gap for width in widths]

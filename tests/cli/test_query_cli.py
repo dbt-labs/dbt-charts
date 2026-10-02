@@ -11,6 +11,8 @@ from typer.testing import CliRunner
 
 from dbt_charts.cli.main import app
 
+from .._paths import DBT_CHARTS_DIR
+
 runner = CliRunner()
 
 SIMPLE_BOARD = """\
@@ -198,7 +200,7 @@ class TestQueryCliVarFlag:
         assert data["data"][0]["country"] == "FR"
 
 
-_FIXTURES = Path(__file__).parent.parent / "fixtures"
+_FIXTURES = DBT_CHARTS_DIR / "tests" / "fixtures"
 
 
 class TestQueryOptionVariety:

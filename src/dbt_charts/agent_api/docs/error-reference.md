@@ -416,6 +416,62 @@ Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked ba
 
 Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values while its endpoint-label rail is visible. The rail places its labels from the order the sorted axis draws (a vertical rail anchors each series at its own last drawn column, a horizontal one anchors every series on the top row), so it has to know that order before the chart renders. dbt Charts confirms it only for a numeric sort column, and labels placed from the wrong order name series in the wrong place, which is worse than a legend. Sort by a measure, or turn the rail off with `style.endpoint_labels.visible: false`.
 
+### ERR-FORMAT-AFFIX-GEO-TOOLTIP-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach a geo tooltip
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.tooltip.format at {field_path} authors a prefix/suffix/notation, but a {chart_type} tooltip takes a plain d3 spec and has no place for an affix. Drop the prefix/suffix/notation, or author a plain spec.
+```
+
+A point/bubble map or choropleth tooltip takes a plain d3 format string, so a prefix, suffix or notation on `style.tooltip.format` (reachable through a `style.formats` alias) cannot paint. Author `style.tooltip.format` as a plain spec or alias without an affix. The tooltips of bar, line, area, scatter and pie charts do paint an affix.
+
+### ERR-FORMAT-AFFIX-NATIVE-TOOLTIP-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach this chart's tooltip
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+The measure format at {field_path} authors a prefix/suffix/notation, but chart {chart_id!r} (a {chart_type} shape excluded from the structured tooltip) takes a plain d3 spec for its hover card and has no place for an affix. Drop the prefix/suffix/notation, or author a plain spec.
+```
+
+A faceted `multiples:` chart, a wide multi-measure scatter, a histogram and a layered scatter take a plain d3 spec for their hover card, so an affix on the measure format cannot paint there. Drop the prefix, suffix or notation, or author a plain spec; charts with a structured tooltip paint the affix.
+
+### ERR-FORMAT-AFFIX-NOMINAL-AXIS-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach a categorical axis
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{field_path} authors a prefix/suffix/notation, but the {axis} channel resolves to a {channel_type} scale, whose tick labels paint from the plain format string. Drop the prefix/suffix/notation, or author a plain spec.
+```
+
+An affix applies to a quantitative axis only. A categorical (nominal or ordinal) axis paints its tick labels from the plain format string, so a prefix, suffix or notation there cannot paint. Remove it, or author the affix on the measure axis.
+
+### ERR-FORMAT-AFFIX-TIME-UNSUPPORTED: A FormatConfig prefix/suffix/notation is a number-format feature only
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Format at {field_path} combines a prefix/suffix/notation with time-format spec {spec!r}. A temporal axis and `time_format` paint through a date formatter that has no place for an affix. Drop the prefix/suffix/notation, or move a prefix/suffix to a number_format slot, a KPI value, or a table column; notation never applies to a date.
+```
+
+A prefix, suffix or notation next to a strftime spec ('%b %Y') is rejected on `time_format` and on a temporal axis's format: those paint through a date formatter, which has no place for an affix. Author a prefix/suffix on a number slot (`number_format`), or on a KPI value or table column format, which paint it around the date (`FY Jan 2026`). `notation` only affects an SI number spec; it does nothing to a date anywhere, so drop it.
+
 ### ERR-FORMAT-INVALID: Format spec is not a predefined name, a style.formats alias, or a valid d3-format/d3-time-format spec
 
 - **Level:** error
@@ -471,6 +527,34 @@ Cannot define {spec!r} in style.formats at {field_path}: this name is engine-pre
 ```
 
 Fired when a `style.formats` key collides with an engine-owned predefined format name such as `number`, `currency`, or `date_short`. Predefined names resolve via engine rules and cannot be shadowed. Define your custom alias under a different name.
+
+### ERR-FORMAT-SIGN-BEFORE-ANCHORED-PREFIX: A sign cannot lead a prefix that paints on one value only
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Format at {field_path} sets sign_placement: before_prefix, but its prefix is anchored on one value: the anchor would read '−EUR 50' beside a bare '−40'. Drop sign_placement (the anchor then reads 'EUR −50'), or set repeat: every.
+```
+
+Where an authored prefix paints on one value of an axis or support_table row (`repeat: anchor`, or that surface's default), the sign follows the prefix (`EUR −50`, `€−50`) so the anchor's digits line up with the bare `−40` beside it. `sign_placement: before_prefix` there is rejected; drop it, or set `repeat: every` to put the prefix on every value.
+
+### ERR-FORMAT-SIGN-PLACEMENT-TABLE-UNSUPPORTED: A table column keeps the sign with the digits
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Format at {field_path} sets sign_placement, but a table column paints its prefix in its own lane and keeps the sign with the digits ('€  −500'). Drop sign_placement from this column's format.
+```
+
+A table column paints the prefix in a lane of its own, aligned down the column, and the sign beside the digits (`€  −500`), so `sign_placement` has nothing to move there and is rejected. Drop it, or give the column a format without it.
 
 ### ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED: strftime directive in a Vega-rendered time_format cannot be measured
 
@@ -695,6 +779,34 @@ Chart {chart_id!r} sets axis_y.scale.domain={domain!r} but the layers use indepe
 ```
 
 Fired when a chart sets `axis_y.scale.domain` at the chart level but the layers use independent (split) y scales. A chart-level domain is ambiguous when left and right sides have different scales. Set `axis_y.scale.domain` on the individual layer instead.
+
+### ERR-LEGEND-ALIGN-UNSUPPORTED: A legend cannot be aligned this way on this chart
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} asks for a legend `align` that cannot be honored: {reason}. Use `align: start` instead.
+```
+
+Fired when a `legend.position.align` of `center` (or a pie's `end`) cannot be honored: the chart is small multiples or has an endpoint-label rail (no single plot to align in), or its legend is larger than the plot.
+
+### ERR-LEGEND-POSITION-UNSUPPORTED: Legend placement combination is not supported
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} places its legend at `edge: {edge}`, `align: {align}`, `overlay: {overlay}`, which no placement supports. Supported placements: {supported}.
+```
+
+Fired when the resolved `legend.position` (edge, align, overlay) names a placement the renderer cannot draw.
 
 ### ERR-LINE-Y-NOT-NUMERIC: Line chart y column is not numeric
 
@@ -1545,6 +1657,20 @@ DuckDB source config's {field!r} is invalid: {reason}. Fix this in the source co
 
 Fired before any SQL is sent, while turning a DuckDB source's `extensions`/`settings`/`secrets`/`attach` config into the SQL statements that apply it: a bad identifier (a key or name that is not a bare `[A-Za-z_][A-Za-z0-9_]*` token, so it cannot be safely spliced into SET/ATTACH/CREATE SECRET), a secret missing its required `type`, or an `attach` entry that sets the same option through both a direct field (`type`/`secret`/`read_only`) and `options`. `{field}` names the config key that failed; fix it in the source config.
 
+### ERR-ADAPTER-NOT-INSTALLED: Warehouse adapter is not installed
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+dbt Charts needs the {package} adapter to query {adapter_type!r} sources, and it is not installed in this Python environment. Install it with: {install}
+```
+
+Fired when a source needs a dbt adapter package that is not installed. It applies to a direct warehouse source in `dbt_charts.yml` and to a `type: dbt_profile` source whose profiles.yml target names the warehouse. Each warehouse adapter ships as a dbt Charts extra, so the fix is to install the extra into the same environment `dct` runs from, e.g. `uv tool install "dbt-charts[snowflake]"` for a uv tool install, or `pip install "dbt-charts[snowflake]"` for a pip/venv install. The message names the command that matches how this dbt Charts was installed. Raised before any connection is attempted.
+
 ### ERR-ADAPTER-RELATIVE-PATH-NO-DATA-DIR: Relative source path needs a data directory to resolve against
 
 - **Level:** error
@@ -1640,10 +1766,10 @@ Fired when a query's SQL calls dbt's `ref()` or `source()` in a form dbt charts 
 **Message template:**
 
 ```
-SQL uses {kind} but no dbt manifest was found (looked for {paths}). Build one with `dbt parse`.
+SQL uses {kind} but no dbt manifest was found (looked for {paths}). Build one with `dbt parse` (`dbt parse --target <target> --target-path <dir>` for a source that sets `target_path:`).
 ```
 
-Fired when a query's SQL calls `ref()` or `source()` but the project has no dbt manifest to resolve the call against. The manifest is what maps a model name to its warehouse relation, so without it dbt charts cannot know which table the query means. Run `dbt parse` (or any command that writes `target/manifest.json`) in the dbt project.
+Fired when a query's SQL calls `ref()` or `source()` but the project has no dbt manifest to resolve the call against. The manifest is what maps a model name to its warehouse relation, so without it dbt charts cannot know which table the query means. Run `dbt parse` (or any command that writes `target/manifest.json`) in the dbt project. A `dbt_profile` source that sets `target_path:` resolves against `<target_path>/manifest.json` instead: build it with `dbt parse --target <target> --target-path <target_path>`.
 
 ### ERR-DBT-MANIFEST-UNREADABLE: dbt manifest could not be read
 
@@ -1714,6 +1840,20 @@ SQL references {{{{ source({source_name!r}, {table_name!r}) }}}}, but no matchin
 ```
 
 Fired when a query's SQL calls the dbt `source()` Jinja function with a source/table pair that is not present in the loaded manifest. Check for a typo, or refresh the manifest (`dbt parse`) if the source was added recently.
+
+### ERR-DBT-TARGET-PATH-INVALID: dbt target path is not usable
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+The dbt target path from {origin} is not usable: {detail}. Use a relative directory inside the dbt project, e.g. `target_path: target/prod` on the source.
+```
+
+Fired when the directory the manifest is read from (the source's `target_path:`, `DBT_TARGET_PATH`, or `target-path:` in `dbt_project.yml`) is absolute, climbs out of the dbt project, contains an unrendered Jinja template, or sits in a `dbt_project.yml` that is not valid YAML. Manifests are read through the project, so the directory must be relative to the dbt project root. Fix it where the message says it came from, or set a relative `target_path:` on the `dbt_profile` source, which wins over `DBT_TARGET_PATH` and `target-path:`. Only checked where a manifest is needed: a query calling `ref()` or `source()`.
 
 ### ERR-FILE-SOURCE-AMBIGUOUS: Inline file source path exists at both candidate locations
 

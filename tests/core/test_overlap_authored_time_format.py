@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
+
 
 def _monthly_rows_with_gaps(count: int) -> list[str]:
     """Monthly first-of-month dates with three months missing.
@@ -59,7 +61,7 @@ def _axis(
         axis_x.labels,
         overlap=dataclasses.replace(axis_x.labels.overlap, skip=skip, tilt=tilt),
         angle=None,
-        format=time_format,
+        format=None if time_format is None else ResolvedFormat(spec=time_format),
     )
     return dataclasses.replace(axis_x, labels=labels)
 
@@ -87,7 +89,7 @@ def _painted_label_clearance(
     font = axis.labels.font
     measurer = get_font_measurer(font.family)
     widest = max(
-        measurer.measure(portable_strftime(d, axis.labels.format), font.size)
+        measurer.measure(portable_strftime(d, axis.labels.format.spec), font.size)
         for _, d in visible
     )
     band = chart_width * 0.9 / len(dates)
@@ -289,7 +291,11 @@ def _ordinal_axis(time_format: str | None) -> Any:
     )
     return dataclasses.replace(
         axis_x,
-        labels=dataclasses.replace(axis_x.labels, angle=None, format=time_format),
+        labels=dataclasses.replace(
+            axis_x.labels,
+            angle=None,
+            format=None if time_format is None else ResolvedFormat(spec=time_format),
+        ),
     )
 
 

@@ -204,6 +204,92 @@ class TestSQLServerDialect:
         assert dialect.param(1) == "@p1"
         assert dialect.param(2) == "@p2"
 
+    def test_no_timeout_sql(self, dialect: SQLServerDialect) -> None:
+        """T-SQL has no session-level SET for a per-statement cap."""
+        assert dialect.statement_timeout_sql(30) is None
+
+    def test_connect_credentials_writes_the_cap_it_is_given(
+        self, dialect: SQLServerDialect
+    ) -> None:
+        """It does not re-decide against the profile: the enforced cap and the
+        reported one stay a single number."""
+        creds = dialect.connect_credentials(
+            {"type": "sqlserver", "host": "h", "query_timeout": 5}, 30
+        )
+        assert creds["query_timeout"] == 30
+        assert creds["host"] == "h"
+
+    def test_connect_credentials_refuses_the_backend_that_ignores_the_cap(
+        self, dialect: SQLServerDialect
+    ) -> None:
+        with pytest.raises(ValueError, match="mssql-python"):
+            dialect.connect_credentials({"backend": "mssql-python"}, 30)
+
+    def test_connect_credentials_leaves_the_source_config_alone(
+        self, dialect: SQLServerDialect
+    ) -> None:
+        """The pool keys its connection pool on the dict it was handed."""
+        source = {"type": "sqlserver", "host": "h"}
+        dialect.connect_credentials(source, 30)
+        assert "query_timeout" not in source
+
+    @pytest.mark.parametrize(
+        ("authored", "expected"),
+        [
+            # Looser than the ceiling: the ceiling stands.
+            (9999, 30),
+            # Stricter: the profile's own cap stands.
+            (5, 5),
+            ("5", 5),
+            # dbt-sqlserver's "no timeout" narrows nothing.
+            (0, 30),
+            ("0", 30),
+            (None, 30),
+        ],
+    )
+    def test_resolve_timeout_seconds_applies_the_cap_as_a_ceiling(
+        self, dialect: SQLServerDialect, authored: object, expected: int
+    ) -> None:
+        assert (
+            dialect.resolve_timeout_seconds({"query_timeout": authored}, 30) == expected
+        )
+
+    def test_an_unauthored_query_timeout_narrows_nothing(
+        self, dialect: SQLServerDialect
+    ) -> None:
+        assert dialect.resolve_timeout_seconds({"type": "sqlserver"}, 30) == 30
+
+    @pytest.mark.parametrize("authored", ["soon", "", [30], 1.5, -1, True])
+    def test_resolve_timeout_seconds_rejects_a_value_dbt_sqlserver_rejects(
+        self, dialect: SQLServerDialect, authored: object
+    ) -> None:
+        """A bool is an int in Python: True must not read as a 1s cap."""
+        with pytest.raises(ValueError, match="query_timeout"):
+            dialect.resolve_timeout_seconds({"query_timeout": authored}, 30)
+
+    def test_timeout_error_is_recognized(self, dialect: SQLServerDialect) -> None:
+        message = (
+            "('HYT00', '[HYT00] [Microsoft][ODBC Driver 18 for SQL Server]"
+            "Query timeout expired (0) (SQLExecDirectW)')"
+        )
+        assert dialect.is_statement_timeout_error(RuntimeError(message)) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # A login timeout reports HYT00 too, but nothing ran.
+            "('HYT00', '[HYT00] [Microsoft][ODBC Driver 18 for SQL Server]"
+            "Login timeout expired (0) (SQLDriverConnect)')",
+            "[42S22] Invalid column name 'no_such_col'. (207)",
+            # The phrase echoed in an identifier is not the driver's HYT00.
+            "[42S22] Invalid column name 'Query timeout expired'. (207)",
+        ],
+    )
+    def test_other_errors_are_not_timeouts(
+        self, dialect: SQLServerDialect, message: str
+    ) -> None:
+        assert dialect.is_statement_timeout_error(RuntimeError(message)) is False
+
 
 class TestDatabricksDialect:
     """Tests for Databricks dialect."""
@@ -360,8 +446,8 @@ class TestClickHouseDialect:
             )
 
     def test_other_dialects_carry_neither_seam(self) -> None:
-        """Both base seams are no-ops: only ClickHouse's cap is credential-shaped
-        and only ClickHouse's profile can spell a cap of its own."""
+        """Both base seams are no-ops: only ClickHouse's and SQL Server's caps are
+        credential-shaped and only their profiles can spell a cap of their own."""
         source = {"type": "postgres", "host": "h"}
         postgres = get_dialect("postgres")
         assert postgres.connect_credentials(source, 30) is source

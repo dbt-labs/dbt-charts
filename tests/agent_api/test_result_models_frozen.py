@@ -41,6 +41,7 @@ from dbt_charts.agent_api.docs._loader import (
     Topic,
     TopicEntry,
 )
+from dbt_charts.agent_api.doctor import DoctorCheck, DoctorReport
 from dbt_charts.agent_api.file_refs import ExpandedPrompt, FileRef
 from dbt_charts.agent_api.files import (
     EditFileResult,
@@ -93,6 +94,8 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
     (ValidateResult(success=True, path="x"), "success"),
     (ContentValidateResult(success=True), "success"),
     (ScaffoldResult(), "created_files"),
+    (DoctorReport(success=True, checks=[]), "success"),
+    (DoctorCheck(code="install", status="pass", message="x"), "status"),
     (InitResult(project_dir=Path("x"), dbt_detected=False), "dbt_detected"),
     (BoardQueryLookupResult(success=True), "success"),
     (

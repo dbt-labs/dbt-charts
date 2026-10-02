@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import OverlapSpec
-from dbt_charts.core.compile.models.style.theme import BarMarkStyle
+from dbt_charts.core.compile.models.style.resolved._marks import ResolvedBarMarkStyle
 
 from ._cartesian import _SeriesCartesianResolvedStyle
 
@@ -30,7 +30,7 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
             "None / 'value' = largest at bottom (VL default)."
         ),
     )
-    mark: BarMarkStyle = Field(
+    mark: ResolvedBarMarkStyle = Field(
         description="Cascade-merged bar mark geometry (padding, size, labels).",
     )
     overlap: OverlapSpec = Field(

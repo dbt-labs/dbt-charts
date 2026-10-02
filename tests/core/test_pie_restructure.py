@@ -487,7 +487,7 @@ rows:
         _, ctx = resolve_style_and_context(get_theme_style(), board_patch)
         chart = PieChart(id="t", type="pie", theta="val", color="cat")
         rc = resolve(chart, [{"cat": "A", "val": 1}], chart_style_context=ctx)
-        assert rc.style.total_style.value.format == ",.1f"
+        assert rc.style.total_style.value.format.spec == ",.1f"
 
     def test_chart_local_total_format_wins_over_board_tier(self):
         """A chart-local style.total.value.format overrides the board/theme
@@ -514,7 +514,7 @@ rows:
             ),
         )
         rc = resolve(chart, [{"cat": "A", "val": 1}], chart_style_context=ctx)
-        assert rc.style.total_style.value.format == ",.2f"
+        assert rc.style.total_style.value.format.spec == ",.2f"
 
 
 # ---------------------------------------------------------------------------
@@ -609,7 +609,7 @@ class TestTotalFormatResolution:
         """A donut whose slices sum below $1 must not misread as SI milli.
 
         $0.67 painted "$670m" (d3's SI milli prefix colliding case-only with
-        the house million grammar) before resolve_format_for_values voted
+        the house million grammar) before resolve_format_parts_for_values voted
         the whole slot (theta values + their sum) to the plain-digit
         fallback. Center total and slice tooltip must agree -- they vote on
         the same set.
@@ -658,7 +658,7 @@ class TestTotalFormatResolution:
         )
 
         # Slice tooltip: the theta encoding's format must match.
-        assert rc.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+        assert rc.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
 
         import vl_convert as vlc
 
@@ -691,7 +691,9 @@ class TestTotalFormatConfig:
         assert value.format is not None
 
     def test_total_format_config_prefix_propagates_to_spec(self):
-        """FormatConfig with prefix reaches the VL encoding."""
+        """FormatConfig with prefix reaches the VL encoding. d3's grammar admits only
+        "$"/"#" as a spec's own symbol character (libs/d3-format's spec.py).
+        """
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
@@ -726,9 +728,16 @@ class TestTotalFormatConfig:
         mapped = PieEmitter().emit(rc, _DEFAULT_BOX, regroup((), data))
         value_layer = mapped.layers[1]
         text_enc = value_layer.encoding["text"]
-        # After resolve_format with a FormatConfig, the VL spec carries the d3 spec.
-        assert text_enc.get("format") is not None
-        assert text_enc.get("format") != "None"
+        # The prefix has nowhere to live inside a plain text.format d3 spec,
+        # so it composes into a calculate transform instead.
+        calc_field = text_enc["field"]
+        calculate_exprs = [
+            t["calculate"] for t in value_layer.transforms if t.get("as") == calc_field
+        ]
+        assert len(calculate_exprs) == 1
+        # json.dumps escapes non-ASCII by default, so check for the decoded
+        # prefix inside the expression's JSON-quoted literal.
+        assert '"\\u25b2 "' in calculate_exprs[0]
 
 
 # ---------------------------------------------------------------------------

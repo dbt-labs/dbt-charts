@@ -64,7 +64,7 @@ def _make_ctx(
     rows: list[dict[str, Any]] | None = None,
     vega_spec: dict[str, Any] | None = None,
 ) -> WarningContext:
-    resolved = make_test_resolved_chart(chart)
+    resolved = make_test_resolved_chart(chart, rows)
     board = make_test_resolved_board(charts={resolved.id: resolved})
     return WarningContext(
         board_spec=board,
@@ -103,6 +103,54 @@ def test_bar_currency_column_with_format_no_warning() -> None:
     chart = _make_chart(y="revenue_usd", format="currency")
     ctx = _make_ctx(chart)
     assert detector.detect(ctx) == []
+
+
+def test_bar_currency_column_with_authored_prefix_no_warning() -> None:
+    """An authored FormatConfig prefix (e.g. a "€" euro sign) satisfies the check even
+    though it never puts a "$" into the resolved d3 spec.
+    """
+    chart = _make_chart(y="revenue_eur", format={"spec": ",.0f", "prefix": "€"})
+    ctx = _make_ctx(chart)
+    assert detector.detect(ctx) == []
+
+
+def test_bar_currency_column_with_authored_prefix_on_an_si_ladder_no_warning() -> None:
+    """An authored prefix on a bare SI spec (``.3~s``) satisfies the check
+    too, even once real data bakes a compacting ladder (``ResolvedRulerAxis``)
+    that clears ``labels.prefix`` and carries the affix on
+    ``ruler.authored_prefix`` instead — the axis is labeled, this
+    must not read as unlabeled just because the affix moved fields."""
+    chart = _make_chart(y="revenue_eur", format={"spec": ".3~s", "prefix": "€"})
+    rows = [
+        {"month": m, "revenue_eur": v} for m, v in enumerate([1e6, 5e6, 12e6, 18e6])
+    ]
+    ctx = _make_ctx(chart, rows=rows)
+    assert detector.detect(ctx) == []
+
+
+def test_eur_field_with_no_format_suggests_euro_symbol_not_dollar() -> None:
+    """A field named revenue_eur with NO authored format still fires (there is genuinely
+    no unit on the axis).
+    """
+    chart = _make_chart(y="revenue_eur")
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+
+    assert len(warnings) == 1
+    fix = warnings[0].fix or ""
+    assert "€" in fix
+    assert "$,.2f" not in fix
+
+
+def test_usd_field_with_no_format_still_suggests_dollar() -> None:
+    """A field named revenue_usd keeps the generic dollar suggestion —
+    $,.2f was already the correct currency for it."""
+    chart = _make_chart(y="revenue_usd")
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+
+    assert len(warnings) == 1
+    assert "$,.2f" in (warnings[0].fix or "")
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +343,28 @@ def test_bare_generic_metric_names_no_warning() -> None:
         assert detector.detect(ctx) == [], f"{name!r} must not fire bare"
 
 
+def test_percent_field_with_currency_prefix_still_fires() -> None:
+    """A percent-classified field authored with a currency prefix is still missing
+    percent formatting.
+    """
+    chart = _make_chart(y="margin_pct", format={"spec": ",.0f", "prefix": "€"})
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+
+    assert len(warnings) == 1
+    assert warnings[0].field == "margin_pct"
+    assert "percent" in (warnings[0].fix or "").lower()
+
+
+def test_percent_field_with_an_authored_percent_suffix_no_warning() -> None:
+    """A column already in percent points, labeled by an authored ``%`` suffix, is unit-
+    labeled.
+    """
+    chart = _make_chart(y="margin_pct", format={"spec": ",.1f", "suffix": "%"})
+    ctx = _make_ctx(chart)
+    assert detector.detect(ctx) == []
+
+
 def _combo(layer_axis_y: dict[str, Any], **base: Any) -> WarningContext:
     layer = {"type": "line", "y": "open_rate", "axis_y": layer_axis_y}
     return _make_ctx(_make_chart(type="bar", y="sends", layers=[layer], **base))
@@ -345,6 +415,47 @@ def test_dual_axis_base_warns_while_formatted_layer_does_not() -> None:
     }
     chart = _make_chart(type="bar", y="revenue_usd", layers=[layer])
     assert [w.field for w in detector.detect(_make_ctx(chart))] == ["revenue_usd"]
+
+
+def test_dual_axis_layer_with_own_affixed_format_no_warning() -> None:
+    """A layer's own affixed axis_y.labels.format (a euro FormatConfig, not a bare d3
+    spec) must satisfy the detector for that layer.
+    """
+    layer = {
+        "type": "line",
+        "y": "revenue_eur",
+        "axis_y": {
+            "position": "right",
+            "labels": {"format": {"spec": ",.0f", "prefix": "€"}},
+        },
+    }
+    chart = _make_chart(type="bar", y="sends", layers=[layer])
+    assert detector.detect(_make_ctx(chart)) == []
+
+
+def test_registered_doc_describes_the_affix_exemption() -> None:
+    """The published `doc` must not claim detection fires "when the resolved y-axis
+    format does not carry the matching symbol ($ for money, % for a percentage)".
+    """
+    doc = WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.doc
+    assert "affix" in doc or "prefix" in doc
+    assert (
+        "does not carry the matching symbol (`$` for money, `%` for a percentage)"
+        not in doc
+    )
+
+
+def test_registered_fix_template_is_the_documented_fallback() -> None:
+    """The registered `fix_template` (the generic dollar-or-percent
+    suggestion) only ever ships for a percent-classified field or a
+    currency-classified field with no recognized currency-code token
+    (_currency_fix_hint bypasses it for a known one, e.g. revenue_eur's
+    euro-specific line) -- the doc must say so, or the published reference
+    reads the template's own worked example as universal when it is a
+    fallback."""
+    doc = WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.doc
+    assert "fix_template" not in doc  # never leak the internal name into user docs
+    assert "currency" in doc and "percent" in doc
 
 
 def _resolved_ctx(y: str, fmt: str | None = None) -> WarningContext:

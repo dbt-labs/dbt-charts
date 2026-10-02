@@ -23,6 +23,7 @@ def _axis(
     angle: float | None = None,
 ) -> Any:
     from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.models.primitives import ResolvedFormat
     from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
@@ -37,7 +38,7 @@ def _axis(
         axis_x.labels,
         overlap=dataclasses.replace(axis_x.labels.overlap, skip=True, tilt=True),
         angle=angle,
-        format=number_format,
+        format=None if number_format is None else ResolvedFormat(spec=number_format),
         font=font,
     )
     return dataclasses.replace(axis_x, labels=labels)

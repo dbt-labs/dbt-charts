@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dbt_charts.core.compile.models.markers import DisplayText, Format
+from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 
 
@@ -46,7 +47,7 @@ class LayerAxisYLabels(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    format: Annotated[FormatAlias | str | None, Format()] = Field(
+    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
         description="d3 format string for this layer's y-axis tick labels.",
     )

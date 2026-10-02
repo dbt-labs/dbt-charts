@@ -202,7 +202,7 @@ def _column_numeric_values(
 ) -> list[float]:
     """Every numeric value one column paints, for a per-chart format vote.
 
-    Shared extraction step behind ``resolve_format_for_values`` (compile/
+    Shared extraction step behind ``resolve_format_parts_for_values`` (compile/
     format.py): a donut's theta column, a cartesian family's y (and
     scatter's x) measure(s), and a geo/heatmap chart's color/size channel
     all need "pull this column's raw values off ``data``" before voting on
@@ -213,8 +213,12 @@ def _column_numeric_values(
     """
     if not field:
         return []
-    return [
-        float(raw)
-        for raw in (row.get(field) for row in data)
-        if isinstance(raw, (int, float, Decimal)) and not isinstance(raw, bool)
-    ]
+    values = []
+    for raw in (row.get(field) for row in data):
+        if not isinstance(raw, (int, float, Decimal)) or isinstance(raw, bool):
+            continue
+        try:
+            values.append(float(raw))
+        except OverflowError:
+            continue
+    return values

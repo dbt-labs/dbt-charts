@@ -17,6 +17,8 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
+
 
 def _axis(channel_type: str, skip: bool, tilt: bool) -> Any:
     from dbt_charts.core.compile.config import get_theme_style
@@ -49,7 +51,8 @@ def _temporal_layout(skip: bool, tilt: bool, chart_width: float = 200.0) -> Any:
 
     axis = _axis("temporal", skip, tilt)
     axis = dataclasses.replace(
-        axis, labels=dataclasses.replace(axis.labels, format="%B %Y")
+        axis,
+        labels=dataclasses.replace(axis.labels, format=ResolvedFormat(spec="%B %Y")),
     )
     data: list[dict[str, Any]] = [
         {"d": f"2022-{month:02d}-01", "y": 1} for month in range(2, 13)

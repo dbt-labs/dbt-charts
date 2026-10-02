@@ -30,7 +30,9 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import get_execution_config
+from dbt_charts.core.execute.adapters.base import RowFetchLimit
 from dbt_charts.core.execute.adapters.sql_adapter import (
+    PreparedSql,
     SqlAdapter,
     _source_config_hash,
 )
@@ -52,6 +54,7 @@ def _make_adapter_mock() -> MagicMock:
     table_mock.column_names = ["v"]
     table_mock.rows = [(1,)]
     adapter.execute.return_value = (None, table_mock)
+    adapter.connections.get_thread_connection.return_value.state = "open"
     return adapter
 
 
@@ -215,6 +218,59 @@ class TestConnectFailureDetection:
             with pytest.raises(ConnectionSetupFailed, match="Invalid access token"):
                 pool.execute("SELECT 1", setup_sql=None)
             pool.close()
+
+
+def _prepared(dialect: str) -> PreparedSql:
+    return PreparedSql(
+        sql="SELECT 1",
+        setup_sql=None,
+        dialect_name=dialect,
+        row_fetch_limit=RowFetchLimit(
+            fetch_limit=10, effective_limit=10, ceiling_binding=False
+        ),
+    )
+
+
+class TestAdapterNotInstalled:
+    """A missing dbt adapter package is a setup problem, not a connection failure."""
+
+    def test_missing_adapter_surfaces_its_own_code(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import sys
+
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
+
+        monkeypatch.setitem(sys.modules, "dbt.adapters.snowflake", None)
+        sa = _make_sql_adapter(tmp_path, local_project)
+        result = sa._execute_via_dbt_adapter(
+            _prepared("snowflake"), SqlQuery(sql="SELECT 1"), _SNOWFLAKE_SOURCE
+        )
+
+        assert result.error is not None
+        assert result.error.code is ERR_ADAPTER_NOT_INSTALLED
+        assert "dbt-charts[snowflake]" in str(result.error)
+
+    def test_other_build_failures_stay_connection_failures(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.diagnostics import ERR_WAREHOUSE_CONNECTION
+
+        sa = _make_sql_adapter(tmp_path, local_project)
+        with patch(_BUILD_ADAPTER, side_effect=ValueError("bad credentials")):
+            result = sa._execute_via_dbt_adapter(
+                _prepared("snowflake"), SqlQuery(sql="SELECT 1"), _SNOWFLAKE_SOURCE
+            )
+
+        assert result.error is not None
+        assert result.error.code is ERR_WAREHOUSE_CONNECTION
 
 
 # ---------------------------------------------------------------------------
@@ -872,3 +928,79 @@ class TestClickHouseQueryTimeout:
             pool.close()
 
         assert build.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# SQL Server: the statement cap rides on the credentials' query_timeout
+# ---------------------------------------------------------------------------
+
+_SQLSERVER_SOURCE: dict[str, Any] = {
+    "type": "sqlserver",
+    "host": "h",
+    "database": "db",
+    "user": "u",
+    "password": "p",
+}
+
+
+class TestSQLServerQueryTimeout:
+    def test_query_timeout_is_set_on_the_credentials(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """T-SQL has no session SET for a cap, so the only statement the worker
+        sends is the query."""
+        sa = _make_sql_adapter(tmp_path, local_project)
+        mock_adapter = _make_adapter_mock()
+
+        with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
+            pool = sa._get_source_pool(_SQLSERVER_SOURCE)
+            pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert (
+            build.call_args.args[0]["query_timeout"]
+            == get_execution_config().max_query_duration_seconds
+        )
+        sent = [c.args[0] for c in mock_adapter.execute.call_args_list]
+        assert sent == ["SELECT 1"]
+        assert "query_timeout" not in _SQLSERVER_SOURCE
+
+    @pytest.mark.parametrize(
+        ("authored", "expected"), [(9999, 7), (3, 3), (0, 7), ("3", 3)]
+    )
+    def test_the_stricter_of_profile_and_ceiling_wins(
+        self, authored: object, expected: int
+    ) -> None:
+        from dbt_charts.core.execute.adapters.sql_adapter import _SourcePool
+
+        source = {**_SQLSERVER_SOURCE, "query_timeout": authored}
+        with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
+            pool = _SourcePool(source, max_workers=1, timeout_seconds=7)
+            pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert build.call_args.args[0]["query_timeout"] == expected
+
+    def test_a_timeout_is_classified_and_not_retried(self) -> None:
+        """HYT00 "Query timeout expired" is the driver cancelling the statement,
+        not the session: the failed query must not run a second time."""
+        from dbt_charts.core.execute.adapters.sql_adapter import (
+            _QueryDurationExceeded,
+            _SourcePool,
+        )
+
+        mock_adapter = _make_adapter_mock()
+        mock_adapter.execute.side_effect = RuntimeError(
+            "('HYT00', '[HYT00] [Microsoft][ODBC Driver 18 for SQL Server]"
+            "Query timeout expired (0) (SQLExecDirectW)')"
+        )
+
+        with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
+            pool = _SourcePool(_SQLSERVER_SOURCE, max_workers=1, timeout_seconds=2)
+            with pytest.raises(_QueryDurationExceeded) as excinfo:
+                pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
+
+        assert excinfo.value.seconds == 2
+        assert build.call_count == 1
+        assert mock_adapter.execute.call_count == 1

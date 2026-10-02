@@ -5,29 +5,43 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, TypeVar
 
+from pydantic import BaseModel
+
 from dbt_charts.core.compile.format import (
-    resolve_format_for_values,
+    resolve_format_parts_for_values,
     resolve_label_format,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
+)
+from dbt_charts.core.compile.models.primitives import (
+    FormatAliases,
+    ResolvedFormat,
+    resolved_as,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedAreaLineStyle,
     ResolvedAreaMarkStyle,
     ResolvedLineMarkStyle,
+    ResolvedPointLabels,
+    ResolvedPointMarkStyle,
     ResolvedStrokeStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
     AreaLineStyle,
     AreaMarkStyle,
+    BarLabelsStyle,
+    BarTotalLabelStyle,
     LineMarkStyle,
     MarkLabelsStyle,
+    PointLabelsStyle,
+    PointMarkStyle,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     chart_authored_axis_format,
 )
+from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 __all__ = [
     "_apply_stroke_width_fallback",
@@ -36,6 +50,9 @@ __all__ = [
     "_build_resolved_line_mark",
     "_label_format_fallback",
     "_measure_tooltip_format",
+    "_resolve_authored_label_format",
+    "_resolved_point_mark",
+    "_with_label_format",
 ]
 
 _LineOrAreaLineT = TypeVar("_LineOrAreaLineT", LineMarkStyle, AreaLineStyle)
@@ -75,7 +92,7 @@ def _measure_tooltip_format(
     y_channel_type: str = "quantitative",
     *,
     values: Iterable[float | None],
-) -> str | None:
+) -> ResolvedFormat | None:
     """Resolve the chart-authored measure (y-axis) tooltip format, if any.
 
     Precedence: chart_authored_axis_format (style.number_format / chart.format)
@@ -85,7 +102,7 @@ def _measure_tooltip_format(
     chart_authored_axis_format returns None for non-quantitative/temporal
     channels, so a nominal y correctly skips the measure-format fallback.
     ``values`` is every value this chart's own y measure(s) will paint,
-    passed through to resolve_format_for_values's per-chart sub-$1 vote.
+    passed to the sub-$1 vote.
     """
     fmt = chart_authored_axis_format(normalized, y_channel_type)
     if (
@@ -96,49 +113,88 @@ def _measure_tooltip_format(
     ):
         fmt = primary.axis_y.labels.format
     return (
-        resolve_format_for_values(fmt, chart_style_context.formats, values)
+        resolve_format_parts_for_values(
+            fmt,
+            chart_style_context.formats,
+            values,
+            no_format_default=PredefinedNumberFormat.number,
+        )
         if fmt
         else None
     )
 
 
-_LabelsT = TypeVar("_LabelsT", bound=MarkLabelsStyle)
+_ResolvedLabelsT = TypeVar("_ResolvedLabelsT", bound=BaseModel)
+_AuthoredLabelsT = TypeVar(
+    "_AuthoredLabelsT",
+    MarkLabelsStyle,
+    BarLabelsStyle,
+    PointLabelsStyle,
+    BarTotalLabelStyle,
+)
+
+
+def _with_label_format(
+    labels: MarkLabelsStyle | BarTotalLabelStyle,
+    resolved_cls: type[_ResolvedLabelsT],
+    fmt: ResolvedFormat | None,
+) -> _ResolvedLabelsT:
+    """``labels`` as ``resolved_cls`` carrying the resolved ``fmt``."""
+    return resolved_as(resolved_cls, labels, format=fmt)
 
 
 def _label_format_fallback(
-    labels: _LabelsT,
-    axis_format: str | None,
+    labels: _AuthoredLabelsT,
+    resolved_cls: type[_ResolvedLabelsT],
+    axis_format: ResolvedFormat | None,
     axis_house_default: bool,
-    formats: dict[str, str] | None,
-) -> tuple[_LabelsT, bool]:
-    """Fall an unset value-label format back to the resolved measure-axis format.
+    formats: FormatAliases | None,
+    values: Iterable[float | None] = (),
+) -> tuple[_ResolvedLabelsT, bool]:
+    """Resolve ``labels`` as ``resolved_cls``, falling an unset format back to the axis's.
 
-    Returns ``(updated_labels, is_house)`` where ``is_house`` controls whether
-    the render layer wraps the SI format in the narrative register (1.2mn) or
-    passes it straight to Vega (raw d3: 1.2M).
-
-    An explicit label format is decided by predefined-membership alone
-    (``resolve_label_format`` — see ``ResolvedAxisStyle.format_raw`` for the
-    house-vs-literal rule it applies). The fallback branch (no label format
-    authored) instead inherits ``axis_house_default`` as callers compute it
-    — the axis's own raw format winner run through the same predicate,
-    since inheriting a label must agree with what its own axis renders,
-    including the axis's own literal-format escape hatch.
-
-    Unlike ``axis_format`` (already resolved via ``resolve_format``), an explicit
-    ``labels.format`` passes through ``resolve_label_format`` for both alias
-    resolution and round-aware trimming — so ``format: currency`` resolves to
-    ``$,.2f`` here, not the literal alias key.
+    Returns ``(labels, is_house)``: house paints the narrative register
+    (1.2mn), otherwise the spec goes straight to Vega (1.2M). An explicit
+    format is resolved by ``resolve_label_format``; the fallback inherits the
+    axis format un-voted, with ``axis_house_default`` so label and axis agree.
+    ``values`` are what the label paints, for the sub-$1 vote.
     """
     if labels.format is not None:
-        resolved, is_house = resolve_label_format(labels.format, formats)
-        return labels.model_copy(update={"format": resolved}), is_house
-    if axis_format is None:
-        return labels, False
-    return labels.model_copy(update={"format": axis_format}), axis_house_default
+        resolved, is_house = resolve_label_format(labels.format, formats, values)
+        return _with_label_format(labels, resolved_cls, resolved), is_house
+    return _with_label_format(labels, resolved_cls, axis_format), (
+        axis_format is not None and axis_house_default
+    )
 
 
-def _build_resolved_line_mark(merged: LineMarkStyle) -> ResolvedLineMarkStyle:
+def _resolve_authored_label_format(
+    labels: _AuthoredLabelsT,
+    resolved_cls: type[_ResolvedLabelsT],
+    formats: FormatAliases | None,
+    values: Iterable[float | None] = (),
+) -> _ResolvedLabelsT:
+    """``labels`` with only its own authored format (no axis fallback) resolved."""
+    fmt, _ = resolve_label_format(labels.format, formats, values)
+    return _with_label_format(labels, resolved_cls, fmt)
+
+
+def _resolved_point_mark(
+    point_mark: PointMarkStyle,
+    formats: FormatAliases | None,
+    values: Iterable[float | None] = (),
+) -> ResolvedPointMarkStyle:
+    return resolved_as(
+        ResolvedPointMarkStyle,
+        point_mark,
+        labels=_resolve_authored_label_format(
+            point_mark.labels, ResolvedPointLabels, formats, values
+        ),
+    )
+
+
+def _build_resolved_line_mark(
+    merged: LineMarkStyle, labels: ResolvedPointLabels
+) -> ResolvedLineMarkStyle:
     """Build a ResolvedLineMarkStyle from an already-merged LineMarkStyle."""
     # merged.stroke.width can't be None here: _apply_stroke_width_fallback
     # already ran and fills width whenever a stroke object exists. Only
@@ -167,7 +223,7 @@ def _build_resolved_line_mark(merged: LineMarkStyle) -> ResolvedLineMarkStyle:
         curve=merged.curve,
         connect=merged.connect,
         disconnected_cap=merged.disconnected_cap,
-        labels=merged.labels,
+        labels=labels,
     )
 
 
@@ -186,7 +242,9 @@ def _build_resolved_area_mark(merged: AreaMarkStyle) -> ResolvedAreaMarkStyle:
     )
 
 
-def _build_resolved_area_line(merged: AreaLineStyle) -> ResolvedAreaLineStyle:
+def _build_resolved_area_line(
+    merged: AreaLineStyle, labels: ResolvedPointLabels
+) -> ResolvedAreaLineStyle:
     """Build a ResolvedAreaLineStyle from an already-merged AreaLineStyle.
 
     Area's top-edge line: stroke/halo geometry + value labels. Mirrors
@@ -217,5 +275,5 @@ def _build_resolved_area_line(merged: AreaLineStyle) -> ResolvedAreaLineStyle:
             dasharray=merged.stroke.dasharray,
         ),
         halo_multiplier=merged.halo_multiplier,
-        labels=merged.labels,
+        labels=labels,
     )

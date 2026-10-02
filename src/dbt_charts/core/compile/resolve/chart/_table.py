@@ -8,10 +8,12 @@ from typing import Any
 
 from d3_format import format as _d3_fmt
 from dbt_charts.core.colors import sanitize_color
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
+    authored_sign_placement,
     decimal_pad_table_for,
-    get_format_prefix_suffix,
     resolve_format,
+    resolve_format_parts,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -21,7 +23,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedTableChart,
 )
 from dbt_charts.core.compile.models.primitives import (
-    FormatConfig,
+    FormatAliases,
     ResolvedNamedPaletteScaleTargetConfig,
     ResolvedScaleTargetConfig,
 )
@@ -55,6 +57,9 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 )
 from dbt_charts.core.compile.resolve.style.palette import (
     palette as resolve_named_palette,
+)
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FORMAT_SIGN_PLACEMENT_TABLE_UNSUPPORTED,
 )
 from dbt_charts.core.font_measure import compose_decimal_units
 from dbt_charts.core.fonts import (
@@ -301,7 +306,7 @@ def _unscaled_decimal_pad_table(
 def _with_resolved_scale_stops(
     columns: dict[str, TableColumnConfig] | None,
     text_color: str | None,
-    formats: dict[str, str] | None,
+    formats: FormatAliases | None,
     font_family: str,
     rows: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
     allow_shared_scale: bool = True,
@@ -338,7 +343,8 @@ def _with_resolved_scale_stops(
 
     result: dict[str, ResolvedTableColumnConfig] = {}
     for name, col in columns.items():
-        resolved_fmt = resolve_format(col.format, formats)
+        _col_parts = resolve_format_parts(col.format, formats, no_format_default=None)
+        resolved_fmt = _col_parts.spec
         coerced_values = _coerced_column_values(rows, name) if rows else []
 
         # A column with no explicit format: still falls back to the engine default
@@ -350,20 +356,12 @@ def _with_resolved_scale_stops(
         si_check_fmt = resolved_fmt or resolve_format(
             PredefinedNumberFormat.number, formats
         )
-        # Raw format name feeding the sub-unit-floor swap below, mirroring
-        # format_kpi_parts's own _raw derivation order: derive from the
-        # authored format first, then override to the engine default only
-        # when unformatted (matching table.py's default_number=True call).
-        raw_format_name = (
-            col.format.spec
-            if isinstance(col.format, FormatConfig)
-            else col.format
-            if isinstance(col.format, str)
-            else None
-        )
+        # Unformatted takes the engine default, as table.py's
+        # default_number=True call does.
+        raw_format_name = _col_parts.raw
         if not resolved_fmt:
             raw_format_name = PredefinedNumberFormat.number.value
-        explicit_prefix, explicit_suffix = get_format_prefix_suffix(col.format)
+        explicit_prefix, explicit_suffix = _col_parts.prefix, _col_parts.suffix
 
         shared_scale: ResolvedColumnSharedScale | None = None
         if allow_shared_scale and coerced_values and is_d3_si_spec(si_check_fmt):
@@ -485,6 +483,7 @@ def _with_resolved_scale_stops(
             result[name] = ResolvedTableColumnConfig.model_validate(
                 {
                     **col.model_dump(exclude_none=True),
+                    **({"format": _col_parts} if col.format is not None else {}),
                     "decimal_pad_table": pad_table,
                     "shared_scale": shared_scale,
                 }
@@ -528,6 +527,8 @@ def _with_resolved_scale_stops(
         resolved_scale = ResolvedColumnScaleConfig.model_validate(scale_base)
         col_base = col.model_dump(exclude_none=True)
         col_base["scale"] = resolved_scale.model_dump(exclude_unset=True)
+        if col.format is not None:
+            col_base["format"] = _col_parts
         col_base["decimal_pad_table"] = pad_table
         col_base["shared_scale"] = shared_scale
         result[name] = ResolvedTableColumnConfig.model_validate(col_base)
@@ -600,22 +601,31 @@ def _resolve_table(
         if table.font.family and "Source Serif" in table.font.family
         else DBT_SANS_TABULAR_FONT_FAMILY
     )
+    table_columns = _materialize_table_columns(
+        primary.columns if primary is not None else None,
+        column_defaults_val,
+        data,
+        table.row.role,
+        pivot_measure_names,
+        table_column_links,
+        table_column_rows,
+    )
     resolved_columns = _with_resolved_scale_stops(
-        _materialize_table_columns(
-            primary.columns if primary is not None else None,
-            column_defaults_val,
-            data,
-            table.row.role,
-            pivot_measure_names,
-            table_column_links,
-            table_column_rows,
-        ),
+        table_columns,
         effective_table_ink,
         formats=chart_local_style_context.formats,
         font_family=numeric_cell_font,
         rows=data,
         allow_shared_scale=allow_shared_scale,
     )
+    # The prefix lane paints apart from the signed digits (`€  −40`).
+    formats = chart_local_style_context.formats
+    for name, column in table_columns.items() if table_columns is not None else ():
+        if authored_sign_placement(column.format, formats) is not None:
+            raise CompilationError.from_code(
+                ERR_FORMAT_SIGN_PLACEMENT_TABLE_UNSUPPORTED,
+                field_path=f"charts.{normalized.id}.style.columns.{name}.format",
+            )
     header_overflow_val = primary.header_overflow if primary is not None else None
     _tf = _title_font(normalized, chart_local_style_context, width)
     return ResolvedTableChart(
@@ -629,6 +639,7 @@ def _resolve_table(
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=table.padding,
+            legendless=True,
         ),
         **_shared_kwargs(normalized, variables, chart_local_style_context),
         chart_type="table",

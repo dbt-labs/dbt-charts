@@ -21,6 +21,8 @@ from dbt_charts.core.render.chart.feature import FeaturePipeline
 from dbt_charts.core.render.chart.session import BoardRenderSession
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 
+from ...conftest import baked_format
+
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 
 
@@ -87,7 +89,7 @@ def _bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
     from ...conftest import fixture_chart_for_type
 
     rcs = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         rcs,
         fixture_chart_for_type("bar"),
         "bar",
@@ -95,17 +97,26 @@ def _bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     ax = build_resolved_axis(
         ax_merged,
+        format=baked_format(ax_merged),
         band_position=ax_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     ay = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     return ResolvedBarChart(
         panel_axes=(),

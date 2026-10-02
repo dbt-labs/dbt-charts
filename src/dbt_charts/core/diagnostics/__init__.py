@@ -59,6 +59,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     WARN_UNREFERENCED_CHART,
 )
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_ADAPTER_NOT_INSTALLED,
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_CHART_COLUMN_NOT_IN_RESULT,
@@ -275,6 +276,7 @@ __all__ = [
     "ERR_BINDER_UNKNOWN_COLUMN",
     "ERR_BINDER_TYPE_MISMATCH",
     "ERR_WAREHOUSE_CONNECTION",
+    "ERR_ADAPTER_NOT_INSTALLED",
     "ERR_WAREHOUSE_RUNTIME",
     "ERR_QUERY_DURATION_EXCEEDED",
     "ERR_WAREHOUSE_QUERY_INVALID",

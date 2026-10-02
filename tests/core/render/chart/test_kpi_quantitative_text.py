@@ -281,6 +281,54 @@ class TestKpiSupportBlock:
 # ---------------------------------------------------------------------------
 
 
+class TestKpiSupportLineFlatText:
+    """The support line is one flat string on every surface (SVG, ``--format text``)."""
+
+    @staticmethod
+    def _support(fmt, value):
+        import re
+
+        from dbt_charts.core.render.board_to_dict import _kpi_text_parts
+
+        support = KpiSupportConfig(value="delta", label="vs last", format=fmt)
+        resolved, data = _resolved_kpi(
+            value="revenue",
+            label="Revenue",
+            support=support,
+            _data=[{"revenue": 1.0, "delta": value}],
+        )
+        svg = render_kpi_svg(
+            resolved,
+            data,
+            width=300,
+            height=200,
+            board_style=resolve_style(get_theme_style()),
+        )
+        svg_text = re.sub(r"<[^>]+>", "", svg)
+        return svg_text, _kpi_text_parts(resolved, data[0], None)["support"]
+
+    @pytest.mark.parametrize(
+        ("value", "painted"),
+        [(1234567, "1,234,567"), (12, "12"), (-500, "\u2212500")],
+    )
+    def test_unformatted_number_keeps_house_digits(self, value, painted):
+        svg_text, text = self._support(None, value)
+        assert f"{painted} vs last" in svg_text
+        assert text == f"{painted} vs last"
+
+    def test_predefined_currency_magnitude_stays_flush(self):
+        svg_text, text = self._support("currency", 12_400_000)
+        assert "$12.4M vs last" in svg_text
+        assert text == "$12.4M vs last"
+
+    def test_authored_suffix_keeps_its_gap_on_both_surfaces(self):
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        svg_text, text = self._support(FormatConfig(spec=",.2f", suffix=" EUR"), 154.25)
+        assert "154.25 EUR vs last" in svg_text
+        assert text == "154.25 EUR vs last"
+
+
 class TestKpiTonePrecedence:
     def test_style_tone_rejected(self):
         """style.tone is retired — the headline value has no tone field.
@@ -584,6 +632,19 @@ class TestKpiTemporalFormat:
         )
         assert number_str == "2026/11"
         assert is_numeric is False
+
+    def test_negative_value_with_spaced_prefix_places_sign_after_prefix(self):
+        """A KPI has no anchor-row concept -- unlike table.py's `symbol_mode."""
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+        from dbt_charts.core.render.chart.kpi import _format_value_parts
+
+        prefix, number_str, suffix, is_numeric = _format_value_parts(
+            -500, FormatConfig(spec=",.0f", prefix="EUR "), "chart_id"
+        )
+        assert is_numeric is True
+        assert prefix == "EUR"
+        assert number_str == "−500"
+        assert suffix == ""
 
     def test_invalid_strftime_alias_raises(self):
         from dbt_charts.core.render.chart.kpi import _format_value_parts

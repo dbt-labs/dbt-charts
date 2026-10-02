@@ -7,11 +7,11 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedPieStyle
+from dbt_charts.core.compile.models.style.theme import LegendAlign
 
 from ._base import _SharedResolvedChartFields
-from ._layer import FormatState
 from .table import ResolvedTableChart
 
 
@@ -42,9 +42,9 @@ class ResolvedPieChart(_SharedResolvedChartFields):
         default=None,
         description="Total-value annotation for donut center.",
     )
-    format: FormatState = Field(
+    format: ResolvedFormat | None = Field(
         default=None,
-        description="D3-format string, FormatConfig, or None for slice values.",
+        description="Authored slice-value format, resolved; None when unauthored.",
     )
     style: ResolvedPieStyle = Field(
         description="Pie family style slice.",
@@ -86,7 +86,12 @@ class ResolvedPieChart(_SharedResolvedChartFields):
     attached_row_indices: tuple[int, ...] = Field(
         default=(), description="Row indices projected into the companion table."
     )
-    attached_table_placement: Literal["none", "below", "right"] = Field(default="none")
+    attached_table_placement: Literal["none", "left", "right", "top", "bottom"] = Field(
+        default="none"
+    )
+    attached_table_align: LegendAlign = Field(
+        default="start", description="Table position along its edge."
+    )
     attached_table_width: float = Field(default=0.0)
     wheel_width: float = Field(default=0.0)
     attached_heading: str = Field(default="")

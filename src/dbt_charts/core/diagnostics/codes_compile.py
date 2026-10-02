@@ -1070,6 +1070,149 @@ ERR_FORMAT_KIND_MISMATCH = REGISTRY.register(
     )
 )
 
+ERR_FORMAT_AFFIX_TIME_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-AFFIX-TIME-UNSUPPORTED",
+        domain="compile",
+        title="A FormatConfig prefix/suffix/notation is a number-format feature only",
+        message_template=(
+            "Format at {field_path} combines a prefix/suffix/notation with "
+            "time-format spec {spec!r}. A temporal axis and `time_format` "
+            "paint through a date formatter that has no place for an affix. "
+            "Drop the prefix/suffix/notation, or move a prefix/suffix to a "
+            "number_format slot, a KPI value, or a table column; notation "
+            "never applies to a date."
+        ),
+        doc=(
+            "A prefix, suffix or notation next to a strftime spec ('%b %Y') "
+            "is rejected on `time_format` and on a temporal axis's format: "
+            "those paint through a date formatter, which has no place for an "
+            "affix. Author a prefix/suffix on a number slot (`number_format`), "
+            "or on a KPI value or table column format, which paint it around "
+            "the date (`FY Jan 2026`). `notation` only affects an SI number "
+            "spec; it does nothing to a date anywhere, so drop it."
+        ),
+        summary="FormatConfig affix on a time-format spec.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FORMAT_SIGN_PLACEMENT_TABLE_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-SIGN-PLACEMENT-TABLE-UNSUPPORTED",
+        domain="compile",
+        title="A table column keeps the sign with the digits",
+        message_template=(
+            "Format at {field_path} sets sign_placement, but a table column "
+            "paints its prefix in its own lane and keeps the sign with the "
+            "digits ('€  −500'). Drop sign_placement from this "
+            "column's format."
+        ),
+        doc=(
+            "A table column paints the prefix in a lane of its own, aligned "
+            "down the column, and the sign beside the digits (`€  −500`), so "
+            "`sign_placement` has nothing to move there and is rejected. Drop "
+            "it, or give the column a format without it."
+        ),
+        summary="sign_placement on a table column.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-SIGN-BEFORE-ANCHORED-PREFIX",
+        domain="compile",
+        title="A sign cannot lead a prefix that paints on one value only",
+        message_template=(
+            "Format at {field_path} sets sign_placement: before_prefix, but its "
+            "prefix is anchored on one value: the anchor would read '−EUR 50' "
+            "beside a bare '−40'. Drop sign_placement (the anchor then reads "
+            "'EUR −50'), or set repeat: every."
+        ),
+        doc=(
+            "Where an authored prefix paints on one value of an axis or "
+            "support_table row (`repeat: anchor`, or that surface's default), "
+            "the sign follows the prefix (`EUR −50`, `€−50`) so the "
+            "anchor's digits line up with the bare `−40` beside it. "
+            "`sign_placement: before_prefix` there is rejected; drop it, or set "
+            "`repeat: every` to put the prefix on every value."
+        ),
+        summary="sign_placement: before_prefix on an anchored prefix.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FORMAT_AFFIX_GEO_TOOLTIP_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-AFFIX-GEO-TOOLTIP-UNSUPPORTED",
+        domain="compile",
+        title="A FormatConfig prefix/suffix/notation cannot reach a geo tooltip",
+        message_template=(
+            "style.tooltip.format at {field_path} authors a "
+            "prefix/suffix/notation, but a {chart_type} tooltip takes a "
+            "plain d3 spec and has no place for an affix. Drop the "
+            "prefix/suffix/notation, or author a plain spec."
+        ),
+        doc=(
+            "A point/bubble map or choropleth tooltip takes a plain d3 "
+            "format string, so a prefix, suffix or notation on "
+            "`style.tooltip.format` (reachable through a `style.formats` "
+            "alias) cannot paint. Author `style.tooltip.format` as a plain "
+            "spec or alias without an affix. The tooltips of bar, line, "
+            "area, scatter and pie charts do paint an affix."
+        ),
+        summary="FormatConfig affix on a geo chart's tooltip format.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FORMAT_AFFIX_NOMINAL_AXIS_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-AFFIX-NOMINAL-AXIS-UNSUPPORTED",
+        domain="compile",
+        title="A FormatConfig prefix/suffix/notation cannot reach a categorical axis",
+        message_template=(
+            "{field_path} authors a prefix/suffix/notation, but the "
+            "{axis} channel resolves to a {channel_type} scale, whose tick "
+            "labels paint from the plain format string. Drop the "
+            "prefix/suffix/notation, or author a plain spec."
+        ),
+        doc=(
+            "An affix applies to a quantitative axis only. A categorical "
+            "(nominal or ordinal) axis paints its tick labels from the plain "
+            "format string, so a prefix, suffix or notation there cannot "
+            "paint. Remove it, or author the affix on the measure axis."
+        ),
+        summary="FormatConfig affix authored on a nominal/ordinal axis.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FORMAT_AFFIX_NATIVE_TOOLTIP_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-AFFIX-NATIVE-TOOLTIP-UNSUPPORTED",
+        domain="compile",
+        title="A FormatConfig prefix/suffix/notation cannot reach this chart's tooltip",
+        message_template=(
+            "The measure format at {field_path} authors a "
+            "prefix/suffix/notation, but chart {chart_id!r} (a {chart_type} "
+            "shape excluded from the structured tooltip) takes a plain d3 "
+            "spec for its hover card and has no place for an affix. Drop the "
+            "prefix/suffix/notation, or author a plain spec."
+        ),
+        doc=(
+            "A faceted `multiples:` chart, a wide multi-measure scatter, a "
+            "histogram and a layered scatter take a plain d3 spec for their "
+            "hover card, so an affix on the measure format cannot paint "
+            "there. Drop the prefix, suffix or notation, or author a plain "
+            "spec; charts with a structured tooltip paint the affix."
+        ),
+        summary="FormatConfig affix on a chart with no structured tooltip.",
+        docs_topic="charts",
+    )
+)
+
 ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED",

@@ -42,7 +42,7 @@ def _plan(data: list[dict]):
 def test_authored_number_format_widens_the_gutter() -> None:
     data = [{"bucket": str((i + 1) * 1_000_000), "value": 10} for i in range(6)]
     plan = _plan(data)
-    bare_ax = plan.ax_merged
+    bare_ax = plan.axes.x.style
     formatted_labels = bare_ax.labels.model_copy(update={"format": "$,.0f"})
     formatted_ax = bare_ax.model_copy(update={"labels": formatted_labels})
 
@@ -58,7 +58,10 @@ def test_authored_label_expr_falls_back_to_raw_values() -> None:
     guessing, same as the render-layer sites' own labelExpr fallback."""
     data = [{"bucket": str((i + 1) * 1_000_000), "value": 10} for i in range(6)]
     plan = _plan(data)
-    bare_ax = plan.ax_merged
+    bare_ax = plan.axes.x.style
+    bare_ax = bare_ax.model_copy(
+        update={"labels": bare_ax.labels.model_copy(update={"format": None})}
+    )
     bare_gutter = _categorical_axis_gutter_px(bare_ax, data, "bucket")
 
     expr_labels = bare_ax.labels.model_copy(update={"format": "$,.0f", "expr": "'X'"})

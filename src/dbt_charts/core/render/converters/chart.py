@@ -38,6 +38,10 @@ from dbt_charts.core.render.chart.title_overflow import (
     apply_title_overflow_to_spec,
     fix_title_alignment,
 )
+from dbt_charts.core.render.converters.legend_align import (
+    apply_legend_shifts,
+    legend_shifts,
+)
 from dbt_charts.core.render.converters.pdf import to_pdf
 from dbt_charts.core.render.converters.png import to_png
 from dbt_charts.core.render.errors import FormatError
@@ -876,6 +880,7 @@ def render_vega_spec(
     title_style_dict = spec.pop("$df_title_style", None)
     axis_label_kinds = spec.pop("$df_axis_label_kinds", None)
     value_label_layers = spec.pop("$df_value_label_layers", [])
+    legend_align_sentinel = spec.pop("$df_legend_align", None)
     title_style = (
         TitleStyle.model_validate(title_style_dict)
         if title_style_dict is not None
@@ -960,6 +965,22 @@ def render_vega_spec(
         # so render_chart_item records a per-tile error card instead of aborting
         # the entire dashboard render process.
         raise ChartDataError(str(exc)) from exc
+    if legend_align_sentinel is not None:
+        try:
+            scenegraph = vlc.vegalite_to_scenegraph(spec)
+        except Exception as exc:  # noqa: BLE001 — vl-convert throws untyped JS errors
+            raise ChartDataError(str(exc), chart_id=chart_id) from exc
+        svg_result = apply_legend_shifts(
+            svg_result,
+            legend_shifts(
+                scenegraph,
+                legend_align_sentinel["edge"],
+                legend_align_sentinel["align"],
+                chart_id,
+            ),
+            legend_align_sentinel["edge"],
+            chart_id,
+        )
     svg_result = _namespace_svg_ids(svg_result, chart_id)
     svg_result = _fix_chart_click_hrefs(svg_result)
     svg_result = _stamp_chart_title_kind(svg_result)

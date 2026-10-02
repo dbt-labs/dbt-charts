@@ -518,7 +518,7 @@ class DbtSchemaSource:
 
     def _load_manifest(self) -> dict[str, Any] | None:
         if not self._manifest_loaded:
-            loaded = load_manifest(self._project)
+            loaded = load_manifest(self._project, optional=True)
             self._manifest = loaded.raw if loaded else None
             self._manifest_loaded = True
         return self._manifest

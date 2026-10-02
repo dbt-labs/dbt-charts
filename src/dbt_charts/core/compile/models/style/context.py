@@ -31,7 +31,10 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 
-from dbt_charts.core.compile.models.primitives import BorderStyle
+from dbt_charts.core.compile.models.primitives import (
+    BorderStyle,
+    FormatAliases,
+)
 from dbt_charts.core.compile.models.style.authored import (
     AxisXStylePatch,
     AxisYStylePatch,
@@ -242,7 +245,7 @@ class ChartStyleContext:
     # === the board-level instance resolve_chart_style_context() produces. ===
 
     # Format alias vocabulary from the root Style.formats cascade.
-    formats: dict[str, str] | None = None
+    formats: FormatAliases | None = None
 
     # Chart-local axis overrides (Layers 11/12/13) as typed patches. None = no
     # chart-local override on that axis variant. These are NOT exposed to

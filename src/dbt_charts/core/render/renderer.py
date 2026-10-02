@@ -112,6 +112,7 @@ from dbt_charts.core.render.font_selection import collect_painted_italic_familie
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.sizing import resolve_active_tab_index
+from dbt_charts.core.render.thumbnail import cartoonize
 from dbt_charts.core.render.warnings import (
     WarningContext,
     registry as _warnings_registry,
@@ -435,7 +436,7 @@ def render(
     Args:
         board: Compiled board to render
         executor: Executor for query execution
-        format: Output format (svg, html, png, pdf, terminal, json, text, text-data, yaml, data)
+        format: Output format (svg, html, png, pdf, thumbnail, terminal, json, text, text-data, yaml, data)
         variables: Variable values for queries
         ignore_codes: Caller-supplied set of warning codes to suppress (CLI seam).
         builtin_variables: Pre-computed built-in variables (e.g. dir-navigation
@@ -1015,6 +1016,15 @@ def render(
     elif format == "pdf":
         return RenderResult(
             output=to_pdf(strip_pagination_chrome(svg_content)),
+            chart_errors=error_collector,
+            payload_errors=error_collector,
+            warnings=render_warnings,
+            suppressed_warnings=suppressed_warnings,
+        )
+
+    elif format == "thumbnail":
+        return RenderResult(
+            output=cartoonize(strip_pagination_chrome(svg_content)),
             chart_errors=error_collector,
             payload_errors=error_collector,
             warnings=render_warnings,

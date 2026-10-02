@@ -90,6 +90,7 @@
         "gridWidth": 1.5,
         "labelAngle": 0.0,
         "labelColor": "#222222",
+        "labelExpr": "(abs(datum.value) < 1 ? (datum.value !== 0 && abs(datum.value) < 1e-10 ? format(datum.value,\".3~e\") : format(datum.value,\".3~r\")) : format(datum.value,\".3~s\"))",
         "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
         "labelFontSize": 11.0,
         "labelFontWeight": "400",

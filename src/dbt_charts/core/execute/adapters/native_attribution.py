@@ -14,7 +14,7 @@ source — which means one connection serves several sources, and a worker holds
 across renders. Only :func:`~dbt_charts.core.attribution.connection_identity` is true
 for all of them, so only that is sent. Team, board and query ride the query comment.
 
-The rest of ``_ADAPTER_TYPE_MAP`` is absent for four different reasons:
+The rest of ``_ADAPTER_TYPE_MAP`` is absent for five different reasons:
 
 - **BigQuery** — carries the whole payload as structured job labels already.
 - **Redshift and Athena** — each has exactly one session-identifying knob, and
@@ -27,6 +27,9 @@ The rest of ``_ADAPTER_TYPE_MAP`` is absent for four different reasons:
 - **ClickHouse** — ``log_comment`` is the field, and it is inert, but it is a
   *setting* rather than a credential: dbt-clickhouse would send it with every
   request, and a ``readonly = 1`` user cannot send settings at all.
+- **SQL Server** — dbt-sqlserver hard-codes ``APP=dbt-sqlserver/<version>`` into
+  the connection string and exposes no credential to change it, so there is
+  nothing to fill. The query comment still carries attribution.
 - **DuckDB and Spark** — DuckDB runs in-process, with no session to identify. Spark
   was never assessed; if someone adds it, that is a new decision to make rather than
   one already taken here.

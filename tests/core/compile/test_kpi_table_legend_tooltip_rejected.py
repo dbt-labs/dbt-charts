@@ -26,7 +26,7 @@ def test_legend_rejected_on_kpi_authored_patch() -> None:
     from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
     with pytest.raises(ValidationError) as exc_info:
-        KpiChartStylePatch.model_validate({"legend": {"position": "bottom"}})
+        KpiChartStylePatch.model_validate({"legend": {"position": {"edge": "bottom"}}})
     errors = exc_info.value.errors()
     assert any(e["type"] == "extra_forbidden" for e in errors)
 
@@ -130,7 +130,7 @@ def test_style_patch_kpi_legend_rejected() -> None:
 
     with pytest.raises(ValidationError) as exc_info:
         StylePatch.model_validate(
-            {"charts": {"kpi": {"legend": {"position": "bottom"}}}}
+            {"charts": {"kpi": {"legend": {"position": {"edge": "bottom"}}}}}
         )
     errors = exc_info.value.errors()
     assert any(e["type"] == "extra_forbidden" for e in errors)

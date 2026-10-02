@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import resolve_label_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
@@ -11,8 +12,11 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedScatterChart,
 )
+from dbt_charts.core.compile.models.primitives import resolved_as
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedPointLabels,
+    ResolvedPointMarkStyle,
     ResolvedScatterStyle,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
@@ -63,6 +67,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
+    has_structured_tooltip,
     plan_cartesian,
     quantitative_channel_values,
 )
@@ -73,6 +78,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SCATTER_MULTI_Y_NOT_NUMERIC,
 )
@@ -155,7 +161,7 @@ def _resolve_scatter(
         normalized,
         channels,
         _authored_legend(primary),
-        merge_onto_base(chart_style_context.legend, scatter.legend),
+        merge_legend(chart_style_context.legend, scatter.legend),
         width,
         _NO_RAIL_ENDPOINT_LABELS,
         endpoint_label_has_layers=False,
@@ -174,7 +180,7 @@ def _resolve_scatter(
         subtitle_present=False,
         axis_title_costs_height=False,
     )
-    ax_merged, ay_merged = plan.ax_merged, plan.ay_merged
+    ay_merged = plan.axes.y.style
     ay_merged = _bake_ay_position_right(ay_merged)
     _ay_cont_scatter = (
         ay_merged.scale.continuous if ay_merged.scale is not None else None
@@ -236,7 +242,7 @@ def _resolve_scatter(
     # Scatter's x (even a categorical "dot plot" x) is always bottom-orient —
     # only y ever places on a left/right edge.
     # No tick_values on the categorical axis -- the non-compacting bake
-    # can't fire regardless, but format_raw is required, not defaulted
+    # can't fire regardless, but the format is required, not defaulted
     # (see build_resolved_axis's docstring).
     # Scatter's tooltip_format tracks an explicit chart-authored measure format
     # (style.number_format / chart.format) — falls back to the board default
@@ -263,13 +269,11 @@ def _resolve_scatter(
         ]
     ay, style_tail = build_cartesian_axes(
         normalized.id,
+        "scatter",
         chart_style_context,
-        ax_merged,
-        ay_merged,
-        ax_band_position=plan.ax_band_position,
-        ay_band_position=plan.ay_band_position,
+        plan.axes.x,
+        replace(plan.axes.y, style=ay_merged),
         ax_edge=None,
-        ay_format_raw=plan.ay_format_raw,
         ticks=scatter_ticks,
         column_forming=True,
         measure_tooltip_format=_measure_tooltip_format(
@@ -280,6 +284,7 @@ def _resolve_scatter(
             values=tooltip_format_values,
         ),
         tooltip_format_values=tooltip_format_values,
+        structured_tooltip_eligible=has_structured_tooltip(normalized),
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=y_ch_type == "quantitative",
         ay_floors_tick_step=True,
@@ -289,17 +294,17 @@ def _resolve_scatter(
         # risk of the shared-scale composition _y_domain_floor guards against.
         endpoint_rail_may_discard_domain=False,
     )
-    _, axis_house_default = resolve_label_format(
-        plan.ay_format_raw, chart_style_context.formats
-    )
+    axis_house_default = plan.axes.y.is_house
     resolved_scatter_labels, scatter_label_is_house = _label_format_fallback(
         scatter.marks.point.labels,
+        ResolvedPointLabels,
         ay.labels.format,
         axis_house_default,
         chart_style_context.formats,
+        tooltip_format_values,
     )
-    scatter_point_mark = scatter.marks.point.model_copy(
-        update={"labels": resolved_scatter_labels}
+    scatter_point_mark = resolved_as(
+        ResolvedPointMarkStyle, scatter.marks.point, labels=resolved_scatter_labels
     )
     resolved_layers = _resolve_layer_list(
         normalized.layers,
@@ -309,6 +314,9 @@ def _resolve_scatter(
         normalized.query_name,
         0.0,
         0.0,
+        data,
+        datasets,
+        normalized.id,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)

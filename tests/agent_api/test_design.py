@@ -2242,6 +2242,36 @@ def test_an_explicit_formats_null_clears_the_table_for_that_scope() -> None:
     assert set(offered) == _NUMBER_ALIASES
 
 
+def test_an_authored_format_config_object_is_readonly_not_a_lossy_combo() -> None:
+    """A `format:` field's widget carve-out (the `nested_models == ["FormatConfig"]`
+    exception in `_widget_for`) exists so a *string* format (`",.0f"`, an alias name)
+    keeps its combo control.
+    """
+    board = (
+        "rows:\n  - title: R\n    type: bar\n    query: q\n    x: m\n"
+        "    y: v\n    style:\n      number_format:\n"
+        '        spec: ",.0f"\n        prefix: "EUR "\n'
+    )
+    fmt = _flat(build_design_target(board, "rows.0"))["style.number_format"]
+    assert fmt.widget == "combo"
+    assert fmt.readonly, "an authored FormatConfig object must not offer a lossy combo"
+    assert fmt.value == '",.0f" prefix="EUR "', fmt.value
+    assert fmt.value != "unset"
+
+
+def test_an_explicitly_nulled_format_field_stays_editable() -> None:
+    """`format: null` is the documented way to drop an inherited theme-level format on a
+    chart (`apps/docs/docs/styling.md`).
+    """
+    board = (
+        "rows:\n  - title: R\n    type: bar\n    query: q\n    x: m\n"
+        "    y: v\n    style:\n      number_format: null\n"
+    )
+    fmt = _flat(build_design_target(board, "rows.0"))["style.number_format"]
+    assert fmt.value is None
+    assert not fmt.readonly, "an explicit null must stay editable"
+
+
 def test_a_board_with_no_aliases_of_its_own_offers_only_the_built_ins() -> None:
     """The engine's names are the whole vocabulary until a board adds to it."""
     board = "rows:\n  - title: R\n    type: bar\n    query: q\n    x: m\n    y: v\n"
@@ -3714,3 +3744,13 @@ class TestOneParsePerBuild:
         target, authored = build_design(BOARD, "rows.0.cols.0")
         assert target.path == "rows.0.cols.0"
         assert authored == load_yaml_mapping(BOARD)
+
+
+def test_format_config_display_shows_sign_placement_and_repeat() -> None:
+    from dbt_charts.agent_api.design import _format_config_display
+    from dbt_charts.core.compile.models.primitives import FormatConfig
+
+    shown = _format_config_display(
+        FormatConfig(sign_placement="after_prefix", repeat="every")
+    )
+    assert shown == "sign_placement=after_prefix repeat=every"

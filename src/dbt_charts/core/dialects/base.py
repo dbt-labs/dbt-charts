@@ -191,7 +191,8 @@ class SQLDialect(ABC):
         stays true by construction.
 
         The base returns `seconds`: only a profile that can spell the cap itself
-        can narrow it, and ClickHouse's ``custom_settings`` is the one that can.
+        can narrow it, as ClickHouse's ``custom_settings`` and SQL Server's
+        ``query_timeout`` do.
 
         Raises:
             ValueError: the profile's own cap cannot be compared against the
@@ -219,8 +220,8 @@ class SQLDialect(ABC):
 
         Never mutates `creds` — the pool hashes the config it was handed to key
         the connection pool, so an in-place write would fork pools by cap. The
-        base returns it unchanged: for every dialect but ClickHouse the cap is
-        not credential-shaped.
+        base returns it unchanged: for every dialect but ClickHouse and SQL
+        Server the cap is not credential-shaped.
         """
         return creds
 

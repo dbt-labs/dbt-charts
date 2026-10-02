@@ -38,6 +38,8 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from .conftest import baked_format
+
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 # Data band [520, 580] sits INSIDE the authored domain [400, 600] (wider on both
@@ -174,7 +176,7 @@ def _v2_axes(
             ),
         )
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -182,17 +184,26 @@ def _v2_axes(
         "quantitative",
         overrides,
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     ax = build_resolved_axis(
         ax_merged,
+        format=baked_format(ax_merged),
         band_position=ax_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     ay = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     # D-03: tick_values are baked by resolve(); pre-populate here so emitter tests
     # that construct charts directly (bypassing resolve()) still exercise the path.

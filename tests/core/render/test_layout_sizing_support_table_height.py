@@ -53,7 +53,7 @@ def _entry_dx(
         dt_style,
         entry_numerals=numerals
         if numerals
-        else plain_numerals(dt, None, "Inter", [[]] * len(dt.entries)),
+        else plain_numerals(dt, "Inter", [[]] * len(dt.entries)),
         values_per_entry=values,
         **kwargs,
     )
@@ -271,11 +271,9 @@ def test_compute_entry_dx_centers_banded_temporal_bar():
     # so it centers the number column on the midpoint via dx exactly like an
     # ordinal bar. (Continuous axes — temporal without timeUnit, quantitative —
     # still return None; covered by test_compute_entry_dx_returns_none_for_continuous_x.)
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
-    dt = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     dt_style = get_theme_style().charts.support_table
     data = [{"revenue": 100.0}, {"revenue": 200.0}]
 
@@ -286,11 +284,9 @@ def test_compute_entry_dx_centers_banded_temporal_bar():
 def test_compute_entry_dx_returns_none_for_continuous_x():
     # Continuous axes have no bands: temporal without timeUnit and quantitative
     # both return None — a non-zero dx would shift text off the data point.
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
-    dt = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     dt_style = get_theme_style().charts.support_table
     data = [{"revenue": 100.0}, {"revenue": 200.0}]
 
@@ -301,13 +297,11 @@ def test_compute_entry_dx_returns_none_for_continuous_x():
 
 def test_compute_entry_dx_returns_half_max_width_for_numeric_source():
     # Basic case: numeric data, no format → dx = max_width / 2.
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.font_measure import get_font_measurer
 
     dt_style = get_theme_style().charts.support_table
-    dt = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     data = [{"revenue": 1.0}, {"revenue": 1000.0}]
 
     result = _entry_dx(dt, data, dt_style, has_time_unit=False, x_type="ordinal")
@@ -327,11 +321,9 @@ def test_compute_entry_dx_returns_half_max_width_for_numeric_source():
 
 def test_compute_entry_dx_returns_none_for_empty_data():
     # No rows → all max_w = 0 → returns None (no centering needed).
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
-    dt = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     dt_style = get_theme_style().charts.support_table
 
     result = _entry_dx(dt, [], dt_style, has_time_unit=False, x_type="ordinal")
@@ -339,15 +331,13 @@ def test_compute_entry_dx_returns_none_for_empty_data():
 
 
 def test_compute_entry_dx_uses_aggregate_entry_format():
-    # ChartSupportTableAggregate also has a .format field; dx computation must use it.
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    # ResolvedSupportTableAggregate also has a .format field; dx computation must use it.
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.font_measure import get_font_measurer
     from dbt_charts.core.render.format_utils import format_value
 
     dt_style = get_theme_style().charts.support_table
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {"entries": [{"aggregate": "sum", "source": "revenue", "format": "$,.0f"}]}
     )
     data = [{"revenue": 1234.0}, {"revenue": 5678.0}]
@@ -366,7 +356,7 @@ def test_compute_entry_dx_uses_aggregate_entry_format():
 
 
 def test_compute_entry_dx_aggregates_multi_row_per_x():
-    # HIGH fix: for ChartSupportTableAggregate entries, _compute_support_table_entry_dx
+    # HIGH fix: for ResolvedSupportTableAggregate entries, _compute_support_table_entry_dx
     # must aggregate the data by x-field before measuring string widths.  Without
     # aggregation, the dx is measured from raw per-row values which are typically
     # much smaller than the aggregated total — the column then lands left of the
@@ -378,14 +368,12 @@ def test_compute_entry_dx_aggregates_multi_row_per_x():
     # Widest raw value → "$500" (3 chars + $); widest aggregate → "$1,000" (5 chars + $).
     # "$500" and "$1,000" have different rendered widths in the monospace font,
     # so the test can assert that the result reflects the aggregate width.
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.font_measure import get_font_measurer
     from dbt_charts.core.render.format_utils import format_value
 
     dt_style = get_theme_style().charts.support_table
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {
             "entries": [
                 {
@@ -453,12 +441,10 @@ def test_compute_entry_dx_count_distinct_over_non_numeric_source():
     # Fix: count/count_distinct must not coerce source values to float; instead count
     # rows / distinct raw values so non-numeric sources are first-class.
 
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     dt_style = get_theme_style().charts.support_table
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {
             "entries": [
                 {
@@ -495,12 +481,10 @@ def test_compute_entry_dx_returns_none_for_quantitative_x():
     # For quantitative (continuous) x, there are no bands — applying dx would shift
     # the text right of the data point instead of centering it on a band.
     # _compute_support_table_entry_dx must return None when x_type is "quantitative".
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     dt_style = get_theme_style().charts.support_table
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {"entries": [{"source": "revenue", "label": "Rev"}]}
     )
     data = [{"score": 1.0, "revenue": 100.0}, {"score": 2.0, "revenue": 200.0}]
@@ -515,12 +499,10 @@ def test_compute_entry_dx_returns_none_for_quantitative_x():
 def test_compute_entry_dx_returns_none_for_temporal_without_time_unit():
     # MEDIUM fix: temporal x without timeUnit is a continuous scale — no bands.
     # Applying dx would shift the label away from the data point.
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     dt_style = get_theme_style().charts.support_table
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {"entries": [{"source": "revenue", "label": "Rev"}]}
     )
     data = [{"date": "2024-01-01", "revenue": 100.0}]
@@ -539,9 +521,7 @@ def test_compute_entry_dx_font_size_none_raises():
     # immediately rather than silently shipping misaligned cells.
     import pytest
 
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     dt_style = get_theme_style().charts.support_table.model_copy(
         update={
@@ -550,7 +530,7 @@ def test_compute_entry_dx_font_size_none_raises():
             ).charts.support_table.font.model_copy(update={"size": None})
         }
     )
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {"entries": [{"source": "revenue", "label": "Rev"}]}
     )
     data = [{"month": "Jan", "revenue": 100.0}]
@@ -572,12 +552,10 @@ def test_lex_sortable_ordinal_x_gets_dx_centering():
     # This test exercises the apply_chart_support_table_post_pass path end-to-end via
     # attach_support_table's entry_dx parameter to confirm the bug is fixed.
     # It verifies that a lex-sortable ordinal axis still receives a dx value.
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     dt_style = get_theme_style().charts.support_table
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {"entries": [{"source": "revenue", "format": "$,.0f", "label": "Rev"}]}
     )
     # Lex-sortable year-month strings — the shape that gets reclassified to
@@ -608,12 +586,10 @@ def test_compute_entry_dx_bare_non_numeric_source_returns_none():
     # returns None) rather than crashing the renderer.
     #
     # This test ensures the render does NOT crash when source points to a string column.
-    from dbt_charts.core.compile.models.chart.authored import (
-        ChartSupportTable,
-    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
 
     dt_style = get_theme_style().charts.support_table
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {"entries": [{"source": "label", "label": "Name"}]}
     )
     data = [
@@ -711,13 +687,13 @@ def test_entry_dx_measures_the_bare_cell_not_the_anchor():
     edges in a single lane and lets the wider anchor hang into the y-axis
     gutter, where there is room.
     """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.render.chart.support_table_attachment import (
         StripAnchor,
         StripNumerals,
     )
 
-    dt = ChartSupportTable.model_validate(
+    dt = ResolvedSupportTable.model_validate(
         {"entries": [{"source": "goal", "format": "$,.3s"}]}
     )
     dt_style = get_theme_style().charts.support_table
@@ -782,7 +758,7 @@ def test_titled_support_table_top_uses_title_offset_not_padding_top():
               room is preserved while the strip space is reserved via the offset.
               padding.top is card_pad only (no strip height added).
     """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.render.chart.support_table_attachment import (
         support_table_strip_height,
     )
@@ -792,7 +768,7 @@ def test_titled_support_table_top_uses_title_offset_not_padding_top():
     spec = generate_vega_lite_spec(chart, _DT_DATA, width=400, height=300)
 
     # Compute expected strip height for a single-row top support_table.
-    dt_obj = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt_obj = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     theme = get_theme_style()
     dt_style = theme.charts.support_table  # position: top by default
     expected_strip_h = support_table_strip_height(dt_obj, dt_style, None)
@@ -830,7 +806,7 @@ def test_titleless_support_table_top_keeps_padding_bump():
     The padding.top bump is the correct mechanism when there is no title to protect
     from misalignment — this path must remain unchanged after the fix.
     """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.render.chart.support_table_attachment import (
         support_table_strip_height,
     )
@@ -839,7 +815,7 @@ def test_titleless_support_table_top_keeps_padding_bump():
     chart = _make_bar_chart(title=None, with_support_table=True)
     spec = generate_vega_lite_spec(chart, _DT_DATA, width=400, height=300)
 
-    dt_obj = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt_obj = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     dt_style = get_theme_style().charts.support_table
     expected_strip_h = support_table_strip_height(dt_obj, dt_style, None)
 
@@ -995,7 +971,7 @@ def test_titled_support_table_title_gap_matches_strip_height(tmp_path):
 
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.compile import compile as compile_board
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.execute.adapters import build_adapter_registry
     from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.board_resolve import build_resolved_board
@@ -1054,7 +1030,7 @@ cols:
     )
 
     theme = get_theme_style()
-    dt_obj = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt_obj = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     dt_style = theme.charts.support_table
     strip_h = support_table_strip_height(dt_obj, dt_style, None)
     theme_title_offset = theme.title.position.offset or 0.0
@@ -1115,9 +1091,11 @@ def test_correct_support_table_height_two_pass_fires_when_title_calibration_unde
     from unittest.mock import MagicMock, patch
 
     from dbt_charts.core.compile.models.board.normalized import LayoutItem
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
     from dbt_charts.core.compile.models.chart.normalized import BarChart
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedChart,
+        ResolvedSupportTable,
+    )
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
     from dbt_charts.core.compile.resolve.style.board import resolve_style
 
@@ -1136,7 +1114,7 @@ def test_correct_support_table_height_two_pass_fires_when_title_calibration_unde
         TARGET - 8.0
     )  # Correction render undershoots → second-pass fires
 
-    dt_obj = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt_obj = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     dt_bar = BarChart(
         id="two_pass_bar",
         query=SqlQuery(sql="SELECT 1", source="test"),
@@ -1320,9 +1298,11 @@ def test_titled_support_table_correction_path_does_not_raise(tmp_path):
     from unittest.mock import MagicMock, patch
 
     from dbt_charts.core.compile.models.board.normalized import LayoutItem
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
     from dbt_charts.core.compile.models.chart.normalized import BarChart
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedChart,
+        ResolvedSupportTable,
+    )
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
     from dbt_charts.core.compile.resolve.style.board import resolve_style
     from dbt_charts.core.render.chart.support_table_attachment import (
@@ -1330,7 +1310,7 @@ def test_titled_support_table_correction_path_does_not_raise(tmp_path):
     )
 
     dt_style = get_theme_style().charts.support_table
-    dt_obj = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt_obj = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
     strip_h = support_table_strip_height(dt_obj, dt_style, None)
     assert strip_h > 0
 

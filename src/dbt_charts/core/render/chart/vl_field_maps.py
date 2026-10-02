@@ -7,8 +7,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from dbt_charts.core.compile.models.primitives import (
+    ResolvedFormat,
+    painted_sign_placement,
+)
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisStyle,
+    ResolvedLegendPosition,
     ResolvedRulerAxis,
     ResolvedScaleStyle,
     ResolvedTickLabel,
@@ -24,6 +29,11 @@ from dbt_charts.core.render.chart.emitters._measured_label_padding import (
 from dbt_charts.core.render.numeral_expr import (
     numeral_vega_expr,
     sub_unit_guarded_vega_expr,
+)
+from dbt_charts.core.text.format_d3 import (
+    _LEADING_SIGN_CHARS,
+    SignPlacement,
+    is_d3_si_spec,
 )
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
@@ -144,6 +154,86 @@ def _stroke_to_vl(stroke: Any) -> dict[str, Any]:
     return d
 
 
+def _affixed_digits_expr(
+    value_expr: str,
+    spec: str,
+    fmt: ResolvedFormat,
+    decimal_pad_table: tuple[str, ...] = (),
+    *,
+    anchored: bool,
+    trailing_suffix: bool = True,
+) -> str:
+    """Vega expr mirroring ``format_d3``'s ``affix_signed`` order, for an affix
+    d3's spec cannot embed: ``spec`` paints the digits, ``fmt`` supplies the
+    affix, notation and sign placement, ``anchored`` whether the affix paints
+    on one value only (``painted_sign_placement``).
+
+    Formats the signed value so d3's sign decision survives; only a leading
+    sign is relocated against the prefix.
+    """
+    formatted_e = _apply_decimal_pad(
+        numeral_vega_expr(value_expr, spec, fmt.notation), decimal_pad_table
+    )
+    return _affix_signed_expr(
+        formatted_e,
+        fmt.prefix,
+        fmt.suffix if trailing_suffix else "",
+        painted_sign_placement(fmt, anchored),
+    )
+
+
+def _affix_signed_expr(
+    text_e: str, prefix: str, suffix: str, sign_placement: SignPlacement
+) -> str:
+    """Vega twin of ``affix_signed``: ``text_e`` wrapped in the affix, its
+    leading sign placed against ``prefix``."""
+    has_sign_e = f"test(/^[{_LEADING_SIGN_CHARS}]/, {text_e})"
+    sign_e = f"({has_sign_e} ? substring({text_e}, 0, 1) : '')"
+    body_e = f"({has_sign_e} ? substring({text_e}, 1) : {text_e})"
+    parts = [sign_e]
+    if prefix:
+        if sign_placement == "after_prefix":
+            parts.insert(0, json.dumps(prefix))
+        else:
+            parts.append(json.dumps(prefix))
+    parts.append(body_e)
+    if suffix:
+        parts.append(json.dumps(suffix))
+    return " + ".join(parts)
+
+
+def sign_affixed_expr(sign_e: str, affixed_e: str, fmt: ResolvedFormat | None) -> str:
+    """Vega twin of ``sign_affixed``: ``sign_e`` placed against ``fmt``'s
+    prefix in ``affixed_e``, an unsigned value already wrapped in it."""
+    if fmt is None or not fmt.prefix:
+        return f"{sign_e} + {affixed_e}"
+    body_e = f"replace({affixed_e}, {json.dumps(fmt.prefix)}, '')"
+    return _affix_signed_expr(f"({sign_e} + {body_e})", fmt.prefix, "", fmt.placement)
+
+
+def compose_axis_format(
+    d: dict[str, Any],  # type-state: explicit_any — VL JSON dict boundary
+    fmt: ResolvedFormat,
+) -> None:
+    """Set VL's native ``format``, or compose a ``labelExpr`` when the format
+    carries an affix or an SI notation override a d3 spec cannot hold. A zero
+    tick stays bare, as on the ladder paths.
+
+    An authored ``labels.expr`` (already in ``d``) wins; ``format`` is still set
+    because Vega's axis description reads it.
+    """
+    if "labelExpr" in d:
+        d["format"] = fmt.spec
+    elif fmt.prefix or fmt.suffix:
+        affixed = _affixed_digits_expr("datum.value", fmt.spec, fmt, anchored=False)
+        bare = f"format(datum.value,{json.dumps(fmt.spec)})"
+        d["labelExpr"] = f"(datum.value === 0 ? {bare} : {affixed})"
+    elif fmt.notation is not None and is_d3_si_spec(fmt.spec):
+        d["labelExpr"] = numeral_vega_expr("datum.value", fmt.spec, fmt.notation)
+    else:
+        d["format"] = fmt.spec
+
+
 def axis_to_vl(
     axis: Any,
     *,
@@ -210,8 +300,12 @@ def axis_to_vl(
     # for. tick_label.format is composed into `labelExpr` instead, by
     # `inject_axis_numeral_expr` (called by each emitter after this
     # function) -- see that function's docstring.
-    if (v := _n(axis, "labels", "format")) is not None:
-        d["format"] = v
+    if (fmt := _n(axis, "labels", "format")) is not None:
+        # A ladder composes the affix into its own labelExpr.
+        if _n(axis, "ruler") is not None or _n(axis, "tick_label") is not None:
+            d["format"] = fmt.spec
+        else:
+            compose_axis_format(d, fmt)
 
     # Title: null suppresses the visual axis label (title still appears in tooltips
     # via encoding.title). Emitting null is the correct VL mechanism — it removes
@@ -345,28 +439,27 @@ def measure_axis_to_vl(
     orient = d.get("orient")
     align = d.get("labelAlign")
     labels: list[str] = []
+    # A synthesized affix labelExpr is measurable via format_d3; an authored
+    # label.expr or a case transform is not.
+    _measurable_affix_expr = (
+        axis.labels.expr is None
+        and axis.ruler is None
+        and axis.tick_label is None
+        and axis.labels.format is not None
+        and axis.labels.format.has_affix
+    )
     if (
         orient in ("left", "right")
         and align == orient
-        and "labelExpr" not in d
+        and ("labelExpr" not in d or _measurable_affix_expr)
         and axis.labels.font.case not in ("upper", "lower")
     ):
         if category_labels:
             labels = list(category_labels)
         else:
-            # tick_label (set only when ruler is None, per
-            # ResolvedAxisStyle's mutual-exclusion invariant) is what this
-            # axis's ticks actually paint, via inject_axis_numeral_expr's
-            # labelExpr composition (axis_to_vl leaves `format` alone --
-            # see its docstring) -- measuring against the shared
-            # label.format instead would size the gutter for the wrong
-            # (SI-compacted) string.
-            if axis.tick_label is not None:
-                measure_format = axis.tick_label.format
-            elif axis.labels.format is not None:
-                measure_format = axis.labels.format
-            else:
-                measure_format = None
+            # tick_label is what the ticks paint (via labelExpr); measuring the
+            # shared label.format would size the gutter for the SI-compacted string.
+            measure_fmt = axis.labels.format
             # A PREDEFINED_NATIVE format name (e.g. "percent_number") bypasses
             # d3 entirely -- it paints via a Python lambda, not a d3-format
             # spec. quantitative_tick_labels/estimated_quantitative_tick_labels
@@ -375,13 +468,13 @@ def measure_axis_to_vl(
             # slots (KPI, table) per predefined_formats.py -- an axis reaching
             # one here means compile-time validation didn't catch an invalid
             # authoring, not that this code should guess how to measure it.
-            if measure_format is not None and measure_format in PREDEFINED_NATIVE_NAMES:
-                measure_format = None
-            if measure_format is not None:
+            if measure_fmt is not None and measure_fmt.spec in PREDEFINED_NATIVE_NAMES:
+                measure_fmt = None
+            if measure_fmt is not None:
                 if axis.tick_values:
                     labels = quantitative_tick_labels(
                         tuple(axis.tick_values),
-                        measure_format,
+                        measure_fmt,
                         ruler=axis.ruler,
                         tick_label=axis.tick_label,
                     )
@@ -397,22 +490,12 @@ def measure_axis_to_vl(
                         values = list(bounds)
                     else:
                         values = numeric_values(data, y_fields)
-                    # tick_label.si_format/.scientific_format (set only for a
-                    # ladder-less axis) mirror the exact per-tick guard
-                    # inject_axis_numeral_expr composes into the real
-                    # labelExpr -- see estimated_quantitative_tick_labels's
-                    # own docstring for why measuring measure_format alone
-                    # would OVER-measure every candidate >= 1 (the axis
-                    # paints "1.5M"; measure_format alone reads "1500000").
+                    # si_format/scientific_format mirror the labelExpr's per-tick
+                    # guard; measure_fmt alone would over-measure ("1500000" vs "1.5M").
                     labels = estimated_quantitative_tick_labels(
                         values,
-                        measure_format,
-                        si_format=axis.tick_label.si_format
-                        if axis.tick_label is not None
-                        else None,
-                        scientific_format=axis.tick_label.scientific_format
-                        if axis.tick_label is not None
-                        else None,
+                        measure_fmt,
+                        tick_label=axis.tick_label,
                     )
     if labels:
         padding = measured_label_padding(
@@ -520,7 +603,8 @@ def _apply_decimal_pad(formatted_e: str, pad_table: tuple[str, ...]) -> str:
 def inject_axis_numeral_expr(
     ax_vl: dict[str, Any],
     ruler: ResolvedRulerAxis | None,
-    tick_label: ResolvedTickLabel | None = None,
+    tick_label: ResolvedTickLabel | None,
+    fmt: ResolvedFormat | None,
 ) -> dict[str, Any]:
     """Compose the ladder's digit producer -- the innermost labelExpr layer.
 
@@ -538,7 +622,7 @@ def inject_axis_numeral_expr(
     Takes ``ruler`` directly rather than a whole ``ResolvedAxisStyle`` --
     the single baked "does this axis ship the ruler composition" decision
     (``ResolvedAxisStyle.ruler`` for the primary edge,
-    ``ResolvedAxisStyle.mirror_ruler`` for the mirror ghost -- both baked
+    ``ResolvedMirrorAxis.ruler`` for the mirror ghost -- both baked
     the same way, at resolve, so this function never needs to know which
     edge it is composing for). It already folds in every gate that used to
     be re-checked here (does the ladder compact, is the format SI-shaped,
@@ -554,9 +638,8 @@ def inject_axis_numeral_expr(
     Falls back to ``tick_label`` -- ``ruler``'s non-compacting sibling --
     when ``ruler`` is None. The two are mutually exclusive by construction
     (``ResolvedAxisStyle.__post_init__``), so at most one branch ever fires.
-    Unlike ``ruler``, ``tick_label`` has no per-edge mirror variant (see
-    ``ResolvedAxisStyle.mirror_ruler``'s docstring): callers always pass the
-    primary axis's own resolved ``tick_label``, never a mirror-specific one.
+    The mirror ghost passes ``ResolvedMirrorAxis.tick_label`` for its own
+    ``mirror.format``.
     This composition is deliberately NOT done by writing ``tick_label.format``
     onto VL's axis ``format`` in ``axis_to_vl``: Vega's own auto-generated
     axis description (its SVG ARIA accessibility label) also reads
@@ -575,10 +658,10 @@ def inject_axis_numeral_expr(
 
     ``tick_label.prefix`` / ``tick_label.anchor_at_start`` parallel the
     structure of ``ruler.prefix`` / ``ruler.anchor_at_start`` for the
-    non-compacting case: when the format has a currency symbol and
-    ``anchor_at_start`` is a bool (column-forming, baked at resolve), the
-    prefix appears on the anchor tick only. When ``anchor_at_start`` is
-    ``None`` instead (non-column-forming), the prefix repeats on every tick
+    non-compacting case: when the format has an affix and ``anchor_at_start``
+    is a bool (anchored, baked at resolve), the affix appears on the anchor
+    tick only. When ``anchor_at_start`` is ``None`` instead (repeated), the
+    affix repeats on every tick
     -- mirrors ``ruler``'s ``prefix_repeats``, not its ``mode`` (see above:
     the two decisions are independent). Either way a zero-valued
     tick never carries the symbol (mirrors ``ruler``'s ``suffix_present``): a
@@ -609,6 +692,9 @@ def inject_axis_numeral_expr(
     that thinning only runs when the axis paints from a plain ``format``
     string.
 
+    ``fmt`` is the axis's ``labels.format`` (the mirror's when it relabels the
+    ghost); required once a ladder exists.
+
     No-ops (returns ``ax_vl`` unchanged) when both ``ruler`` and
     ``tick_label`` are None, or when ``labelExpr`` is already set
     (belt-and-braces: resolve's authored-``label.expr`` check already
@@ -636,32 +722,72 @@ def inject_axis_numeral_expr(
             # `tick_label.scientific_format` (`sub_unit_scientific_format`,
             # gated at `SUB_UNIT_SCIENTIFIC_FLOOR`) applies instead, mirroring
             # `non_compacting_tick_format`'s own fixed-point/scientific split
-            # for a real ladder. Neither arm has a
-            # prefix/decimal-pad device of its own -- see
-            # `sub_unit_digit_format`'s own docstring for why.
+            # for a real ladder. Neither arm has a decimal-pad device of its
+            # own -- see `sub_unit_digit_format`'s own docstring for why; an
+            # anchored affix rides the last tick (`anchor_at_start`).
+            assert fmt is not None  # a ladder implies a format
+            _scientific_format = tick_label.scientific_format
+            assert _scientific_format is not None  # see comment above
+            # Only the SI arm takes a notation.
+            bare_e = sub_unit_guarded_vega_expr(
+                "datum.value",
+                f"format(datum.value,{json.dumps(tick_label.format)})",
+                f"format(datum.value,{json.dumps(_scientific_format)})",
+                numeral_vega_expr("datum.value", tick_label.si_format, fmt.notation),
+            )
+            if not (fmt.prefix or fmt.suffix):
+                return {**ax_vl, "labelExpr": bare_e}
+            anchored = tick_label.anchor_at_start is not None
+            plain_affixed_e = _affixed_digits_expr(
+                "datum.value", tick_label.format, fmt, anchored=anchored
+            )
+            plain_e = (
+                f"(datum.value === 0 ? "
+                f"format(datum.value,{json.dumps(tick_label.format)}) : "
+                f"{plain_affixed_e})"
+            )
+            affixed_e = sub_unit_guarded_vega_expr(
+                "datum.value",
+                plain_e,
+                _affixed_digits_expr(
+                    "datum.value", _scientific_format, fmt, anchored=anchored
+                ),
+                _affixed_digits_expr(
+                    "datum.value", tick_label.si_format, fmt, anchored=anchored
+                ),
+            )
+            if tick_label.anchor_at_start is None:
+                return {**ax_vl, "labelExpr": affixed_e}
+            anchor_idx = 0 if tick_label.anchor_at_start else 1
             return {
                 **ax_vl,
-                "labelExpr": sub_unit_guarded_vega_expr(
-                    "datum.value",
-                    tick_label.format,
-                    tick_label.scientific_format,
-                    f"format(datum.value,{json.dumps(tick_label.si_format)})",
-                ),
+                "labelExpr": f"(datum.index === {anchor_idx} ? {affixed_e} : {bare_e})",
             }
-        trimmed_e = f"format(datum.value,{json.dumps(tick_label.format)})"
+        assert fmt is not None  # a ladder implies a format
+        trimmed_e = numeral_vega_expr("datum.value", tick_label.format, fmt.notation)
         text_e = _apply_decimal_pad(trimmed_e, tick_label.decimal_pad_table)
-        if tick_label.prefix:
-            # Use with_symbol so d3-format's sign-before-symbol ordering
-            # applies: format("$,.0f")(-500) -> "-$500", not "$-500". Integer
-            # place-value is automatic under text-anchor=end; decimal padding
-            # is handled by _apply_decimal_pad below (missing-length math is
-            # symbol-invariant, so the plain tick_label.format spec is what's
-            # passed for that, not anchor_spec).
-            anchor_spec = with_symbol(tick_label.format, tick_label.prefix)
-            anchor_e = _apply_decimal_pad(
-                f"format(datum.value,{json.dumps(anchor_spec)})",
-                tick_label.decimal_pad_table,
+        if tick_label.prefix or fmt.prefix or fmt.suffix:
+            # with_symbol keeps d3's sign-before-symbol order ("-$500").
+            anchor_spec = (
+                with_symbol(tick_label.format, tick_label.prefix)
+                if tick_label.prefix
+                else tick_label.format
             )
+            if fmt.prefix or fmt.suffix:
+                anchor_e = _apply_decimal_pad(
+                    _affixed_digits_expr(
+                        "datum.value",
+                        anchor_spec,
+                        fmt,
+                        anchored=tick_label.anchor_at_start is not None,
+                    ),
+                    tick_label.decimal_pad_table,
+                )
+            else:
+                anchor_e = _apply_decimal_pad(
+                    numeral_vega_expr("datum.value", anchor_spec, fmt.notation),
+                    tick_label.decimal_pad_table,
+                )
             if tick_label.anchor_at_start is None:
                 prefix_present = "datum.value !== 0"
             else:
@@ -718,9 +844,22 @@ def inject_axis_numeral_expr(
     # computed from the plain digit_spec (never anchor_digit_spec), which is
     # correct for both branches of the ternary (a currency symbol adds equal
     # length to both sides of the length-diff).
-    if prefix:
-        anchor_digit_spec = with_symbol(digit_spec, prefix)
-        anchor_digits_expr = numeral_vega_expr(value_expr, anchor_digit_spec)
+    # An authored affix has no d3 slot: the anchor tick composes it beside the
+    # native `prefix` ("US $12.4 M").
+    assert fmt is not None  # a ladder implies a format
+    if prefix or fmt.prefix:
+        anchor_digit_spec = with_symbol(digit_spec, prefix) if prefix else digit_spec
+        if fmt.prefix:
+            # The authored suffix trails the magnitude suffix, below.
+            anchor_digits_expr = _affixed_digits_expr(
+                value_expr,
+                anchor_digit_spec,
+                fmt,
+                anchored=not ruler.prefix_repeats,
+                trailing_suffix=False,
+            )
+        else:
+            anchor_digits_expr = numeral_vega_expr(value_expr, anchor_digit_spec)
         prefix_present = (
             "datum.value !== 0"
             if ruler.prefix_repeats
@@ -736,6 +875,14 @@ def inject_axis_numeral_expr(
     parts.append(_apply_decimal_pad(digit_expr_combined, ruler.decimal_pad_table))
     padding_expr = json.dumps(ruler.reservation) if ruler.reserve else "''"
     parts.append(f"({suffix_present} ? {json.dumps(suffix_text)} : {padding_expr})")
+    if fmt.suffix:
+        # Trails the magnitude suffix ("12.4 M EUR").
+        affix_present = (
+            "datum.value !== 0"
+            if ruler.prefix_repeats
+            else f"datum.value !== 0 && {anchor_test}"
+        )
+        parts.append(f"({affix_present} ? {json.dumps(fmt.suffix)} : '')")
 
     return {**ax_vl, "labelExpr": " + ".join(parts)}
 
@@ -853,10 +1000,30 @@ def compose_axis_label_expr(
     wrapper reaches every caller without any of them having to remember to
     add it.
     """
-    ax_vl = inject_axis_numeral_expr(ax_vl, ruler, axis.tick_label)
+    ax_vl = inject_axis_numeral_expr(ax_vl, ruler, axis.tick_label, axis.labels.format)
     ax_vl = inject_axis_label_case(ax_vl, axis)
     ax_vl = inject_axis_label_values_filter(ax_vl, axis)
     return ax_vl
+
+
+def legend_orient(position: ResolvedLegendPosition) -> str:
+    """Map a resolved legend placement to a Vega-Lite ``legend.orient``.
+
+    Vega-Lite's cardinals reserve a strip start-aligned to the plot; its corners
+    float over the marks. A centered or end-aligned legend starts from the cardinal
+    or corner on its edge and is slid along that edge afterwards (``render/
+    converters/legend_align.py``), since Vega-Lite has no such orient. Resolve rejects
+    every unsupported combination (``validate_cartesian_position``), so reaching
+    one here is a bug.
+    """
+    edge, align = position.edge, position.align
+    if not position.overlay:
+        return edge
+    if edge in ("top", "bottom"):
+        assert align in ("start", "center", "end"), position
+        return f"{edge}-{'right' if align == 'end' else 'left'}"
+    assert align == "center", position
+    return f"top-{edge}"
 
 
 def legend_to_vl(legend: Any) -> dict[str, Any] | None:
@@ -876,7 +1043,7 @@ def legend_to_vl(legend: Any) -> dict[str, Any] | None:
 
     d: dict[str, Any] = {}
     if (v := _n(legend, "position")) is not None:
-        d["orient"] = v
+        d["orient"] = legend_orient(v)
     if (v := _n(legend, "direction")) is not None:
         d["direction"] = v
     if (v := _n(legend, "columns")) is not None and v > 0:

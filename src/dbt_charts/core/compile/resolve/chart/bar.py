@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import resolve_label_format
+from dbt_charts.core.compile.format import resolve_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTablePerSeries,
@@ -17,9 +18,15 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedBarChart,
 )
+from dbt_charts.core.compile.models.primitives import resolved_as
 from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.compile.models.style.resolved import ResolvedBarStyle
+from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedBarLabels,
+    ResolvedBarMarkStyle,
+    ResolvedBarStyle,
+    ResolvedBarTotalLabel,
+)
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
@@ -82,6 +89,7 @@ from dbt_charts.core.compile.resolve.chart._layers import (
 from dbt_charts.core.compile.resolve.chart._marks import (
     _label_format_fallback,
     _measure_tooltip_format,
+    _resolve_authored_label_format,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
@@ -91,6 +99,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
+    has_structured_tooltip,
     plan_cartesian,
     quantitative_channel_values,
 )
@@ -116,6 +125,7 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
@@ -383,9 +393,8 @@ def _categorical_axis_gutter_px(
         return 0.0
     if ax.labels.expr is None:
         # No case: a horizontal bar's category axis never gets the case expr.
-        labels = [
-            category_label_text(label, ax.labels.format, None) for label in labels
-        ]
+        spec = None if ax.labels.format is None else resolve_format(ax.labels.format)
+        labels = [category_label_text(label, spec, None) for label in labels]
     padding = measured_label_padding(labels, font.family, font.size)
     label_limit = (
         ax.labels.max_width
@@ -677,7 +686,7 @@ def _resolve_bar(
     # resolution, so hoisting them is a pure reordering. Reused below by the
     # fit-rule call, `_stack_legend_should_yield`, and the floor check --
     # one estimate for all three, never recomputed.
-    merged_legend = merge_onto_base(chart_style_context.legend, bar.legend)
+    merged_legend = merge_legend(chart_style_context.legend, bar.legend)
     plot_height_estimate = estimate_cartesian_plot_height(normalized, bar, width)
     # Flat chart.stack overrides style.bar.stack; fall through to the merged bar
     # style (which already applied style.bar.stack → board theme cascade) so that
@@ -697,7 +706,7 @@ def _resolve_bar(
     channels, wide_measure_series = resolve_wide_measure_channels(
         normalized, channels, "bar", has_layers=bool(normalized.layers)
     )
-    ax_merged, ay_merged = plan.ax_merged, plan.ay_merged
+    ax_merged, ay_merged = plan.axes.x.style, plan.axes.y.style
     # Orientation depends on ax_merged.time_unit (a pure cascade fact, not
     # data-derived — see _bar_orientation), so it's computable right after
     # the merge, before the axes are built. Computed once, here, and reused
@@ -1094,19 +1103,18 @@ def _resolve_bar(
     tooltip_format_values = quantitative_channel_values(data, normalized.y)
     ay, style_tail = build_cartesian_axes(
         normalized.id,
+        "bar",
         chart_style_context,
-        ax_merged,
-        ay_merged,
-        ax_band_position=plan.ax_band_position,
-        ay_band_position=plan.ay_band_position,
+        plan.axes.x,
+        replace(plan.axes.y, style=ay_merged),
         ax_edge=x_edge,
-        ay_format_raw=plan.ay_format_raw,
         ticks=_CartesianTickResolution(tick_values, bar_domain_max, bar_domain_min),
         column_forming=orientation != "horizontal",
         measure_tooltip_format=_measure_tooltip_format(
             normalized, primary, chart_style_context, values=tooltip_format_values
         ),
         tooltip_format_values=tooltip_format_values,
+        structured_tooltip_eligible=has_structured_tooltip(normalized),
         ax_is_quantitative=x_ch_type == "quantitative",
         # Bar semantics fix y=measure regardless of orientation (see the
         # _bake_cartesian_axes docstring above), so the published channel-type
@@ -1126,9 +1134,7 @@ def _resolve_bar(
         # on the sibling ticks=... empty-ladder calls).
         endpoint_rail_may_discard_domain=False,
     )
-    _, axis_house_default = resolve_label_format(
-        plan.ay_format_raw, chart_style_context.formats
-    )
+    axis_house_default = plan.axes.y.is_house
     _tf = _title_font(normalized, chart_local_style_context, width)
     bkw = _base_kwargs(
         normalized,
@@ -1154,31 +1160,34 @@ def _resolve_bar(
         normalized.query_name,
         0.0,
         0.0,
+        data,
+        datasets,
+        normalized.id,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)
-    # Total label: fall back to axis format when none authored; use resolve_label_format
-    # so both branches share the alias-gate register decision.
-    raw_total = bar.marks.bar.total_label
-    if raw_total.format is None and ay.labels.format is not None:
-        resolved_total = raw_total.model_copy(update={"format": ay.labels.format})
-        total_label_is_house = axis_house_default
-    elif raw_total.format is not None:
-        resolved_total_fmt, total_label_is_house = resolve_label_format(
-            raw_total.format, chart_style_context.formats
-        )
-        resolved_total = raw_total.model_copy(update={"format": resolved_total_fmt})
-    else:
-        total_label_is_house = False
-        resolved_total = raw_total
-    resolved_labels, label_is_house = _label_format_fallback(
-        bar.marks.bar.labels,
+    # Total label: falls back to the axis format when none is authored.
+    resolved_total, total_label_is_house = _label_format_fallback(
+        bar.marks.bar.total_label,
+        ResolvedBarTotalLabel,
         ay.labels.format,
         axis_house_default,
         chart_style_context.formats,
+        tooltip_format_values,
     )
-    bar_mark = bar.marks.bar.model_copy(
-        update={"labels": resolved_labels, "total_label": resolved_total}
+    resolved_labels, label_is_house = _label_format_fallback(
+        bar.marks.bar.labels,
+        ResolvedBarLabels,
+        ay.labels.format,
+        axis_house_default,
+        chart_style_context.formats,
+        tooltip_format_values,
+    )
+    bar_mark = resolved_as(
+        ResolvedBarMarkStyle,
+        bar.marks.bar,
+        labels=resolved_labels,
+        total_label=resolved_total,
     )
     # support_table.position resolution needs the same orientation facts
     # already baked above: axis_y_orient falls back to "right" when unset,
@@ -1290,57 +1299,57 @@ def _resolve_histogram(
     primary = plan.primary
     hist = merge_onto_base(chart_style_context.histogram, primary)
     channels = plan.channels
-    ax_merged, ay_merged = plan.ax_merged, plan.ay_merged
+    ay_merged = plan.axes.y.style
     ay_merged = _bake_ay_position_left(ay_merged)
     # Histogram's x is always a bottom-orient bin axis — no left/right edge.
-    # Neither axis carries tick_values on a histogram (VL computes bins
-    # client-side). ay_format_raw is passed None explicitly below -- it
-    # does not describe a real authoring (histogram has no cascade to read
-    # one from), yet it is not inert: empty tick_values is also the
-    # ladder-less sub-unit guard's own entry condition (build_resolved_axis's
-    # `elif`, axis_cascade.py), and None (never a predefined name) is what
-    # keeps that branch from firing here — histogram's y is a VL-computed row
-    # count, not real user data, so nothing chose it to receive that guard.
-    # The label gate below uses the REAL plan.ay_format_raw so the
-    # narrative/native decision matches bar's behavior for the same format.
+    # y's as_literal() keeps the ladder-less sub-unit guard off a VL-computed
+    # row count; x is a real binned column and keeps the plan's flags.
     ay, style_tail = build_cartesian_axes(
         normalized.id,
+        "histogram",
         chart_style_context,
-        ax_merged,
-        ay_merged,
-        ax_band_position=plan.ax_band_position,
-        ay_band_position=plan.ay_band_position,
+        plan.axes.x,
+        replace(plan.axes.y.as_literal(), style=ay_merged),
         ax_edge=None,
         ticks=_CartesianTickResolution((), None, None),
         column_forming=True,
-        measure_tooltip_format=None,
-        # Histogram's y is a VL-computed row count, not a real column --
-        # nothing to vote the sub-$1 floor on.
+        # y is a VL-computed row count: nothing to vote on, so values=().
+        measure_tooltip_format=_measure_tooltip_format(
+            normalized, primary, chart_style_context, values=()
+        ),
         tooltip_format_values=(),
+        # Histogram is always excluded from the structured tooltip.
+        structured_tooltip_eligible=False,
         # Histogram's binned x column is always numeric; its y (row count)
         # is always the measure, regardless of the x column's own type.
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=True,
-        ay_format_raw=None,
         ay_floors_tick_step=True,
         # Inert: ticks is always the empty _CartesianTickResolution above, so
         # _y_gridline_caps_bottom returns before this bool is ever read.
         zero_anchor=True,
         endpoint_rail_may_discard_domain=False,
     )
-    _, hist_axis_house_default = resolve_label_format(
-        plan.ay_format_raw, chart_style_context.formats
-    )
     # histogram reuses ResolvedBarStyle; these bar-only fields are unread by
     # the histogram emit path (no stack, no endpoint labels, no grouped x offset).
     _tf = _title_font(normalized, chart_local_style_context, width)
     hist_labels, hist_label_is_house = _label_format_fallback(
         hist.marks.bar.labels,
+        ResolvedBarLabels,
         ay.labels.format,
-        hist_axis_house_default,
+        plan.axes.y.is_house,
         chart_style_context.formats,
     )
-    hist_mark = hist.marks.bar.model_copy(update={"labels": hist_labels})
+    hist_mark = resolved_as(
+        ResolvedBarMarkStyle,
+        hist.marks.bar,
+        labels=hist_labels,
+        total_label=_resolve_authored_label_format(
+            hist.marks.bar.total_label,
+            ResolvedBarTotalLabel,
+            chart_style_context.formats,
+        ),
+    )
     return ResolvedBarChart(
         **_base_kwargs(
             normalized,

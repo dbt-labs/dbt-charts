@@ -206,7 +206,7 @@ def test_authored_legend_position_never_beats_the_yield() -> None:
     """
     for position in ("right", "bottom"):
         resolved = _resolved(
-            25, _NARROW_WIDTH, legend=LegendStylePatch(position=position)
+            25, _NARROW_WIDTH, legend=LegendStylePatch(position={"edge": position})
         )
         assert resolved.legend.visible is False, position
 

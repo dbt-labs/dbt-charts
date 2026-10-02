@@ -55,7 +55,10 @@ from dbt_charts.core.execute.adapters.base import (
     plain_error,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+from dbt_charts.core.execute.adapters.dbt_utils import (
+    DbtRefResolver,
+    source_target_path,
+)
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
 from dbt_charts.core.execute.source_registry import SourceRegistry
 from dbt_charts.core.execute.source_resolver import (
@@ -735,7 +738,9 @@ class AdapterRegistry:
         )
 
         try:
-            resolved_sql, _resolved_relations = self._dbt_refs.resolve(query.sql)
+            resolved_sql, _resolved_relations = self._dbt_refs.resolve(
+                query.sql, source_target_path(source_config)
+            )
         except DbtChartsError as exc:
             return handle_adapter_error("dbt ref resolution", exc)
 
@@ -807,6 +812,32 @@ class AdapterRegistry:
         return adapter.prepare_sql(
             query, variables=variables, params=params, source_config=source_config
         )
+
+    def execute_prepared(
+        self,
+        prepared: PreparedSql,
+        query: AnyQuery,
+        *,
+        source_config: ResolvedSourceConfig,
+    ) -> QueryResult:
+        """Send wire SQL from :meth:`prepare_sql` — possibly rewritten — to the warehouse.
+
+        ``query`` only routes: it names the adapter that owns the source and
+        labels a duration error. Nothing is rendered or guarded again, so the
+        caller owns what it substituted into ``prepared.sql``.
+        """
+        if not is_sql_query(query):
+            return plain_error(f"Expected SQL query, got {query.query_type}")
+
+        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
+
+        adapter = self.get_adapter(query, source_config)
+        if not isinstance(adapter, SqlAdapter):
+            return plain_error(
+                f"{type(adapter).__name__} builds no wire SQL — "
+                f"execute_prepared applies only to dbt-adapter sources."
+            )
+        return adapter.execute_prepared(prepared, query, source_config)
 
     @property
     def adapters(self) -> list[BaseAdapter]:

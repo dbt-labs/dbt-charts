@@ -1,0 +1,151 @@
+title: A FormatConfig on every format slot
+
+# A FormatConfig as a style.formats alias value, referenced by name everywhere.
+style:
+  formats:
+    eur:
+      spec: ",.0f"
+      prefix: "€"
+    eur_trailing:
+      spec: ",.0f"
+      suffix: " €"
+
+queries:
+  revenue:
+    columns: [channel, revenue_eur]
+    values:
+      - [Web, 168000]
+      - [Store, 28000]
+      - [Refunds, -41500]
+  stacked:
+    columns: [month, segment, revenue_eur]
+    values:
+      - [Jan, Direct, 90000]
+      - [Jan, Partner, 40000]
+      - [Feb, Direct, 110000]
+      - [Feb, Partner, 55000]
+  dual:
+    columns: [month, revenue_eur, margin_pct]
+    values:
+      - [Jan, 130000, 0.21]
+      - [Feb, 165000, 0.24]
+
+charts:
+  # 1. chart-level number_format.
+  chart_number_format:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: style.number_format — inline FormatConfig
+    style:
+      number_format:
+        spec: ",.0f"
+        prefix: "€"
+
+  # 2. axis label format, prefix. Sign ordering: Refunds must read -€41,500.
+  axis_prefix:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: axis_y.labels.format — prefix, expect -€41,500
+    style:
+      axis_y:
+        labels:
+          format:
+            spec: ",.0f"
+            prefix: "€"
+
+  # 3. axis label format, suffix — the locale-correct form, expect -41.500 €.
+  axis_suffix:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: axis_y.labels.format — suffix, expect -41,500 €
+    style:
+      axis_y:
+        labels:
+          format:
+            spec: ",.0f"
+            suffix: " €"
+
+  # 4. mark value labels.
+  value_labels:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: marks.bar.labels.format — value labels
+    style:
+      marks:
+        bar:
+          labels:
+            visible: true
+            format:
+              spec: ",.0f"
+              prefix: "€"
+
+  # 5. stack total labels.
+  stack_totals:
+    type: bar
+    query: stacked
+    x: month
+    y: revenue_eur
+    color: segment
+    title: marks.bar.total_label.format — stack totals
+    style:
+      stack: zero
+      marks:
+        bar:
+          total_label:
+            visible: true
+            format:
+              spec: ",.0f"
+              prefix: "€"
+
+  # NOTE: the tooltip has no chart-authored format slot — TooltipStyle.format is
+  # theme-only and style.number_format feeds it, so chart_number_format above is
+  # the tooltip's case too. The resolved tooltip format still has to carry the affix.
+
+  # 7. mirrored y-axis edge.
+  mirror_edge:
+    type: line
+    query: dual
+    x: month
+    y: revenue_eur
+    title: axis_y.mirror.format — ghost edge
+    style:
+      axis_y:
+        mirror:
+          format:
+            spec: ",.0f"
+            prefix: "€"
+
+  # 8. the style.formats alias, referenced by name, in slots that take a plain string.
+  alias_by_name:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: style.formats alias by name — number_format eur
+    style:
+      number_format: eur
+
+  alias_trailing:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: style.formats alias by name — suffix variant
+    style:
+      axis_y:
+        labels:
+          format: eur_trailing
+
+rows:
+  - cols: [chart_number_format, axis_prefix]
+  - cols: [axis_suffix, value_labels]
+  - cols: [stack_totals, mirror_edge]
+  - cols: [alias_by_name, alias_trailing]

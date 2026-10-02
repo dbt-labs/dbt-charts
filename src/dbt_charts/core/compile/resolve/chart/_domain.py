@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, Literal, NamedTuple
 
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import tick_min_step_for_format
+from dbt_charts.core.compile.format import resolve_format, tick_min_step_for_format
 from dbt_charts.core.compile.models.chart.authored._layer import BarLayer
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.style.theme import (
@@ -430,7 +430,7 @@ def _measure_axis_min_step(ay: AxisYStyle) -> float | None:
     """
     if ay.labels.format is None:
         return None
-    return tick_min_step_for_format(ay.labels.format)
+    return tick_min_step_for_format(resolve_format(ay.labels.format))
 
 
 def _authored_tick_ladder(ay: AxisYStyle) -> tuple[float, ...] | None:

@@ -40,6 +40,8 @@ from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.render.chart.spec import RenderBox
 
+from ...conftest import baked_format
+
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 
 
@@ -87,7 +89,7 @@ def _axis_y_with_domain(chart_type: str, domain: list[float]) -> Any:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -95,11 +97,14 @@ def _axis_y_with_domain(chart_type: str, domain: list[float]) -> Any:
         "quantitative",
         AxisOverrides(),
     )
+    ay_merged, ay_band_position = baked.y.style, baked.y.band_position
+
     ay = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     scale = ResolvedScaleStyle(continuous=ResolvedScaleContinuousStyle(domain=domain))
     ay = dataclasses.replace(ay, scale=scale)
@@ -158,7 +163,7 @@ def test_v2_bar_authored_domain_drives_tick_span(bar_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("bar"),
         "bar",
@@ -166,11 +171,14 @@ def test_v2_bar_authored_domain_drives_tick_span(bar_style) -> None:
         "quantitative",
         AxisOverrides(),
     )
+    ay_merged, ay_band_position = baked.y.style, baked.y.band_position
+
     ay_base = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     # D-03: set ticks.count, authored domain, AND pre-baked tick_values (as resolve() does).
     ay = dataclasses.replace(
@@ -289,7 +297,7 @@ def test_v2_area_authored_domain_drives_tick_span(area_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("area"),
         "area",
@@ -297,11 +305,14 @@ def test_v2_area_authored_domain_drives_tick_span(area_style) -> None:
         "quantitative",
         AxisOverrides(),
     )
+    ay_merged, ay_band_position = baked.y.style, baked.y.band_position
+
     ay_base = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     ay = dataclasses.replace(
         ay_base,
@@ -362,7 +373,7 @@ def test_v2_scatter_authored_domain_emitted_in_vl_scale(scatter_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("scatter"),
         "scatter",
@@ -370,13 +381,16 @@ def test_v2_scatter_authored_domain_emitted_in_vl_scale(scatter_style) -> None:
         "quantitative",
         AxisOverrides(),
     )
+    ay_merged, ay_band_position = baked.y.style, baked.y.band_position
+
     ay_base = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
         is_quantitative=True,
         zero_anchored=True,
+        formats=None,
     )
     ay = dataclasses.replace(
         ay_base,
@@ -422,7 +436,7 @@ def test_v2_scatter_authored_domain_drives_tick_span(scatter_style) -> None:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    _, ay_merged, _, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("scatter"),
         "scatter",
@@ -430,13 +444,16 @@ def test_v2_scatter_authored_domain_drives_tick_span(scatter_style) -> None:
         "quantitative",
         AxisOverrides(),
     )
+    ay_merged, ay_band_position = baked.y.style, baked.y.band_position
+
     ay_base = build_resolved_axis(
         ay_merged,
+        format=baked_format(ay_merged),
         band_position=ay_band_position,
         chart_id="test",
-        format_raw=None,
         is_quantitative=True,
         zero_anchored=True,
+        formats=None,
     )
     ay = dataclasses.replace(
         ay_base,

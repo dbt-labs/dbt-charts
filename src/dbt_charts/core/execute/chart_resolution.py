@@ -6,7 +6,7 @@ y-axis datasets, then passes those facts once into compile resolution.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from types import EllipsisType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -58,6 +58,63 @@ def collect_shared_y_datasets(
     return datasets
 
 
+class _LayerRows(Mapping[str, CacheRows]):
+    """Shared-scale rows plus every other own-query layer's, read on demand.
+
+    A layer's format vote reads its own rows wherever the layer is drawn, but a
+    right-axis layer never widens the primary scale, so its query is executed
+    only when a vote actually reads it.
+    """
+
+    def __init__(
+        self,
+        rows: dict[str, CacheRows],
+        deferred: set[str],
+        executor: Executor,
+        variables: VariableValues,
+    ) -> None:
+        self._rows = rows
+        self._deferred = deferred - rows.keys()
+        self._executor = executor
+        self._variables = variables
+
+    def __getitem__(self, query_name: str) -> CacheRows:
+        if query_name not in self._rows:
+            if query_name not in self._deferred:
+                raise KeyError(query_name)
+            self._rows[query_name] = self._executor.execute_query(
+                query_name, self._variables
+            )
+        return self._rows[query_name]
+
+    def __contains__(
+        self,
+        query_name: object,  # type-state: object_annotation — Mapping override
+    ) -> bool:
+        return query_name in self._rows or query_name in self._deferred
+
+    def __iter__(self) -> Iterator[str]:
+        yield from self._rows
+        yield from self._deferred - self._rows.keys()
+
+    def __len__(self) -> int:
+        return len(self._rows.keys() | self._deferred)
+
+
+def collect_layer_datasets(
+    chart: Chart,
+    data: CacheRows,
+    executor: Executor,
+    variables: VariableValues,
+) -> Mapping[str, CacheRows]:
+    """``collect_shared_y_datasets`` plus lazy access to every other layer query."""
+    shared = collect_shared_y_datasets(chart, data, executor, variables)
+    if not isinstance(chart, (BarChart, LineChart, AreaChart, ScatterChart)):
+        return shared
+    own_queries = {layer.query for layer in chart.layers if layer.query is not None}
+    return _LayerRows(shared, own_queries, executor, variables)
+
+
 def resolve_chart_with_runtime_inputs(
     chart: Chart,
     data: list[dict[str, Any]],
@@ -82,7 +139,7 @@ def resolve_chart_with_runtime_inputs(
     chart gets, so pie's family-aware default (authored ``width:`` first)
     applies instead of a literal divide-by-zero width.
     """
-    layer_datasets = collect_shared_y_datasets(chart, data, executor, variables)
+    layer_datasets = collect_layer_datasets(chart, data, executor, variables)
     return resolve(
         chart,
         data,

@@ -1,0 +1,5 @@
+kind: Features
+body: 'dbt Charts can now connect to SQL Server. Install `dbt-charts[sqlserver]` and point a source at a SQL Server target through `type: dbt_profile`, the same path Athena, ClickHouse, Databricks and Spark use. `max_query_duration_seconds` is enforced through the profile''s `query_timeout` (a stricter value of yours is kept), `dct query --describe` checks columns without running the query, a rejected query is no longer sent twice, and dbt-sqlserver''s behavior-change warnings go to stderr so `--json` output stays valid. The host needs Microsoft ODBC Driver 17 or 18.'
+time: 2026-10-02T12:01:00.000000-07:00
+custom:
+    DbtChartsIssue: 53

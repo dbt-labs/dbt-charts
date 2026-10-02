@@ -13,11 +13,11 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.authored import (
-    ChartSupportTable,
-    ChartSupportTableAggregate,
-    ChartSupportTablePerSeries,
-    ChartSupportTableSource,
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedSupportTable,
+    ResolvedSupportTableAggregate,
+    ResolvedSupportTablePerSeries,
+    ResolvedSupportTableSource,
 )
 from dbt_charts.core.render.chart.support_table_attachment import (
     StripAnchor,
@@ -36,7 +36,7 @@ def _dt_style(**overrides):
 
 
 def _table(entries):
-    return ChartSupportTable.model_validate({"entries": entries})
+    return ResolvedSupportTable.model_validate({"entries": entries})
 
 
 def _hbar_spec(width=400, height=200):
@@ -104,8 +104,8 @@ def test_column_edges_right_plot_gutter_pushes_the_whole_block_away_from_the_plo
 
 def test_attach_columns_source_entry_emits_cell_and_header():
     spec = _hbar_spec()
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -143,8 +143,8 @@ def test_attach_columns_source_entry_emits_cell_and_header():
 
 def test_attach_columns_aggregate_entry_emits_groupby_on_category_field():
     spec = _hbar_spec()
-    table = _table([ChartSupportTableAggregate(aggregate="sum", source="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableAggregate(aggregate="sum", source="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -174,8 +174,8 @@ def test_attach_columns_aggregate_entry_emits_groupby_on_category_field():
 def test_attach_columns_per_series_expands_one_column_per_series():
     spec = _hbar_spec()
     spec["encoding"]["color"] = {"field": "product", "type": "nominal"}
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -214,8 +214,8 @@ def test_attach_columns_per_series_expands_one_column_per_series():
 
 def test_attach_columns_per_series_without_series_order_raises():
     spec = _hbar_spec()
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     with pytest.raises(RenderError, match=r"(?i)series_order"):
         attach_support_table_columns(
             spec,
@@ -247,8 +247,10 @@ def test_attach_columns_grouped_per_series_stays_a_single_column():
     spec = _hbar_spec()
     spec["encoding"]["color"] = {"field": "product", "type": "nominal"}
     spec["encoding"]["yOffset"] = {"field": "product", "type": "nominal"}
-    table = _table([ChartSupportTablePerSeries(per_series="revenue", label="Revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table(
+        [ResolvedSupportTablePerSeries(per_series="revenue", label="Revenue")]
+    )
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -298,8 +300,8 @@ def test_attach_columns_grouped_per_series_cells_land_on_their_own_sub_band():
     spec = _hbar_spec()
     spec["encoding"]["color"] = {"field": "product", "type": "nominal"}
     spec["encoding"]["yOffset"] = {"field": "product", "type": "nominal"}
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -337,8 +339,8 @@ def test_attach_columns_grouped_per_series_without_parent_offset_omits_it():
     """
     spec = _hbar_spec()
     spec["encoding"]["color"] = {"field": "product", "type": "nominal"}
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -368,7 +370,7 @@ def test_attach_columns_grouped_per_series_without_parent_offset_omits_it():
 
 
 def test_visual_column_widths_and_headers_single_column_uses_entry_label():
-    table = _table([ChartSupportTablePerSeries(per_series="revenue", label="Sales")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue", label="Sales")])
     widths, headers = _visual_column_widths_and_headers(
         table, [40.0], series_order=["A", "B"], single_column_per_series=True
     )
@@ -377,7 +379,7 @@ def test_visual_column_widths_and_headers_single_column_uses_entry_label():
 
 
 def test_visual_column_widths_and_headers_single_column_defaults_to_title_cased_field():
-    table = _table([ChartSupportTablePerSeries(per_series="unit_revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="unit_revenue")])
     widths, headers = _visual_column_widths_and_headers(
         table, [40.0], series_order=["A", "B"], single_column_per_series=True
     )
@@ -385,7 +387,7 @@ def test_visual_column_widths_and_headers_single_column_defaults_to_title_cased_
 
 
 def test_visual_column_widths_and_headers_multi_column_still_names_each_series():
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
     widths, headers = _visual_column_widths_and_headers(
         table, [40.0], series_order=["A", "B"], single_column_per_series=False
     )
@@ -396,8 +398,8 @@ def test_visual_column_widths_and_headers_multi_column_still_names_each_series()
 def test_attach_columns_same_side_as_labels_widens_label_padding():
     spec = _hbar_spec()
     spec["encoding"]["y"]["axis"] = {"labelPadding": 50.0}
-    table = _table([ChartSupportTableSource(source="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableSource(source="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     style = _dt_style(position="left")
     out = attach_support_table_columns(
         spec,
@@ -445,8 +447,8 @@ def test_attach_columns_on_a_layered_base_widens_the_layer_own_axis_too():
         },
         {"mark": {"type": "bar"}, "encoding": {"x": spec["encoding"]["x"]}},
     ]
-    table = _table([ChartSupportTableSource(source="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableSource(source="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     style = _dt_style(position="left")
     out = attach_support_table_columns(
         spec,
@@ -475,8 +477,8 @@ def test_attach_columns_on_a_layered_base_widens_the_layer_own_axis_too():
 def test_attach_columns_opposite_side_from_labels_leaves_label_padding_alone():
     spec = _hbar_spec()
     spec["encoding"]["y"]["axis"] = {"labelPadding": 50.0}
-    table = _table([ChartSupportTableSource(source="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableSource(source="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -503,8 +505,8 @@ def test_attach_columns_left_position_reserves_gutter_before_the_plot():
     # not a hardcoded number), so a dense field of digits stands off the
     # marks by as much as a neighboring axis label would.
     spec = _hbar_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableSource(source="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     style = _dt_style(position="left")
     axis_label_padding = 8.0
     out = attach_support_table_columns(
@@ -540,8 +542,8 @@ def test_attach_columns_right_position_gets_the_same_plot_side_gutter():
     # it gets the identical composed gutter as position="left", not a
     # narrower one relying on incidental column-width slack.
     spec = _hbar_spec()
-    table = _table([ChartSupportTableSource(source="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableSource(source="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     style = _dt_style(position="right")
     axis_label_padding = 8.0
     out = attach_support_table_columns(
@@ -586,8 +588,8 @@ def test_per_series_columns_share_category_band_center_not_sub_band_offset():
     spec = _hbar_spec()
     spec["encoding"]["color"] = {"field": "product", "type": "nominal"}
     spec["encoding"]["yOffset"] = {"field": "product", "type": "nominal"}
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -627,8 +629,8 @@ def test_per_series_columns_share_category_band_center_not_sub_band_offset():
 def test_attach_columns_requires_explicit_width():
     spec = _hbar_spec()
     del spec["width"]
-    table = _table([ChartSupportTableSource(source="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableSource(source="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     with pytest.raises(RenderError, match=r"(?i)width"):
         attach_support_table_columns(
             spec,
@@ -666,7 +668,7 @@ def test_entry_column_widths_measures_the_anchor_not_the_bare_cell():
     """
     from dbt_charts.core.font_measure import get_font_measurer
 
-    table = _table([ChartSupportTableSource(source="goal", format="$,.3s")])
+    table = _table([ResolvedSupportTableSource(source="goal", format="$,.3s")])
     declaring = StripNumerals(
         divisor=1e6,
         digit_spec=",.0~f",
@@ -719,9 +721,9 @@ def test_entry_column_widths_measures_the_header_when_it_is_wider_than_the_value
 
     label = "Avg Order Revenue"
     table = _table(
-        [ChartSupportTableSource(source="revenue", format=",.0f", label=label)]
+        [ResolvedSupportTableSource(source="revenue", format=",.0f", label=label)]
     )
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     style = _dt_style()
     style = style.model_copy(
         update={
@@ -771,8 +773,8 @@ def test_entry_column_widths_measures_the_header_when_it_is_wider_than_the_value
 def test_per_series_column_cells_use_dark_fills_when_font_color_unset():
     spec = _hbar_spec()
     spec["encoding"]["color"] = {"field": "product", "type": "nominal"}
-    table = _table([ChartSupportTablePerSeries(per_series="revenue")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTablePerSeries(per_series="revenue")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -813,13 +815,13 @@ def test_attach_columns_emits_vertical_rule_between_columns_when_width_positive(
     spec = _hbar_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="revenue", label="Revenue"),
-            ChartSupportTableAggregate(
+            ResolvedSupportTableSource(source="revenue", label="Revenue"),
+            ResolvedSupportTableAggregate(
                 aggregate="sum", source="revenue", label="Total"
             ),
         ]
     )
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     style = _dt_style(
         position="left",
         row=_dt_style().row.model_copy(
@@ -912,13 +914,13 @@ def test_attach_columns_rule_never_overprints_neighboring_column_text(position):
     )
     table = _table(
         [
-            ChartSupportTableSource(source="revenue", format=",", label="Revenue"),
-            ChartSupportTableAggregate(
+            ResolvedSupportTableSource(source="revenue", format=",", label="Revenue"),
+            ResolvedSupportTableAggregate(
                 aggregate="sum", source="revenue", format=",", label="Total"
             ),
         ]
     )
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     revenue_value, total_value = 1_234.0, 588_000.0
     widths = _entry_column_widths(
         table,
@@ -977,13 +979,13 @@ def test_attach_columns_omits_rule_layers_when_width_zero():
     spec = _hbar_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="revenue", label="Revenue"),
-            ChartSupportTableAggregate(
+            ResolvedSupportTableSource(source="revenue", label="Revenue"),
+            ResolvedSupportTableAggregate(
                 aggregate="sum", source="revenue", label="Total"
             ),
         ]
     )
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -1028,8 +1030,8 @@ def test_column_cell_forces_tabular_font_regardless_of_authored_family():
         position="left",
         font=_dt_style().font.model_copy(update={"family": proportional_family}),
     )
-    table = _table([ChartSupportTableSource(source="revenue", format="$.2s")])
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -1091,9 +1093,9 @@ def test_column_width_measurement_matches_the_painted_tabular_typeface():
             )
         }
     )
-    table = _table([ChartSupportTableSource(source="revenue", format=",")])
+    table = _table([ResolvedSupportTableSource(source="revenue", format=",")])
     values = [1234567.0]
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
 
     widths = _entry_column_widths(
         table,
@@ -1130,13 +1132,13 @@ def test_attach_columns_rule_explicitly_nulls_y_to_avoid_stray_domain_entry():
     spec = _hbar_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="revenue", label="Revenue"),
-            ChartSupportTableAggregate(
+            ResolvedSupportTableSource(source="revenue", label="Revenue"),
+            ResolvedSupportTableAggregate(
                 aggregate="sum", source="revenue", label="Total"
             ),
         ]
     )
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,
@@ -1178,13 +1180,13 @@ def test_attach_columns_rule_is_not_announced_to_screen_readers():
     spec = _hbar_spec()
     table = _table(
         [
-            ChartSupportTableSource(source="revenue", label="Revenue"),
-            ChartSupportTableAggregate(
+            ResolvedSupportTableSource(source="revenue", label="Revenue"),
+            ResolvedSupportTableAggregate(
                 aggregate="sum", source="revenue", label="Total"
             ),
         ]
     )
-    numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
     out = attach_support_table_columns(
         spec,
         support_table=table,

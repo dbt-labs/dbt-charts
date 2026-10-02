@@ -6,6 +6,7 @@ these cases are the branches that expression takes.
 
 import pytest
 
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.render.chart.features.value_labels import (
     painted_label_text,
     painted_span_label_text,
@@ -28,7 +29,10 @@ from dbt_charts.core.render.chart.features.value_labels import (
 def test_painted_label_text(
     value: float, format_spec: str, is_house: bool, expected: str
 ) -> None:
-    assert painted_label_text(value, format_spec, is_house) == expected
+    assert (
+        painted_label_text(value, ResolvedFormat(spec=format_spec), is_house)
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -41,4 +45,7 @@ def test_painted_label_text(
     ],
 )
 def test_painted_span_label_text(end: float, start: float, expected: str) -> None:
-    assert painted_span_label_text(end, start, "$,.0f", False) == expected
+    assert (
+        painted_span_label_text(end, start, ResolvedFormat(spec="$,.0f"), False)
+        == expected
+    )

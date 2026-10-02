@@ -19,6 +19,8 @@ from dbt_charts.core.compile.models.chart.resolved import ResolvedAreaStyle
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 
+from ...conftest import baked_format
+
 
 def _default_legend():
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
@@ -67,7 +69,7 @@ def _area_axis(fill: str = "null", time_unit: str = "yearweek") -> Any:
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, _, ax_band_position, _, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("area"),
         "area",
@@ -75,11 +77,13 @@ def _area_axis(fill: str = "null", time_unit: str = "yearweek") -> Any:
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ax_band_position = baked.x.style, baked.x.band_position
     ax = build_resolved_axis(
         ax_merged,
+        format=baked_format(ax_merged),
         band_position=ax_band_position,
         chart_id="test",
-        format_raw=None,
+        formats=None,
     )
     return dataclasses.replace(ax, fill=fill, time_unit=time_unit, type=None)
 

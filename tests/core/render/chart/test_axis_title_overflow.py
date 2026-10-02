@@ -39,7 +39,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
 from dbt_charts.core.render.chart.spec import RenderBox
 from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl
 
-from ...conftest import fixture_chart_for_type
+from ...conftest import baked_format, fixture_chart_for_type
 from .test_render_emitters import _C, _make_resolved_axes
 
 LONG = "Connections Timeline Count Connections Observed Across All Categories"
@@ -49,7 +49,7 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
     chart_style_context = resolve_chart_style_context(
         get_theme_style(get_default_theme_name())
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("line"),
         "line",
@@ -57,18 +57,27 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     return (
         build_resolved_axis(
             ax_merged,
+            format=baked_format(ax_merged),
             band_position=ax_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
         build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged),
             band_position=ay_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
     )
 

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field
 
-from dbt_charts.core.compile.models.style.theme import PointMarkStyle
-
 from ._cartesian import _SeriesCartesianResolvedStyle
-from ._marks import ResolvedLineMarkStyle
+from ._marks import ResolvedLineMarkStyle, ResolvedPointMarkStyle
 
 
 class ResolvedLineStyle(_SeriesCartesianResolvedStyle):
@@ -24,7 +22,7 @@ class ResolvedLineStyle(_SeriesCartesianResolvedStyle):
     line_mark: ResolvedLineMarkStyle = Field(
         description="Cascade-merged line mark geometry (stroke, halo, labels).",
     )
-    point_mark: PointMarkStyle = Field(
+    point_mark: ResolvedPointMarkStyle = Field(
         description="Cascade-merged point mark geometry; size=None or <=0 means no point overlay.",
     )
     dashes: list[list[int]] = Field(

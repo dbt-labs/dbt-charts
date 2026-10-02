@@ -12,10 +12,12 @@ test_bar_chart_style.py) instead of duplicated here.
 from __future__ import annotations
 
 from d3_format import format as d3_format
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedRulerAxis,
     ResolvedTickLabel,
 )
+from dbt_charts.core.compile.resolve.style.axis_cascade import ladderless_tick_label
 from dbt_charts.core.font_measure import RESERVATION_GUARD, compose_suffix_reservation
 from dbt_charts.core.fonts import DBT_SANS_TABULAR_FONT_FAMILY
 from dbt_charts.core.render.chart.emitters._measured_label_padding import (
@@ -26,27 +28,30 @@ from dbt_charts.core.render.chart.emitters._measured_label_padding import (
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     sub_unit_digit_format,
-    sub_unit_scientific_format,
 )
 from dbt_charts.core.utils import measured_label_padding
 
 
 class TestQuantitativeTickLabels:
     def test_formats_each_tick_through_the_same_d3_spec_vl_uses(self) -> None:
-        assert quantitative_tick_labels((0.0, 5000.0, 15000.0), "~s", ruler=None) == [
+        assert quantitative_tick_labels(
+            (0.0, 5000.0, 15000.0), ResolvedFormat(spec="~s"), ruler=None
+        ) == [
             "0",
             "5k",
             "15k",
         ]
 
     def test_empty_tick_values_yields_empty_labels(self) -> None:
-        assert quantitative_tick_labels((), "~s", ruler=None) == []
+        assert quantitative_tick_labels((), ResolvedFormat(spec="~s"), ruler=None) == []
 
     def test_no_ruler_is_the_plain_d3_render(self) -> None:
         """ruler=None behavior is unchanged -- a ladder that doesn't compact
         still renders straight from the literal spec.
         """
-        assert quantitative_tick_labels((0.0, 20.0, 40.0), ".3~s", ruler=None) == [
+        assert quantitative_tick_labels(
+            (0.0, 20.0, 40.0), ResolvedFormat(spec=".3~s"), ruler=None
+        ) == [
             "0",
             "20",
             "40",
@@ -69,7 +74,7 @@ class TestQuantitativeTickLabelsEndAnchoredPrefix:
 
         labels = quantitative_tick_labels(
             ticks,
-            format_spec,
+            ResolvedFormat(spec=format_spec),
             ruler=None,
             tick_label=ResolvedTickLabel(
                 format=format_spec, prefix=prefix, anchor_at_start=False
@@ -96,7 +101,7 @@ class TestQuantitativeTickLabelsEndAnchoredPrefix:
 
         labels = quantitative_tick_labels(
             ticks,
-            format_spec,
+            ResolvedFormat(spec=format_spec),
             ruler=None,
             tick_label=ResolvedTickLabel(
                 format=format_spec, prefix=prefix, anchor_at_start=None
@@ -115,7 +120,7 @@ class TestQuantitativeTickLabelsEndAnchoredPrefix:
 
         labels = quantitative_tick_labels(
             ticks,
-            format_spec,
+            ResolvedFormat(spec=format_spec),
             ruler=None,
             tick_label=ResolvedTickLabel(
                 format=format_spec, prefix=prefix, anchor_at_start=False
@@ -140,7 +145,7 @@ class TestQuantitativeTickLabelsEndAnchoredPrefix:
 
         labels = quantitative_tick_labels(
             ticks,
-            format_spec,
+            ResolvedFormat(spec=format_spec),
             ruler=None,
             tick_label=ResolvedTickLabel(
                 format=format_spec, prefix=prefix, anchor_at_start=False
@@ -164,7 +169,7 @@ class TestQuantitativeTickLabelsEndAnchoredPrefix:
 
         labels = quantitative_tick_labels(
             ticks,
-            format_spec,
+            ResolvedFormat(spec=format_spec),
             ruler=None,
             tick_label=ResolvedTickLabel(
                 format=format_spec, prefix=prefix, anchor_at_start=True
@@ -173,6 +178,28 @@ class TestQuantitativeTickLabelsEndAnchoredPrefix:
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
         assert labels[0] == "−$500", f"expected sign before symbol, got {labels[0]!r}"
         assert labels[1] == "0"
+
+    def test_native_symbol_and_authored_prefix_measure_together(self) -> None:
+        """Non-compacting sibling of TestQuantitativeTickLabelsWithRuler's
+        test_native_symbol_and_authored_prefix_measure_together_on_the_anchor.
+        """
+        ticks = (0.0, 2_000.0, 4_000.0, 6_000.0, 8_000.0)
+        format_spec = ",.0f"
+
+        labels = quantitative_tick_labels(
+            ticks,
+            ResolvedFormat(
+                spec=format_spec, prefix="US ", sign_placement="before_prefix"
+            ),
+            ruler=None,
+            tick_label=ResolvedTickLabel(
+                format=format_spec, prefix="$", anchor_at_start=False
+            ),
+        )
+
+        assert labels[-1] == "US $8,000"
+        for label in labels[:-1]:
+            assert "$" not in label and "US" not in label, label
 
 
 class TestQuantitativeTickLabelsWithRuler:
@@ -190,6 +217,7 @@ class TestQuantitativeTickLabelsWithRuler:
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.ANCHOR,
+            register="analytic",
             reserve=True,
             prefix_repeats=False,
             prefix="$",
@@ -198,7 +226,9 @@ class TestQuantitativeTickLabelsWithRuler:
             reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0)
-        labels = quantitative_tick_labels(ticks, "$.3~s", ruler=ruler)
+        labels = quantitative_tick_labels(
+            ticks, ResolvedFormat(spec="$.3~s"), ruler=ruler
+        )
         pad = ruler.reservation
         assert labels == [
             "0" + pad,
@@ -209,6 +239,76 @@ class TestQuantitativeTickLabelsWithRuler:
             "$500 K",
         ]
 
+    def test_authored_prefix_measures_the_same_as_a_native_dollar(self) -> None:
+        """The gutter measurement for an authored FormatConfig prefix on a
+        bare SI spec (no native "$") must match what the axis actually
+        paints (test_axis_numeral_expr.py's real-Vega-render sibling) --
+        same numbers as test_anchor_mode_450k_ladder_matches_the_real_render,
+        prefix authored instead of embedded in the spec."""
+        ruler = ResolvedRulerAxis(
+            exponent=3,
+            mode=SuffixMode.ANCHOR,
+            register="analytic",
+            reserve=True,
+            prefix_repeats=False,
+            prefix="",
+            digit_spec=",.1~f",
+            anchor_at_start=False,
+            reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
+        )
+        ticks = (0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0)
+        labels = quantitative_tick_labels(
+            ticks,
+            ResolvedFormat(spec=".3~s", prefix="€", sign_placement="before_prefix"),
+            ruler=ruler,
+        )
+        pad = ruler.reservation
+        assert labels == [
+            "0" + pad,
+            "100" + pad,
+            "200" + pad,
+            "300" + pad,
+            "400" + pad,
+            "€500 K",
+        ]
+
+    def test_native_symbol_and_authored_prefix_measure_together_on_the_anchor(
+        self,
+    ) -> None:
+        """The gutter measurement for a spec that is BOTH SI-shaped and
+        carries its own native "$" (the `currency` preset, `$.3~s`) plus an
+        authored prefix must match what the axis actually paints
+        (test_axis_numeral_expr.py's
+        test_native_symbol_and_authored_prefix_compose_together_on_the_anchor)
+        -- same numbers as test_anchor_mode_450k_ladder_matches_the_real_render,
+        an authored "US " added on top of the native "$"."""
+        ruler = ResolvedRulerAxis(
+            exponent=3,
+            mode=SuffixMode.ANCHOR,
+            register="analytic",
+            reserve=True,
+            prefix_repeats=False,
+            prefix="$",
+            digit_spec=",.1~f",
+            anchor_at_start=False,
+            reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
+        )
+        ticks = (0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0)
+        labels = quantitative_tick_labels(
+            ticks,
+            ResolvedFormat(spec="$.3~s", prefix="US ", sign_placement="before_prefix"),
+            ruler=ruler,
+        )
+        pad = ruler.reservation
+        assert labels == [
+            "0" + pad,
+            "100" + pad,
+            "200" + pad,
+            "300" + pad,
+            "400" + pad,
+            "US $500 K",
+        ]
+
     def test_repeat_mode_900k_ladder_matches_the_real_render(self) -> None:
         """A column-forming axis (``reserve=True``): REPEAT is the ladder's
         own magnitude-driven suffix register, independent of the prefix,
@@ -217,6 +317,7 @@ class TestQuantitativeTickLabelsWithRuler:
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.REPEAT,
+            register="narrative",
             reserve=True,
             prefix_repeats=False,
             prefix="$",
@@ -225,7 +326,9 @@ class TestQuantitativeTickLabelsWithRuler:
             reservation=compose_suffix_reservation("k", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0)
-        labels = quantitative_tick_labels(ticks, "$.3~s", ruler=ruler)
+        labels = quantitative_tick_labels(
+            ticks, ResolvedFormat(spec="$.3~s"), ruler=ruler
+        )
         pad = ruler.reservation
         assert labels == [
             "0" + pad,
@@ -246,6 +349,7 @@ class TestQuantitativeTickLabelsWithRuler:
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.REPEAT,
+            register="narrative",
             reserve=False,
             prefix_repeats=True,
             prefix="$",
@@ -254,7 +358,9 @@ class TestQuantitativeTickLabelsWithRuler:
             reservation="",
         )
         ticks = (0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0)
-        labels = quantitative_tick_labels(ticks, "$.3~s", ruler=ruler)
+        labels = quantitative_tick_labels(
+            ticks, ResolvedFormat(spec="$.3~s"), ruler=ruler
+        )
         assert labels == [
             "0",
             "$200k",
@@ -268,6 +374,7 @@ class TestQuantitativeTickLabelsWithRuler:
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.ANCHOR,
+            register="analytic",
             reserve=True,
             prefix_repeats=False,
             prefix="",
@@ -275,7 +382,9 @@ class TestQuantitativeTickLabelsWithRuler:
             anchor_at_start=False,
             reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
-        labels = quantitative_tick_labels((0.0, 500_000.0), ".3~s", ruler=ruler)
+        labels = quantitative_tick_labels(
+            (0.0, 500_000.0), ResolvedFormat(spec=".3~s"), ruler=ruler
+        )
         assert labels[0] == "0" + ruler.reservation
         assert labels[1] == "500 K"
 
@@ -287,6 +396,7 @@ class TestQuantitativeTickLabelsWithRuler:
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.REPEAT,
+            register="narrative",
             reserve=False,
             prefix_repeats=True,
             prefix="$",
@@ -295,7 +405,9 @@ class TestQuantitativeTickLabelsWithRuler:
             reservation="",
         )
         ticks = (0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0)
-        labels = quantitative_tick_labels(ticks, "$.3~s", ruler=ruler)
+        labels = quantitative_tick_labels(
+            ticks, ResolvedFormat(spec="$.3~s"), ruler=ruler
+        )
         assert labels == ["0", "$200k", "$400k", "$600k", "$800k", "$1,000k"]
 
     def test_ruler_negative_anchor_renders_sign_before_symbol(self) -> None:
@@ -305,6 +417,7 @@ class TestQuantitativeTickLabelsWithRuler:
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.ANCHOR,
+            register="analytic",
             reserve=True,
             prefix_repeats=False,
             prefix="$",
@@ -313,7 +426,9 @@ class TestQuantitativeTickLabelsWithRuler:
             reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (-500_000.0, -300_000.0, -100_000.0, 0.0)
-        labels = quantitative_tick_labels(ticks, "$.3~s", ruler=ruler)
+        labels = quantitative_tick_labels(
+            ticks, ResolvedFormat(spec="$.3~s"), ruler=ruler
+        )
         pad = ruler.reservation
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
         assert labels[0] == "−$500 K", f"expected sign before symbol, got {labels[0]!r}"
@@ -335,6 +450,7 @@ class TestQuantitativeTickLabelsWithRuler:
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.ANCHOR,
+            register="analytic",
             reserve=True,
             prefix_repeats=False,
             prefix="",
@@ -343,7 +459,9 @@ class TestQuantitativeTickLabelsWithRuler:
             reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (-600_000.0, -400_000.0, -200_000.0, 0.0)
-        labels = quantitative_tick_labels(ticks, ".3~s", ruler=ruler)
+        labels = quantitative_tick_labels(
+            ticks, ResolvedFormat(spec=".3~s"), ruler=ruler
+        )
         pad = ruler.reservation
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen, for a negative value.
         assert labels == [
@@ -385,12 +503,19 @@ class TestEstimatedQuantitativeTickLabels:
     """
 
     def test_empty_values_yields_empty_labels(self) -> None:
-        assert estimated_quantitative_tick_labels([], "~s") == []
+        assert (
+            estimated_quantitative_tick_labels(
+                [], ResolvedFormat(spec="~s"), tick_label=None
+            )
+            == []
+        )
 
     def test_covers_the_raw_data_extent(self) -> None:
         # domain_min is clamped to include 0 (common zero-anchored scale);
         # the max side must still be covered by an M-magnitude candidate.
-        labels = estimated_quantitative_tick_labels([5.0, 1_500_000.0], "~s")
+        labels = estimated_quantitative_tick_labels(
+            [5.0, 1_500_000.0], ResolvedFormat(spec="~s"), tick_label=None
+        )
         assert "0" in labels
         assert any(label.endswith("M") for label in labels)
 
@@ -399,12 +524,18 @@ class TestEstimatedQuantitativeTickLabels:
         format where Vega-Lite's `nice: true` domain rounds 999,950 up to
         1,000,000 — one digit-group wider than the raw max.
         """
-        labels = estimated_quantitative_tick_labels([0.0, 999_950.0], ",.0f")
+        labels = estimated_quantitative_tick_labels(
+            [0.0, 999_950.0], ResolvedFormat(spec=",.0f"), tick_label=None
+        )
         assert "1,000,000" in labels
 
     def test_wider_domain_yields_a_wider_max_label(self) -> None:
-        narrow = estimated_quantitative_tick_labels([0.0, 5.0], ",.0f")
-        wide = estimated_quantitative_tick_labels([0.0, 1_500_000.0], ",.0f")
+        narrow = estimated_quantitative_tick_labels(
+            [0.0, 5.0], ResolvedFormat(spec=",.0f"), tick_label=None
+        )
+        wide = estimated_quantitative_tick_labels(
+            [0.0, 1_500_000.0], ResolvedFormat(spec=",.0f"), tick_label=None
+        )
         narrow_max_len = max(len(label) for label in narrow)
         wide_max_len = max(len(label) for label in wide)
         assert wide_max_len > narrow_max_len
@@ -421,9 +552,13 @@ class TestEstimatedQuantitativeTickLabels:
         "1500000" for a candidate Vega-Lite actually paints "1.5M" -- reserving
         gutter for a string the axis never draws.
         """
-        plain_only = estimated_quantitative_tick_labels([0.0, 1_500_000.0], ".3~r")
+        plain_only = estimated_quantitative_tick_labels(
+            [0.0, 1_500_000.0], ResolvedFormat(spec=".3~r"), tick_label=None
+        )
         guarded = estimated_quantitative_tick_labels(
-            [0.0, 1_500_000.0], ".3~r", si_format=".3~s"
+            [0.0, 1_500_000.0],
+            ResolvedFormat(spec=".3~r"),
+            tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
         )
         assert any(len(label) > 6 for label in plain_only)
         assert all(len(label) <= 6 for label in guarded)
@@ -431,16 +566,17 @@ class TestEstimatedQuantitativeTickLabels:
 
     def test_si_format_still_uses_plain_format_below_one(self) -> None:
         labels = estimated_quantitative_tick_labels(
-            [0.0, 0.5], ".3~r", si_format=".3~s"
+            [0.0, 0.5],
+            ResolvedFormat(spec=".3~r"),
+            tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
         )
         assert "0.5" in labels
 
     def test_scientific_format_covers_a_deep_sub_unit_candidate(self) -> None:
         labels = estimated_quantitative_tick_labels(
             [0.0, 1e-11],
-            sub_unit_digit_format(".3~s"),
-            si_format=".3~s",
-            scientific_format=sub_unit_scientific_format(".3~s"),
+            ResolvedFormat(spec=sub_unit_digit_format(".3~s")),
+            tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
         )
         assert "1e-11" in labels
         assert not any("0.0000000000" in label for label in labels)
@@ -448,8 +584,70 @@ class TestEstimatedQuantitativeTickLabels:
     def test_zero_never_measured_as_scientific(self) -> None:
         labels = estimated_quantitative_tick_labels(
             [0.0, 1e-11],
-            sub_unit_digit_format(".3~s"),
-            si_format=".3~s",
-            scientific_format=sub_unit_scientific_format(".3~s"),
+            ResolvedFormat(spec=sub_unit_digit_format(".3~s")),
+            tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
         )
         assert "0" in labels
+
+    def test_si_format_arm_still_composes_an_authored_affix(self) -> None:
+        """The ladder-less SI guard must not drop an authored FormatConfig affix once it
+        takes over from the plain ``format_spec`` path.
+        """
+        labels = estimated_quantitative_tick_labels(
+            [0.0, 1_500_000.0],
+            ResolvedFormat(spec=".3~r", prefix="EUR ", sign_placement="before_prefix"),
+            tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+        )
+        assert any(label.startswith("EUR ") for label in labels), labels
+
+    def test_si_format_arm_composes_an_authored_notation(self) -> None:
+        """Same gap, for ``notation``: the real axis composes
+        ``numeral_vega_expr``'s house-register substitution into the SI arm
+        of ``inject_axis_numeral_expr``'s labelExpr, so the estimate must
+        measure the narrative ("mn") register, not d3's own SI suffix ("M"),
+        when ``notation: narrative`` is authored."""
+        labels = estimated_quantitative_tick_labels(
+            [0.0, 1_500_000.0],
+            ResolvedFormat(spec=".3~r", notation="narrative"),
+            tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+        )
+        assert any(label.endswith("mn") for label in labels), labels
+        assert not any(label.endswith("M") for label in labels), labels
+
+    def test_plain_arm_composes_an_authored_notation_with_no_affix(self) -> None:
+        """A notation override with no prefix/suffix must still reach the plain (non-
+        ladder, non-SI-guarded) estimate path.
+        """
+        labels = estimated_quantitative_tick_labels(
+            [0.0, 1_500_000.0],
+            ResolvedFormat(spec=".3~s", notation="narrative"),
+            tick_label=None,
+        )
+        assert any(label.endswith("mn") for label in labels), labels
+
+
+def test_affixed_literal_measures_a_bare_zero_tick() -> None:
+    labels = quantitative_tick_labels(
+        (0.0, 50_000.0),
+        ResolvedFormat(spec=",.0f", prefix="EUR ", sign_placement="before_prefix"),
+        ruler=None,
+    )
+    assert labels == ["0", "EUR 50,000"]
+
+
+def test_ladderless_estimate_measures_a_bare_zero_tick() -> None:
+    labels = estimated_quantitative_tick_labels(
+        [0.0, 2_000.0],
+        ResolvedFormat(spec=".3~s", prefix="EUR ", sign_placement="before_prefix"),
+        tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+    )
+    assert "0" in labels
+    assert "EUR 0" not in labels
+
+
+def test_after_prefix_measures_the_sign_after_the_prefix() -> None:
+    fmt = ResolvedFormat(spec=",.0f", prefix="EUR ", sign_placement="after_prefix")
+    assert quantitative_tick_labels((-50_000.0, 0.0), fmt, ruler=None) == [
+        "EUR −50,000",
+        "0",
+    ]

@@ -199,6 +199,51 @@ ERR_PIE_NEGATIVE_THETA = REGISTRY.register(
     )
 )
 
+ERR_LEGEND_POSITION_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LEGEND-POSITION-UNSUPPORTED",
+        domain="render",
+        title="Legend placement combination is not supported",
+        message_template=(
+            "Chart {chart_id!r} places its legend at `edge: {edge}`, "
+            "`align: {align}`, `overlay: {overlay}`, which no placement "
+            "supports. Supported placements: {supported}."
+        ),
+        doc=(
+            "Fired when the resolved `legend.position` (edge, align, overlay) "
+            "names a placement the renderer cannot draw."
+        ),
+        summary=(
+            "Fired when a chart's legend `position` names an edge, align and "
+            "overlay combination that no placement supports."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_LEGEND_ALIGN_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LEGEND-ALIGN-UNSUPPORTED",
+        domain="render",
+        title="A legend cannot be aligned this way on this chart",
+        message_template=(
+            "Chart {chart_id!r} asks for a legend `align` that cannot be honored: "
+            "{reason}. Use `align: start` instead."
+        ),
+        doc=(
+            "Fired when a `legend.position.align` of `center` (or a pie's `end`) "
+            "cannot be honored: the chart is small multiples or has an "
+            "endpoint-label rail (no single plot to align in), or its legend is "
+            "larger than the plot."
+        ),
+        summary=(
+            "Fired when a centered or end-aligned legend has no plot to align in "
+            "or is larger than the plot."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_MAP_LOOKUP_KEY_MISMATCH = REGISTRY.register(
     ErrorCode(
         code="ERR-MAP-LOOKUP-KEY-MISMATCH",
@@ -1722,16 +1767,29 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
             "but the y-axis format is {format!r}."
         ),
         fix_template=(
-            "Set `{format_key}` to a currency format (e.g. `$,.2f`) "
-            "or a percent format (e.g. `.1%`) to match the field's meaning."
+            "Set `{format_key}` to {currency_format} or a percent format "
+            "(`.1%` for a 0-1 share, or `suffix: '%'` for values already in "
+            "percent points) to match the field's meaning."
         ),
         doc=(
             "Fires when a chart's y-encoding field name looks like money or a "
             "percentage but the chart's baked y-axis format is unfit to render "
             "that kind. Detection is name-based: fields ending in _usd, _revenue, "
             "_amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) "
-            "trigger when the resolved y-axis format does not carry the "
-            "matching symbol (`$` for money, `%` for a percentage)."
+            "trigger when the resolved y-axis format is unfit for that kind. A "
+            "percent-classified field needs a `%` in the resolved format or in an "
+            "authored FormatConfig prefix/suffix (a column already in percent "
+            "points, `suffix: '%'`, is labeled); any other affix does not "
+            "satisfy it. A currency-classified field is "
+            "satisfied either by a `$` in the resolved format OR by an "
+            "authored FormatConfig prefix/suffix (e.g. `€`, `EUR `) with no "
+            "`$` anywhere: d3's grammar admits only `$`/`#` as a spec's own "
+            "symbol character, so a non-dollar currency can only ever reach "
+            "the axis through that authored affix. The fix suggests the "
+            "dollar spec (`$,.2f`), except for a currency-classified field "
+            "whose trailing `_<code>` names a currency dbt Charts recognizes "
+            "(`_eur`, `_gbp`): it suggests `,.2f` with `prefix: '€'` (that "
+            "currency's own symbol)."
         ),
         docs_topic="charts",
     )
@@ -2614,29 +2672,32 @@ WARN_LEGEND_POSITION_WIDTH_FALLBACK = REGISTRY.register(
     WarningCode(
         code="WARN-LEGEND-POSITION-WIDTH-FALLBACK",
         domain="render",
-        title="Tiny-width tier overrode an authored legend position",
+        title="A narrow card overrode an authored legend edge",
         # Authored explicitly: the doc's first sentence ends inside the inline
-        # code span `legend.position`, which the agent_api summary deriver
+        # code span `legend.position.edge`, which the agent_api summary deriver
         # refuses to split on rather than guess.
         summary=(
             "Fired when a card too narrow for a side legend overrides the "
-            "position its author wrote."
+            "edge its author wrote."
         ),
         message_template=(
-            "Chart {chart_id!r} authored `legend.position: {authored_position}`, "
-            "but the tiny width tier forced the legend back to `top`: a card "
-            "this narrow cannot hold a side legend."
+            "Chart {chart_id!r} authored `legend.position.edge: {authored_edge}`, "
+            "but a card this narrow cannot hold a side legend, so it was placed "
+            "on the `{resolved_edge}` edge instead."
         ),
         fix_template=(
-            "Widen the chart past the tiny width tier, or drop "
-            "`legend.position` and accept the automatic top legend."
+            "Widen the chart, or drop `legend.position.edge` and accept the "
+            "automatic placement."
         ),
         doc=(
-            "Fires when a cartesian chart (bar, line, area, scatter, heatmap) "
-            "authors a non-top `legend.position` and the card's width falls "
-            "into the tiny tier, where the engine forces the legend back to "
-            "a compact top strip regardless. The fallback itself is not a "
-            "defect (a tiny card cannot physically fit a side legend); this "
+            "Fires when a chart authors a `legend.position.edge` its card is too "
+            "narrow to honor and the engine places the legend elsewhere. A "
+            "cartesian chart (bar, line, area, scatter, heatmap) authoring a "
+            "non-top edge on a card in the tiny width tier gets a compact top "
+            "strip; a pie or donut authoring a side edge (`left` or `right`) "
+            "gets its attached table below the wheel when the wheel region "
+            "beside it would be too narrow. The fallback itself is not a "
+            "defect (the card physically cannot fit a side legend); this "
             "warning exists only because the override was otherwise silent: "
             "the resolved chart renders a different legend position than the "
             "one the author wrote, with no signal that happened."

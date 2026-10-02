@@ -88,6 +88,64 @@ class TestResolveThroughProjectSeam:
         assert relations == []
 
 
+class TestResolveAgainstTargetPath:
+    """A source's target_path picks the manifest its refs resolve against."""
+
+    _PROD = {
+        "nodes": {
+            "model.test.orders": {
+                "resource_type": "model",
+                "name": "orders",
+                "schema": "prod",
+                "alias": "orders",
+            }
+        },
+        "sources": {},
+    }
+
+    def _project(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> Project:
+        return in_memory_project(
+            tmp_path,
+            {
+                "target/manifest.json": json.dumps(_DEV),
+                "target/prod/manifest.json": json.dumps(self._PROD),
+            },
+        )
+
+    def test_each_target_path_resolves_to_its_own_relation(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        resolver = DbtRefResolver(self._project(tmp_path, in_memory_project))
+
+        assert resolver.resolve(_REF_SQL)[0] == "SELECT * FROM dev_dave.orders"
+        assert (
+            resolver.resolve(_REF_SQL, "target/prod")[0] == "SELECT * FROM prod.orders"
+        )
+        assert resolver.resolve(_REF_SQL)[0] == "SELECT * FROM dev_dave.orders"
+
+    def test_missing_target_path_names_the_path_and_never_uses_the_default(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        resolver = DbtRefResolver(self._project(tmp_path, in_memory_project))
+
+        with pytest.raises(DbtChartsError) as exc_info:
+            resolver.resolve(_REF_SQL, "target/staging")
+
+        assert exc_info.value.code is ERR_DBT_MANIFEST_MISSING
+        assert "target/staging/manifest.json" in str(exc_info.value)
+        assert "target/manifest.json" not in str(exc_info.value).replace(
+            "target/staging/manifest.json", ""
+        )
+
+
 class TestMissingManifest:
     """A ref() that cannot be resolved must name the manifest, not blame Jinja."""
 
@@ -144,7 +202,9 @@ class TestConcurrentLoad:
         )
         real_load = dbt_manifest_mod.load_manifest
 
-        def slow_load(p: Project) -> LoadedManifest | None:
+        def slow_load(
+            p: Project, target_path: str | None = None
+        ) -> LoadedManifest | None:
             time.sleep(0.1)
             return real_load(p)
 

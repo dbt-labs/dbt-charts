@@ -9,7 +9,13 @@ fragile: `Path.parent` never raises on a wrong count, so a file that
 moves to a deeper directory silently resolves to the wrong location.
 
 Four patterns this test bans, repo-wide under dbt-charts/tests/:
-  - `.resolve().parent.parent` (any multi-hop chain after .resolve())
+  - `.resolve().parent.parent` or a bare `__file__).parent.parent` (two or
+    more `.parent` hops off `__file__`, with or without `.resolve()` --
+    a bare chain is exactly as fragile and slipped past a resolve()-only
+    pattern). Scoped to `__file__` specifically, not any `.parent.parent`
+    walk -- a fixture-path variable's own `.parent.parent` (e.g. a board
+    file's containing project dir) isn't the __file__-based project-root
+    rediscovery this guard exists to catch.
   - `.parents[N]`             (bracket-style index access, any N 0–9)
   - `DBT_CHARTS_DIR.parent` / `DBT_CHARTS_PKG_DIR.parent` — INV1: nothing
     under dbt-charts/ may read a path outside dbt-charts/, and going up
@@ -37,12 +43,14 @@ _PATHS_PY = _TESTS_DIR / "_paths.py"
 _VISUAL_DIR = _TESTS_DIR / "visual"
 _SELF = Path(__file__).resolve()
 
-# Match any of the three banned forms:
-#   resolve().parent.parent        — two or more .parent hops after .resolve()
+# Match any of the four banned forms: resolve().parent.parent / __file__).parent.parent
+# — two or more .parent hops off __file__, resolve() or not
 #   .parents[N]                    — bracket index, N in 0-9
 #   DBT_CHARTS_DIR.parent / DBT_CHARTS_PKG_DIR.parent — escapes the INV1 boundary
+#   PROJECT_ROOT                   — the removed monorepo-root escape hatch
 _RAW_WALK_RE = re.compile(
     r"resolve\(\)\.parent\.parent"
+    r"|__file__\)(?:\.parent){2,}"
     r"|\.parents\[[0-9]\]"
     r"|DBT_CHARTS_(?:PKG_)?DIR\.parent\b"
     r"|\bPROJECT_ROOT\b"

@@ -1538,6 +1538,17 @@ class DbtProfileSourceConfig(AttributedSourceConfig, BaseSourceConfig):
             "Resolution order: profiles_dir → $DBT_PROFILES_DIR → linked dbt project → ~/.dbt."
         ),
     )
+    target_path: str | None = Field(
+        default=None,
+        description=(
+            "Directory holding the manifest.json built for this target, relative to "
+            "the linked dbt project directory; same meaning as dbt's --target-path. "
+            "ref() and source() resolve against <target_path>/manifest.json. Build it "
+            "with `dbt parse --target <target> --target-path <target_path>`. "
+            "Defaults to dbt's own resolution: $DBT_TARGET_PATH → dbt_project.yml "
+            "target-path → target."
+        ),
+    )
 
 
 # ============================================================================
@@ -1565,6 +1576,10 @@ class DbtTargetSourceConfig(AttributedSourceConfig, BaseSourceConfig):
 
     source_category: ClassVar[str] = "database"
     type: str = Field(description="Warehouse type dbt resolved for this target.")
+    target_path: str | None = Field(
+        default=None,
+        description="The dbt_profile source's target_path.",
+    )
 
 
 # Union of all source config types

@@ -229,6 +229,40 @@ def test_all_zero_values_all_get_labels() -> None:
     assert _value_label_texts(svg) == ["0", "0", "0"]
 
 
+def test_zero_label_composes_an_authored_affix() -> None:
+    """A FormatConfig prefix on marks.bar.labels.format must reach the zero row's static
+    "0" text.
+    """
+    board = """
+title: probe
+charts:
+  c:
+    type: bar
+    query: q
+    x: k
+    y: v
+    width: 600
+    style:
+      orientation: vertical
+      marks:
+        bar:
+          labels:
+            position: above
+            format:
+              spec: ",.2f"
+              prefix: "EUR "
+queries:
+  q:
+    sql: "SELECT 1"
+    source: test_source
+rows: [{rows: [c]}]
+"""
+    rows = [{"k": "A", "v": 0}, {"k": "B", "v": 12}, {"k": "C", "v": 7}]
+    svg = _render_svg(board, rows)
+    # labels.visible is unset, so ValueLabelFeature paints nothing.
+    assert _value_label_texts(svg) == ["EUR 0.00"]
+
+
 def test_value_labels_visible_zero_row_gets_exactly_one_label() -> None:
     """Regression: with marks.bar.labels.visible on, the zero row must not
     get two overlapping text marks (ZeroValueLabelFeature's "0" plus

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     HeatmapChart,
@@ -38,11 +40,13 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
+    has_structured_tooltip,
     plan_cartesian,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 
 __all__ = [
     "_resolve_heatmap",
@@ -75,7 +79,7 @@ def _resolve_heatmap(
     primary = plan.primary
     heatmap = merge_onto_base(chart_style_context.heatmap, primary)
     channels = plan.channels
-    ax_merged, ay_merged = plan.ax_merged, plan.ay_merged
+    ay_merged = plan.axes.y.style
     # Heatmap's color channel is always a gradient (a continuous scale over
     # cell values), never a row of discrete series entries -- a gradient
     # legend is a different shape that does not wrap into a horizontal row,
@@ -84,7 +88,7 @@ def _resolve_heatmap(
         normalized,
         channels,
         _authored_legend(primary),
-        merge_onto_base(chart_style_context.legend, heatmap.legend),
+        merge_legend(chart_style_context.legend, heatmap.legend),
         width,
         _NO_RAIL_ENDPOINT_LABELS,
         endpoint_label_has_layers=False,
@@ -123,21 +127,22 @@ def _resolve_heatmap(
     tooltip_format_values = _column_numeric_values(data, color_field)
     _ay, style_tail = build_cartesian_axes(
         normalized.id,
+        "heatmap",
         chart_style_context,
-        ax_merged,
-        ay_merged,
-        ax_band_position=plan.ax_band_position,
-        ay_band_position=plan.ay_band_position,
+        plan.axes.x.as_literal(),
+        replace(plan.axes.y.as_literal(), style=ay_merged),
         ax_edge=None,
         ticks=_CartesianTickResolution((), None, None),
         column_forming=True,
         measure_tooltip_format=None,
         tooltip_format_values=tooltip_format_values,
+        structured_tooltip_eligible=has_structured_tooltip(
+            normalized, heatmap_color_field=color_field
+        ),
         # Both of a heatmap's channels are nominal -- see plan_cartesian's
         # own "nominal", "nominal" call above.
         ax_is_quantitative=False,
         ay_is_quantitative=False,
-        ay_format_raw=None,
         ay_floors_tick_step=False,
         # Inert: ticks is always the empty _CartesianTickResolution above, so
         # _y_gridline_caps_bottom returns before this bool is ever read.

@@ -41,6 +41,7 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("adapters/dbt_adapter.py", "_read_target_dict"),
         # adapters/dbt_adapter_factory.py
         ("adapters/dbt_adapter_factory.py", "build_adapter"),
+        ("adapters/dbt_adapter_factory.py", "import_adapter_module"),
         # adapters/duckdb_adapter.py
         ("adapters/duckdb_adapter.py", "DuckDBAdapter._connect"),
         # adapters/http_adapter.py
@@ -52,6 +53,9 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("cache_backend.py", "_require_aware"),
         # cache_composition.py
         ("cache_composition.py", "compose_over_named_rows"),
+        # chart_resolution.py — _LayerRows is a Mapping, so __getitem__ must raise
+        # KeyError for an absent key (`in` and .get() depend on it).
+        ("chart_resolution.py", "_LayerRows.__getitem__"),
         # duckdb_config.py
         ("duckdb_config.py", "normalize_duckdb_config"),
         # executor.py — an adapter/test-double's truncated_reason failing

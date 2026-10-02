@@ -64,8 +64,8 @@ def _build_hover_emphasis_dict(
     wide range of settings that read well).
 
     The bar/arc recession color still rides no wire of its own: it is the
-    chart's own background, which Vega already paints into each chart's SVG
-    as the view's background rect, read there by the runtime. The drop line
+    chart's own canvas, stamped on each chart wrapper as
+    ``data-dbt-chart-canvas`` and read there by the runtime. The drop line
     is a different mechanism (a scaffold line added by the runtime, not a
     recede-in-place), so its paint has no such rendered fact to read off and
     is carried explicitly instead.

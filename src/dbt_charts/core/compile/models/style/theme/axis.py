@@ -75,6 +75,7 @@ class AxisLabelOverlapConfig(BaseModel):
 
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
+    FormatConfig,
 )
 from dbt_charts.core.compile.models.style.theme.board import (
     PaddingStyle,
@@ -426,7 +427,7 @@ class AxisLabelStyle(BaseModel):
         default=None,
         description="Pixel offset of the label from its tick anchor; None uses Vega-Lite's default.",
     )
-    format: Annotated[FormatAlias | str | None, Format()] = Field(
+    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None, description="Tick value format string; None uses auto-format."
     )
 
@@ -965,7 +966,7 @@ class AxisMirrorStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    format: Annotated[FormatAlias | str | None, Format()] = Field(
+    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
         description="Tick value format string for the mirrored edge; None reuses the primary axis's format.",
     )

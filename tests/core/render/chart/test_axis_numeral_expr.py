@@ -33,6 +33,7 @@ import re
 
 import vl_convert as vlc
 
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedRulerAxis,
     ResolvedTickLabel,
@@ -42,7 +43,13 @@ from dbt_charts.core.font_measure import (
     compose_suffix_reservation,
 )
 from dbt_charts.core.fonts import DBT_SANS_TABULAR_FONT_FAMILY
-from dbt_charts.core.render.chart.vl_field_maps import inject_axis_numeral_expr
+from dbt_charts.core.render.chart.emitters._measured_label_padding import (
+    quantitative_tick_labels,
+)
+from dbt_charts.core.render.chart.vl_field_maps import (
+    compose_axis_format,
+    inject_axis_numeral_expr,
+)
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     ruler_digit_format,
@@ -51,6 +58,7 @@ from dbt_charts.core.text.numeral_scale import (
     suffix_at_register,
 )
 
+_PLAIN = ResolvedFormat(spec="")
 _TEXT_RE = re.compile(r"<text[^>]*>(.*?)</text>", re.S)
 
 
@@ -89,6 +97,7 @@ def _ruler(
         digit_spec=digit_spec,
         anchor_at_start=anchor_at_start,
         reservation=reservation,
+        register=register,
     )
 
 
@@ -126,7 +135,7 @@ def _render_axis_labels(
 
 class TestCompositionGating:
     def test_no_ruler_is_noop(self) -> None:
-        assert inject_axis_numeral_expr({}, None) == {}
+        assert inject_axis_numeral_expr({}, None, None, None) == {}
 
     def test_authored_label_expr_is_the_full_opt_out(self) -> None:
         """Belt-and-braces: resolve never bakes ``ruler`` when
@@ -137,7 +146,7 @@ class TestCompositionGating:
         """
         ruler = _ruler(3, SuffixMode.ANCHOR)
         ax_vl = {"labelExpr": "datum.label"}
-        assert inject_axis_numeral_expr(ax_vl, ruler) == ax_vl
+        assert inject_axis_numeral_expr(ax_vl, ruler, None, _PLAIN) == ax_vl
 
 
 class TestExpressionShape:
@@ -146,7 +155,7 @@ class TestExpressionShape:
         gates on the LAST rendered tick, ``datum.index === 1``.
         """
         ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=False)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert "datum.index === 1" in expr
         assert "datum.value !== 0" in expr
 
@@ -155,7 +164,7 @@ class TestExpressionShape:
         see ``TestNegativeLadderAnchor`` for the real-render regression.
         """
         ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert "datum.index === 0" in expr
 
     def test_repeat_mode_with_no_prefix_never_gates_on_the_anchor(self) -> None:
@@ -164,13 +173,13 @@ class TestExpressionShape:
         index at all in this combination.
         """
         ruler = _ruler(3, SuffixMode.REPEAT)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert "datum.index" not in expr
         assert "datum.value !== 0" in expr
 
     def test_currency_prefix_anchors_on_index_in_anchor_mode(self) -> None:
         ruler = _ruler(3, SuffixMode.ANCHOR, format_spec="$.3~s")
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert "datum.index === 1" in expr
         # The symbol is embedded inside the anchor's format() spec (so d3-format
         # places it correctly relative to the sign) -- not as a bare "$" literal.
@@ -186,7 +195,7 @@ class TestExpressionShape:
         ``ruler.mode``, decides this.
         """
         ruler = _ruler(3, SuffixMode.REPEAT, format_spec="$.3~s", reserve=True)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert "datum.index === 1" in expr
         assert re.search(r'format\([^,]+,"[^"]*\$[^"]*"\)', expr) is not None, expr
 
@@ -198,7 +207,7 @@ class TestExpressionShape:
         is no anchor ternary to reference an index.
         """
         ruler = _ruler(3, SuffixMode.REPEAT, format_spec="$.3~s", reserve=False)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert "datum.index" not in expr
         assert re.search(r'format\([^,]+,"[^"]*\$[^"]*"\)', expr) is not None, expr
 
@@ -208,7 +217,7 @@ class TestExpressionShape:
         Both must be present -- the ruler path emits a ternary of two format calls.
         """
         ruler = _ruler(3, SuffixMode.ANCHOR, format_spec="$.3~s")
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         calls = re.findall(r'format\([^,]+,"([^"]+)"\)', expr)
         assert len(calls) == 2, (
             f"expected two format calls (anchor + non-anchor), got {calls!r}"
@@ -228,7 +237,7 @@ class TestExpressionShape:
         ``test_axis_ruler_resolve.py::test_non_column_forming_axis_bakes_repeat_mode_regardless_of_ladder``).
         """
         ruler = _ruler(3, SuffixMode.REPEAT, reserve=False)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert '"k"' in expr
         assert '" K"' not in expr
         assert RESERVATION_GUARD not in expr
@@ -236,7 +245,7 @@ class TestExpressionShape:
 
     def test_vertical_reservation_carries_the_zero_width_guard(self) -> None:
         ruler = _ruler(3, SuffixMode.ANCHOR)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         # json.dumps escapes non-ASCII to \uXXXX (valid JS string syntax) --
         # check for the escape sequence the emitted expression actually
         # contains, not the raw character.
@@ -250,7 +259,7 @@ class TestRealVegaRendering:
 
     def test_anchor_mode_450k_ladder(self) -> None:
         ruler = _ruler(3, SuffixMode.ANCHOR, format_spec="$.3~s")
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
 
@@ -264,13 +273,92 @@ class TestRealVegaRendering:
             "$500 K",
         ]
 
+    def test_authored_prefix_anchors_on_a_bare_si_spec_like_currencys_dollar(
+        self,
+    ) -> None:
+        """An authored FormatConfig prefix on a bare SI spec (no native "$" in it)
+        composes around the ladder the same way `currency`'s ($.3~s) native dollar
+        already does.
+        """
+        ruler = _ruler(3, SuffixMode.ANCHOR, format_spec=".3~s")
+        expr = inject_axis_numeral_expr(
+            {},
+            ruler,
+            None,
+            ResolvedFormat(spec=".3~s", prefix="€", sign_placement="before_prefix"),
+        )["labelExpr"]
+        ticks = [0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+
+        pad = ruler.reservation
+        assert labels == [
+            "0" + pad,
+            "100" + pad,
+            "200" + pad,
+            "300" + pad,
+            "400" + pad,
+            "€500 K",
+        ]
+
+    def test_native_symbol_and_authored_prefix_compose_together_on_the_anchor(
+        self,
+    ) -> None:
+        """A ladder whose spec is BOTH SI-shaped and carries its own native
+        "$"/"#" symbol (the `currency` preset, `$.3~s`) composes an authored
+        prefix around it instead of picking one and dropping the other --
+        same numbers as test_anchor_mode_450k_ladder, an authored "US "
+        added on top of the native "$"."""
+        ruler = _ruler(3, SuffixMode.ANCHOR, format_spec="$.3~s")
+        expr = inject_axis_numeral_expr(
+            {},
+            ruler,
+            None,
+            ResolvedFormat(spec="$.3~s", prefix="US ", sign_placement="before_prefix"),
+        )["labelExpr"]
+        ticks = [0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+
+        pad = ruler.reservation
+        assert labels == [
+            "0" + pad,
+            "100" + pad,
+            "200" + pad,
+            "300" + pad,
+            "400" + pad,
+            "US $500 K",
+        ]
+
+    def test_authored_suffix_trails_the_magnitude_suffix(self) -> None:
+        """An authored suffix (a spelled-out currency code, e.g. " EUR") trails the
+        magnitude suffix rather than interleaving with it.
+        """
+        ruler = _ruler(3, SuffixMode.ANCHOR, format_spec=".3~s")
+        expr = inject_axis_numeral_expr(
+            {},
+            ruler,
+            None,
+            ResolvedFormat(spec=".3~s", suffix=" EUR"),
+        )["labelExpr"]
+        ticks = [0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+
+        pad = ruler.reservation
+        assert labels == [
+            "0" + pad,
+            "100" + pad,
+            "200" + pad,
+            "300" + pad,
+            "400" + pad,
+            "500 K EUR",
+        ]
+
     def test_repeat_mode_900k_ladder(self) -> None:
         """A column-forming axis (the default here): REPEAT is the ladder's
         own magnitude-driven suffix register, independent of the prefix,
         which still anchors on one tick (``ruler.prefix_repeats`` is False).
         """
         ruler = _ruler(3, SuffixMode.REPEAT, format_spec="$.3~s")
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
 
@@ -291,7 +379,7 @@ class TestRealVegaRendering:
         ``reserve=False`` -- the prefix now repeats on every non-zero tick.
         """
         ruler = _ruler(3, SuffixMode.REPEAT, format_spec="$.3~s", reserve=False)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
 
@@ -320,7 +408,7 @@ class TestRealVegaRendering:
             format_spec="$.3~s",
             reserve=False,
         )
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
         assert labels == [
@@ -343,7 +431,7 @@ class TestComposedReservationSurvivesVlConvert:
 
     def test_composed_characters_appear_verbatim_in_the_rendered_labels(self) -> None:
         ruler = _ruler(3, SuffixMode.ANCHOR, format_spec="$.3~s")
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
 
@@ -377,7 +465,7 @@ class TestNegativeLadderAnchor:
 
     def test_all_negative_zero_topped_ladder_declares_the_magnitude_once(self) -> None:
         ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [-600_000.0, -400_000.0, -200_000.0, 0.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
 
@@ -405,7 +493,7 @@ class TestReservationSurvivesVlConvert:
 
     def test_non_anchor_tick_keeps_its_reservation_through_vl_convert(self) -> None:
         ruler = _ruler(3, SuffixMode.ANCHOR)
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
 
@@ -452,6 +540,7 @@ class TestNonCompactingEndAnchoredPrefix:
             tick_label=ResolvedTickLabel(
                 format=",.0f", prefix=prefix, anchor_at_start=False
             ),
+            fmt=_PLAIN,
         )["labelExpr"]
 
         # Anchor-only conditional -- datum.index gates which format call runs.
@@ -473,9 +562,41 @@ class TestNonCompactingEndAnchoredPrefix:
             tick_label=ResolvedTickLabel(
                 format=",.0f", prefix=prefix, anchor_at_start=True
             ),
+            fmt=_PLAIN,
         )["labelExpr"]
 
         assert "datum.index === 0" in expr
+
+    def test_authored_prefix_renders_the_same_as_a_native_dollar(self) -> None:
+        """An authored FormatConfig prefix on the non-compacting (tick_label) path
+        paints identically to a native "$".
+        """
+        expr = inject_axis_numeral_expr(
+            {},
+            None,
+            tick_label=ResolvedTickLabel(format=",.0f", anchor_at_start=False),
+            fmt=ResolvedFormat(spec="", prefix="€", sign_placement="before_prefix"),
+        )["labelExpr"]
+        ticks = [0.0, 100.0, 200.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+        assert labels == ["0", "100", "€200"]
+
+    def test_native_symbol_and_authored_prefix_compose_together(self) -> None:
+        """Same combination as the ruler's
+        test_native_symbol_and_authored_prefix_compose_together_on_the_anchor, non-
+        compacting sibling.
+        """
+        expr = inject_axis_numeral_expr(
+            {},
+            None,
+            tick_label=ResolvedTickLabel(
+                format=",.0f", prefix="$", anchor_at_start=False
+            ),
+            fmt=ResolvedFormat(spec="", prefix="US ", sign_placement="before_prefix"),
+        )["labelExpr"]
+        ticks = [0.0, 100.0, 200.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+        assert labels == ["0", "100", "US $200"]
 
 
 class TestNonCompactingRepeatPrefix:
@@ -494,6 +615,7 @@ class TestNonCompactingRepeatPrefix:
             tick_label=ResolvedTickLabel(
                 format=",.0f", prefix="$", anchor_at_start=None
             ),
+            fmt=_PLAIN,
         )["labelExpr"]
         assert "datum.index" not in expr
 
@@ -505,6 +627,7 @@ class TestNonCompactingRepeatPrefix:
             tick_label=ResolvedTickLabel(
                 format=",.0f", prefix="$", anchor_at_start=None
             ),
+            fmt=_PLAIN,
         )["labelExpr"]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
         assert labels[0] == "0", labels
@@ -522,6 +645,7 @@ class TestNonCompactingRepeatPrefix:
             tick_label=ResolvedTickLabel(
                 format=",.0f", prefix="$", anchor_at_start=False
             ),
+            fmt=_PLAIN,
         )["labelExpr"]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
         dollar_labels = [label for label in labels if "$" in label]
@@ -543,7 +667,7 @@ class TestNegativeAnchorCurrencySign:
     def test_ruler_negative_anchor_renders_sign_before_symbol(self) -> None:
         """Compacting ruler path: negative anchor tick must be '-$500 K', not '$-500 K'."""
         ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True, format_spec="$.3~s")
-        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [-500_000.0, -300_000.0, -100_000.0, 0.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
@@ -557,10 +681,48 @@ class TestNegativeAnchorCurrencySign:
             tick_label=ResolvedTickLabel(
                 format=",.0f", prefix="$", anchor_at_start=True
             ),
+            fmt=_PLAIN,
         )["labelExpr"]
         labels = _render_axis_labels([-500.0, 0.0], (-500.0, 0.0), expr)
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
         assert labels[0] == "−$500", f"expected sign before symbol, got {labels[0]!r}"
+
+    def test_ruler_negative_anchor_composes_native_symbol_and_authored_prefix(
+        self,
+    ) -> None:
+        """Both the native "$" and an authored prefix on the same SI-shaped spec:
+        the anchored authored prefix leads, then the sign, then the native
+        symbol's own body.
+        """
+        ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True, format_spec="$.3~s")
+        expr = inject_axis_numeral_expr(
+            {},
+            ruler,
+            None,
+            ResolvedFormat(spec="$.3~s", prefix="US ", sign_placement="before_prefix"),
+        )["labelExpr"]
+        ticks = [-500_000.0, -300_000.0, -100_000.0, 0.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+        assert labels[0] == "US −$500 K", (
+            f"expected prefix+sign+symbol, got {labels[0]!r}"
+        )
+
+    def test_tick_label_negative_anchor_composes_native_symbol_and_authored_prefix(
+        self,
+    ) -> None:
+        """Non-compacting tick_label sibling of the ruler test above."""
+        expr = inject_axis_numeral_expr(
+            {},
+            None,
+            tick_label=ResolvedTickLabel(
+                format=",.0f", prefix="$", anchor_at_start=True
+            ),
+            fmt=ResolvedFormat(spec="", prefix="US ", sign_placement="before_prefix"),
+        )["labelExpr"]
+        labels = _render_axis_labels([-500.0, 0.0], (-500.0, 0.0), expr)
+        assert labels[0] == "US −$500", (
+            f"expected prefix+sign+symbol, got {labels[0]!r}"
+        )
 
 
 class TestLadderLessSubUnitGuard:
@@ -584,7 +746,10 @@ class TestLadderLessSubUnitGuard:
         branch -- only pins that the two don't cross-fire.
         """
         expr = inject_axis_numeral_expr(
-            {}, None, tick_label=ResolvedTickLabel(format=",.1~f")
+            {},
+            None,
+            tick_label=ResolvedTickLabel(format=",.1~f"),
+            fmt=_PLAIN,
         )["labelExpr"]
         assert "abs(" not in expr
 
@@ -593,7 +758,7 @@ class TestLadderLessSubUnitGuard:
         gate on here -- Vega's own tick set isn't known at resolve, so the
         guard reads each tick's own value.
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(), _PLAIN)[
             "labelExpr"
         ]
         assert "abs(datum.value) < 1" in expr
@@ -603,7 +768,7 @@ class TestLadderLessSubUnitGuard:
         """The reported bug, on a ladder-less axis: 0.3 must render "0.3",
         never d3's own SI "300m".
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([0.29, 0.3, 0.38], (0.29, 0.38), expr)
@@ -613,7 +778,7 @@ class TestLadderLessSubUnitGuard:
         """The house register isn't traded away to close the sub-unit band:
         a tick at or above 1 keeps this axis's own SI compaction.
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label(",.3~s"))[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(",.3~s"), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([0.0, 20_000.0], (0.0, 20_000.0), expr)
@@ -625,14 +790,14 @@ class TestLadderLessSubUnitGuard:
         0.5 and another at 1.5, and only the first should drop SI. Gating
         per tick, on each tick's own value, closes exactly that hole.
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label(",.3~s"))[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(",.3~s"), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([0.5, 1_500.0], (0.5, 1_500.0), expr)
         assert labels == ["0.5", "1.5k"], labels
 
     def test_negative_sub_one_tick_keeps_its_sign(self) -> None:
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([-0.38, 0.0], (-0.38, 0.0), expr)
@@ -644,7 +809,7 @@ class TestLadderLessSubUnitGuard:
         no different than before this guard existed -- pinned anyway since
         every other sign test in this class is on the sub-1 arm.
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([-1_500.0, 0.0], (-1_500.0, 0.0), expr)
@@ -656,7 +821,7 @@ class TestLadderLessSubUnitGuard:
         ".3~s")` prints "1", not "1.00" the way the significant-digit
         register would).
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([1.0, 2.0], (1.0, 2.0), expr)
@@ -668,7 +833,7 @@ class TestLadderLessSubUnitGuard:
         SI arms alike, rather than anchoring on one the way a real ladder's
         non-compacting currency spec does.
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label("$.3~s"))[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label("$.3~s"), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([0.5, 20_000.0], (0.5, 20_000.0), expr)
@@ -680,7 +845,7 @@ class TestLadderLessSubUnitGuard:
         scientific fallback that keeps a pico tick reading "1e-11", not
         "0.00000000001".
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([1e-11, 2e-11], (1e-11, 2e-11), expr)
@@ -691,7 +856,7 @@ class TestLadderLessSubUnitGuard:
         "0", not the scientific register's "0e+0", even though `0 < FLOOR`
         would otherwise select it.
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([0.0, 20_000.0], (0.0, 20_000.0), expr)
@@ -701,8 +866,202 @@ class TestLadderLessSubUnitGuard:
         """Only the deep-sub-unit band falls to scientific -- an everyday
         value like 0.3 stays on the plain significant-digit register.
         """
-        expr = inject_axis_numeral_expr({}, None, tick_label=self._tick_label())[
+        expr = inject_axis_numeral_expr({}, None, self._tick_label(), _PLAIN)[
             "labelExpr"
         ]
         labels = _render_axis_labels([0.29, 0.3], (0.29, 0.3), expr)
         assert labels == ["0.29", "0.3"], labels
+
+
+class TestComposeAxisFormatRealVegaRendering:
+    """``compose_axis_format`` -- the NON-ladder axis path (``axis_to_vl`` calls it
+    whenever ``label.format`` is set), real Vega render.
+    """
+
+    def test_negative_value_with_authored_prefix_paints_sign_before_prefix(
+        self,
+    ) -> None:
+        d: dict = {}
+        compose_axis_format(
+            d, ResolvedFormat(spec=",.0f", prefix="€", sign_placement="before_prefix")
+        )
+        labels = _render_axis_labels(
+            [-50_000.0, 0.0, 50_000.0], (-50_000.0, 50_000.0), d["labelExpr"]
+        )
+        assert labels == ["−€50,000", "0", "€50,000"]
+
+    def test_after_prefix_paints_the_sign_after_the_prefix(self) -> None:
+        d: dict = {}
+        compose_axis_format(
+            d, ResolvedFormat(spec=",.0f", prefix="EUR ", sign_placement="after_prefix")
+        )
+        labels = _render_axis_labels(
+            [-50_000.0, 0.0, 50_000.0], (-50_000.0, 50_000.0), d["labelExpr"]
+        )
+        assert labels == ["EUR −50,000", "0", "EUR 50,000"]
+
+    def test_zero_tick_is_bare_like_the_ladder_paths(self) -> None:
+        d: dict = {}
+        compose_axis_format(d, ResolvedFormat(spec=",.0f", suffix=" €"))
+        labels = _render_axis_labels([0.0, 50_000.0], (0.0, 50_000.0), d["labelExpr"])
+        assert labels == ["0", "50,000 €"]
+
+    def test_ladderless_si_zero_tick_is_bare(self) -> None:
+        from dbt_charts.core.compile.resolve.style.axis_cascade import (
+            ladderless_tick_label,
+        )
+
+        expr = inject_axis_numeral_expr(
+            {},
+            None,
+            ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+            ResolvedFormat(spec=".3~s", prefix="EUR ", sign_placement="before_prefix"),
+        )["labelExpr"]
+        labels = _render_axis_labels([0.0, 0.5, 2_000.0], (0.0, 2_000.0), expr)
+        assert labels == ["0", "EUR 0.5", "EUR 2k"]
+
+    def test_anchor_repeat_on_a_ladderless_axis_affixes_only_the_last_tick(
+        self,
+    ) -> None:
+        from dbt_charts.core.compile.resolve.style.axis_cascade import (
+            ladderless_tick_label,
+        )
+
+        fmt = ResolvedFormat(spec=".3~s", suffix=" EUR", repeat="anchor")
+        expr = inject_axis_numeral_expr({}, None, ladderless_tick_label(fmt, ()), fmt)[
+            "labelExpr"
+        ]
+        labels = _render_axis_labels([0.5, 1_000.0, 2_000.0], (0.0, 2_000.0), expr)
+        assert labels == ["0.5", "1k", "2k EUR"]
+
+    def test_anchor_repeat_on_an_all_negative_ladderless_axis_affixes_the_bottom(
+        self,
+    ) -> None:
+        from dbt_charts.core.compile.resolve.style.axis_cascade import (
+            ladderless_tick_label,
+        )
+
+        fmt = ResolvedFormat(spec=".3~s", suffix=" EUR", repeat="anchor")
+        tick_label = ladderless_tick_label(fmt, (-2_000.0, -500.0))
+        expr = inject_axis_numeral_expr({}, None, tick_label, fmt)["labelExpr"]
+        labels = _render_axis_labels([-2_000.0, -1_000.0, 0.0], (-2_000.0, 0.0), expr)
+        assert labels == ["−2k EUR", "−1k", "0"]
+
+    def test_anchor_repeat_on_a_plain_axis_affixes_only_the_anchor_tick(
+        self,
+    ) -> None:
+        from dbt_charts.core.compile.resolve.style.axis_cascade import (
+            affix_tick_label,
+        )
+
+        fmt = ResolvedFormat(
+            spec=".3~s",
+            prefix="EUR ",
+            sign_placement="after_prefix",
+            notation="narrative",
+            repeat="anchor",
+        )
+        ticks = (-1_000_000.0, 0.0, 1_000_000.0, 2_000_000.0)
+        tick_label = affix_tick_label(fmt, ticks)
+        expr = inject_axis_numeral_expr({}, None, tick_label, fmt)["labelExpr"]
+        labels = _render_axis_labels(list(ticks), (ticks[0], ticks[-1]), expr)
+        assert labels == ["−1mn", "0", "1mn", "EUR 2mn"]
+        assert labels == quantitative_tick_labels(ticks, fmt, None, tick_label)
+
+    def test_authored_suffix_trails_the_digits_sign_still_leads(self) -> None:
+        d: dict = {}
+        compose_axis_format(d, ResolvedFormat(spec=",.0f", suffix=" €"))
+        labels = _render_axis_labels(
+            [-50_000.0, 50_000.0], (-50_000.0, 50_000.0), d["labelExpr"]
+        )
+        assert labels == ["−50,000 €", "50,000 €"]
+
+    def test_authored_notation_composes_on_a_bare_si_spec(self) -> None:
+        d: dict = {}
+        compose_axis_format(
+            d,
+            ResolvedFormat(
+                spec=".3~s",
+                prefix="€",
+                notation="narrative",
+                sign_placement="before_prefix",
+            ),
+        )
+        labels = _render_axis_labels([1_200_000.0], (0.0, 1_200_000.0), d["labelExpr"])
+        assert labels == ["€1.2mn"]
+
+    def test_no_affix_takes_the_plain_format_fast_path(self) -> None:
+        """No prefix/suffix/notation authored -- VL's native `format` key, not a
+        labelExpr.
+        """
+        d: dict = {}
+        compose_axis_format(d, ResolvedFormat(spec=",.0f"))
+        assert d == {"format": ",.0f"}
+        assert "labelExpr" not in d
+
+    def test_never_overwrites_an_already_authored_label_expr(self) -> None:
+        """An authored axis_y.labels.expr (axis_to_vl writes it into `d` before this
+        function ever runs) must win over an inherited affix/format.
+        """
+        d = {"labelExpr": "'ZZ' + datum.label"}
+        compose_axis_format(
+            d, ResolvedFormat(spec=",.0f", prefix="€", sign_placement="before_prefix")
+        )
+        assert d["labelExpr"] == "'ZZ' + datum.label"
+        assert d["format"] == ",.0f"
+
+    def test_no_affix_still_sets_format_alongside_an_authored_label_expr(
+        self,
+    ) -> None:
+        """No prefix/suffix/notation authored, so there is nothing to compose."""
+        d = {"labelExpr": "datum.label + ' u'"}
+        compose_axis_format(d, ResolvedFormat(spec=",.0f"))
+        assert d == {"labelExpr": "datum.label + ' u'", "format": ",.0f"}
+
+    def test_notation_on_a_non_si_spec_is_a_true_no_op(self) -> None:
+        """`notation` only ever changes an SI-shaped spec's magnitude suffix
+        (numeral_vega_expr's own no-op condition).
+        """
+        d: dict = {}
+        compose_axis_format(d, ResolvedFormat(spec=",.0f", notation="narrative"))
+        assert d == {"format": ",.0f"}
+        assert "labelExpr" not in d
+
+
+class TestAnchoredNegativeTickParity:
+    """The measured label equals the painted one for an anchored negative tick
+    with an authored prefix, which leads the sign there."""
+
+    _FMT = ResolvedFormat(spec=".3~s", prefix="€", sign_placement="before_prefix")
+
+    def test_ruler(self) -> None:
+        ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True)
+        ticks = (-500_000.0, -300_000.0, -100_000.0, 0.0)
+        expr = inject_axis_numeral_expr({}, ruler, None, self._FMT)["labelExpr"]
+        painted = _render_axis_labels(list(ticks), (ticks[0], ticks[-1]), expr)
+        assert painted[0].startswith("€−500")
+        assert painted == quantitative_tick_labels(ticks, self._FMT, ruler)
+
+    def test_tick_label(self) -> None:
+        tick_label = ResolvedTickLabel(format=",.0f", anchor_at_start=True)
+        ticks = (-500.0, -250.0, 0.0)
+        expr = inject_axis_numeral_expr({}, None, tick_label, self._FMT)["labelExpr"]
+        painted = _render_axis_labels(list(ticks), (ticks[0], ticks[-1]), expr)
+        assert painted == ["€−500", "−250", "0"]
+        assert painted == quantitative_tick_labels(ticks, self._FMT, None, tick_label)
+
+    def test_ladderless(self) -> None:
+        from dbt_charts.core.compile.models.primitives import resolved_as
+        from dbt_charts.core.compile.resolve.style.axis_cascade import (
+            ladderless_tick_label,
+        )
+        from dbt_charts.core.render.chart.emitters._measured_label_padding import (
+            _sub_unit_guarded_format,
+        )
+
+        fmt = resolved_as(ResolvedFormat, self._FMT, repeat="anchor")
+        tick_label = ladderless_tick_label(fmt, (-2_000.0, -500.0))
+        expr = inject_axis_numeral_expr({}, None, tick_label, fmt)["labelExpr"]
+        painted = _render_axis_labels([-2_000.0, -1_000.0, 0.0], (-2_000.0, 0.0), expr)
+        assert painted[0] == "€−2k"
+        assert painted[0] == _sub_unit_guarded_format(-2_000.0, fmt, tick_label)

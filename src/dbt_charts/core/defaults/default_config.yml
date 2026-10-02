@@ -464,6 +464,44 @@ chart_rendering:
     # >=18.67px (14pt) bold -- see render/contrast_warning.py.
     min_ratio: 4.5
     large_text_min_ratio: 3.0
+  thumbnail:
+    # render/thumbnail.py: the abstracted, unreadable board picture.
+    # Share of the page ink (black on a light page, white on a dark one)
+    # blended into the page for every placeholder.
+    placeholder_ink: 0.20
+    # Value bars and status-colored blocks blend their source color into the page.
+    bar_color_weight: 0.6
+    status_color_weight: 0.75
+    # HSV saturation past which a color counts as chromatic (a status color,
+    # a saturated mark).
+    chromatic_saturation: 0.3
+    # Placeholder height as a share of the measured line box; text at or above
+    # large_text_size px takes the taller share. Never thinner than min_text_height px.
+    text_height: 0.48
+    large_text_height: 0.60
+    large_text_size: 20.0
+    min_text_height: 2.0
+    # Value bars: height share of the line box, rounding cap, minimum width,
+    # the gap kept from the previous column, and the largest share of the
+    # table's width one bar may take.
+    bar_height: 0.72
+    bar_max_corner_radius: 3.0
+    min_bar_width: 2.0
+    bar_gap: 14.0
+    bar_room_share: 0.22
+    # Text cells draw as blocks this share of the column's widest cell, no
+    # narrower than min_block_width px.
+    block_share: 0.55
+    min_block_width: 10.0
+    # A collapsed variable control's pill height as a share of its box.
+    variable_pill_height: 0.6
+    # Conditional-format glyphs draw as dots: radius is this share of the
+    # line box, no smaller than min_glyph_dot_radius px.
+    glyph_dot_share: 0.32
+    min_glyph_dot_radius: 2.5
+    # Text chunks whose baselines differ by less than this share of the
+    # larger font size sit on one visual line.
+    same_line_share: 0.6
 
 
 # ============================================================================

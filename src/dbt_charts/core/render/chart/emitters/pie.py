@@ -29,12 +29,18 @@ from dbt_charts.core.render.chart.emitters._channels import (
     channel_to_encoding,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
-from dbt_charts.core.render.chart.vl_field_maps import slice_mark_to_vl
+from dbt_charts.core.render.chart.vl_field_maps import (
+    _affixed_digits_expr,
+    slice_mark_to_vl,
+)
 from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 from dbt_charts.core.render.utils import font_style_to_mark, normalize_data_types
 from dbt_charts.core.text.case import format_display_text
 
 _ARC_TOTAL_FIELD = "__dbt_arc_total"
+# Composed text field for a center total with an affix a d3 spec cannot hold.
+_ARC_TOTAL_TEXT_FIELD = "__dbt_arc_total_text"
 _ARC_ROW_FIELD = "__dbt_arc_row"
 
 # Shared with features/structured_tooltip.py's pie tooltip role builder —
@@ -221,8 +227,8 @@ class PieEmitter:
             "type": "quantitative",
             "title": format_display_text(chart.theta, from_slug=True, font=legend_font),
         }
-        if fmt:
-            theta_enc["format"] = fmt
+        if fmt.spec:
+            theta_enc["format"] = fmt.spec
 
         arc_encoding = {"theta": theta_enc}
 
@@ -293,13 +299,8 @@ class PieEmitter:
                 "x": {"value": {"expr": "width / 2"}},
                 "y": {"value": {"expr": "height / 2"}},
             }
-            # total_style.value.format is already the resolved-and-floored d3
-            # spec (resolve_format_for_values, baked in _resolve_pie); consume
-            # it directly — no compile-time reach-back.
+            # Already resolved and floored (_resolve_pie); consumed directly.
             total_fmt = total_style.value.format
-            if total_fmt:
-                value_enc["text"]["format"] = total_fmt
-
             value_transforms: list[dict[str, Any]] = [
                 {
                     "joinaggregate": [
@@ -309,6 +310,30 @@ class PieEmitter:
                 {"window": [{"op": "row_number", "as": _ARC_ROW_FIELD}]},
                 {"filter": f"datum.{_ARC_ROW_FIELD} === 1"},
             ]
+            if total_fmt is None:
+                pass
+            elif total_fmt.prefix or total_fmt.suffix:
+                # No slot in VL's text.format: compose into its own field.
+                calc = _affixed_digits_expr(
+                    f"datum.{_ARC_TOTAL_FIELD}",
+                    total_fmt.spec,
+                    total_fmt,
+                    anchored=False,
+                )
+                value_transforms.append(
+                    {"calculate": calc, "as": _ARC_TOTAL_TEXT_FIELD}
+                )
+                value_enc["text"] = {"field": _ARC_TOTAL_TEXT_FIELD, "type": "nominal"}
+            elif total_fmt.notation is not None and total_fmt.spec:
+                expr = numeral_vega_expr(
+                    f"datum.{_ARC_TOTAL_FIELD}", total_fmt.spec, total_fmt.notation
+                )
+                value_transforms.append(
+                    {"calculate": expr, "as": _ARC_TOTAL_TEXT_FIELD}
+                )
+                value_enc["text"] = {"field": _ARC_TOTAL_TEXT_FIELD, "type": "nominal"}
+            elif total_fmt.spec:
+                value_enc["text"]["format"] = total_fmt.spec
             layers.append(
                 ChartSpec(
                     mark="text",

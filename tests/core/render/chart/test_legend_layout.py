@@ -119,7 +119,7 @@ class TestLegendLabelMaxWidth:
             style=BarChartStylePatch.model_validate(
                 {
                     "legend": LegendStylePatch.model_validate(
-                        {"position": "bottom", "label": {"max_width": 1000}}
+                        {"position": {"edge": "bottom"}, "label": {"max_width": 1000}}
                     )
                 }
             )
@@ -228,6 +228,7 @@ class TestLegendSymbolLimit:
         from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
         from dbt_charts.core.compile.models.style.resolved import (
             ResolvedLegendElementStyle,
+            ResolvedLegendPosition,
             ResolvedLegendStyle,
         )
         from dbt_charts.core.render.chart.vl_field_maps import legend_to_vl
@@ -245,7 +246,7 @@ class TestLegendSymbolLimit:
         )
         _elem = ResolvedLegendElementStyle(font=_font, padding=4.0, visible=True)
         legend_no_cap = ResolvedLegendStyle(
-            position="right",
+            position=ResolvedLegendPosition(edge="right", align="start", overlay=False),
             direction="vertical",
             columns=0,
             compact_columns=2,

@@ -62,6 +62,7 @@ from dbt_charts.core.compile.models.style.theme import (
     LineMarkStyle,
     PaddingStyle,
     PieChartStyle,
+    PieLegendStyle,
     PointMapChartStyle,
     PointMarkStyle,
     QuantitativeAxisStyle,
@@ -374,6 +375,14 @@ if TYPE_CHECKING:
 
 else:
     LegendStylePatch = build_patch_model(LegendStyle)
+
+if TYPE_CHECKING:
+
+    class PieLegendStylePatch(PieLegendStyle):
+        pass
+
+else:
+    PieLegendStylePatch = build_patch_model(PieLegendStyle)
 
 
 # Individual mark-type patches for per-family style overrides.

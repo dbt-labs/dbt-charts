@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
-from dbt_charts.core.compile.models.primitives import OverlapSpec
+from dbt_charts.core.compile.models.primitives import OverlapSpec, ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     category_scale_for,
@@ -99,6 +99,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     compose_axis_label_expr,
     effective_bar_size,
     emit_resolved_scale_vl,
+    inject_axis_numeral_expr,
     measure_axis_to_vl,
 )
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
@@ -459,7 +460,12 @@ def _emit_histogram(
         "title": resolve_xy_titles(
             chart.x, None, chart.x_label, None, ax, ax, box, chart.id
         ).x_title,
-        "axis": axis_to_vl(ax, label_overlap="allow", label_angle=0.0),
+        "axis": inject_axis_numeral_expr(
+            axis_to_vl(ax, label_overlap="allow", label_angle=0.0),
+            ax.ruler,
+            ax.tick_label,
+            ax.labels.format,
+        ),
     }
     # A histogram's x IS the quantitative (binned) axis, so authored tick
     # cadence applies here. This path builds its own axis dict rather than
@@ -888,7 +894,7 @@ def _temporal_measure_encoding(enc: VLDict, ay: ResolvedAxisStyle) -> None:
 def _emit_vertical(
     chart: ResolvedBarChart,
     data: list[dict[str, Any]],
-    tooltip_format: str,
+    tooltip_format: ResolvedFormat,
     single_series_color: str,
     config: dict[str, Any],
     box: RenderBox,
@@ -1074,7 +1080,7 @@ def _emit_vertical(
         "type": chart.measure_type,
         "title": y_title,
         "axis": ay_vl,
-        "format": tooltip_format,
+        "format": tooltip_format.spec,
     }
 
     # tick_values are baked at resolve(); emitter reads them to build VL scale/axis.
@@ -1381,7 +1387,7 @@ def _emit_vertical(
 def _emit_horizontal(
     chart: ResolvedBarChart,
     data: list[dict[str, Any]],
-    tooltip_format: str,
+    tooltip_format: ResolvedFormat,
     single_series_color: str,
     config: dict[str, Any],
     box: RenderBox,
@@ -1525,7 +1531,7 @@ def _emit_horizontal(
         "title": x_title,
         "axis": ay_vl,
         "scale": x_enc_scale,
-        "format": tooltip_format,
+        "format": tooltip_format.spec,
     }
 
     if chart.stack == "normalize":
@@ -1616,7 +1622,10 @@ def _emit_horizontal(
     if "labelExpr" not in ax_vl:
         # No case: this axis never gets inject_axis_label_case.
         cat_labels = [
-            category_label_text(v, ax.labels.format, None) for v in cat_labels
+            category_label_text(
+                v, ax.labels.format.spec if ax.labels.format is not None else None, None
+            )
+            for v in cat_labels
         ]
     cat_align = ax_vl.get("labelAlign")
     # Measurability: exact per-row category text is always safe to measure

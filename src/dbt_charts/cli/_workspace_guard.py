@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dbt_charts.agent_api import version_info
 from dbt_charts.agent_api._paths import find_repo_root
-from dbt_charts.cli import _version_info
 
 
 def _expected_package_dir(repo_root: Path) -> Path | None:
@@ -53,7 +53,7 @@ def detect_workspace_mismatch(cwd: Path) -> str | None:
     if expected is None:
         return None
 
-    info = _version_info.collect()
+    info = version_info.collect()
     actual = info.package_dir.resolve()
     if actual == expected:
         return None

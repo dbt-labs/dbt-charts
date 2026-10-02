@@ -40,7 +40,6 @@ from dbt_charts.core.compile.models.style.resolved import (
 # ---------------------------------------------------------------------------
 from ._channel import ResolvedStyleChannel
 from ._layer import (
-    FormatState,
     LayeredResolvedChart,
     ResolvedAreaLayer,
     ResolvedBarLayer,
@@ -50,6 +49,13 @@ from ._layer import (
     effective_color_field,
 )
 from ._partition import PartitionAxis
+from ._support_table import (
+    ResolvedSupportTable,
+    ResolvedSupportTableAggregate,
+    ResolvedSupportTableEntry,
+    ResolvedSupportTablePerSeries,
+    ResolvedSupportTableSource,
+)
 
 # ---------------------------------------------------------------------------
 # Per-family discriminated models.
@@ -59,7 +65,7 @@ from .bar import ResolvedBarChart
 from .callout import ResolvedCalloutChart
 from .geoshape import ResolvedGeoshapeChart
 from .heatmap import ResolvedHeatmapChart
-from .kpi import ResolvedKpiChart
+from .kpi import ResolvedKpiChart, ResolvedKpiSupportConfig
 from .line import ResolvedLineChart
 from .pie import ResolvedPieChart
 from .point_map import ResolvedPointMapChart
@@ -98,7 +104,6 @@ __all__ = [
     "ResolvedScatterLayer",
     "ResolvedLayer",
     "LayeredResolvedChart",
-    "FormatState",
     "effective_color_field",
     # New discriminated family models
     "ResolvedAreaChart",
@@ -107,6 +112,12 @@ __all__ = [
     "ResolvedGeoshapeChart",
     "ResolvedHeatmapChart",
     "ResolvedKpiChart",
+    "ResolvedSupportTable",
+    "ResolvedSupportTableAggregate",
+    "ResolvedSupportTableEntry",
+    "ResolvedSupportTablePerSeries",
+    "ResolvedSupportTableSource",
+    "ResolvedKpiSupportConfig",
     "ResolvedLineChart",
     "ResolvedPieChart",
     "ResolvedPointMapChart",

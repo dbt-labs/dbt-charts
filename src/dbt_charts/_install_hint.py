@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 
-def _is_uv_tool_install() -> bool:
+def is_uv_tool_install() -> bool:
     """True if this process is running from a `uv tool install` environment.
 
     `uv tool install` creates an isolated virtualenv under uv's tool
@@ -60,6 +60,6 @@ def install_hint(extra: str | None = None) -> str:
     when set, the returned command installs dbt charts with that extras bracket.
     """
     spec = f"dbt-charts[{extra}]" if extra else "dbt-charts"
-    if _is_uv_tool_install():
+    if is_uv_tool_install():
         return f'uv tool install "{spec}"'
     return f'pip install "{spec}"'

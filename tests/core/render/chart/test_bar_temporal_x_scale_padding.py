@@ -23,10 +23,8 @@ from typing import Any
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
-from dbt_charts.core.compile.models.style.theme import (
-    BarMarkStyle,
-    PaddingStyle,
-)
+from dbt_charts.core.compile.models.style.resolved import ResolvedBarMarkStyle
+from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.chart._axes import _bake_cartesian_axes
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -37,7 +35,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 from dbt_charts.core.render.chart.emitters.bar import BarEmitter
 from dbt_charts.core.render.chart.spec import RenderBox
 
-from ...conftest import fixture_chart_for_type
+from ...conftest import baked_format, fixture_chart_for_type
 
 _DEFAULT_BOX = RenderBox(width=300.0, height=300.0)
 
@@ -55,7 +53,7 @@ def _sparse_daily_data() -> list[dict[str, Any]]:
 def _temporal_bar_axes():
     """Bake axis_x/axis_y for a bar chart with a temporal x channel."""
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("bar"),
         "bar",
@@ -63,18 +61,27 @@ def _temporal_bar_axes():
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     return (
         build_resolved_axis(
             ax_merged,
+            format=baked_format(ax_merged),
             band_position=ax_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
         build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged),
             band_position=ay_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
     )
 
@@ -116,7 +123,7 @@ def test_continuous_temporal_x_bar_gets_half_bar_width_padding(bar_style) -> Non
     first/last date's bar sits fully on-plot instead of straddling the edge."""
     band_px = 20.0
     bar_style = bar_style.model_copy(
-        update={"mark": BarMarkStyle(size=band_px, band_width=0.8, padding=0.0)}
+        update={"mark": ResolvedBarMarkStyle(size=band_px, band_width=0.8, padding=0.0)}
     )
     chart = _build_chart(bar_style)
 
@@ -135,7 +142,7 @@ def test_continuous_temporal_x_bar_width_tracks_scale_gap(bar_style) -> None:
     and never a bare max_size literal that ignores how the dates pack."""
     bar_style = bar_style.model_copy(
         update={
-            "mark": BarMarkStyle(
+            "mark": ResolvedBarMarkStyle(
                 gap=3.0, min_size=4.0, max_size=20.0, band_width=0.8, padding=0.0
             )
         }

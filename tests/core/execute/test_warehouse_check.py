@@ -1046,6 +1046,182 @@ class TestWarehouseCheckClickHouse:
         assert "nope" in result.error
 
 
+def _sqlserver_registry(
+    result: QueryResult, prepared_sql: str = "SELECT month, revenue FROM orders"
+):
+    """Registry that resolves a SQL Server source and prepares SQL without I/O."""
+    from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
+
+    registry = MagicMock()
+    registry.resolve_query_source.return_value = DbtTargetSourceConfig(
+        type="sqlserver", host="h", database="analytics", schema="dbo"
+    )
+    registry.prepare_sql.return_value = PreparedSql(
+        sql=prepared_sql,
+        setup_sql=None,
+        dialect_name="sqlserver",
+        row_fetch_limit=resolve_effective_row_limit(None),
+    )
+    registry.execute_prepared.return_value = result
+    return registry
+
+
+def _describe_row(name, type_, *, number=None, error_type=None, message=None):
+    return {
+        "name": name,
+        "system_type_name": type_,
+        "error_number": number,
+        "error_type": error_type,
+        "error_message": message,
+    }
+
+
+class TestWarehouseCheckSqlServer:
+    """SQL Server binds the query through sys.dm_exec_describe_first_result_set,
+    wrapped around the *rendered* SQL, and never executes it."""
+
+    def test_valid_query_reads_columns_from_the_dmv(self):
+        registry = _sqlserver_registry(
+            QueryResult(
+                data=[
+                    _describe_row("Month", "date"),
+                    _describe_row("revenue", "decimal(18,2)"),
+                ]
+            )
+        )
+        result = _check_sql("SELECT month, revenue FROM orders", registry)
+        assert result.status == "valid"
+        assert result.mechanism == "sys.dm_exec_describe_first_result_set"
+        assert result.adapter_type == "sqlserver"
+        assert result.columns_checked is True
+        # Lowercased like SqlAdapter's results.
+        assert result.columns == [
+            WarehouseCheckColumn(name="month", type="date"),
+            WarehouseCheckColumn(name="revenue", type="decimal(18,2)"),
+        ]
+
+    def test_wraps_the_rendered_sql_and_quotes_it(self):
+        """A value rendered into the query carries its own quotes. Wrapping
+        before rendering would let them close the literal."""
+        registry = _sqlserver_registry(
+            QueryResult(data=[]), prepared_sql="SELECT 1 WHERE n = 'O''Brien'"
+        )
+        _check_sql("SELECT 1 FROM orders WHERE n = 'x'", registry)
+        wrapped = registry.execute_prepared.call_args.args[0]
+        assert wrapped.sql.startswith("SELECT name, system_type_name")
+        assert (
+            "sys.dm_exec_describe_first_result_set("
+            "N'SELECT 1 WHERE n = ''O''''Brien''', NULL, 0)"
+        ) in wrapped.sql
+        assert wrapped.sql.endswith("ORDER BY column_ordinal")
+        registry.execute.assert_not_called()
+
+    def test_an_unbound_query_is_invalid_with_the_servers_message(self):
+        registry = _sqlserver_registry(
+            QueryResult(
+                data=[
+                    _describe_row(
+                        None,
+                        None,
+                        number=207,
+                        error_type=1,
+                        message="Invalid column name 'nope'.",
+                    )
+                ]
+            )
+        )
+        result = _check_sql("SELECT nope FROM orders", registry)
+        assert result.status == "invalid"
+        assert result.columns_checked is False
+        assert "Invalid column name 'nope'." in result.error
+        assert "207" in result.error
+
+    def test_a_statement_the_dmv_cannot_describe_is_unchecked(self):
+        """error_type 3-11 mean the function could not determine the result (a
+        temp table, dynamic SQL), which says nothing about whether the query runs."""
+        registry = _sqlserver_registry(
+            QueryResult(
+                data=[
+                    _describe_row(
+                        None,
+                        None,
+                        number=11526,
+                        error_type=10,
+                        message="The metadata could not be determined.",
+                    )
+                ]
+            )
+        )
+        result = _check_sql("SELECT * FROM #t", registry)
+        assert result.status == "unchecked"
+        assert "metadata could not be determined" in result.reason
+
+    def test_the_authored_limit_does_not_truncate_the_schema(self):
+        """The describe's rows are columns: a KPI query with `limit: 1` must
+        still report every column."""
+        import yaml
+
+        from dbt_charts.core.compile import compile as compile_board
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        compiled = compile_board(
+            yaml.dump(
+                {
+                    "source": "s",
+                    "queries": {"q": "SELECT a, b FROM t"},
+                    "charts": {"c": {"query": "q", "type": "table"}},
+                }
+            )
+        )
+        assert compiled.board is not None, compiled.errors
+        registry = _sqlserver_registry(QueryResult(data=[]))
+        warehouse_check(
+            SqlQuery(sql="SELECT a, b FROM t", source="s", limit=1),
+            board=compiled.board,
+            adapter_registry=registry,
+            query_name="q",
+            query_registry=compiled.query_registry,
+        )
+        sent = registry.prepare_sql.call_args.args[0]
+        assert sent.limit is None
+
+    def test_a_connection_failure_is_unchecked(self):
+        from dbt_charts.core.diagnostics.codes_execute import ERR_WAREHOUSE_CONNECTION
+
+        registry = _sqlserver_registry(
+            QueryResult(
+                data=[],
+                error=QueryError(
+                    "Login failed for user 'reader'",
+                    code=ERR_WAREHOUSE_CONNECTION,
+                ),
+            )
+        )
+        result = _check_sql("SELECT 1", registry)
+        assert result.status == "unchecked"
+
+    def test_a_setup_sql_query_is_unchecked(self):
+        """The DMV binds in a scope of its own and cannot see temp objects that
+        a setup_sql created in the batch around it."""
+        registry = _sqlserver_registry(QueryResult(data=[]))
+        registry.prepare_sql.return_value = PreparedSql(
+            sql="SELECT * FROM #t",
+            setup_sql="SELECT 1 AS x INTO #t",
+            dialect_name="sqlserver",
+            row_fetch_limit=resolve_effective_row_limit(None),
+        )
+        result = _check_sql("SELECT * FROM #t", registry)
+        assert result.status == "unchecked"
+        assert "setup_sql" in result.reason
+        registry.execute_prepared.assert_not_called()
+
+    def test_a_multi_statement_query_is_unchecked(self):
+        registry = _sqlserver_registry(QueryResult(data=[]))
+        result = _check_sql("SELECT 1; SELECT 2", registry)
+        assert result.status == "unchecked"
+        registry.execute_prepared.assert_not_called()
+
+
 class TestWarehouseCheckCacheRef:
     """A cache ref composes a render-time result no warehouse has heard of."""
 

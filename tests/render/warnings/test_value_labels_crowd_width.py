@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
     LineChart,
 )
+from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve import resolve
@@ -85,6 +86,22 @@ def test_fires_on_bar_value_label_overflow() -> None:
     assert "px" in w.message
     assert "overflow" in w.message
     assert w.fix is not None
+
+
+def test_fires_on_bar_value_label_with_authored_affix() -> None:
+    """A FormatConfig-authored prefix must not crash the detector, and the measured
+    width must include it.
+    """
+    board = _board(
+        "bar",
+        {"position": "middle", "format": FormatConfig(spec=",.5f", prefix="EUR ")},
+    )
+    warnings = detector.detect(_ctx(_bar(), _rows(30), board))
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert isinstance(w, Diagnostic)
+    assert w.code == WARN_VALUE_LABELS_CROWD_WIDTH.code
+    assert w.field == "val"
 
 
 def test_no_fire_when_labels_fit() -> None:

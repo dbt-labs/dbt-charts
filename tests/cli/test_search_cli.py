@@ -12,9 +12,11 @@ from typer.testing import CliRunner
 from dbt_charts.agent_api.search import SearchResult
 from dbt_charts.cli.main import app
 
+from .._paths import DBT_CHARTS_DIR
+
 runner = CliRunner()
 
-_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
+_FIXTURE_DIR = DBT_CHARTS_DIR / "tests" / "fixtures"
 
 
 class TestDftSearchHappyPath:

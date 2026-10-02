@@ -34,6 +34,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTableSource,
 )
 from dbt_charts.core.compile.models.markers import Channel, FontFamily, Format
+from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
     AuthoredSqlQuery,
@@ -579,9 +580,11 @@ class DesignProperty(BaseModel):
             "True when this property is shown for information but cannot be "
             "saved from this control: the authored value carries more than the "
             "widget can hold, and writing what the widget shows back would "
-            "silently drop the rest — `chart.support_table` with a `format:` or "
-            "`aggregate:` entry, on the `list` control that can only author "
-            "bare column names."
+            "silently drop the rest: a `format:` authored as an object "
+            "(`prefix`, `suffix`, `notation`) on the `combo` control that can "
+            "only author a spec string, and `chart.support_table` with a "
+            "`format:` or `aggregate:` entry, on the `list` control that can "
+            "only author bare column names."
         ),
     )
 
@@ -665,9 +668,13 @@ def _widget_for(field: SchemaField) -> Widget | None:
     # `list[str] | None` — plain lists, not unions — and refusing every
     # container left the whole family with no data binding at all while its
     # fonts were editable.
-    if (field.container is not None and field.container != "list") or (
-        field.nested_models
+    # A `format`-marked field's `FormatConfig` arm is a value, not a sub-object.
+    nested_models = field.nested_models
+    if nested_models == ["FormatConfig"] and any(
+        isinstance(f, Format) for f in field.facets
     ):
+        nested_models = []
+    if (field.container is not None and field.container != "list") or nested_models:
         return None
     # A union like `str | list[str] | None` reports `container=None` — the
     # container is one arm, not the whole field, so the guard above misses it.
@@ -749,6 +756,23 @@ def _scalar(value: Any) -> str | int | float | bool | list[str] | None:
     ):
         return list(value)
     return None
+
+
+def _format_config_display(value: FormatConfig) -> str:
+    """A read-only display string for an authored ``FormatConfig``: spec plus
+    set affix fields, so the panel does not show the format as ``unset``."""
+    parts = [f'"{value.spec}"'] if value.spec else []
+    if value.prefix:
+        parts.append(f'prefix="{value.prefix}"')
+    if value.suffix:
+        parts.append(f'suffix="{value.suffix}"')
+    if value.notation:
+        parts.append(f"notation={value.notation}")
+    if value.sign_placement:
+        parts.append(f"sign_placement={value.sign_placement}")
+    if value.repeat:
+        parts.append(f"repeat={value.repeat}")
+    return " ".join(parts) if parts else "(no spec or affix set)"
 
 
 def _drills_into(field: SchemaField) -> str | None:
@@ -1212,11 +1236,19 @@ def _describe(
                 for value in enum_values
                 if _variable_accepts(instance, **{field.name: value})
             )
+        authored_here = _absolute(writes_at, key) in authored
+        # A writable combo would overwrite an authored FormatConfig and drop its
+        # affix; `format: null` stays editable.
+        readonly = isinstance(value, FormatConfig)
         properties[field.name] = DesignProperty(
             widget=widget,
             type_repr=field.type_repr,
-            value=_scalar(value),
-            authored_here=_absolute(writes_at, key) in authored,
+            value=(
+                _format_config_display(value)
+                if isinstance(value, FormatConfig)
+                else _scalar(value)
+            ),
+            authored_here=authored_here,
             required=required,
             description=field.description,
             enum_values=enum_values,
@@ -1227,6 +1259,7 @@ def _describe(
             options_complete=options_complete,
             facets=tuple(type(f).__name__.lower() for f in field.facets),
             list_only=_list_only(field),
+            readonly=readonly,
         )
     return DesignNode(
         model=model_name,

@@ -8,14 +8,16 @@ cannot live in either without creating a circular import.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     PlainSerializer,
+    SerializationInfo,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -37,7 +39,12 @@ from dbt_charts.core.compile.models.schema_names import (
     ScalePaletteName,
     StopsPaletteName,
 )
-from dbt_charts.core.text.format_d3 import Notation
+from dbt_charts.core.text.format_d3 import (
+    Notation,
+    SignPlacement,
+    default_sign_placement,
+)
+from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 
 # A frozenset dumps in Python's per-process hash-seed order, so two otherwise-
 # identical processes emit different orderings for the same set. Every model
@@ -120,6 +127,9 @@ def validate_incremental_value(
 # =============================================================================
 
 
+AffixRepeat = Literal["every", "anchor"]
+
+
 class FormatConfig(BaseModel):
     """Format configuration for value display.
 
@@ -156,6 +166,166 @@ class FormatConfig(BaseModel):
         default=None,
         description="Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn).",
     )
+    sign_placement: SignPlacement | None = Field(
+        default=None,
+        description=(
+            "Where a negative sign sits against the prefix: 'before_prefix' "
+            "(−€500) or 'after_prefix' (EUR −500). Unset: after_prefix when "
+            "the prefix ends in a space or paints on one value only, else "
+            "before_prefix. Table columns keep the sign with the digits and "
+            "reject it."
+        ),
+    )
+    repeat: AffixRepeat | None = Field(
+        default=None,
+        description=(
+            "Whether the prefix/suffix paints on 'every' value of an axis, "
+            "table column or support_table row, or on one 'anchor' value. "
+            "Unset keeps each surface's default. Single-value slots ignore it."
+        ),
+    )
+
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+
+def resolved_as(
+    cls: type[_ModelT],
+    model: BaseModel,
+    **update: Any,  # type-state: explicit_any — replacement field values
+) -> _ModelT:
+    """``model``'s fields with ``update`` applied, as the resolved subclass ``cls``."""
+    return cls(**{**dict(model), **update})
+
+
+AuthoredFormat = str | FormatConfig
+"""A format as authored: a spec, preset or alias name, or a format block."""
+
+FormatAliases = dict[str, AuthoredFormat]
+"""The ``style.formats`` alias table."""
+
+
+AUTHORED_FORMATS = "authored_formats"
+"""Serialization context flag: dump each ``ResolvedFormat`` as authored board YAML."""
+
+
+class ResolvedFormat(FormatConfig):
+    """A resolved d3 spec plus the affix/notation it cannot carry, and the
+    authored spec (``raw``) house rules key on.
+
+    Serializes to the bare spec when it carries neither affix nor ``raw``, else
+    to a ``FormatConfig``-shaped object plus ``raw``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    spec: str = ""
+    prefix: str = ""
+    suffix: str = ""
+    notation: Notation | None = None
+    repeat: AffixRepeat | None = None
+    raw: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_wire(
+        cls,
+        value: Any,  # type-state: explicit_any — validator boundary input
+    ) -> Any:  # type-state: explicit_any — validator boundary output
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            return {"spec": value}
+        if isinstance(value, FormatConfig):
+            value = value.model_dump()
+        if isinstance(value, dict):
+            return {
+                k: "" if v is None and k in ("spec", "prefix", "suffix") else v
+                for k, v in value.items()
+            }
+        return value
+
+    @model_serializer(mode="plain")
+    def _to_wire(
+        self, info: SerializationInfo
+    ) -> str | dict[str, Any]:  # type-state: explicit_any — JSON object
+        if info.context and info.context.get(AUTHORED_FORMATS):
+            if self._is_bare:
+                return self.spec if self.raw is None else self.raw
+            config = self._config().model_dump(exclude_none=True)
+            return config if self.raw is None else {**config, "spec": self.raw}
+        if self._is_bare and self.raw is None:
+            return self.spec
+        wire = self._config().model_dump(exclude_none=True)
+        if self.raw is not None:
+            wire["raw"] = self.raw
+        return wire
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls,
+        core_schema: Any,  # type-state: explicit_any — pydantic CoreSchema
+        handler: Any,  # type-state: explicit_any — pydantic GetJsonSchemaHandler
+    ) -> Any:  # type-state: explicit_any — JsonSchemaValue
+        return {"anyOf": [{"type": "string"}, handler(core_schema)]}
+
+    @property
+    def has_affix(self) -> bool:
+        return bool(self.prefix or self.suffix or self.notation is not None)
+
+    @property
+    def _is_bare(self) -> bool:
+        return (
+            not self.has_affix and self.repeat is None and self.sign_placement is None
+        )
+
+    @property
+    def placement(self) -> SignPlacement:
+        """Effective placement; ``sign_placement`` is the authored value, None
+        when unset."""
+        if self.sign_placement is not None:
+            return self.sign_placement
+        return default_sign_placement(self.prefix)
+
+    @property
+    def is_house(self) -> bool:
+        """True when ``raw`` names a predefined number format (house rules apply)."""
+        return self.raw is not None and self.raw in PREDEFINED_NUMBER_NAMES
+
+    @property
+    def is_spec_less_affix(self) -> bool:
+        """True when an affix is present but no spec (``no_format_default`` fills it)."""
+        return not self.spec and self.has_affix
+
+    @property
+    def authored(self) -> AuthoredFormat | None:
+        """The authored input, to re-resolve through ``format_value``."""
+        if self.raw is None or self._is_bare:
+            return self.raw
+        return self._config().model_copy(update={"spec": self.raw})
+
+    def _config(self) -> FormatConfig:
+        return FormatConfig(
+            spec=self.spec or None,
+            prefix=self.prefix or None,
+            suffix=self.suffix or None,
+            notation=self.notation,
+            sign_placement=self.sign_placement,
+            repeat=self.repeat,
+        )
+
+
+def signs_before_prefix(fmt: ResolvedFormat) -> bool:
+    """An authored ``before_prefix`` on a prefix, which no anchored surface can
+    paint."""
+    return bool(fmt.prefix) and fmt.sign_placement == "before_prefix"
+
+
+def painted_sign_placement(fmt: ResolvedFormat, anchored: bool) -> SignPlacement:
+    """The placement a painter composes: an anchored prefix (one value per
+    ladder, column or strip) leads the sign, so the anchor's digits line up
+    with the bare values beside it (``€−50`` above ``−40``)."""
+    return "after_prefix" if anchored else fmt.placement
 
 
 # =============================================================================

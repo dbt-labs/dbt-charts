@@ -264,6 +264,8 @@ def infer_dialect_from_dbt(
     except Exception:  # noqa: BLE001
         return None
 
+    if not isinstance(dbt_config, dict):
+        return None
     profile_name = dbt_config.get("profile")
     if not profile_name:
         return None
@@ -278,7 +280,19 @@ def infer_dialect_from_dbt(
     except Exception:  # noqa: BLE001
         return None
 
-    profile = profiles.get(profile_name, {})
-    target = target_name or profile.get("target", "dev")
-    target_config = profile.get("outputs", {}).get(target, {})
-    return target_config.get("type")
+    if not isinstance(profiles, dict):
+        return None
+    profile = profiles.get(profile_name)
+    if not isinstance(profile, dict):
+        return None
+    outputs = profile.get("outputs")
+    if not isinstance(outputs, dict):
+        return None
+    default_target = profile.get(
+        "target", "dev"
+    )  # type-state: silent_fallback — as _read_target_dict
+    target_config = outputs.get(target_name or default_target)
+    if not isinstance(target_config, dict):
+        return None
+    adapter_type = target_config.get("type")
+    return adapter_type if isinstance(adapter_type, str) else None

@@ -25,7 +25,9 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
+    FormatAliases,
     ResolvedFontStyle,
+    ResolvedFormat,
     SpacingValues,
 )
 from dbt_charts.core.compile.models.style.authored import PaginationConfig
@@ -35,7 +37,6 @@ from dbt_charts.core.compile.models.style.resolved.callout import (
 )
 from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
-    AxisMirrorStyle,
     BarChartStyle,
     FooterStyle,
     FrameStyle,
@@ -47,8 +48,9 @@ from dbt_charts.core.compile.models.style.theme import (
     KpiChartStyle,
     KpiTonesStyle,
     LayoutStyle,
+    LegendAlign,
     LegendDirection,
-    LegendPosition,
+    LegendEdge,
     LineChartStyle,
     PaddingStyle,
     PieChartStyle,
@@ -89,10 +91,11 @@ class ResolvedRulerAxis:
     # suffix field (and required a tabular label font at resolve). False for
     # a horizontal ruler, whose ticks render along VL's x channel.
     reserve: bool
-    # Whether the currency prefix repeats on every non-zero tick rather than
-    # anchoring on one. Column_forming alone decides this -- unlike `mode`,
-    # which can independently be REPEAT on a column-forming axis too (the
-    # ladder's own magnitude-driven suffix register).
+    # Whether the currency prefix and authored affix repeat on every non-zero
+    # tick rather than anchoring on one. The format's `repeat`, else
+    # column_forming, decides this -- unlike `mode`, which can independently
+    # be REPEAT on a column-forming axis too (the ladder's own
+    # magnitude-driven suffix register).
     prefix_repeats: bool
     # Split from axis.format by ruler_digit_format (core/text/numeral_scale.py)
     # once, here, rather than re-parsed at every consumer: prefix is the
@@ -144,6 +147,9 @@ class ResolvedRulerAxis:
     # horizontal ruler reserves nothing; a start-anchored axis gets no
     # ruler at all -- see build_resolved_axis).
     reservation: str
+    # The magnitude-suffix register: authored notation, else analytic for
+    # ANCHOR and narrative for REPEAT.
+    register: Notation
     # Pre-built decimal-padding strings, one per possible missing_len value
     # (0..precision+1). Each entry is the result of decimal_reservation_pad
     # for that missing_len, built from compose_decimal_units at resolve time.
@@ -152,16 +158,6 @@ class ResolvedRulerAxis:
     # needed). The axis's labelExpr and the Python gutter measurer select from
     # this table live (via decimal_pad_for), so they always agree.
     decimal_pad_table: tuple[str, ...] = dataclasses.field(default_factory=tuple)
-
-    @property
-    def register(self) -> Notation:
-        """The register this decision speaks: analytic for ANCHOR, narrative
-        for REPEAT. Derived from mode, not stored, so there is one source of
-        truth for a decision mode already determines (register follows
-        frequency: a suffix stated once is a set declaration and reads
-        analytic; a suffix on every member is value-attached and reads
-        narrative)."""
-        return "analytic" if self.mode is SuffixMode.ANCHOR else "narrative"
 
     @property
     def suffix_string(self) -> str:
@@ -194,15 +190,15 @@ class ResolvedTickLabel:
     # (mirrors ruler.prefix): the bare symbol (e.g. "$"), no added spacing.
     # "" when the format has no currency symbol.
     prefix: str = ""
-    # Tri-state, keyed off `prefix` and column_forming (folded in at resolve,
-    # never re-declared in render): "" prefix -> irrelevant, unset. Non-empty
-    # prefix + column_forming -> bool, whether the anchor tick is first
-    # rather than last (largest positive tick when any exist, else the
-    # most-negative — sign-aware, unlike the magnitude-based
-    # ResolvedRulerAxis.anchor_at_start, since a "$" has no scale dependency
-    # the way a shared "K"/"M" suffix does). Non-empty prefix + NOT
-    # column_forming -> None, meaning repeat the prefix on every tick (no
-    # vertical digit column to disambiguate against) — mirrors
+    # Tri-state, keyed off the affix (`prefix` or the format's authored
+    # prefix/suffix) and the format's `repeat`, else column_forming (folded in
+    # at resolve, never re-declared in render): no affix -> irrelevant, unset.
+    # Anchored -> bool, whether the anchor tick is first rather than last
+    # (largest positive tick when any exist, else the most-negative —
+    # sign-aware, unlike the magnitude-based ResolvedRulerAxis.anchor_at_start,
+    # since a "$" has no scale dependency the way a shared "K"/"M" suffix
+    # does; the last tick without a ladder). Repeated (`repeat: every`, or no
+    # column forms) -> None, the affix on every tick — mirrors
     # ResolvedRulerAxis's SuffixMode.REPEAT.
     anchor_at_start: bool | None = None
     # Mirrors ResolvedRulerAxis.decimal_pad_table: one padding string per
@@ -378,7 +374,7 @@ class ResolvedAxisElementStyle:
     bound: bool | float | None = None
     flush: bool | float | None = None
     offset: float | None = None
-    format: str | None = None  # tick-label format string; None uses VL auto-format
+    format: ResolvedFormat | None = None  # None uses VL auto-format
     tilt_increments: list[float] | None = None
     # Sparse label-only cadence override — None labels every tick per
     # the usual smart cadence/format; a list blanks every tick not in it.
@@ -445,6 +441,17 @@ class ResolvedAxisTicksStyle:
 
 
 @dataclasses.dataclass(frozen=True)
+class ResolvedMirrorAxis:
+    """The mirrored edge of ``axis_y.mirror``: an authored ``format``/``expr``
+    relabels it, else it repaints the primary's ladder for its own anchoring."""
+
+    format: ResolvedFormat | None = None
+    expr: str | None = None
+    ruler: ResolvedRulerAxis | None = None
+    tick_label: ResolvedTickLabel | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class ResolvedAxisStyle:
     """Resolved per-axis style.
 
@@ -460,9 +467,8 @@ class ResolvedAxisStyle:
     labels: ResolvedAxisElementStyle
     title: ResolvedAxisElementStyle
     position: str | None  # None is a valid concrete value ("use VL default")
-    # y-axis only: draw the y-scale on both edges. An AxisMirrorStyle object
-    # additionally relabels the mirrored edge (format/expr); see AxisMirrorStyle.
-    mirror: bool | AxisMirrorStyle | None
+    # y-axis only: the y-scale is drawn on both edges. None when not mirrored.
+    mirror: ResolvedMirrorAxis | None
     band_position: float | None
     scale: ResolvedScaleStyle | None  # per-axis scale override (board cascade only)
     # None on non-dimension axes (axis_y, axis_quantitative, axis_band):
@@ -502,17 +508,6 @@ class ResolvedAxisStyle:
     # values — a non-column-forming (horizontal) axis is baked to REPEAT/
     # narrative regardless of what the bare ladder would otherwise select.
     ruler: ResolvedRulerAxis | None = None
-    # y-axis only: the ruler decision for the *mirrored* edge (style.axis_y.
-    # mirror), baked alongside ruler by the same build_resolved_axis call --
-    # not re-derived in render. The ghost's own anchoring is typically, but
-    # not always (an authored labels.align can make either edge either
-    # anchoring), the opposite of the primary's, so a single ruler cannot
-    # describe both; this is the second one. None when mirror is unset, the
-    # ladder doesn't compact (ruler is also None then), or mirror.expr/
-    # mirror.format replaces the ghost's paint entirely (the engine's own
-    # composition, baked or not, is never consulted, so there is nothing
-    # for this field to describe).
-    mirror_ruler: ResolvedRulerAxis | None = None
     # Baked by resolve(): the non-compacting sibling of `ruler` — the same
     # compact/does-not-compact decision, the other outcome. `ruler` says
     # "this ladder compacts, here is the magnitude"; this says "this ladder
@@ -542,19 +537,6 @@ class ResolvedAxisStyle:
     # or unpinned data close enough to 0 for the axis to reach it on its
     # own. False on a non-measure axis or when no anchor decision ran.
     zero_anchored: bool = False
-    # The value-axis format's raw name/spec, pre-alias-resolution — e.g.
-    # "currency" or "number", not "$.3~s" — the final winner of the whole
-    # cascade regardless of which tier wrote it (theme default or an
-    # authored layer). This is the single fact that decides house-vs-literal
-    # everywhere in the engine: a predefined name (``PREDEFINED_NUMBER_NAMES``)
-    # takes house rules; a literal d3 spec or a ``style.formats`` alias is
-    # honored verbatim -- name-vs-literal is the only test, never who
-    # authored it or which tier. A reader that needs to re-format a raw
-    # value the way this axis does — applying house notation, the sub-unit
-    # fallback — must use this field, not ``labels.format``: the latter is
-    # already resolved and re-feeding a resolved spec through the format
-    # functions skips both.
-    format_raw: str | None = None
 
     def __post_init__(self) -> None:
         if self.ruler is not None and self.tick_label is not None:
@@ -579,6 +561,16 @@ class ResolvedLegendElementStyle(BaseModel):
     visible: bool | None = None
 
 
+class ResolvedLegendPosition(BaseModel):
+    """Concrete legend placement; radial families never overlay."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    edge: LegendEdge
+    align: LegendAlign
+    overlay: bool
+
+
 class ResolvedLegendStyle(BaseModel):
     """Resolved legend style.
 
@@ -588,7 +580,7 @@ class ResolvedLegendStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    position: LegendPosition
+    position: ResolvedLegendPosition
     direction: LegendDirection
     columns: int
     # Divides legend entries into rows (_stack_legend_should_yield in
@@ -614,12 +606,12 @@ class ResolvedLegendStyle(BaseModel):
     symbol_fill: bool | None = None
     # Internal, resolved-only fact — never authored, absent from every patch
     # model (LegendStyle/LegendStylePatch declare no such field). Set to the
-    # author's own `position` when the tiny-width tier forced this legend
+    # author's own `position.edge` when the tiny-width tier forced this legend
     # back to `top` over it (cartesian_series_naming's
     # legend_position_overridden_by_width); None otherwise, including a
     # tiny-width chart that authored no position or authored `top` itself.
     # Read by the WARN-LEGEND-POSITION-WIDTH-FALLBACK render-stage detector.
-    position_overridden_by_width: LegendPosition | None = None
+    position_overridden_by_width: LegendEdge | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -699,7 +691,7 @@ class ResolvedChartDefaults:
     font_family: str | None
     title: TitleStyle
     pagination: PaginationConfig | None
-    formats: dict[str, str] | None
+    formats: FormatAliases | None
     background: str
     # The opaque canvas label ink derives contrast against: the board
     # background composited over the theme's own canvas. Read by
@@ -780,6 +772,7 @@ __all__ = [
     "ResolvedCalloutStyle",
     "ResolvedChartDefaults",
     "ResolvedLegendElementStyle",
+    "ResolvedLegendPosition",
     "ResolvedLegendStyle",
     "ResolvedScaleContinuousStyle",
     "ResolvedScaleLogStyle",

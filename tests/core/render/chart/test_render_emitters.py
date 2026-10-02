@@ -25,6 +25,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedScatterChart,
     ResolvedScatterStyle,
 )
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
@@ -32,6 +33,8 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
+
+from ...conftest import baked_format
 
 
 # Required base fields (no defaults on non-None resolved model fields).
@@ -136,7 +139,7 @@ def _make_resolved_axes(
     from ...conftest import fixture_chart_for_type
 
     chart_style_context = resolve_chart_style_context(get_theme_style())
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type(chart_type),
         chart_type,
@@ -144,18 +147,27 @@ def _make_resolved_axes(
         y_type,
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     return (
         build_resolved_axis(
             ax_merged,
+            format=baked_format(ax_merged),
             band_position=ax_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
         build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged),
             band_position=ay_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
     )
 
@@ -445,7 +457,7 @@ def test_area_point_mark_size_adds_visible_point_overlay(
     Vega-Lite's own native `mark: {type: area, point: true}` (which compiles
     to a genuine separate symbol mark). Size 0/None (default) must add no
     such layer — points are opt-in, matching the line-chart precedent."""
-    from dbt_charts.core.compile.models.style.theme import PointMarkStyle
+    from dbt_charts.core.compile.models.style.resolved import ResolvedPointMarkStyle
     from dbt_charts.core.render.chart.emitters import get_emitter
 
     # Default fixture has point_mark unset (size None/0) — no point overlay.
@@ -458,7 +470,7 @@ def test_area_point_mark_size_adds_visible_point_overlay(
     ), "No visible point overlay expected when point_mark.size is unset"
 
     with_points = area_style.model_copy(
-        update={"point_mark": PointMarkStyle(size=60.0)}
+        update={"point_mark": ResolvedPointMarkStyle(size=60.0)}
     )
     spec = get_emitter(_area(with_points)).emit(
         _area(with_points), _DEFAULT_BOX, regroup((), [])
@@ -621,12 +633,10 @@ def test_line_emit_point_overlay_layers_when_point_size_set() -> None:
     """When point_mark.size > 0, emitter produces halo-point and fg-point layers."""
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedLineMarkStyle,
+        ResolvedPointLabels,
+        ResolvedPointMarkStyle,
         ResolvedSeriesLabelStyle,
         ResolvedStrokeStyle,
-    )
-    from dbt_charts.core.compile.models.style.theme import (
-        PointLabelsStyle,
-        PointMarkStyle,
     )
     from dbt_charts.core.render.chart.emitters import get_emitter
     from dbt_charts.core.render.chart.translate import translate_to_vl
@@ -650,9 +660,9 @@ def test_line_emit_point_overlay_layers_when_point_size_set() -> None:
             stroke=ResolvedStrokeStyle(width=3.0),
             halo_multiplier=halo_mult,
             curve=None,
-            labels=PointLabelsStyle(),
+            labels=ResolvedPointLabels(),
         ),
-        point_mark=PointMarkStyle(size=pt_size, filled=True, stroke_width=3.0),
+        point_mark=ResolvedPointMarkStyle(size=pt_size, filled=True, stroke_width=3.0),
         endpoint_labels=EndpointLabelsConfig(
             visible=False, label_offset=8.0, height=20.0
         ),
@@ -1748,12 +1758,12 @@ def test_bar_emit_mixed_sign_split_keeps_y_on_outer_encoding_and_per_layer_radiu
     MirrorAxisFeature) depend on it — and each sub-layer must keep its own
     distinct per-sign corner radius, not merge or lose it."""
     from dbt_charts.core.compile.models.primitives import BorderStyle
-    from dbt_charts.core.compile.models.style.theme import BarMarkStyle
+    from dbt_charts.core.compile.models.style.resolved import ResolvedBarMarkStyle
     from dbt_charts.core.render.chart.emitters.bar import BarEmitter
 
     radius_style = bar_style.model_copy(
         update={
-            "mark": BarMarkStyle(
+            "mark": ResolvedBarMarkStyle(
                 border=BorderStyle(width=1.0, color="#000", radius=6.0)
             )
         }
@@ -1804,12 +1814,12 @@ def test_bar_emit_mixed_sign_split_declares_axis_only_on_outer_encoding(
     field/type/scale for their own marks; only ``axis`` is exclusive to the
     outer (shared-scale) encoding."""
     from dbt_charts.core.compile.models.primitives import BorderStyle
-    from dbt_charts.core.compile.models.style.theme import BarMarkStyle
+    from dbt_charts.core.compile.models.style.resolved import ResolvedBarMarkStyle
     from dbt_charts.core.render.chart.emitters.bar import BarEmitter
 
     radius_style = bar_style.model_copy(
         update={
-            "mark": BarMarkStyle(
+            "mark": ResolvedBarMarkStyle(
                 border=BorderStyle(width=1.0, color="#000", radius=6.0)
             )
         }
@@ -2687,7 +2697,7 @@ def test_pie_resolve_style_slice_is_resolved_pie_style() -> None:
     board_style = resolve_chart_style_context(get_theme_style())
     resolved = resolve(compiled, [{"amount": 100}], board_style)
     assert isinstance(resolved.style, ResolvedPieStyle)
-    assert isinstance(resolved.style.tooltip_format, str)
+    assert isinstance(resolved.style.tooltip_format, ResolvedFormat)
 
 
 # ---------------------------------------------------------------------------

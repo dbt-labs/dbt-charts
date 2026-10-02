@@ -36,7 +36,7 @@ from dbt_charts.core.compile.resolve.chart.line import _resolve_line
 from dbt_charts.core.compile.resolve.style.axis_cascade import build_resolved_axis
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-from .conftest import fixture_chart_for_type
+from .conftest import baked_format, fixture_chart_for_type
 
 
 @pytest.fixture(autouse=True)
@@ -50,7 +50,7 @@ def _merged_ay(chart_type: str = "line", y_channel_type: str = "quantitative"):
     """Return a merged AxisYStyle from the default theme for the given chart type."""
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     chart = fixture_chart_for_type(chart_type)
-    _, ay, _, ay_band_pos, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         ctx,
         chart,
         chart_type,
@@ -58,7 +58,7 @@ def _merged_ay(chart_type: str = "line", y_channel_type: str = "quantitative"):
         y_channel_type,
         AxisOverrides(),
     )
-    return ay, ay_band_pos
+    return baked.y.style, baked.y.band_position
 
 
 def test_quantitative_alias_format_forces_right_align_on_right_edge():
@@ -66,11 +66,12 @@ def test_quantitative_alias_format_forces_right_align_on_right_edge():
     ay, ay_band_pos = _merged_ay()
     resolved = build_resolved_axis(
         ay,
+        format=baked_format(ay, raw="number"),
         band_position=ay_band_pos,
         edge="right",
-        format_raw="number",
         is_quantitative=True,
         chart_id="test",
+        formats=None,
     )
     assert resolved.labels.align == "right"
 
@@ -80,11 +81,12 @@ def test_quantitative_alias_format_no_force_on_left_edge():
     ay, ay_band_pos = _merged_ay()
     resolved = build_resolved_axis(
         ay,
+        format=baked_format(ay, raw="number"),
         band_position=ay_band_pos,
         edge="left",
-        format_raw="number",
         is_quantitative=True,
         chart_id="test_left",
+        formats=None,
     )
     # No forced override; align passes through as None (VL handles it).
     assert resolved.labels.align is None
@@ -95,11 +97,12 @@ def test_quantitative_alias_format_no_force_on_no_edge():
     ay, ay_band_pos = _merged_ay()
     resolved = build_resolved_axis(
         ay,
+        format=baked_format(ay, raw="number"),
         band_position=ay_band_pos,
         edge=None,
-        format_raw="number",
         is_quantitative=True,
         chart_id="test_none",
+        formats=None,
     )
     assert resolved.labels.align is None
 
@@ -112,11 +115,12 @@ def test_raw_d3_format_does_not_force_right_align():
     )
     resolved = build_resolved_axis(
         ay_with_align,
+        format=baked_format(ay_with_align, raw=",.0f"),
         band_position=ay_band_pos,
         edge="right",
-        format_raw=",.0f",
         is_quantitative=True,
         chart_id="test_raw",
+        formats=None,
     )
     # No forced right -- the authored "center" passes through.
     assert resolved.labels.align == "center"
@@ -130,11 +134,12 @@ def test_non_quantitative_axis_alias_format_does_not_force_right_align():
     )
     resolved = build_resolved_axis(
         ay_with_align,
+        format=baked_format(ay_with_align, raw="number"),
         band_position=ay_band_pos,
         edge="right",
-        format_raw="number",
         is_quantitative=False,
         chart_id="test_ordinal",
+        formats=None,
     )
     # is_quantitative=False -- no forced override.
     assert resolved.labels.align == "center"
@@ -205,7 +210,7 @@ def test_right_edge_theme_default_format_wired_through_full_resolve():
         variables={},
     )
     ay = resolved.style.axis_y
-    assert ay.labels.format == ".3~s"
+    assert ay.labels.format.spec == ".3~s"
     assert ay.labels.align == "right"
 
 
@@ -238,7 +243,7 @@ def test_time_predefined_name_does_not_force_right_align_on_right_edge():
         variables={},
     )
     ay = resolved.style.axis_y
-    assert ay.format_raw == "date_short"
+    assert ay.labels.format.raw == "date_short"
     assert ay.labels.align != "right"
 
 
@@ -363,6 +368,79 @@ rows:
     codes = {w.code for w in result.warnings}
     assert WARN_AXIS_ALIGN_DISCARDED.code in codes, (
         f"Expected WARN-AXIS-ALIGN-DISCARDED in compile warnings; got: {codes}"
+    )
+
+
+def test_compile_time_diagnostic_fires_for_an_alias_to_a_house_preset():
+    from dbt_charts.core.compile.compiler import compile as _compile
+    from dbt_charts.core.diagnostics import WARN_AXIS_ALIGN_DISCARDED
+
+    board_yaml = """
+style:
+  formats:
+    mine: percent
+queries:
+  q:
+    type: values
+    rows:
+      - {month: 1, value: 0.5}
+      - {month: 2, value: 0.75}
+charts:
+  rev:
+    type: line
+    x: month
+    y: value
+    query: q
+    style:
+      axis_y:
+        position: right
+        labels:
+          align: left
+          format: mine
+rows:
+  - rev
+"""
+    result = _compile(board_yaml)
+    assert result.errors == [], result.errors
+    assert WARN_AXIS_ALIGN_DISCARDED.code in {w.code for w in result.warnings}
+
+
+def test_compile_time_diagnostic_does_not_crash_on_format_config_affix():
+    """A FormatConfig-authored affix on labels.format must not crash the diagnostic with
+    ``TypeError.
+    """
+    from dbt_charts.core.compile.compiler import compile as _compile
+    from dbt_charts.core.diagnostics import WARN_AXIS_ALIGN_DISCARDED
+
+    board_yaml = """
+queries:
+  q:
+    type: values
+    rows:
+      - {month: 1, value: 0.5}
+      - {month: 2, value: 0.75}
+charts:
+  rev:
+    type: line
+    x: month
+    y: value
+    query: q
+    style:
+      axis_y:
+        position: right
+        labels:
+          align: left
+          format:
+            spec: ",.0f"
+            prefix: "EUR "
+rows:
+  - rev
+"""
+    result = _compile(board_yaml)
+    assert result.errors == [], f"Unexpected compile errors: {result.errors}"
+    codes = {w.code for w in result.warnings}
+    assert WARN_AXIS_ALIGN_DISCARDED.code not in codes, (
+        f"A non-predefined-name FormatConfig spec must not force right-align; got: {codes}"
     )
 
 
@@ -634,12 +712,13 @@ def test_column_forming_axis_with_non_tabular_font_does_not_force_align_right():
     )
     resolved = build_resolved_axis(
         ay_nontabular,
+        format=baked_format(ay_nontabular, raw="number"),
         band_position=ay_band_pos,
         edge="right",
-        format_raw="number",
         is_quantitative=True,
         column_forming=True,
         chart_id="nontabular_test",
+        formats=None,
     )
     # With a non-tabular font and column_forming=True, _force_right is False.
     # align stays at None (VL's own per-orient default applies).

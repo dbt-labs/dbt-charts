@@ -34,8 +34,10 @@ from dbt_charts.ai.mcp.server import (
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.project import Project
 
+from ..._paths import DBT_CHARTS_DIR
+
 _FIXTURE_SINGLE_QUERY_BOARD = (
-    Path(__file__).parent.parent.parent / "fixtures" / "single-query-board"
+    DBT_CHARTS_DIR / "tests" / "fixtures" / "single-query-board"
 )
 
 DBT_CHARTS_SRC = Path(dbt_charts.__file__).parent

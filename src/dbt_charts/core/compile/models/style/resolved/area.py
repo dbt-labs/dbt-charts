@@ -6,10 +6,8 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field
 
-from dbt_charts.core.compile.models.style.theme import PointMarkStyle
-
 from ._cartesian import _SeriesCartesianResolvedStyle
-from ._marks import ResolvedAreaLineStyle, ResolvedAreaMarkStyle
+from ._marks import ResolvedAreaLineStyle, ResolvedAreaMarkStyle, ResolvedPointMarkStyle
 
 
 class ResolvedAreaStyle(_SeriesCartesianResolvedStyle):
@@ -36,7 +34,7 @@ class ResolvedAreaStyle(_SeriesCartesianResolvedStyle):
             "value labels (see ResolvedAreaLineStyle)."
         ),
     )
-    point_mark: PointMarkStyle = Field(
+    point_mark: ResolvedPointMarkStyle = Field(
         description=(
             "Point-overlay mark at each plotted value; size 0 (default) "
             "renders no points, matching the line-chart precedent."

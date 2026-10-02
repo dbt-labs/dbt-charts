@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import resolve_format, resolve_label_format
+from dbt_charts.core.compile.format import (
+    check_anchored_sign,
+    resolve_format_parts,
+    resolve_format_parts_for_values,
+    resolve_label_format,
+)
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored._layer import (
     AreaLayer,
@@ -20,23 +25,48 @@ from dbt_charts.core.compile.models.chart.resolved._layer import (
     ResolvedAreaLayer,
     ResolvedBarLayer,
     ResolvedLayer,
+    ResolvedLayerAxisY,
+    ResolvedLayerAxisYLabels,
     ResolvedLineLayer,
     ResolvedScatterLayer,
 )
+from dbt_charts.core.compile.models.primitives import ResolvedFormat, resolved_as
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
+from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedBarLabels,
+    ResolvedBarMarkStyle,
+    ResolvedBarTotalLabel,
+    ResolvedPointLabels,
+    ResolvedPointMarkStyle,
+)
+from dbt_charts.core.compile.models.style.resolved._base import ResolvedTickLabel
+from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
+from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows, LayerDatasets
 from dbt_charts.core.compile.resolve.chart._marks import (
     _apply_stroke_width_fallback,
     _build_resolved_area_line,
     _build_resolved_area_mark,
     _build_resolved_line_mark,
+    _resolve_authored_label_format,
+    _resolved_point_mark,
+    _with_label_format,
 )
 from dbt_charts.core.compile.resolve.chart._palette import _with_color_tokens
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     bake_line_stroke,
     bake_point_companions,
 )
+from dbt_charts.core.compile.resolve.style.axis_cascade import (
+    affix_tick_label,
+    ladderless_tick_label,
+)
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
+)
+from dbt_charts.core.text.format_d3 import is_d3_si_spec
+from dbt_charts.core.text.predefined_formats import (
+    PredefinedNumberFormat,
 )
 
 __all__ = [
@@ -44,6 +74,26 @@ __all__ = [
     "_resolve_layer_list",
     "_resolve_one_layer",
 ]
+
+
+def _layer_rows(
+    layer: CartesianLayer,
+    data: ChartRows,
+    base_query_name: str | None,
+    datasets: LayerDatasets,
+) -> ChartRows:
+    """The rows a layer's own y measure paints, for its format vote.
+
+    A layer on the base query reads ``data``; one with its own ``query:`` reads
+    ``datasets`` (``...`` means none supplied; an absent name raises).
+    """
+    if layer.query is None or layer.query == base_query_name:
+        return data
+    if datasets is ...:
+        return []
+    if layer.query not in datasets:
+        raise ChartDataError(f"Missing rows for layer query {layer.query!r}")
+    return datasets[layer.query]
 
 
 def _resolve_one_layer(
@@ -54,6 +104,10 @@ def _resolve_one_layer(
     base_query_name: str | None,
     line_adaptive_stroke: float,
     line_px_per_point: float,
+    data: ChartRows,
+    datasets: LayerDatasets,
+    chart_id: str,
+    index: int,
 ) -> ResolvedLayer:
     """Resolve a single typed authored layer into its resolved counterpart.
 
@@ -96,23 +150,59 @@ def _resolve_one_layer(
     Register is decided by alias-membership only: a layer's own authored format
     string that is a theme alias → house narrative; a literal d3 spec → native Vega.
     Unformatted overlay labels stay unformatted — no axis fallback for layers.
+
+    ``data``/``datasets`` feed the sub-$1 vote of every label built below:
+    Vega bakes one spec per label, so it must vote over the layer's own rows.
     """
-    axis_y = layer.axis_y if layer.axis_y is not None else LayerAxisYStyle()
-    # axis_y.labels.format is an authored spec that _overlay.py hands to Vega
-    # verbatim for axis ticks — it needs alias lookup + round-aware trim so the
-    # overlay axis agrees on digits with the base chart's axis for the same spec.
-    if axis_y.labels is not None and axis_y.labels.format is not None:
-        axis_y = axis_y.model_copy(
-            update={
-                "labels": axis_y.labels.model_copy(
-                    update={
-                        "format": resolve_format(
-                            axis_y.labels.format, chart_style_context.formats
-                        )
-                    }
-                )
-            }
+
+    def _layer_values() -> Iterator[float]:
+        # Lazy: only a voting format reads the rows.
+        yield from _column_numeric_values(
+            _layer_rows(layer, data, base_query_name, datasets), layer.y
         )
+
+    authored_axis_y = layer.axis_y if layer.axis_y is not None else LayerAxisYStyle()
+    axis_format: ResolvedFormat | None = None
+    tick_label: ResolvedTickLabel | None = None
+    tooltip_format: ResolvedFormat | None = None
+    if authored_axis_y.labels is not None and authored_axis_y.labels.format is not None:
+        raw_format = authored_axis_y.labels.format
+        # A spec-less affix takes the ``number`` default so the painter has digits.
+        axis_format = resolve_format_parts(
+            raw_format,
+            chart_style_context.formats,
+            no_format_default=PredefinedNumberFormat.number,
+        )
+        if is_d3_si_spec(axis_format.spec) and axis_format.is_house:
+            tick_label = ladderless_tick_label(axis_format, list(_layer_values()))
+        else:
+            tick_label = affix_tick_label(axis_format, ())
+        if tick_label is not None and tick_label.anchor_at_start is not None:
+            check_anchored_sign(
+                axis_format, f"charts.{chart_id}.layers[{index}].axis_y.labels.format"
+            )
+        voted = resolve_format_parts_for_values(
+            raw_format,
+            chart_style_context.formats,
+            _layer_values(),
+            no_format_default=PredefinedNumberFormat.number,
+        )
+        if voted.spec != axis_format.spec:
+            tooltip_format = voted
+    axis_y = ResolvedLayerAxisY(
+        position=authored_axis_y.position,
+        title=authored_axis_y.title,
+        scale=authored_axis_y.scale,
+        ticks=authored_axis_y.ticks,
+        grid=authored_axis_y.grid,
+        labels=(
+            ResolvedLayerAxisYLabels(format=axis_format)
+            if axis_format is not None
+            else None
+        ),
+        tick_label=tick_label,
+        tooltip_format=tooltip_format,
+    )
     query_name = layer.query if layer.query is not None else base_query_name
     layer_style = _with_color_tokens(layer.style, chart_style_context)
     if isinstance(layer, LineLayer):
@@ -132,30 +222,33 @@ def _resolve_one_layer(
         )
         # Register by alias-gate: no axis fallback for overlay layers.
         line_fmt, line_label_is_house = resolve_label_format(
-            line_merged.labels.format, chart_style_context.formats
+            line_merged.labels.format, chart_style_context.formats, _layer_values()
         )
         point_fmt, point_label_is_house = resolve_label_format(
-            pre_fallback_point_mark.labels.format, chart_style_context.formats
+            pre_fallback_point_mark.labels.format,
+            chart_style_context.formats,
+            _layer_values(),
         )
-        line_labels = line_merged.labels.model_copy(update={"format": line_fmt})
-        point_labels = pre_fallback_point_mark.labels.model_copy(
-            update={"format": point_fmt}
+        line_labels = _with_label_format(
+            line_merged.labels, ResolvedPointLabels, line_fmt
+        )
+        point_labels = _with_label_format(
+            pre_fallback_point_mark.labels, ResolvedPointLabels, point_fmt
         )
         # Mirror _build_layer_label_specs: line_mark.labels used when visible,
         # else point_mark.labels — pick the matching is_house.
         layer_label_is_house = (
             line_label_is_house if line_labels.visible is True else point_label_is_house
         )
-        line_merged_final = line_merged.model_copy(update={"labels": line_labels})
         # A layer is always its own trend line, never a separator — the
         # stacked-perimeter fallback constant is base-chart-recipe-specific
         # and does not apply here.
-        line_merged_final = _apply_stroke_width_fallback(
-            line_merged_final, get_chart_rendering().stroke.fallback_width
+        line_merged = _apply_stroke_width_fallback(
+            line_merged, get_chart_rendering().stroke.fallback_width
         )
-        resolved_line_layer_mark = _build_resolved_line_mark(line_merged_final)
-        line_layer_point_mark = pre_fallback_point_mark.model_copy(
-            update={"labels": point_labels}
+        resolved_line_layer_mark = _build_resolved_line_mark(line_merged, line_labels)
+        line_layer_point_mark = resolved_as(
+            ResolvedPointMarkStyle, pre_fallback_point_mark, labels=point_labels
         )
         # Same density signal, same gate, same companion derivation as the
         # base series (bake_point_companions) — otherwise a layered line
@@ -194,19 +287,16 @@ def _resolve_one_layer(
         # layer's own patch -- so no separate gate is needed here.
         area_line_merged = bake_line_stroke(area_line_merged, line_adaptive_stroke)
         area_fmt, area_label_is_house = resolve_label_format(
-            area_line_merged.labels.format, chart_style_context.formats
+            area_line_merged.labels.format, chart_style_context.formats, _layer_values()
         )
-        area_line_labels = area_line_merged.labels.model_copy(
-            update={"format": area_fmt}
-        )
-        area_line_merged_final = area_line_merged.model_copy(
-            update={"labels": area_line_labels}
+        area_line_labels = _with_label_format(
+            area_line_merged.labels, ResolvedPointLabels, area_fmt
         )
         # A layer is always its own trend line, never a separator — the
         # stacked-perimeter fallback constant is base-chart-recipe-specific
         # and does not apply here.
-        area_line_merged_final = _apply_stroke_width_fallback(
-            area_line_merged_final, get_chart_rendering().stroke.fallback_width
+        area_line_merged = _apply_stroke_width_fallback(
+            area_line_merged, get_chart_rendering().stroke.fallback_width
         )
         return ResolvedAreaLayer(
             type="area",
@@ -216,10 +306,14 @@ def _resolve_one_layer(
                     area_marks.area if area_marks is not None else None,
                 )
             ),
-            line_mark=_build_resolved_area_line(area_line_merged_final),
-            point_mark=merge_onto_base(
-                area_parent.marks.point,
-                area_marks.point if area_marks is not None else None,
+            line_mark=_build_resolved_area_line(area_line_merged, area_line_labels),
+            point_mark=_resolved_point_mark(
+                merge_onto_base(
+                    area_parent.marks.point,
+                    area_marks.point if area_marks is not None else None,
+                ),
+                chart_style_context.formats,
+                _layer_values(),
             ),
             axis_y=axis_y,
             x=layer.x,
@@ -239,12 +333,25 @@ def _resolve_one_layer(
             bar_marks.bar if bar_marks is not None else None,
         )
         bar_fmt, bar_label_is_house = resolve_label_format(
-            pre_fallback_bar_mark.labels.format, chart_style_context.formats
+            pre_fallback_bar_mark.labels.format,
+            chart_style_context.formats,
+            _layer_values(),
         )
-        bar_labels = pre_fallback_bar_mark.labels.model_copy(update={"format": bar_fmt})
+        bar_labels = _with_label_format(
+            pre_fallback_bar_mark.labels, ResolvedBarLabels, bar_fmt
+        )
         return ResolvedBarLayer(
             type="bar",
-            bar_mark=pre_fallback_bar_mark.model_copy(update={"labels": bar_labels}),
+            bar_mark=resolved_as(
+                ResolvedBarMarkStyle,
+                pre_fallback_bar_mark,
+                labels=bar_labels,
+                total_label=_resolve_authored_label_format(
+                    pre_fallback_bar_mark.total_label,
+                    ResolvedBarTotalLabel,
+                    chart_style_context.formats,
+                ),
+            ),
             axis_y=axis_y,
             x=layer.x,
             y=layer.y,
@@ -264,15 +371,17 @@ def _resolve_one_layer(
         scatter_marks.point if scatter_marks is not None else None,
     )
     scatter_fmt, scatter_label_is_house = resolve_label_format(
-        pre_fallback_scatter_point.labels.format, chart_style_context.formats
+        pre_fallback_scatter_point.labels.format,
+        chart_style_context.formats,
+        _layer_values(),
     )
-    scatter_labels = pre_fallback_scatter_point.labels.model_copy(
-        update={"format": scatter_fmt}
+    scatter_labels = _with_label_format(
+        pre_fallback_scatter_point.labels, ResolvedPointLabels, scatter_fmt
     )
     return ResolvedScatterLayer(
         type="scatter",
-        point_mark=pre_fallback_scatter_point.model_copy(
-            update={"labels": scatter_labels}
+        point_mark=resolved_as(
+            ResolvedPointMarkStyle, pre_fallback_scatter_point, labels=scatter_labels
         ),
         axis_y=axis_y,
         x=layer.x,
@@ -319,6 +428,9 @@ def _resolve_layer_list(
     base_query_name: str | None,
     line_adaptive_stroke: float,
     line_px_per_point: float,
+    data: ChartRows,
+    datasets: LayerDatasets,
+    chart_id: str,
 ) -> tuple[ResolvedLayer, ...]:
     """Resolve a list of authored typed layers to their resolved counterparts.
 
@@ -337,6 +449,9 @@ def _resolve_layer_list(
     literal, so on those bases it means only "skip the size half". A
     line-type layer still gets its ring there, baked off its own stroke (see
     ``_resolve_one_layer``); only the density-driven dot size is withheld.
+
+    ``data``/``datasets``: the base rows and layer-query map, for each layer's
+    label format vote.
     """
     if not layers:
         return ()
@@ -349,6 +464,10 @@ def _resolve_layer_list(
             base_query_name,
             line_adaptive_stroke,
             line_px_per_point,
+            data,
+            datasets,
+            chart_id,
+            index,
         )
-        for layer in layers
+        for index, layer in enumerate(layers)
     )

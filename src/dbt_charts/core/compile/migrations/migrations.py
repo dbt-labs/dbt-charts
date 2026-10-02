@@ -147,6 +147,18 @@ class Move:
     value_map: Mapping[MappedScalar, MappedScalar] | None = dataclasses.field(
         default=None, hash=False
     )
+    # old_path == new_path with an expansion: a scalar became a mapping under
+    # the same key. Only a string the expansion names fires. A leaf the target
+    # grammar does not declare there is dropped (`drop_notes` explains a `True`
+    # one). Mutually exclusive with value_map.
+    expansion: Mapping[str, Mapping[str, MappedScalar]] | None = dataclasses.field(
+        default=None, hash=False
+    )
+    drop_notes: Mapping[str, str] = dataclasses.field(default_factory=dict, hash=False)
+    # Where a board holds another board (`board_nesting_prefixes`): an expansion
+    # follows these in the document, since `_relative_field_paths` stops at the
+    # first self-nesting.
+    sub_board_prefixes: tuple[YamlKeyPath, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -431,8 +443,11 @@ def _apply_identity_moves(
     if not firing:
         return mapping_dict
     result = copy.deepcopy(mapping_dict)
+    notices: list[str] = []
     for move in firing:
-        _apply_move(result, move, catalog)
+        notices.extend(_apply_move(result, move, catalog))
+    for notice in notices:
+        warn_migration(notice, stacklevel=3)
     warn_migration(
         "dbt charts migrated this YAML in memory; `dct migrate` may be able "
         "to update the file.",
@@ -877,7 +892,7 @@ def migrate_mapping(
             _apply_map_key_deletions(result, map_key_deletions, catalog)[0]
         )
         for move in moves:
-            _apply_move(result, move, catalog)
+            drop_warnings.extend(_apply_move(result, move, catalog))
         drop_warnings.extend(_apply_deletions(result, deletions, catalog)[0])
         for cond_move in cond_moves:
             drop_warnings.extend(_apply_conditional_move(result, cond_move, catalog))
@@ -1093,6 +1108,33 @@ def migrate_yaml_text(
         deletion_reasons.extend(map_key_reasons)
         yaml_text = _delete_paths_in_yaml_text(yaml_text, map_key_struck_paths)
         for move in moves:
+            if move.expansion is not None:
+                for at, node, _parent, _key, bindings in list(
+                    expansion_locations(staged, move, catalog)
+                ):
+                    expansion_source = (
+                        *at,
+                        *_substitute_wildcards(move.old_path, bindings),
+                    )
+                    expanded, _notes = _expanded_value(
+                        node,
+                        move,
+                        _substitute_wildcards(move.new_path, bindings),
+                        catalog,
+                    )
+                    yaml_text = set_board_values(
+                        yaml_text, {".".join(expansion_source): None}
+                    )
+                    yaml_text = set_board_values(
+                        yaml_text,
+                        {
+                            ".".join((*expansion_source, leaf)): leaf_value
+                            for leaf, leaf_value in expanded.items()
+                            if isinstance(leaf_value, (str, int, float, bool))
+                        },
+                    )
+                deletion_reasons.extend(_apply_move(staged, move, catalog))
+                continue
             for parent, key, bindings in list(
                 move_source_locations(staged, move, catalog)
             ):
@@ -1147,7 +1189,7 @@ def migrate_yaml_text(
                 # value instead of setting it.
                 if source != destination:
                     removals.add(".".join(source))
-            _apply_move(staged, move, catalog)
+            deletion_reasons.extend(_apply_move(staged, move, catalog))
         reasons, struck_paths = _apply_deletions(staged, deletions, catalog)
         deletion_reasons.extend(reasons)
         yaml_text = _delete_paths_in_yaml_text(yaml_text, struck_paths)
@@ -2408,10 +2450,191 @@ def _try_delete_tail(node: dict[str, JsonValue], tail: YamlKeyPath) -> bool:
     return False
 
 
-def _apply_move(mapping: JsonObject, move: Move, catalog: YamlSchemaCatalog) -> None:
+def _apply_move(
+    mapping: JsonObject, move: Move, catalog: YamlSchemaCatalog
+) -> list[str]:
+    """Apply *move* everywhere it fires; returns the notices an expansion owes."""
+    notices: list[str] = []
+    if move.expansion is not None:
+        for _at, node, parent, key, bindings in list(
+            expansion_locations(mapping, move, catalog)
+        ):
+            expanded, notes = _expanded_value(
+                node, move, _substitute_wildcards(move.new_path, bindings), catalog
+            )
+            notices.extend(notes)
+            if isinstance(parent, dict):
+                assert isinstance(key, str)
+                parent[key] = expanded
+            else:
+                assert isinstance(key, int)
+                parent[key] = expanded
+        return notices
     for parent, key, bindings in list(move_source_locations(mapping, move, catalog)):
         destination = _substitute_wildcards(move.new_path, bindings)
         _move_value(mapping, parent, key, destination, move)
+    return notices
+
+
+def _value_at(document: JsonValue, path: Sequence[str]) -> JsonValue:
+    node = document
+    for part in path:
+        if isinstance(node, list):
+            node = node[int(part)]
+        else:
+            assert isinstance(node, dict)
+            node = node[part]
+    return node
+
+
+def _live_positions_along(
+    document: JsonObject, path: Sequence[str], live: JsonObject
+) -> list[JsonObject]:
+    """Live-grammar schema nodes for the value at *path*, narrowed by each ancestor.
+
+    Narrowing at every mapping on the way down is what lets a chart's own
+    ``type:`` pick its family's style grammar, so a field one family declares
+    and another does not reads differently at the same dotted position.
+    """
+    node: JsonValue = document
+    positions: list[JsonObject] = [live]
+    for part in path:
+        if isinstance(node, dict):
+            positions = _plausible_positions(live, positions, node)
+            positions = _child_positions(live, positions, part)
+            node = node[part]
+        elif isinstance(node, list):
+            positions = _item_positions(live, positions)
+            node = node[int(part)]
+        else:
+            break
+    return positions
+
+
+def _expanded_value(
+    document: JsonObject,
+    move: Move,
+    destination: Sequence[str],
+    catalog: YamlSchemaCatalog,
+) -> tuple[dict[str, JsonValue], list[str]]:
+    """The mapping a scalar at *destination* expands to, plus any drop notices.
+
+    The scalar is still in *document*; its leaves are filtered to those the
+    target grammar declares at that position.
+    """
+    assert move.expansion is not None
+    value = _value_at(document, destination)
+    assert isinstance(value, str)
+    target = catalog.schema_for(move.target_schema)
+    positions = _live_positions_along(document, destination, target)
+    expanded: dict[str, JsonValue] = {}
+    notes: list[str] = []
+    for leaf, leaf_value in move.expansion[value].items():
+        if _declares_tail(target, positions, (leaf,)):
+            expanded[leaf] = leaf_value
+        elif leaf_value is True and leaf in move.drop_notes:
+            notes.append(move.drop_notes[leaf])
+    if not expanded:
+        raise MigrationError(
+            f"Cannot expand {_format_path(move.old_path)!r} value {value!r}: "
+            f"{move.target_schema} declares none of its leaves here."
+        )
+    return expanded, notes
+
+
+def board_nesting_prefixes(root: type[BaseModel]) -> tuple[YamlKeyPath, ...]:
+    """Every key path (``*`` for a map or list level) at which *root* holds *root*.
+
+    ``_relative_field_paths`` is opaque past the first self-nesting, so a board
+    inside a board has to be found in the document by following these.
+    """
+    found: list[YamlKeyPath] = []
+
+    def walk(
+        model: type[BaseModel], prefix: YamlKeyPath, seen: frozenset[type[BaseModel]]
+    ) -> None:
+        for name, field in model.model_fields.items():
+            if field.annotation is None:
+                continue
+            for nested, suffix in _nested_models(field.annotation):
+                path = (*prefix, name, *suffix)
+                if nested is root:
+                    found.append(path)
+                elif nested not in seen and root in _closure(nested):
+                    walk(nested, path, seen | {nested})
+
+    walk(root, (), frozenset({root}))
+    return tuple(dict.fromkeys(found))
+
+
+def _follow(
+    node: JsonValue, parts: YamlKeyPath
+) -> Iterable[tuple[YamlKeyPath, JsonValue]]:
+    """Document values reached by *parts* from *node*, with their concrete paths."""
+    if not parts:
+        yield (), node
+        return
+    head, rest = parts[0], parts[1:]
+    if head == "*" and isinstance(node, dict):
+        children = list(node.items())
+    elif head == "*" and isinstance(node, list):
+        children = [(str(i), item) for i, item in enumerate(node)]
+    elif isinstance(node, dict) and head in node:
+        children = [(head, node[head])]
+    else:
+        return
+    for key, child in children:
+        for path, value in _follow(child, rest):
+            yield (key, *path), value
+
+
+def _board_nodes(
+    node: JsonObject, prefixes: tuple[YamlKeyPath, ...], at: YamlKeyPath = ()
+) -> Iterable[tuple[YamlKeyPath, JsonObject]]:
+    """*node* and every board mapping nested inside it, with concrete paths."""
+    yield at, node
+    for prefix in prefixes:
+        for path, child in _follow(node, prefix):
+            if isinstance(child, dict):
+                yield from _board_nodes(child, prefixes, (*at, *path))
+
+
+def expansion_locations(
+    document: JsonObject, move: Move, catalog: YamlSchemaCatalog
+) -> Iterable[
+    tuple[
+        YamlKeyPath,
+        JsonObject,
+        JsonObject | list[JsonValue],
+        str | int,
+        tuple[str, ...],
+    ]
+]:
+    """Where *move*'s expansion fires: ``(board path, board, parent, key, bindings)``.
+
+    Walks the root board and each nested board; a position two walks both reach
+    is yielded once.
+    """
+    assert move.expansion is not None
+    source_schema = catalog.schema_for(move.source_schema)
+    live = catalog.current_schema
+    seen: set[tuple[int, str | int]] = set()
+    for at, node in _board_nodes(document, move.sub_board_prefixes):
+        for parent, key, bindings in _source_locations(
+            node, move.old_path, source_schema, [source_schema], live, [live]
+        ):
+            if isinstance(parent, dict):
+                assert isinstance(key, str)
+                value = parent[key]
+            else:
+                assert isinstance(key, int)
+                value = parent[key]
+            if not (isinstance(value, str) and value in move.expansion):
+                continue
+            if (id(parent), key) in seen:
+                continue
+            seen.add((id(parent), key))
+            yield at, node, parent, key, bindings
 
 
 def move_source_locations(
@@ -2453,6 +2676,12 @@ def move_source_locations(
     legal syntax for this field at any schema version) is left alone instead
     of being forced through the map.
     """
+    if move.expansion is not None:
+        for _at, _node, parent, key, bindings in expansion_locations(
+            document, move, catalog
+        ):
+            yield parent, key, bindings
+        return
     source_schema = catalog.schema_for(move.source_schema)
     live = catalog.current_schema
     identity_move = move.old_path == move.new_path and move.value_map is not None
@@ -2460,13 +2689,13 @@ def move_source_locations(
         document, move.old_path, source_schema, [source_schema], live, [live]
     ):
         if identity_move:
-            assert move.value_map is not None
             if isinstance(parent, dict):
                 assert isinstance(key, str)
                 current_value = parent[key]
             else:
                 assert isinstance(key, int)
                 current_value = parent[key]
+            assert move.value_map is not None
             if not _identity_value_would_change(move.value_map, current_value):
                 continue
         yield parent, key, bindings

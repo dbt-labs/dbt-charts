@@ -205,7 +205,7 @@ def test_grouped_bar_legend_sits_on_top_untitled() -> None:
     """
     resolved = _resolved("month", _TEMPORAL_DATA, stack="none")
 
-    assert resolved.legend.position == "top"
+    assert resolved.legend.position.edge == "top"
     assert resolved.legend.direction == "horizontal"
     assert resolved.legend.title.visible is False
     assert resolved.legend.columns == 0

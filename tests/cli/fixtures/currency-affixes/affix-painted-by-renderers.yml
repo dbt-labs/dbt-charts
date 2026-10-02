@@ -1,0 +1,74 @@
+title: Currency affixes painted by the renderers
+
+queries:
+  revenue:
+    columns: [channel, revenue_eur]
+    values:
+      - [Web, 168000]
+      - [Store, 28000]
+      - [Refunds, -41500]
+  total:
+    columns: [revenue_eur]
+    values: [[154500]]
+  positive:
+    columns: [channel, revenue_eur]
+    values:
+      - [Web, 168000]
+      - [Store, 28000]
+
+charts:
+  kpi_svg:
+    type: kpi
+    query: total
+    label: KPI value — expect EUR 154,500
+    value: revenue_eur
+    style:
+      value:
+        format:
+          spec: ",.0f"
+          prefix: "EUR "
+
+  support_table:
+    type: bar
+    query: revenue
+    x: channel
+    y: revenue_eur
+    title: support_table entry — expect EUR on the cells
+    support_table:
+      entries:
+        - source: revenue_eur
+          label: Revenue
+          format:
+            spec: ",.0f"
+            prefix: "EUR "
+
+  donut_total:
+    type: donut
+    query: positive
+    color: channel
+    theta: revenue_eur
+    title: Donut center total — expect EUR
+    total:
+      label: Net
+    style:
+      total:
+        value:
+          format:
+            spec: ",.0f"
+            prefix: "EUR "
+
+  table_cells:
+    type: table
+    query: revenue
+    title: Table column — control, known good
+    style:
+      columns:
+        revenue_eur:
+          label: Revenue
+          format:
+            spec: ",.0f"
+            prefix: "EUR "
+
+rows:
+  - cols: [kpi_svg, support_table]
+  - cols: [donut_total, table_cells]

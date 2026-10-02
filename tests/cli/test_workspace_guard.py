@@ -8,16 +8,15 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from dbt_charts.cli import _version_info, _workspace_guard
+from dbt_charts.agent_api import version_info
+from dbt_charts.cli import _workspace_guard
 from dbt_charts.cli.main import app
 
 runner = CliRunner()
 
 
-def _version_info_for(
-    package_dir: Path, *, editable: bool
-) -> _version_info.VersionInfo:
-    return _version_info.VersionInfo(
+def _version_info_for(package_dir: Path, *, editable: bool) -> version_info.VersionInfo:
+    return version_info.VersionInfo(
         version="0.5.1.dev134",
         package_dir=package_dir,
         python_version="3.13.12",
@@ -63,7 +62,7 @@ def test_monorepo_checkout_with_stale_global_build_warns(tmp_path: Path) -> None
     expected = _make_monorepo_checkout(tmp_path)
     stale = tmp_path / "stale-install" / "dbt_charts"
     with patch.object(
-        _version_info, "collect", return_value=_version_info_for(stale, editable=False)
+        version_info, "collect", return_value=_version_info_for(stale, editable=False)
     ):
         message = _workspace_guard.detect_workspace_mismatch(tmp_path)
     assert message is not None
@@ -77,7 +76,7 @@ def test_monorepo_checkout_with_matching_editable_build_is_silent(
 ) -> None:
     expected = _make_monorepo_checkout(tmp_path)
     with patch.object(
-        _version_info,
+        version_info,
         "collect",
         return_value=_version_info_for(expected, editable=True),
     ):
@@ -90,7 +89,7 @@ def test_oss_export_checkout_with_matching_editable_build_is_silent(
     """dbt-labs/dbt-charts, where dbt-charts/ IS the root — must not be skipped."""
     expected = _make_oss_checkout(tmp_path)
     with patch.object(
-        _version_info,
+        version_info,
         "collect",
         return_value=_version_info_for(expected, editable=True),
     ):
@@ -101,7 +100,7 @@ def test_oss_export_checkout_with_stale_global_build_warns(tmp_path: Path) -> No
     expected = _make_oss_checkout(tmp_path)
     stale = tmp_path / "stale-install" / "dbt_charts"
     with patch.object(
-        _version_info, "collect", return_value=_version_info_for(stale, editable=False)
+        version_info, "collect", return_value=_version_info_for(stale, editable=False)
     ):
         message = _workspace_guard.detect_workspace_mismatch(tmp_path)
     assert message is not None
@@ -124,7 +123,7 @@ def test_worktree_resolves_against_its_own_checkout(tmp_path: Path) -> None:
     (worktree / "dbt-charts" / "pyproject.toml").write_text("")
 
     with patch.object(
-        _version_info,
+        version_info,
         "collect",
         return_value=_version_info_for(main_package, editable=True),
     ):
@@ -149,7 +148,7 @@ def test_worktree_matching_its_own_install_is_silent(tmp_path: Path) -> None:
     (worktree / "dbt-charts" / "pyproject.toml").write_text("")
 
     with patch.object(
-        _version_info,
+        version_info,
         "collect",
         return_value=_version_info_for(own_package, editable=True),
     ):
@@ -163,7 +162,7 @@ def test_mismatch_warns_on_stderr_without_failing_the_command(
     monkeypatch.chdir(tmp_path)
     stale = _version_info_for(tmp_path / "stale" / "dbt_charts", editable=False)
 
-    with patch.object(_version_info, "collect", return_value=stale):
+    with patch.object(version_info, "collect", return_value=stale):
         result = runner.invoke(app, ["docs"])
 
     assert result.exit_code == 0
@@ -186,7 +185,7 @@ def test_bracketed_checkout_path_survives_rich_markup(
     monkeypatch.chdir(checkout)
     stale = _version_info_for(tmp_path / "stale" / "dbt_charts", editable=False)
 
-    with patch.object(_version_info, "collect", return_value=stale):
+    with patch.object(version_info, "collect", return_value=stale):
         result = runner.invoke(app, ["docs"])
 
     assert result.exit_code == 0
@@ -200,7 +199,7 @@ def test_env_opt_out_silences_the_warning(
     monkeypatch.chdir(tmp_path)
     stale = _version_info_for(tmp_path / "stale" / "dbt_charts", editable=False)
 
-    with patch.object(_version_info, "collect", return_value=stale):
+    with patch.object(version_info, "collect", return_value=stale):
         result = runner.invoke(app, ["docs"], env={"DCT_NO_WORKSPACE_GUARD": "1"})
 
     assert result.exit_code == 0
@@ -214,7 +213,7 @@ def test_env_opt_out_rejects_garbage(
     monkeypatch.chdir(tmp_path)
     stale = _version_info_for(tmp_path / "stale" / "dbt_charts", editable=False)
 
-    with patch.object(_version_info, "collect", return_value=stale):
+    with patch.object(version_info, "collect", return_value=stale):
         result = runner.invoke(app, ["docs"], env={"DCT_NO_WORKSPACE_GUARD": "maybe"})
 
     assert result.exit_code == 2

@@ -624,9 +624,11 @@ def test_resolved_chart_bakes_number_format_for_numeric_y():
     assert isinstance(entries[0], ChartSupportTableSource)
     # "number" is predefined — the format name is stamped directly
     # (no theme formats dict lookup needed).
-    assert entries[0].format == "number"
+    assert entries[0].format.raw == "number"
     assert isinstance(entries[1], ChartSupportTableSource)
-    assert entries[1].format == "~s", "already-authored format must not be overwritten"
+    assert entries[1].format.spec == "~s", (
+        "already-authored format must not be overwritten"
+    )
 
 
 def test_resolved_chart_does_not_stamp_number_format_for_numeric_string_y():

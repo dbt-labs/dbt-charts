@@ -1,7 +1,7 @@
 """Neutral resolved-chart primitives shared across compile and render layers.
 
 Stage: COMPILE (neutral)
-Purpose: House FormatState, effective_color_field, and the typed
+Purpose: House effective_color_field and the typed
 ResolvedLayer discriminated union in a module that carries no dependency on the
 normalized chart package.
 """
@@ -11,21 +11,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
 
-from dbt_charts.core.compile.models.chart.authored._layer import LayerAxisYStyle
+from dbt_charts.core.compile.models.chart.authored._layer import (
+    LayerAxisYGrid,
+    LayerAxisYScale,
+    LayerAxisYTicks,
+)
 from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyleChannel
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from dbt_charts.core.compile.models.style.resolved._base import ResolvedTickLabel
 from dbt_charts.core.compile.models.style.resolved._marks import (
     ResolvedAreaLineStyle,
     ResolvedAreaMarkStyle,
+    ResolvedBarMarkStyle,
     ResolvedLineMarkStyle,
+    ResolvedPointMarkStyle,
 )
-from dbt_charts.core.compile.models.style.theme.marks import (
-    BarMarkStyle,
-    PointMarkStyle,
-)
-
-# str: authored format string; FormatConfig: structured format spec; None: default.
-FormatState = str | FormatConfig | None
 
 
 class _WithResolvedChannels(Protocol):
@@ -83,12 +83,36 @@ class LayeredResolvedChart(Protocol):
 
 
 @dataclass(frozen=True)
+class ResolvedLayerAxisYLabels:
+    format: ResolvedFormat | None = None
+
+
+@dataclass(frozen=True)
+class ResolvedLayerAxisY:
+    """A layer's own y-axis: authored chrome plus its baked format.
+
+    ``tick_label`` is the guarded per-tick label for an SI format (a layer has
+    no ladder); ``tooltip_format`` is set only when the layer's values move the
+    sub-unit vote off ``labels.format``.
+    """
+
+    position: Literal["left", "right"] | None = None
+    title: str | None = None
+    scale: LayerAxisYScale | None = None
+    ticks: LayerAxisYTicks | None = None
+    grid: LayerAxisYGrid | None = None
+    labels: ResolvedLayerAxisYLabels | None = None
+    tick_label: ResolvedTickLabel | None = None
+    tooltip_format: ResolvedFormat | None = None
+
+
+@dataclass(frozen=True)
 class ResolvedBarLayer:
     """Resolved bar-type overlay layer."""
 
     type: Literal["bar"]
-    bar_mark: BarMarkStyle
-    axis_y: LayerAxisYStyle = field(default_factory=LayerAxisYStyle)
+    bar_mark: ResolvedBarMarkStyle
+    axis_y: ResolvedLayerAxisY = field(default_factory=ResolvedLayerAxisY)
     x: str | None = None
     y: str | None = None
     # Column each bar starts from; absent, bars start at zero.
@@ -111,8 +135,8 @@ class ResolvedLineLayer:
 
     type: Literal["line"]
     line_mark: ResolvedLineMarkStyle
-    point_mark: PointMarkStyle
-    axis_y: LayerAxisYStyle = field(default_factory=LayerAxisYStyle)
+    point_mark: ResolvedPointMarkStyle
+    axis_y: ResolvedLayerAxisY = field(default_factory=ResolvedLayerAxisY)
     x: str | None = None
     y: str | None = None
     label: str | None = None
@@ -128,8 +152,8 @@ class ResolvedAreaLayer:
     type: Literal["area"]
     area_mark: ResolvedAreaMarkStyle
     line_mark: ResolvedAreaLineStyle
-    point_mark: PointMarkStyle
-    axis_y: LayerAxisYStyle = field(default_factory=LayerAxisYStyle)
+    point_mark: ResolvedPointMarkStyle
+    axis_y: ResolvedLayerAxisY = field(default_factory=ResolvedLayerAxisY)
     x: str | None = None
     y: str | None = None
     label: str | None = None
@@ -143,8 +167,8 @@ class ResolvedScatterLayer:
     """Resolved scatter-type overlay layer."""
 
     type: Literal["scatter"]
-    point_mark: PointMarkStyle
-    axis_y: LayerAxisYStyle = field(default_factory=LayerAxisYStyle)
+    point_mark: ResolvedPointMarkStyle
+    axis_y: ResolvedLayerAxisY = field(default_factory=ResolvedLayerAxisY)
     x: str | None = None
     y: str | None = None
     label: str | None = None

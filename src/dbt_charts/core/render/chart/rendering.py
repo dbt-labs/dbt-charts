@@ -703,6 +703,7 @@ def _wrap_rendered_chart_svg(
         f'class="{escape_attr(class_attr)}"',
         f'id="chart-{escape_attr(identity.id)}"',
         f'data-chart-id="{escape_attr(identity.id)}"',
+        f'data-chart-type="{escape_attr(chart_type)}"',
         f'data-chart-title="{escape_attr(chart_title)}"',
         f'data-chart-width="{escape_attr(outer_width)}"',
         f'data-chart-height="{escape_attr(actual_height)}"',
@@ -727,6 +728,8 @@ def _wrap_rendered_chart_svg(
     # safe to recede, so it is only ever emitted, never emitted as "false".
     if identity.magnitude_colored:
         attrs_parts.append('data-dbt-magnitude-colored="true"')
+    if identity.canvas is not None and not is_error_fallback:
+        attrs_parts.append(f'data-dbt-chart-canvas="{escape_attr(identity.canvas)}"')
 
     attrs_str = " " + " ".join(attrs_parts)
     return f"<g{attrs_str}>{boundary}</g>", actual_height

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from math import ceil
-from typing import Any, Literal, NamedTuple
+from typing import Any, Generic, Literal, NamedTuple, TypeVar
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format import (
+    resolve_format_parts,
+)
 from dbt_charts.core.compile.models.chart.authored import (
     CartesianLayer,
     MultiplesConfig,
@@ -23,6 +26,10 @@ from dbt_charts.core.compile.models.chart.normalized._base import (
     _CartesianChartFields,
 )
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+from dbt_charts.core.compile.models.primitives import (
+    FormatAliases,
+    ResolvedFormat,
+)
 from dbt_charts.core.compile.models.style.authored import (
     EndpointLabelsConfig,
     LegendStylePatch,
@@ -33,7 +40,7 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedLegendStyle
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
-    LegendPosition,
+    LegendEdge,
     _CartesianChartStyle,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
@@ -52,6 +59,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.typography import width_tier
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FORMAT_AFFIX_NOMINAL_AXIS_UNSUPPORTED,
     ERR_TICKS_INTERVAL_MEASURE_AXIS,
 )
 from dbt_charts.core.diagnostics.codes_render import (
@@ -61,6 +69,10 @@ from dbt_charts.core.diagnostics.codes_render import (
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.numeric import aspect_ratio_height
 from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.format_d3 import is_d3_si_spec
+from dbt_charts.core.text.predefined_formats import (
+    PredefinedNumberFormat,
+)
 
 __all__ = [
     "SeriesNaming",
@@ -123,6 +135,81 @@ def _extract_axis_overrides(
     )
 
 
+_S = TypeVar("_S", AxisXStyle, AxisYStyle)
+
+
+@dataclass(frozen=True)
+class BakedAxis(Generic[_S]):
+    """One cascade-merged axis and its baked format.
+
+    ``style.labels.format`` holds the resolved d3 spec; ``format`` carries the
+    whole format, with ``raw`` the cascade's raw winner (theme default included).
+    """
+
+    style: _S
+    band_position: float | None
+    format: ResolvedFormat | None
+
+    @property
+    def is_house(self) -> bool:
+        """Whether labels inheriting this format take house rules (predefined SI name)."""
+        return (
+            self.format is not None
+            and self.format.is_house
+            and is_d3_si_spec(self.format.spec)
+        )
+
+    def as_literal(self) -> BakedAxis[_S]:
+        """This axis as a VL-computed one: never house."""
+        if self.format is None:
+            return self
+        return replace(self, format=self.format.model_copy(update={"raw": None}))
+
+
+@dataclass(frozen=True)
+class BakedCartesianAxes:
+    x: BakedAxis[AxisXStyle]
+    y: BakedAxis[AxisYStyle]
+
+
+def _bake_axis(
+    merged: _S,
+    band_position: float | None,
+    *,
+    formats: FormatAliases | None,
+    chart_id: str,
+    axis: str,
+    channel_type: str,
+) -> BakedAxis[_S]:
+    """Resolve the merged axis's winning ``labels.format`` into a ``ResolvedFormat``.
+
+    A categorical axis rejects an affix (a labelExpr would bypass
+    gate_label_format); the channel type is only known here.
+    """
+    winner = merged.labels.format
+    if winner is None:
+        return BakedAxis(merged, band_position, None)
+    resolved = resolve_format_parts(
+        winner, formats, no_format_default=PredefinedNumberFormat.number
+    )
+    if channel_type not in ("quantitative", "temporal") and resolved.has_affix:
+        raise CompilationError.from_code(
+            ERR_FORMAT_AFFIX_NOMINAL_AXIS_UNSUPPORTED,
+            field_path=f"charts.{chart_id}.style.{axis}.labels.format",
+            axis=axis,
+            channel_type=channel_type,
+        )
+    if channel_type != "quantitative":
+        # A strftime spec cannot take a number affix.
+        resolved = resolved.model_copy(
+            update={"prefix": "", "suffix": "", "notation": None}
+        )
+    style = merged.model_copy(
+        update={"labels": merged.labels.model_copy(update={"format": resolved.spec})}
+    )
+    return BakedAxis(style, band_position, resolved)
+
+
 def _bake_cartesian_axes(
     chart_style_context: ChartStyleContext,
     chart: Chart,
@@ -132,16 +219,9 @@ def _bake_cartesian_axes(
     axis_overrides: AxisOverrides,
     multiples: MultiplesConfig | None = None,
     y: str | list[str] | None = None,
-) -> tuple[AxisXStyle, AxisYStyle, float | None, float | None, str | None]:
-    """Walk the axis cascade for axis_x and axis_y, returning the merged,
-    theme-typed axis pair, each axis's band_position (None unless that
-    channel classified ordinal/nominal and a band override authored it),
-    and axis_y's raw pre-resolve format string (``ay_format_raw`` — see
-    ``ResolvedAxisStyle.format_raw``), captured here before this function's
-    own ``resolve_format()`` call overwrites it. axis_x's raw format is
-    resolved the same way but not returned: no caller threads a raw format
-    into ``build_resolved_axis`` for axis_x, since no caller passes
-    ``tick_values`` for it either.
+) -> BakedCartesianAxes:
+    """Walk the axis cascade for axis_x and axis_y: each merged,
+    theme-typed axis with its band_position and baked format.
 
     axis_x = categorical axis (normalized.x column, dbt charts semantics).
     axis_y = measure axis (normalized.y column, dbt charts semantics).
@@ -194,7 +274,11 @@ def _bake_cartesian_axes(
         ),
         axis_overrides=axis_overrides,
         chart_type=chart_type,
-        label_authored=bool(getattr(chart, "x_label", None)),
+        label_authored=bool(
+            getattr(
+                chart, "x_label", None
+            )  # type-state: silent_fallback — absent on kpi/pie
+        ),
     )
     ay, ay_band_position = _merge_axis_cascade(
         chart_style_context,
@@ -204,7 +288,11 @@ def _bake_cartesian_axes(
         chart_fallback_format=chart_authored_axis_format(chart, y_channel_type),
         axis_overrides=axis_overrides,
         chart_type=chart_type,
-        label_authored=bool(getattr(chart, "y_label", None)),
+        label_authored=bool(
+            getattr(
+                chart, "y_label", None
+            )  # type-state: silent_fallback — absent on kpi/pie
+        ),
     )
     # labels.values (the label-cadence filter) lives only on DimensionLabelStyle,
     # used solely by AxisXStyle.labels — axis_y structurally cannot author it,
@@ -224,37 +312,33 @@ def _bake_cartesian_axes(
     # type and lives in render (apply_x_tick_cadence).
     # Resolve any format alias (e.g. "currency_whole" → "$,.0f") at bake time
     # so axis_to_vl() emits valid d3-format strings, not internal alias names.
-    # No `if fmts:` gate: resolve_format() resolves predefined names to their
-    # round-aware specs (trim already baked) and aliases to native d3; fmts
-    # empty/None still resolves predefined names on the first path.
     # The spec itself is already guaranteed resolvable by
     # validate/formats.py's compile()-time pass (the per-chart authored walk
     # plus the four theme-baked global axis slots) -- this function trusts
     # that guarantee rather than re-checking it, per core/AGENTS.md's
     # validation-boundary rule.
     fmts = chart_style_context.formats
-    if ax.labels.format is not None:
-        resolved_ax_format = resolve_format(ax.labels.format, fmts)
-        ax = ax.model_copy(
-            update={
-                "labels": ax.labels.model_copy(update={"format": resolved_ax_format})
-            }
-        )
-    # ay_format_raw is captured here, before resolve_format overwrites
-    # ay.labels.format with the resolved d3 spec. See ResolvedAxisStyle.format_raw.
-    ay_format_raw = ay.labels.format
-    if ay_format_raw is not None:
-        resolved_ay_format = resolve_format(ay_format_raw, fmts)
-        ay = ay.model_copy(
-            update={
-                "labels": ay.labels.model_copy(update={"format": resolved_ay_format})
-            }
-        )
+    baked_x = _bake_axis(
+        ax,
+        ax_band_position,
+        formats=fmts,
+        chart_id=chart.id,
+        axis="axis_x",
+        channel_type=x_channel_type,
+    )
+    baked_y = _bake_axis(
+        ay,
+        ay_band_position,
+        formats=fmts,
+        chart_id=chart.id,
+        axis="axis_y",
+        channel_type=y_channel_type,
+    )
     # This getattr is load-bearing, not typing ceremony like x_label/y_label
     # above: HeatmapChart has no `layers` field and DOES resolve through
     # plan_cartesian, so an attribute read here would raise on every heatmap.
-    ay = _apply_multiples_mirror(
-        ay,
+    mirrored = _apply_multiples_mirror(
+        baked_y.style,
         multiples,
         y,
         y_channel_type,
@@ -265,13 +349,7 @@ def _bake_cartesian_axes(
             )  # type-state: silent_fallback — layers is structurally absent on HeatmapChart, which does resolve through plan_cartesian; absent means "no overlays", not missing data
         ),
     )
-    return (
-        ax,
-        ay,
-        ax_band_position,
-        ay_band_position,
-        ay_format_raw,
-    )
+    return BakedCartesianAxes(x=baked_x, y=replace(baked_y, style=mirrored))
 
 
 def _edge_or_none(value: str | None) -> Literal["left", "right"] | None:
@@ -959,7 +1037,7 @@ class SeriesNaming(NamedTuple):
     call to this function.
 
     ``legend_position_overridden_by_width`` carries the author's own
-    ``position`` when ``tiny_top_legend`` overrode it back to top — the one
+    ``position.edge`` when ``tiny_top_legend`` overrode it back to top — the one
     route ``author_moved_legend_off_top`` does not outrank (see this
     function's docstring). ``None`` otherwise, including when the author
     placed no position at all.
@@ -977,7 +1055,7 @@ class SeriesNaming(NamedTuple):
     suppress_legend: bool
     top_legend: Literal["compact", "row", "off"]
     force_legend_visible: bool
-    legend_position_overridden_by_width: LegendPosition | None
+    legend_position_overridden_by_width: LegendEdge | None
 
 
 _NO_RAIL_ENDPOINT_LABELS = EndpointLabelsConfig(
@@ -1130,7 +1208,23 @@ def cartesian_series_naming(
     authored_position = (
         authored_legend.position if authored_legend is not None else None
     )
-    author_placed_legend = authored_position is not None and not author_hid_legend
+    authored_edge: LegendEdge | None = (
+        None if authored_position is None else authored_position.edge
+    )
+    # Naming any leaf of `position` is placing the legend; only a named edge can
+    # conflict with the automatic top strip (an unset edge is the engine's call).
+    author_placed_legend = (
+        authored_position is not None
+        and any(
+            leaf is not None
+            for leaf in (
+                authored_position.edge,
+                authored_position.align,
+                authored_position.overlay,
+            )
+        )
+        and not author_hid_legend
+    )
     suppress_legend = not (
         author_showed_legend or author_placed_legend
     ) and _suppress_legend_for_endpoint_labels(
@@ -1140,13 +1234,15 @@ def cartesian_series_naming(
         wide_measure_series=suppress_wide_measure_series,
         has_layers=has_layers,
     )
-    # An authored `position: top` agrees with the automatic top strip -- only a
-    # position that moves the legend off the top is a conflict to resolve. Short-
+    # An authored `edge: top` agrees with the automatic top strip -- only an
+    # edge that moves the legend off the top is a conflict to resolve. Short-
     # circuiting on agreement would drop the horizontal/columns-0/titleless
     # layout and render a worse legend than authoring nothing.
-    author_moved_legend_off_top = author_placed_legend and authored_position != "top"
-    legend_position_overridden_by_width: LegendPosition | None = (
-        authored_position if tiny_top_legend and author_moved_legend_off_top else None
+    author_moved_legend_off_top = (
+        author_placed_legend and authored_edge is not None and authored_edge != "top"
+    )
+    legend_position_overridden_by_width: LegendEdge | None = (
+        authored_edge if tiny_top_legend and author_moved_legend_off_top else None
     )
     # The chart's shape wants a legend named at all, independent of whether a
     # single top row happens to fit: `top_legend_series is not None` is the

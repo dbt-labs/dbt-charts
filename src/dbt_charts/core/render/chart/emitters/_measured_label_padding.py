@@ -75,12 +75,17 @@ from __future__ import annotations
 from decimal import Decimal
 
 from d3_format import format as d3_format
+from dbt_charts.core.compile.models.primitives import (
+    ResolvedFormat,
+    painted_sign_placement,
+)
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedRulerAxis,
     ResolvedTickLabel,
 )
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.render.chart._types import VLDict
+from dbt_charts.core.text.format_d3 import format_d3
 from dbt_charts.core.text.numeral_scale import (
     SUB_UNIT_SCIENTIFIC_FLOOR,
     SuffixMode,
@@ -102,14 +107,15 @@ _ESTIMATE_TARGET_COUNTS: tuple[int, ...] = (3, 4, 5, 6, 8, 10, 12)
 
 def quantitative_tick_labels(
     tick_values: tuple[float, ...],
-    format_spec: str,
+    fmt: ResolvedFormat,
     ruler: ResolvedRulerAxis | None,
     tick_label: ResolvedTickLabel | None = None,
 ) -> list[str]:
     """Render each baked tick label exactly as the axis will paint it.
 
-    ``format_spec`` is the raw d3-format string dbt charts passes verbatim to
-    VL's ``axis.format``. When ``ruler`` is None (the axis's resolved
+    ``fmt.spec`` is the d3 string passed verbatim to VL's ``axis.format``;
+    ``tick_label.format`` replaces it when a tick label paints. ``fmt``'s affix
+    and notation compose around the digits in every branch. When ``ruler`` is None (the axis's resolved
     ``ResolvedAxisStyle.ruler`` — the ladder doesn't compact, the format
     isn't SI-shaped, or ``label.expr`` is authored), VL renders straight
     from the literal spec and so does this — dbt charts' analytic/narrative
@@ -139,28 +145,55 @@ def quantitative_tick_labels(
     always has a concrete value (``None`` is itself the concrete "no ruler"
     state, passed explicitly) -- a silently-omittable default here would let
     a future call site under-measure a compacting ladder without noticing.
+
+    The plain case measures the affix as the composed ``labelExpr`` paints it.
     """
+    format_spec = tick_label.format if tick_label is not None else fmt.spec
     if ruler is None:
         if tick_label is None:
+            if fmt.has_affix:
+                # A zero tick stays bare, as compose_axis_format paints it.
+                return [
+                    format_d3(
+                        v,
+                        format_spec,
+                        fmt.prefix,
+                        fmt.suffix,
+                        fmt.notation,
+                        fmt.placement,
+                    )
+                    if v != 0
+                    else d3_format(format_spec, v)
+                    for v in tick_values
+                ]
             return [d3_format(format_spec, v) for v in tick_values]
         prefix = tick_label.prefix
         anchor_at_start = tick_label.anchor_at_start
         pad_table = tick_label.decimal_pad_table
 
-        if prefix:
-            # Mirrors inject_axis_numeral_expr's labelExpr (see this
-            # function's docstring). Use with_symbol so d3-format's
-            # sign-before-symbol ordering applies (format("$,.0f")(-500) ->
-            # "-$500", not "$-500").
-            anchor_spec = with_symbol(format_spec, prefix)
+        if prefix or fmt.prefix or fmt.suffix:
+            # Mirrors inject_axis_numeral_expr. with_symbol keeps d3's
+            # sign-before-symbol order ("-$500"); an authored affix composes
+            # on `anchor_spec` so the native symbol survives.
+            anchor_spec = with_symbol(format_spec, prefix) if prefix else format_spec
             anchor_pos = None
             if anchor_at_start is not None:
                 anchor_pos = 0 if anchor_at_start else len(tick_values) - 1
             prefixed_labels = []
             for i, v in enumerate(tick_values):
                 is_prefixed = v != 0 and (anchor_pos is None or i == anchor_pos)
-                spec = anchor_spec if is_prefixed else format_spec
-                digits = d3_format(spec, v)
+                if is_prefixed and (fmt.prefix or fmt.suffix):
+                    digits = format_d3(
+                        v,
+                        anchor_spec,
+                        fmt.prefix,
+                        fmt.suffix,
+                        fmt.notation,
+                        painted_sign_placement(fmt, anchor_at_start is not None),
+                    )
+                else:
+                    spec = anchor_spec if is_prefixed else format_spec
+                    digits = format_d3(v, spec, notation=fmt.notation)
                 if pad_table:
                     digits += decimal_pad_for(pad_table, digits)
                 prefixed_labels.append(digits)
@@ -188,15 +221,27 @@ def quantitative_tick_labels(
         # gates, see this function's docstring.
         carries_suffix = value != 0 and (ruler.mode is SuffixMode.REPEAT or is_anchor)
         carries_prefix = value != 0 and (ruler.prefix_repeats or is_anchor)
-        # Use the symbol-inclusive spec on any prefix-carrying tick so
-        # d3-format's sign-before-symbol ordering applies
-        # (format("$,.1~f")(-500) -> "-$500", not "$-500").
+        # Symbol-inclusive spec keeps d3's sign-before-symbol order ("-$500");
+        # an authored affix composes on `anchor_digit_spec`.
         scaled = value / magnitude
-        digits = d3_format(anchor_digit_spec if carries_prefix else digit_spec, scaled)
+        if carries_prefix and fmt.prefix:
+            digits = format_d3(
+                scaled,
+                anchor_digit_spec,
+                fmt.prefix,
+                sign_placement=painted_sign_placement(fmt, not ruler.prefix_repeats),
+            )
+        else:
+            digits = d3_format(
+                anchor_digit_spec if carries_prefix else digit_spec, scaled
+            )
         if pad_table:
             digits += decimal_pad_for(pad_table, digits)
         tail = suffix_text if carries_suffix else ruler.reservation
-        labels.append(digits + tail)
+        label = digits + tail
+        if fmt.suffix and carries_prefix:
+            label += fmt.suffix
+        labels.append(label)
     return labels
 
 
@@ -218,9 +263,8 @@ def numeric_values(data: list[VLDict], fields: tuple[str, ...]) -> list[float]:
 
 def estimated_quantitative_tick_labels(
     values: list[float],
-    format_spec: str,
-    si_format: str | None = None,
-    scientific_format: str | None = None,
+    fmt: ResolvedFormat,
+    tick_label: ResolvedTickLabel | None,
 ) -> list[str]:
     """Upper-bound candidate tick labels for a quantitative axis whose real
     Vega-Lite ticks aren't known (dbt charts hasn't baked ``tick_values``).
@@ -242,17 +286,11 @@ def estimated_quantitative_tick_labels(
     measure all of them and take the max width. Returns ``[]`` for no values
     (nothing to estimate from).
 
-    ``si_format``/``scientific_format`` mirror ``ResolvedTickLabel``'s own
-    pair (set together or not at all — the caller threads them straight from
-    there): when set, a candidate doesn't format through ``format_spec``
-    unconditionally — it goes through the exact same per-tick guard
-    ``inject_axis_numeral_expr`` composes into the axis's real ``labelExpr``
-    (magnitude >= 1 -> ``si_format``; below 1 and below
-    ``SUB_UNIT_SCIENTIFIC_FLOOR`` -> ``scientific_format``; otherwise ->
-    ``format_spec``; zero always through ``format_spec``, never scientific).
-    Passing ``format_spec`` alone here for a ladder-less axis would measure a
-    string the axis never paints (e.g. "1500000" for a tick VL actually
-    renders "1.5M").
+    With a ladder-less ``tick_label``, a candidate goes through the per-tick
+    guard ``inject_axis_numeral_expr`` composes into the real ``labelExpr``
+    (>= 1 -> ``si_format``; below ``SUB_UNIT_SCIENTIFIC_FLOOR`` ->
+    ``scientific_format``; else ``tick_label.format``). ``fmt``'s affix and
+    notation compose into every arm.
     """
     if not values:
         return []
@@ -261,31 +299,66 @@ def estimated_quantitative_tick_labels(
     candidates = {domain_min, domain_max}
     for count in _ESTIMATE_TARGET_COUNTS:
         candidates.update(nice_tick_values(domain_min, domain_max, count))
-    if si_format is None:
-        return [d3_format(format_spec, v) for v in candidates]
-    return [
-        _sub_unit_guarded_format(v, format_spec, si_format, scientific_format)
-        for v in candidates
-    ]
+    if tick_label is None or tick_label.si_format is None:
+        if fmt.has_affix:
+            return [
+                format_d3(
+                    v,
+                    fmt.spec,
+                    fmt.prefix,
+                    fmt.suffix,
+                    fmt.notation,
+                    fmt.placement,
+                )
+                if v != 0
+                else d3_format(fmt.spec, v)
+                for v in candidates
+            ]
+        return [d3_format(fmt.spec, v) for v in candidates]
+    return [_sub_unit_guarded_format(v, fmt, tick_label) for v in candidates]
 
 
 def _sub_unit_guarded_format(
-    value: float,
-    format_spec: str,
-    si_format: str,
-    scientific_format: str | None,
+    value: float, fmt: ResolvedFormat, tick_label: ResolvedTickLabel
 ) -> str:
-    """The exact per-tick choice ``inject_axis_numeral_expr`` composes into a
-    ladder-less axis's ``labelExpr``, applied in Python so the gutter
-    estimate above measures what the axis actually paints. See that
-    function's docstring for the full rationale.
+    """The per-tick choice ``inject_axis_numeral_expr`` composes into a
+    ladder-less axis's ``labelExpr``, applied in Python for gutter estimates.
+
+    ``format_d3`` applies ``fmt.notation`` only to the SI arm.
     """
+    si_format, scientific_format = tick_label.si_format, tick_label.scientific_format
+    assert si_format is not None
     if abs(value) >= 1:
-        return d3_format(si_format, value)
+        return format_d3(
+            value,
+            si_format,
+            fmt.prefix,
+            fmt.suffix,
+            fmt.notation,
+            painted_sign_placement(fmt, tick_label.anchor_at_start is not None),
+        )
     if (
         scientific_format is not None
         and value != 0
         and abs(value) < SUB_UNIT_SCIENTIFIC_FLOOR
     ):
-        return d3_format(scientific_format, value)
-    return d3_format(format_spec, value)
+        return format_d3(
+            value,
+            scientific_format,
+            fmt.prefix,
+            fmt.suffix,
+            sign_placement=painted_sign_placement(
+                fmt, tick_label.anchor_at_start is not None
+            ),
+        )
+    if value == 0:
+        return d3_format(tick_label.format, value)
+    return format_d3(
+        value,
+        tick_label.format,
+        fmt.prefix,
+        fmt.suffix,
+        sign_placement=painted_sign_placement(
+            fmt, tick_label.anchor_at_start is not None
+        ),
+    )

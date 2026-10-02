@@ -10,8 +10,9 @@ from __future__ import annotations
 from decimal import Decimal
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.format import resolve_format
 from dbt_charts.core.compile.models.chart.normalized import KpiChart
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import FormatConfig, ResolvedFormat
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
@@ -19,6 +20,10 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 
 _DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="t")
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
+
+
+def _narrative(spec: str) -> ResolvedFormat:
+    return ResolvedFormat(spec=spec, notation="narrative", raw=spec)
 
 
 def _kpi(*, fmt=None) -> KpiChart:
@@ -45,11 +50,11 @@ class TestUnauthoredFormatThreshold:
         resolved = resolve(
             _kpi(), [{"metric": 1_500_000}], chart_style_context=_BOARD_STYLE
         )
-        assert resolved.format == FormatConfig(spec=".2~s", notation="narrative")
+        assert resolved.format == _narrative(".2~s")
 
     def test_at_threshold_defaults_to_narrative_compact(self):
         resolved = resolve(_kpi(), [{"metric": 1000}], chart_style_context=_BOARD_STYLE)
-        assert resolved.format == FormatConfig(spec=".2~s", notation="narrative")
+        assert resolved.format == _narrative(".2~s")
 
     def test_decimal_headline_value_above_threshold_compacts_same_as_int(self):
         # Warehouse NUMERIC/DECIMAL columns (dbt adapters, BigQuery, DuckDB)
@@ -58,7 +63,7 @@ class TestUnauthoredFormatThreshold:
         resolved = resolve(
             _kpi(), [{"metric": Decimal("1500000")}], chart_style_context=_BOARD_STYLE
         )
-        assert resolved.format == FormatConfig(spec=".2~s", notation="narrative")
+        assert resolved.format == _narrative(".2~s")
 
 
 class TestTypedFormatDefaulting:
@@ -68,7 +73,7 @@ class TestTypedFormatDefaulting:
             [{"metric": 1_500_000}],
             chart_style_context=_BOARD_STYLE,
         )
-        assert resolved.format == FormatConfig(spec=".2~s", notation="narrative")
+        assert resolved.format == _narrative(".2~s")
 
     def test_missing_spec_below_threshold_stays_exact(self):
         resolved = resolve(
@@ -76,7 +81,7 @@ class TestTypedFormatDefaulting:
             [{"metric": 131}],
             chart_style_context=_BOARD_STYLE,
         )
-        assert resolved.format == FormatConfig(spec=None, notation="narrative")
+        assert resolved.format == ResolvedFormat(spec="", notation="narrative")
 
     def test_explicit_analytic_notation_is_preserved(self):
         resolved = resolve(
@@ -84,7 +89,9 @@ class TestTypedFormatDefaulting:
             [{"metric": 1_500_000}],
             chart_style_context=_BOARD_STYLE,
         )
-        assert resolved.format == FormatConfig(spec=".2s", notation="analytic")
+        assert resolved.format == ResolvedFormat(
+            spec=".2s", notation="analytic", raw=".2s"
+        )
 
     def test_explicit_spec_disables_compaction_default(self):
         resolved = resolve(
@@ -92,7 +99,7 @@ class TestTypedFormatDefaulting:
             [{"metric": 1_500_000}],
             chart_style_context=_BOARD_STYLE,
         )
-        assert resolved.format == FormatConfig(spec=",.0f", notation="narrative")
+        assert resolved.format == _narrative(",.0f")
 
 
 class TestPlainStringSpec:
@@ -100,7 +107,32 @@ class TestPlainStringSpec:
         resolved = resolve(
             _kpi(fmt=",.0f"), [{"metric": 1_500_000}], chart_style_context=_BOARD_STYLE
         )
-        assert resolved.format == FormatConfig(spec=",.0f", notation="narrative")
+        assert resolved.format == _narrative(",.0f")
+
+
+class TestPredefinedNameKeepsIdentity:
+    """A predefined format name must reach render as the name, not its d3 spec."""
+
+    def test_plain_string_predefined_name_is_kept(self):
+        resolved = resolve(
+            _kpi(fmt="currency"), [{"metric": 0.45}], chart_style_context=_BOARD_STYLE
+        )
+        assert resolved.format == ResolvedFormat(
+            spec=resolve_format("currency"), notation="narrative", raw="currency"
+        )
+
+    def test_format_config_predefined_name_is_kept_beside_an_affix(self):
+        resolved = resolve(
+            _kpi(fmt=FormatConfig(spec="currency", suffix=" EUR")),
+            [{"metric": 0.45}],
+            chart_style_context=_BOARD_STYLE,
+        )
+        assert resolved.format == ResolvedFormat(
+            spec=resolve_format("currency"),
+            suffix=" EUR",
+            notation="narrative",
+            raw="currency",
+        )
 
 
 class TestNonNumericValue:
@@ -123,8 +155,8 @@ class TestIndependentResolutionAcrossRows:
             normalized, [{"metric": 1_500_000}], chart_style_context=_BOARD_STYLE
         )
 
-        assert low.format == FormatConfig(spec=None, notation="narrative")
-        assert high.format == FormatConfig(spec=".2~s", notation="narrative")
+        assert low.format == ResolvedFormat(spec="", notation="narrative")
+        assert high.format == _narrative(".2~s")
         # The normalized chart's own style must be untouched by either resolution.
         assert normalized.style.value.format == before  # type: ignore[union-attr]
 
@@ -136,5 +168,5 @@ class TestIndependentResolutionAcrossRows:
         )
         low = resolve(normalized, [{"metric": 131}], chart_style_context=_BOARD_STYLE)
 
-        assert high.format == FormatConfig(spec=".2~s", notation="narrative")
+        assert high.format == _narrative(".2~s")
         assert low.format is None

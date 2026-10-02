@@ -1,0 +1,5 @@
+kind: Features
+body: 'A `dbt_profile` source can set `target_path:` to the directory holding the manifest built for its target (`dbt parse --target prod --target-path target/prod`), so `ref()` and `source()` resolve against that target instead of whichever manifest `target/` last held. Without it, the manifest location now follows dbt: `DBT_TARGET_PATH`, then `dbt_project.yml` `target-path:`, then `target`.'
+time: 2026-10-02T12:00:00.000000+00:00
+custom:
+  DbtChartsIssue: "9"

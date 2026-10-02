@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dbt_charts.core.compile.models.chart.resolved import FormatState, ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _CartesianResolvedChartFields,
 )
@@ -19,7 +19,7 @@ from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows
 from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
@@ -92,15 +92,6 @@ def _insert_rule(
         spec.layers.append(rule)
 
 
-def _is_percent_format(fmt: FormatState) -> bool:
-    """True when a format string or FormatConfig spec contains a ``%`` token."""
-    if isinstance(fmt, str):
-        return "%" in fmt
-    if isinstance(fmt, FormatConfig) and fmt.spec is not None:
-        return "%" in fmt.spec
-    return False
-
-
 def _measure_field(
     chart: _CartesianResolvedChartFields,
     spec: ChartSpec,
@@ -127,7 +118,7 @@ def _is_log_scale(axis: ResolvedAxisStyle) -> bool:
 
 
 def _resolved_percent_format(
-    axis: ResolvedAxisStyle, chart_format: FormatState
+    axis: ResolvedAxisStyle, chart_format: ResolvedFormat | None
 ) -> bool:
     """True when the resolved axis label format or the chart-level format is
     percent-shaped.
@@ -137,7 +128,10 @@ def _resolved_percent_format(
     format and yields a duplicate rule at datum 1.
     """
     ax_fmt = axis.labels.format
-    return bool((ax_fmt and "%" in ax_fmt) or _is_percent_format(chart_format))
+    return bool(
+        (ax_fmt and "%" in ax_fmt.spec)
+        or (chart_format and chart_format.raw and "%" in chart_format.raw)
+    )
 
 
 def _zero_in_shared_domain(

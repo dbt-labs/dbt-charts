@@ -11,8 +11,50 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.primitives import Curve, LineCap
-from dbt_charts.core.compile.models.style.theme import PointLabelsStyle
+from dbt_charts.core.compile.models.primitives import Curve, LineCap, ResolvedFormat
+from dbt_charts.core.compile.models.style.theme import (
+    BarLabelsStyle,
+    BarMarkStyle,
+    BarTotalLabelStyle,
+    PointLabelsStyle,
+    PointMarkStyle,
+)
+
+
+class ResolvedBarLabels(BarLabelsStyle):
+    format: ResolvedFormat | None = Field(
+        default=None, description="Resolved value-label format."
+    )
+
+
+class ResolvedPointLabels(PointLabelsStyle):
+    format: ResolvedFormat | None = Field(
+        default=None, description="Resolved value-label format."
+    )
+
+
+ResolvedMarkLabels = ResolvedBarLabels | ResolvedPointLabels
+
+
+class ResolvedBarTotalLabel(BarTotalLabelStyle):
+    format: ResolvedFormat | None = Field(
+        default=None, description="Resolved stack-total label format."
+    )
+
+
+class ResolvedBarMarkStyle(BarMarkStyle):
+    labels: ResolvedBarLabels = Field(
+        default_factory=ResolvedBarLabels, description="Resolved segment labels."
+    )
+    total_label: ResolvedBarTotalLabel = Field(
+        default_factory=ResolvedBarTotalLabel, description="Resolved stack totals."
+    )
+
+
+class ResolvedPointMarkStyle(PointMarkStyle):
+    labels: ResolvedPointLabels = Field(
+        default_factory=ResolvedPointLabels, description="Resolved point labels."
+    )
 
 
 class ResolvedStrokeStyle(BaseModel):
@@ -92,7 +134,7 @@ class ResolvedLineMarkStyle(BaseModel):
             "Selected in place of stroke.cap only in that geometry."
         ),
     )
-    labels: PointLabelsStyle = Field(
+    labels: ResolvedPointLabels = Field(
         description="Baked point labels style.",
     )
 
@@ -117,7 +159,7 @@ class ResolvedAreaLineStyle(BaseModel):
     halo_multiplier: float = Field(
         description="Stroke-width multiplier for the top-edge line's halo layer."
     )
-    labels: PointLabelsStyle = Field(
+    labels: ResolvedPointLabels = Field(
         description="Baked point labels style for the area's plotted points.",
     )
 
@@ -160,7 +202,13 @@ class ResolvedSeriesLabelStyle(BaseModel):
 __all__ = [
     "ResolvedAreaLineStyle",
     "ResolvedAreaMarkStyle",
+    "ResolvedBarLabels",
+    "ResolvedBarMarkStyle",
+    "ResolvedBarTotalLabel",
     "ResolvedLineMarkStyle",
+    "ResolvedMarkLabels",
+    "ResolvedPointLabels",
+    "ResolvedPointMarkStyle",
     "ResolvedSeriesLabelStyle",
     "ResolvedStrokeStyle",
 ]

@@ -9,22 +9,25 @@ from pydantic import ValidationError
 
 from dbt_charts.core.compile.config import get_theme_style, list_built_in_themes
 from dbt_charts.core.compile.format import (
-    resolve_format_for_values,
+    finalize_kpi_value_format,
+    get_format_prefix_suffix,
+    resolve_format_parts,
+    resolve_format_parts_for_values,
     resolve_label_format,
 )
+from dbt_charts.core.compile.models.primitives import FormatConfig, ResolvedFormat
 from dbt_charts.core.diagnostics.codes_render import ERR_PERCENT_RANGE
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.format_utils import (
-    FormatConfig,
     format_d3,
     format_kpi_parts,
     format_value,
-    get_format_prefix_suffix,
     resolve_format,
 )
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NUMBER_NAMES,
     PREDEFINED_SPECS,
+    PredefinedNumberFormat,
 )
 
 _ALIAS_FORMATS = {"tilde": "~s", "money": "$,.2f"}
@@ -36,6 +39,12 @@ class TestResolveLabelFormat:
     House (narrative) fires exactly when the raw string is a theme alias
     resolving to an SI spec — never based on who set it. A hand-typed literal
     SI spec is always a native opt-out, alias or not otherwise.
+
+    ``resolved`` is a ``FormatConfig`` (not a bare string): the affix
+    (``prefix``/``suffix``) rides forward alongside the spec now, since d3's
+    grammar admits only "$"/"#" as a spec's own symbol character and any
+    other affix has nowhere else to survive this call. Every case
+    below authors no affix, so ``resolved.prefix``/``.suffix`` stay ``None``.
     """
 
     def test_alias_si_is_house(self):
@@ -43,24 +52,27 @@ class TestResolveLabelFormat:
         # path regardless of the formats dict; the _ALIAS_FORMATS dict is
         # irrelevant here but kept for API-contract clarity.
         resolved, is_house = resolve_label_format("number", _ALIAS_FORMATS)
-        assert resolved == ".3~s"
+        assert resolved.spec == ".3~s"
         assert is_house is True
 
     def test_literal_si_is_not_house(self):
         # Inline d3 specs are native (three-way contract): no trim injection,
-        # no house-notation register — .2s stays .2s.
+        # no house-notation register — .2s stays .2s. No affix authored --
+        # bare string.
         resolved, is_house = resolve_label_format(".2s", _ALIAS_FORMATS)
-        assert resolved == ".2s"
+        assert resolved.spec == ".2s"
         assert is_house is False
 
     def test_non_si_alias_is_not_house(self):
+        # No affix authored -- bare string.
         resolved, is_house = resolve_label_format("money", _ALIAS_FORMATS)
-        assert resolved == "$,.2f"
+        assert resolved.spec == "$,.2f"
         assert is_house is False
 
     def test_non_si_literal_is_not_house(self):
+        # No affix authored -- bare string.
         resolved, is_house = resolve_label_format("$,.2f", _ALIAS_FORMATS)
-        assert resolved == "$,.2f"
+        assert resolved.spec == "$,.2f"
         assert is_house is False
 
     def test_none_is_not_house(self):
@@ -71,9 +83,10 @@ class TestResolveLabelFormat:
     def test_unknown_key_not_in_formats_treated_as_literal(self):
         # A string that isn't a real alias and isn't valid d3 grammar either
         # is a compile-time authoring error elsewhere; resolve_label_format
-        # itself just reports is_alias=False for it (not house).
+        # itself just reports is_alias=False for it (not house). No affix
+        # authored -- bare string.
         resolved, is_house = resolve_label_format("~s", None)
-        assert resolved == "~s"
+        assert resolved.spec == "~s"
         assert is_house is False
 
     def test_various_alias_si_shapes(self):
@@ -83,16 +96,43 @@ class TestResolveLabelFormat:
         expected_resolved = {"a": "~s", "b": ".2~s", "c": ".3s", "d": "s"}
         for key in formats:
             resolved, is_house = resolve_label_format(key, formats)
-            assert resolved == expected_resolved[key], key
+            assert resolved.spec == expected_resolved[key], key
             assert is_house is False, key
 
     def test_format_config_object_uses_spec_for_alias_check(self):
         # "number" is a predefined name; FormatConfig.spec is the lookup key.
+        # No affix authored -- bare string.
         resolved, is_house = resolve_label_format(
             FormatConfig(spec="number"), _ALIAS_FORMATS
         )
-        assert resolved == ".3~s"
+        assert resolved.spec == ".3~s"
         assert is_house is True
+
+    def test_authored_prefix_survives_alongside_the_resolved_spec(self):
+        # d3's grammar admits only "$"/"#" as a spec's own symbol character
+        # (libs/d3-format's spec.py).
+        resolved, is_house = resolve_label_format(
+            FormatConfig(spec=",.0f", prefix="€"), _ALIAS_FORMATS
+        )
+        assert (resolved.spec, resolved.prefix, resolved.suffix) == (",.0f", "€", "")
+        assert is_house is False
+
+    def test_authored_suffix_survives_through_a_style_formats_alias(self):
+        # A bare alias name whose style.formats target is itself a
+        # FormatConfig with an affix.
+        formats = {"eur_trailing": FormatConfig(spec=",.0f", suffix=" €")}
+        resolved, is_house = resolve_label_format("eur_trailing", formats)
+        assert (resolved.spec, resolved.prefix, resolved.suffix) == (",.0f", "", " €")
+        assert is_house is False
+
+    def test_authored_notation_survives_alongside_the_resolved_spec(self):
+        # An authored notation override on a non-house literal spec must also ride
+        # forward on the returned FormatConfig.
+        resolved, is_house = resolve_label_format(
+            FormatConfig(spec=".3~s", notation="narrative"), _ALIAS_FORMATS
+        )
+        assert (resolved.spec, resolved.notation) == (".3~s", "narrative")
+        assert is_house is False
 
 
 class TestRetiredFormatSuccessors:
@@ -252,6 +292,56 @@ class TestGetFormatPrefixSuffix:
         config = FormatConfig(spec=",.0f")
         assert get_format_prefix_suffix(config) == ("", "")
 
+    def test_object_form_naming_an_alias_follows_the_alias_affix(self):
+        """format: {spec: eur} (the outer object form naming an alias, with no affix of
+        its own) must still reach the alias's own prefix/suffix.
+        """
+        formats = {"eur": FormatConfig(spec=",.0f", prefix="€")}
+        assert get_format_prefix_suffix(FormatConfig(spec="eur"), formats) == (
+            "€",
+            "",
+        )
+        assert get_format_prefix_suffix({"spec": "eur"}, formats) == ("€", "")
+
+    def test_object_form_s_own_affix_wins_over_the_alias_it_names(self):
+        """An explicit affix on the outer object always wins over the alias's own."""
+        formats = {"eur": FormatConfig(spec=",.0f", prefix="€")}
+        assert get_format_prefix_suffix(
+            FormatConfig(spec="eur", suffix=" net"), formats
+        ) == ("", " net")
+
+
+class TestResolvedNotation:
+    """Notation follows an alias like the affix -- mirrors TestGetFormatPrefixSuffix."""
+
+    @staticmethod
+    def _notation(value, formats=None):
+        return resolve_format_parts(value, formats, no_format_default=None).notation
+
+    def test_format_config_notation(self):
+        assert self._notation(FormatConfig(spec="~s", notation="narrative")) == (
+            "narrative"
+        )
+
+    def test_none_values(self):
+        assert self._notation(None) is None
+        assert self._notation(FormatConfig(spec="~s")) is None
+
+    def test_object_form_naming_an_alias_follows_the_alias_notation(self):
+        """format: {spec: mine} (the outer object form naming an alias, with no notation
+        of its own) must still reach the alias's own notation.
+        """
+        formats = {"mine": FormatConfig(spec="~s", notation="narrative")}
+        assert self._notation(FormatConfig(spec="mine"), formats) == "narrative"
+        assert self._notation({"spec": "mine"}, formats) == "narrative"
+
+    def test_object_form_s_own_notation_wins_over_the_alias_it_names(self):
+        formats = {"mine": FormatConfig(spec="~s", notation="narrative")}
+        assert (
+            self._notation(FormatConfig(spec="mine", notation="analytic"), formats)
+            == "analytic"
+        )
+
 
 class TestFormatD3:
     """Tests for D3-style value formatting — d3-correct output via libs/d3-format/."""
@@ -280,7 +370,12 @@ class TestFormatD3:
         assert format_d3(1500000000000, ",.2s") == "1.5T"
 
     def test_custom_prefix_suffix(self):
-        assert format_d3(1234, ",.0f", prefix="$", suffix=" USD") == "$1,234 USD"
+        assert (
+            format_d3(
+                1234, ",.0f", prefix="$", suffix=" USD", sign_placement="before_prefix"
+            )
+            == "$1,234 USD"
+        )
         assert format_d3(100, ",.0f", suffix=" users") == "100 users"
 
     def test_none_value(self):
@@ -289,7 +384,9 @@ class TestFormatD3:
 
     def test_empty_format(self):
         assert format_d3(1234, "") == "1234"
-        assert format_d3(1234, "", prefix="$") == "$1234"
+        assert (
+            format_d3(1234, "", prefix="$", sign_placement="before_prefix") == "$1234"
+        )
 
     def test_negative_values(self):
         # d3 uses U+2212 (−) and places sign before the currency symbol.
@@ -299,6 +396,20 @@ class TestFormatD3:
     def test_negative_si_values(self):
         # d3 uses U+2212 minus sign. Raw d3 output with notation=None.
         assert format_d3(-1500000, ",.2s") == "−1.5M"
+
+    def test_negative_value_with_custom_prefix_places_sign_before_prefix(self):
+        # A non-d3-native prefix (e.g. "€", not embedded in the spec) must still honor
+        # sign-first ordering, same as d3's own $ symbol handling in
+        # test_negative_values above: "−€500", never "€−500".
+        assert (
+            format_d3(-500, ",.0f", prefix="€", sign_placement="before_prefix")
+            == "−€500"
+        )
+
+    def test_negative_value_with_custom_suffix_stays_trailing(self):
+        # Suffix already trails everything, sign included — the locale-correct
+        # form authors get by choosing suffix over prefix.
+        assert format_d3(-500, ",.0f", suffix=" €") == "−500 €"
 
 
 class TestFormatValue:
@@ -491,6 +602,23 @@ class TestNotationFamilies:
     def test_notation_only_affects_si_format(self):
         config = FormatConfig(spec=",.2f", notation="narrative")
         assert format_value(1_500_000, config) == "1,500,000.00"
+
+    def test_format_value_follows_a_bare_alias_names_own_notation(self):
+        """A bare alias name's own notation must reach format_value the same way
+        resolve_format_parts (every Vega painter's own resolver) already follows it.
+        """
+        formats = {
+            "eur": FormatConfig(spec=".3~s", notation="narrative", prefix="EUR ")
+        }
+        assert format_value(1_500_000, "eur", formats) == "EUR 1.5mn"
+
+    def test_format_kpi_parts_follows_a_bare_alias_names_own_notation(self):
+        formats = {
+            "eur": FormatConfig(spec=".3~s", notation="narrative", prefix="EUR ")
+        }
+        # format_kpi_parts strips its own prefix lane (its 3-part decomposition
+        # convention) -- "EUR", not "EUR ".
+        assert format_kpi_parts(1_500_000, "eur", formats) == ("EUR", "1.5", "mn")
 
 
 class TestPercentRangeGuard:
@@ -729,6 +857,41 @@ class TestPercentagePointsDeltaToken:
         assert number == "−3.2"
         assert suffix == " pts"
 
+    def test_negative_value_with_authored_prefix_keeps_the_sign_in_the_number_lane(
+        self,
+    ):
+        """format_kpi_parts itself leaves the sign attached to the number lane, even
+        when a prefix is present.
+        """
+        config = FormatConfig(spec=",.0f", prefix="EUR ")
+        prefix, number, suffix = format_kpi_parts(-500, config)
+        assert prefix == "EUR"
+        assert number == "−500"
+        assert suffix == ""
+
+
+class TestFormatValueNativePresetAffix:
+    """The measured text of a native-preset cell is the painted text."""
+
+    @pytest.mark.parametrize(
+        ("config", "value"),
+        [
+            (FormatConfig(spec="percent_number", suffix=" YoY"), 12.3),
+            (FormatConfig(spec="percent_number_delta", prefix="~"), -12.3),
+            (
+                FormatConfig(
+                    spec="percentage_points_delta", prefix="~", suffix=" vs LY"
+                ),
+                1.5,
+            ),
+        ],
+    )
+    def test_matches_the_painted_lanes(self, config, value):
+        prefix, number, suffix = format_kpi_parts(
+            value, config, None, default_number=True
+        )
+        assert format_value(value, config) == prefix + number + suffix
+
 
 class TestFormatKpiPartsNative:
     """format_kpi_parts(native=True) keeps raw d3 SI suffix chars instead of
@@ -774,7 +937,7 @@ class TestFormatKpiPartsNative:
         house notation values (K/M/B/T/…). Without "G", table symbol_mode:anchors
         strips the suffix from non-first rows, making 3.2B render as "3.2".
         """
-        _, num, suffix = format_kpi_parts(
+        _, _num, suffix = format_kpi_parts(
             3_200_000_000,
             "~s",
             formats={},
@@ -984,9 +1147,15 @@ class TestSiSubUnitFloor:
             "",
         )
 
+    def test_kpi_headline_pipeline_money_prefix_below_one_falls_back(self) -> None:
+        # A KPI headline never reaches format_kpi_parts with the author's raw {prefix:
+        # "£"}.
+        finalized = finalize_kpi_value_format(FormatConfig(prefix="£"), 0.67)
+        assert format_kpi_parts(0.67, finalized) == ("£", "0.67", "")
+
 
 class TestSubUnitFloorVote:
-    """resolve_format_for_values: the Vega-painted analog of TestSiSubUnitFloor.
+    """resolve_format_parts_for_values: the Vega-painted analog of TestSiSubUnitFloor.
 
     Vega paints per-datum inside its own runtime, so the per-value floor
     format_value/format_kpi_parts apply cannot run there -- this decides the
@@ -997,14 +1166,18 @@ class TestSubUnitFloorVote:
 
     def test_all_values_below_one_falls_back_to_currency_full(self) -> None:
         assert (
-            resolve_format_for_values("currency", None, [0.42, 0.25, 0.67])
+            resolve_format_parts_for_values(
+                "currency", None, [0.42, 0.25, 0.67], no_format_default=None
+            ).spec
             == PREDEFINED_SPECS["currency_full"]
         )
 
     def test_one_value_below_one_pulls_the_whole_set(self) -> None:
         # Mixed set: any member in the band pulls the register.
         assert (
-            resolve_format_for_values("currency", None, [0.42, 3.0])
+            resolve_format_parts_for_values(
+                "currency", None, [0.42, 3.0], no_format_default=None
+            ).spec
             == PREDEFINED_SPECS["currency_full"]
         )
 
@@ -1012,19 +1185,25 @@ class TestSubUnitFloorVote:
         # The band test is on abs(v) -- a negative sub-$1 value must floor
         # the same as its positive counterpart.
         assert (
-            resolve_format_for_values("currency", None, [-0.42])
+            resolve_format_parts_for_values(
+                "currency", None, [-0.42], no_format_default=None
+            ).spec
             == PREDEFINED_SPECS["currency_full"]
         )
 
     def test_all_values_at_or_above_one_keeps_si_spec(self) -> None:
         assert (
-            resolve_format_for_values("currency", None, [12.99, 100.0])
+            resolve_format_parts_for_values(
+                "currency", None, [12.99, 100.0], no_format_default=None
+            ).spec
             == PREDEFINED_SPECS["currency"]
         )
 
     def test_all_zero_keeps_si_spec(self) -> None:
         assert (
-            resolve_format_for_values("currency", None, [0.0, 0.0])
+            resolve_format_parts_for_values(
+                "currency", None, [0.0, 0.0], no_format_default=None
+            ).spec
             == (PREDEFINED_SPECS["currency"])
         )
 
@@ -1033,7 +1212,9 @@ class TestSubUnitFloorVote:
         # either ($,.2f would print $0.00) -- stays on SI, same as the
         # per-value predicate.
         assert (
-            resolve_format_for_values("currency", None, [0.0023])
+            resolve_format_parts_for_values(
+                "currency", None, [0.0023], no_format_default=None
+            ).spec
             == (PREDEFINED_SPECS["currency"])
         )
 
@@ -1041,33 +1222,392 @@ class TestSubUnitFloorVote:
         # "number" below 1 reads correctly as an SI milli value -- only
         # money is wrong below the floor.
         assert (
-            resolve_format_for_values("number", None, [0.671])
+            resolve_format_parts_for_values(
+                "number", None, [0.671], no_format_default=None
+            ).spec
             == (PREDEFINED_SPECS["number"])
         )
 
     def test_money_prefix_below_one_falls_back(self) -> None:
         config = FormatConfig(spec="number", prefix="£")
         assert (
-            resolve_format_for_values(config, None, [0.67])
+            resolve_format_parts_for_values(
+                config, None, [0.67], no_format_default=None
+            ).spec
             == PREDEFINED_SPECS["number_full"]
         )
 
     def test_inline_d3_spec_never_takes_house_floor(self) -> None:
         # Native d3 (not a predefined member) is a native-d3 opt-out --
         # never touched by the house sub-unit-floor vote.
-        assert resolve_format_for_values("$.3~s", None, [0.67]) == "$.3~s"
+        assert (
+            resolve_format_parts_for_values(
+                "$.3~s", None, [0.67], no_format_default=None
+            ).spec
+            == "$.3~s"
+        )
 
     def test_style_formats_alias_never_takes_house_floor(self) -> None:
-        assert resolve_format_for_values("money", _ALIAS_FORMATS, [0.67]) == "$,.2f"
+        assert (
+            resolve_format_parts_for_values(
+                "money", _ALIAS_FORMATS, [0.67], no_format_default=None
+            ).spec
+            == "$,.2f"
+        )
 
     def test_none_values_are_skipped(self) -> None:
         assert (
-            resolve_format_for_values("currency", None, [None, None])
+            resolve_format_parts_for_values(
+                "currency", None, [None, None], no_format_default=None
+            ).spec
             == PREDEFINED_SPECS["currency"]
         )
 
     def test_parity_with_format_value_on_a_band_crossing_set(self) -> None:
         values = [0.42, 0.25, 0.67]
-        result_spec = resolve_format_for_values("currency", None, values)
+        result_spec = resolve_format_parts_for_values(
+            "currency", None, values, no_format_default=None
+        ).spec
         for value in values:
             assert format_d3(value, result_spec) == format_value(value, "currency")
+
+
+class TestSubUnitFloorVoteSpecLessAffix:
+    """resolve_format_parts_for_values's ``no_format_default`` keyword."""
+
+    def test_spec_less_affix_dict_below_one_falls_back_to_number_full(self) -> None:
+        assert (
+            resolve_format_parts_for_values(
+                {"prefix": "£"},
+                None,
+                [0.67],
+                no_format_default=PredefinedNumberFormat.number,
+            ).spec
+            == PREDEFINED_SPECS["number_full"]
+        )
+
+    def test_spec_less_affix_format_config_below_one_falls_back(self) -> None:
+        assert (
+            resolve_format_parts_for_values(
+                FormatConfig(prefix="£"),
+                None,
+                [0.67],
+                no_format_default=PredefinedNumberFormat.number,
+            ).spec
+            == PREDEFINED_SPECS["number_full"]
+        )
+
+    def test_spec_less_affix_alias_below_one_falls_back(self) -> None:
+        # An alias name is a plain string with no affix of its own until
+        # resolution follows it to its target -- same shape, same fix.
+        formats = {"gbp": FormatConfig(prefix="£")}
+        assert (
+            resolve_format_parts_for_values(
+                "gbp",
+                formats,
+                [0.67],
+                no_format_default=PredefinedNumberFormat.number,
+            ).spec
+            == PREDEFINED_SPECS["number_full"]
+        )
+
+    def test_spec_less_affix_currency_default_below_one_falls_back(self) -> None:
+        assert (
+            resolve_format_parts_for_values(
+                {"prefix": "£"},
+                None,
+                [0.67],
+                no_format_default=PredefinedNumberFormat.currency,
+            ).spec
+            == PREDEFINED_SPECS["currency_full"]
+        )
+
+    def test_spec_less_affix_above_one_keeps_si_spec(self) -> None:
+        assert (
+            resolve_format_parts_for_values(
+                {"prefix": "£"},
+                None,
+                [12400.0],
+                no_format_default=PredefinedNumberFormat.number,
+            ).spec
+            == PREDEFINED_SPECS["number"]
+        )
+
+    def test_no_affix_no_default_is_unaffected(self) -> None:
+        # A caller that omits no_format_default gets a spec-less, affix-less input
+        # resolved to no spec at all; it never votes (nothing to vote with a "" raw).
+        assert (
+            resolve_format_parts_for_values(
+                None, None, [0.67], no_format_default=None
+            ).spec
+            == ""
+        )
+
+    def test_already_authored_spec_is_never_overridden_by_the_default(self) -> None:
+        # no_format_default only ever substitutes when resolution produces an affix but
+        # no spec -- an explicit spec (with or without affix) is untouched.
+        assert (
+            resolve_format_parts_for_values(
+                FormatConfig(spec="currency", prefix="£"),
+                None,
+                [0.67],
+                no_format_default=PredefinedNumberFormat.number,
+            ).spec
+            == PREDEFINED_SPECS["currency_full"]
+        )
+
+
+class TestResolveFormatPartsForValues:
+    """The one vote every Vega-painted slot resolves through."""
+
+    def test_voted_spec_carries_the_authored_affix_and_notation(self) -> None:
+        parts = resolve_format_parts_for_values(
+            FormatConfig(prefix="£", suffix=" GBP", notation="analytic"),
+            None,
+            [0.5, 1234.5, 2456789.0],
+            no_format_default=PredefinedNumberFormat.number,
+        )
+        assert parts.spec == PREDEFINED_SPECS["number_full"]
+        assert (parts.prefix, parts.suffix, parts.notation) == (
+            "£",
+            " GBP",
+            "analytic",
+        )
+
+    def test_writing_no_spec_votes_exactly_like_writing_the_default(self) -> None:
+        values = [2e6, 4.5e6, 7e6]
+        spec_less = resolve_format_parts_for_values(
+            {"prefix": "GBP "},
+            None,
+            values,
+            no_format_default=PredefinedNumberFormat.number,
+        )
+        explicit = resolve_format_parts_for_values(
+            {"spec": "number", "prefix": "GBP "},
+            None,
+            values,
+            no_format_default=PredefinedNumberFormat.number,
+        )
+        assert spec_less == explicit
+
+    def test_no_format_keeps_no_spec(self) -> None:
+        parts = resolve_format_parts_for_values(
+            None, None, [0.67], no_format_default=PredefinedNumberFormat.number
+        )
+        assert parts.spec == "" and not parts.has_affix
+
+
+class TestResolveLabelFormatValuesAware:
+    """resolve_label_format's ``values`` parameter."""
+
+    def test_spec_less_affix_label_below_one_falls_back_to_plain_digits(self) -> None:
+        resolved, is_house = resolve_label_format(
+            FormatConfig(prefix="£"), None, values=[0.67]
+        )
+        assert (resolved.spec, resolved.prefix) == (
+            PREDEFINED_SPECS["number_full"],
+            "£",
+        )
+        assert is_house is True
+
+    def test_spec_less_affix_label_above_one_keeps_si_spec(self) -> None:
+        resolved, is_house = resolve_label_format(
+            FormatConfig(prefix="£"), None, values=[12400.0]
+        )
+        assert (resolved.spec, resolved.prefix) == (PREDEFINED_SPECS["number"], "£")
+        assert is_house is True
+
+    def test_bare_predefined_name_label_below_one_falls_back(self) -> None:
+        # Not just the spec-less-affix shape -- an explicit "currency"/"number" label
+        # format is itself a Vega-painted bake with no per-value floor.
+        resolved, is_house = resolve_label_format("currency", None, values=[0.42])
+        assert resolved.spec == PREDEFINED_SPECS["currency_full"]
+        assert is_house is True
+
+    def test_no_values_passed_keeps_si_spec(self) -> None:
+        # Omitting values (the default) never votes.
+        resolved, is_house = resolve_label_format("currency", None)
+        assert resolved.spec == PREDEFINED_SPECS["currency"]
+        assert is_house is True
+
+
+class TestAliasToPreset:
+    """An alias naming a preset resolves to that preset, house rules included."""
+
+    @pytest.mark.parametrize(
+        ("value", "formats", "prefix"),
+        [
+            pytest.param("mine", {"mine": "number"}, "", id="bare-alias"),
+            pytest.param(
+                "eur",
+                {"eur": FormatConfig(spec="number", prefix="EUR ")},
+                "EUR ",
+                id="alias-with-affix",
+            ),
+            pytest.param(
+                FormatConfig(spec="mine", suffix=" units"),
+                {"mine": "number"},
+                "",
+                id="alias-in-spec",
+            ),
+        ],
+    )
+    def test_resolves_as_the_preset(self, value, formats, prefix) -> None:
+        parts = resolve_format_parts(value, formats, no_format_default=None)
+        assert parts.spec == resolve_format("number")
+        assert parts.raw == "number"
+        assert parts.is_house
+        assert parts.prefix == prefix
+
+    def test_sub_unit_vote_applies_through_the_alias(self) -> None:
+        direct = resolve_format_parts_for_values(
+            "number", None, [0.67], no_format_default=None
+        )
+        aliased = resolve_format_parts_for_values(
+            "mine", {"mine": "number"}, [0.67], no_format_default=None
+        )
+        assert aliased.spec == direct.spec
+
+
+class TestSignPlacement:
+    """``sign_placement`` resolves once; unset follows the authored prefix."""
+
+    @pytest.mark.parametrize(
+        ("config", "formats", "expected"),
+        [
+            pytest.param(
+                FormatConfig(prefix="EUR "), None, "after_prefix", id="spaced"
+            ),
+            pytest.param(FormatConfig(prefix="€"), None, "before_prefix", id="glued"),
+            pytest.param(
+                FormatConfig(spec="currency"), None, "before_prefix", id="preset"
+            ),
+            pytest.param(
+                FormatConfig(prefix="EUR ", sign_placement="before_prefix"),
+                None,
+                "before_prefix",
+                id="explicit-before",
+            ),
+            pytest.param(
+                FormatConfig(prefix="€", sign_placement="after_prefix"),
+                None,
+                "after_prefix",
+                id="explicit-after",
+            ),
+            pytest.param(
+                "eur", {"eur": FormatConfig(prefix="EUR ")}, "after_prefix", id="alias"
+            ),
+            pytest.param(
+                FormatConfig(spec="eur"),
+                {"eur": FormatConfig(prefix="EUR ", sign_placement="before_prefix")},
+                "before_prefix",
+                id="alias-option",
+            ),
+        ],
+    )
+    def test_resolves(self, config, formats, expected) -> None:
+        parts = resolve_format_parts(config, formats, no_format_default="number")
+        assert parts.placement == expected
+
+    @pytest.mark.parametrize(
+        ("config", "formats", "authored"),
+        [
+            (FormatConfig(prefix="EUR "), None, None),
+            (
+                FormatConfig(prefix="€", sign_placement="before_prefix"),
+                None,
+                "before_prefix",
+            ),
+            (
+                FormatConfig(spec="eur"),
+                {"eur": FormatConfig(prefix="€", sign_placement="after_prefix")},
+                "after_prefix",
+            ),
+        ],
+    )
+    def test_stores_only_the_authored_value(self, config, formats, authored) -> None:
+        parts = resolve_format_parts(config, formats, no_format_default="number")
+        assert parts.sign_placement == authored
+
+    @pytest.mark.parametrize(
+        ("config", "expected"),
+        [
+            (FormatConfig(spec=",.0f", prefix="EUR "), "EUR −500"),
+            (FormatConfig(spec=",.0f", prefix="€"), "−€500"),
+            (FormatConfig(spec="$,.0f", prefix="US "), "US −$500"),
+            (
+                FormatConfig(
+                    spec=",.0f", prefix="EUR ", sign_placement="before_prefix"
+                ),
+                "−EUR 500",
+            ),
+            (
+                FormatConfig(spec=",.0f", prefix="€", sign_placement="after_prefix"),
+                "€−500",
+            ),
+        ],
+    )
+    def test_format_value_places_the_sign(self, config, expected) -> None:
+        assert format_value(-500, config) == expected
+
+    def test_kpi_lanes_keep_the_sign_after_a_spaced_prefix(self) -> None:
+        config = FormatConfig(spec=",.0f", prefix="EUR ")
+        assert format_kpi_parts(-500, config, sign_in_prefix=True) == (
+            "EUR",
+            "−500",
+            "",
+        )
+
+    def test_kpi_lanes_lead_with_the_sign_before_a_glued_prefix(self) -> None:
+        config = FormatConfig(spec=",.0f", prefix="€")
+        assert format_kpi_parts(-500, config, sign_in_prefix=True) == ("−€", "500", "")
+
+    def test_kpi_lanes_put_the_sign_between_authored_prefix_and_native_symbol(
+        self,
+    ) -> None:
+        config = FormatConfig(spec="$,.0f", prefix="US ")
+        assert format_kpi_parts(-500, config, sign_in_prefix=True) == (
+            "US",
+            "−$500",
+            "",
+        )
+
+    def test_table_lanes_keep_the_sign_in_the_number_lane(self) -> None:
+        config = FormatConfig(spec=",.0f", prefix="€")
+        assert format_kpi_parts(-500, config) == ("€", "−500", "")
+
+
+class TestRepeatResolves:
+    def test_unset_is_none(self) -> None:
+        parts = resolve_format_parts(
+            FormatConfig(prefix="€"), None, no_format_default="number"
+        )
+        assert parts.repeat is None
+
+    def test_follows_the_alias(self) -> None:
+        formats = {"eur": FormatConfig(prefix="€", repeat="every")}
+        parts = resolve_format_parts("eur", formats, no_format_default="number")
+        assert parts.repeat == "every"
+
+    def test_own_wins_over_the_alias(self) -> None:
+        formats = {"eur": FormatConfig(prefix="€", repeat="every")}
+        parts = resolve_format_parts(
+            FormatConfig(spec="eur", repeat="anchor"),
+            formats,
+            no_format_default="number",
+        )
+        assert parts.repeat == "anchor"
+
+
+class TestResolvedFormatWire:
+    def test_round_trips_sign_placement_and_repeat(self) -> None:
+        parts = resolve_format_parts(
+            FormatConfig(spec=",.0f", prefix="EUR ", repeat="anchor"),
+            None,
+            no_format_default=None,
+        )
+        assert ResolvedFormat.model_validate(parts.model_dump(mode="json")) == parts
+
+    def test_an_unset_sign_placement_takes_the_prefix_default(self) -> None:
+        assert ResolvedFormat(spec=",.0f", prefix="EUR ").placement == "after_prefix"
+        assert ResolvedFormat(spec=",.0f", prefix="€").placement == "before_prefix"

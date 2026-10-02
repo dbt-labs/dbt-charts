@@ -9,11 +9,15 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 from urllib.parse import quote_plus
 
-from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format import resolve_format, resolve_format_parts
 from dbt_charts.core.compile.models.chart.authored import (
     match_predicate,
 )
-from dbt_charts.core.compile.models.primitives import FontStyle
+from dbt_charts.core.compile.models.primitives import (
+    AuthoredFormat,
+    FontStyle,
+    FormatAliases,
+)
 from dbt_charts.core.compile.models.style.resolved import ResolvedTableColumnConfig
 from dbt_charts.core.compile.models.style.theme import (
     font_weight_as_css,
@@ -62,7 +66,6 @@ if TYPE_CHECKING:
         TableColumnConfig,
     )
     from dbt_charts.core.compile.models.primitives import (
-        FormatConfig,
         ResolvedScaleTarget,
     )
     from dbt_charts.core.compile.models.style.theme import (
@@ -239,8 +242,8 @@ def parse_column_width(
 
 def format_table_cell_value(
     value: Any,
-    format_config: str | FormatConfig | None,
-    formats: dict[str, str] | None = None,
+    format_config: AuthoredFormat | None,
+    formats: FormatAliases | None = None,
 ) -> str:
     """Format a cell value for display.
 
@@ -268,10 +271,18 @@ def format_table_cell_value(
     # may still set a format: spec that should be treated as a time format.
     if is_temporal_value(value):
         if format_config is not None:
-            resolved = resolve_format(format_config, formats)
+            # A spec-less affix ({prefix: "As of "}) dates the default spec.
+            resolved = (
+                resolve_format(format_config, formats)
+                or (PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short])
+            )
             if is_time_format(resolved):
                 # Author-provided strftime spec — raises ValueError for bad directives.
-                return format_temporal_value(value, resolved)
+                date_text = format_temporal_value(value, resolved)
+                affix = resolve_format_parts(
+                    format_config, formats, no_format_default=None
+                )
+                return f"{affix.prefix}{date_text}{affix.suffix}"
             raise ChartDataError.from_code(
                 ERR_TABLE_FORMAT_KIND_MISMATCH,
                 fmt=resolved,
@@ -765,7 +776,7 @@ def measure_column_demands(
     header_case: CaseValue = "none",
     cell_pad: int,
     max_sample_rows: int = 50,
-    formats: dict[str, str] | None = None,
+    formats: FormatAliases | None = None,
     header_visible: bool = True,
     column_when_rules: Mapping[str, Sequence[ConditionalRule]],
 ) -> tuple[dict[str, float], dict[str, float]]:

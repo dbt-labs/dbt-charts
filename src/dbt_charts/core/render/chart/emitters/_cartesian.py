@@ -36,7 +36,7 @@ from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisStyle,
     ResolvedScaleStyle,
@@ -84,6 +84,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     axis_to_vl,
     bake_tick_ladder,
     emit_resolved_scale_vl,
+    inject_axis_numeral_expr,
 )
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.utils import normalize_scalar_for_json
@@ -507,6 +508,11 @@ def resolve_cartesian_x(
         ax,
         label_overlap=label_layout.label_overlap,
         label_angle=label_layout.angle,
+    )
+    # The numeral producer composes innermost, before the temporal
+    # cadence/case/values wrapping, as for ay; a no-op without ruler/tick_label.
+    ax_vl_raw = inject_axis_numeral_expr(
+        ax_vl_raw, ax.ruler, ax.tick_label, ax.labels.format
     )
     x_scale: VLDict = {}
     if ax.scale is not None and ax.scale.padding is not None:
@@ -1140,7 +1146,8 @@ def facet_extra_axis_width_px(
         # Only scatter's nominal y gets the case expr; heatmap and horizontal
         # bar category axes paint uncased.
         case = font.case if isinstance(chart, ResolvedScatterChart) else None
-        domain = {category_label_text(v, labels.format, case) for v in domain}
+        spec = labels.format.spec if labels.format is not None else None
+        domain = {category_label_text(v, spec, case) for v in domain}
     measurer = get_font_measurer(font.family)
     label_limit = (
         labels.max_width if labels.max_width is not None else DEFAULT_VL_LABEL_LIMIT
@@ -1642,13 +1649,16 @@ def build_cartesian_y_encoding(
     ay: ResolvedAxisStyle,
     ay_vl: VLDict,
     y_title: AxisTitle,
-    tooltip_format: str,
+    tooltip_format: ResolvedFormat,
 ) -> VLDict:
     """Build the VL y encoding dict from a resolved axis style.
 
     Tick values from ay.tick_values are baked into ay_vl["values"] when present.
 
     Callers that need a VL ``stack`` key (area charts) mutate the returned dict.
+
+    ``tooltip_format``'s affix never reaches this ``format``: the structured
+    tooltip carries it, or ``_reject_unstructured_tooltip_affix`` rejects it.
     """
     bake_tick_ladder(ay_vl, ay)
     return {
@@ -1657,7 +1667,7 @@ def build_cartesian_y_encoding(
         "title": y_title,
         "axis": ay_vl,
         "scale": resolve_measure_y_scale(ay),
-        "format": tooltip_format,
+        "format": tooltip_format.spec,
     }
 
 

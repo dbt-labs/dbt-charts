@@ -43,14 +43,14 @@ from dbt_charts.core.text.predefined_formats import (
 )
 from dbt_charts.core.utils import x_domain_order
 
-from ...conftest import fixture_chart_for_type
+from ...conftest import baked_format, fixture_chart_for_type
 
 
 def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
     chart_style_context = resolve_chart_style_context(
         get_theme_style(get_default_theme_name())
     )
-    ax_merged, ay_merged, ax_band_position, ay_band_position, _ = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("line"),
         "line",
@@ -58,18 +58,27 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
         "quantitative",
         AxisOverrides(),
     )
+    ax_merged, ay_merged, ax_band_position, ay_band_position = (
+        baked.x.style,
+        baked.y.style,
+        baked.x.band_position,
+        baked.y.band_position,
+    )
+
     return (
         build_resolved_axis(
             ax_merged,
+            format=baked_format(ax_merged),
             band_position=ax_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
         build_resolved_axis(
             ay_merged,
+            format=baked_format(ay_merged),
             band_position=ay_band_position,
             chart_id="test",
-            format_raw=None,
+            formats=None,
         ),
     )
 
@@ -345,7 +354,7 @@ class TestPinNormalizeAxisFormat:
         chart_style_context = resolve_chart_style_context(
             get_theme_style(get_default_theme_name())
         )
-        _, ay_merged, _, ay_band_position, ay_format_raw = _bake_cartesian_axes(
+        baked = _bake_cartesian_axes(
             chart_style_context,
             fixture_chart_for_type("line"),
             "line",
@@ -354,10 +363,11 @@ class TestPinNormalizeAxisFormat:
             AxisOverrides(),
         )
         return build_resolved_axis(
-            ay_merged,
-            band_position=ay_band_position,
+            baked.y.style,
+            format=baked.y.format,
+            band_position=baked.y.band_position,
             chart_id="test",
-            format_raw=ay_format_raw,
+            formats=None,
         )
 
     def test_clears_a_composed_label_expr(self) -> None:

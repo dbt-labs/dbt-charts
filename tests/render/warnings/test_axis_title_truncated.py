@@ -51,13 +51,7 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
     chart_style_context = resolve_chart_style_context(
         get_theme_style(get_default_theme_name())
     )
-    (
-        ax_merged,
-        ay_merged,
-        ax_band,
-        ay_band,
-        ay_format_raw,
-    ) = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context,
         fixture_chart_for_type("bar"),
         "bar",
@@ -67,16 +61,18 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
     )
     return (
         build_resolved_axis(
-            ax_merged,
-            band_position=ax_band,
+            baked.x.style,
+            format=baked.x.format,
+            band_position=baked.x.band_position,
             chart_id="test",
-            format_raw=ay_format_raw,
+            formats=None,
         ),
         build_resolved_axis(
-            ay_merged,
-            band_position=ay_band,
+            baked.y.style,
+            format=baked.y.format,
+            band_position=baked.y.band_position,
             chart_id="test",
-            format_raw=ay_format_raw,
+            formats=None,
         ),
     )
 

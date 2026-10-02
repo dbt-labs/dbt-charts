@@ -7,10 +7,17 @@ from typing import Literal
 from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.authored import KpiSupportConfig
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedKpiStyle
 
 from ._base import _BaseResolvedChartFields
+
+
+class ResolvedKpiSupportConfig(KpiSupportConfig):
+    format: ResolvedFormat | None = Field(
+        default=None,
+        description="Resolved support value format; a date value defaults to date_short when None.",
+    )
 
 
 class ResolvedKpiChart(_BaseResolvedChartFields):
@@ -42,7 +49,7 @@ class ResolvedKpiChart(_BaseResolvedChartFields):
         default="",
         description="KPI card label text rendered below the headline.",
     )
-    support: KpiSupportConfig | None = Field(
+    support: ResolvedKpiSupportConfig | None = Field(
         default=None,
         description="Optional support line below the headline.",
     )
@@ -50,7 +57,7 @@ class ResolvedKpiChart(_BaseResolvedChartFields):
         default="stacked",
         description="Layout variant — dispatches to a distinct SVG emit path.",
     )
-    format: FormatConfig | None = Field(
+    format: ResolvedFormat | None = Field(
         default=None,
         description=(
             "Final headline value format -- resolve() has already applied the "

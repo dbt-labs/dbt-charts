@@ -7,6 +7,7 @@ import re
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     zero_anchor_domain_floor,
     zero_anchor_floor,
@@ -428,7 +429,7 @@ HEATMAP_FORMAT_REMEDY = (
 
 
 def gate_label_format(
-    fmt: str | None,
+    fmt: ResolvedFormat | None,
     field: str,
     data: list[dict[str, Any]],  # type-state: explicit_any — raw query rows
     vl_type: str,
@@ -482,7 +483,7 @@ def gate_label_format(
     ``style.time_format`` text below, which is right on every family, so a
     temporal call site passing ``remedy=None`` is correct rather than lazy.
     """
-    if fmt is None or is_time_format(fmt):
+    if fmt is None or is_time_format(fmt.spec):
         return
     if vl_type not in ("nominal", "ordinal", "temporal"):
         return
@@ -518,7 +519,7 @@ def gate_label_format(
         ERR_LABEL_FORMAT_AXIS_MISMATCH,
         setting=setting,
         field=field,
-        fmt=fmt,
+        fmt=fmt.spec,
         remedy=remedy
         or default_remedy,  # type-state: silent_fallback — None means the default text
     )

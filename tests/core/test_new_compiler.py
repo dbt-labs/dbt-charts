@@ -1542,7 +1542,7 @@ rows:
   - my_donut
 """
         resolved, _ = self._resolved_chart(yaml_content, "my_donut")
-        assert resolved.style.total_style.value.format == ",.0f", (
+        assert resolved.style.total_style.value.format.spec == ",.0f", (
             f"auto-filled donut total must default its format to the "
             f"'integer' preset (full precision, thousands separators); got "
             f"{resolved.style.total_style.value.format!r}"
@@ -1579,7 +1579,7 @@ rows:
         resolved, _ = self._resolved_chart(yaml_content, "my_donut")
         assert resolved.total is not None
         assert resolved.total.label == "Custom Label"
-        assert resolved.style.total_style.value.format == ",.1f", (
+        assert resolved.style.total_style.value.format.spec == ",.1f", (
             f"authored style.total.value.format must win over the "
             f"resolve-time default; got {resolved.style.total_style.value.format!r}"
         )
@@ -1612,7 +1612,7 @@ rows:
   - my_donut
 """
         resolved, _ = self._resolved_chart(yaml_content, "my_donut")
-        assert resolved.style.total_style.value.format == ",d", (
+        assert resolved.style.total_style.value.format.spec == ",d", (
             f"authored format must be preserved untouched; got "
             f"{resolved.style.total_style.value.format!r}"
         )
@@ -1652,7 +1652,7 @@ rows:
         assert resolved.total.label == "Sessions", (
             f"authored label must be preserved untouched; got {resolved.total.label!r}"
         )
-        assert resolved.style.total_style.value.format == ",.0f", (
+        assert resolved.style.total_style.value.format.spec == ",.0f", (
             f"omitted format must still auto-fill to the 'integer' preset, or "
             f"the center renders an unformatted raw number; got "
             f"{resolved.style.total_style.value.format!r}"

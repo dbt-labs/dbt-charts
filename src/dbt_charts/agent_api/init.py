@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING
 from importlib_resources import files
 from pydantic import BaseModel, ConfigDict
 
+from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    SUPPORTED_ADAPTER_TYPES,
+    AdapterNotInstalledError,
+    import_adapter_module,
+)
 from dbt_charts.core.project import CHARTS_SUBDIR
+from dbt_charts.core.project_roots import infer_dialect_from_dbt
 
 if TYPE_CHECKING:
     from importlib_resources.abc import Traversable
@@ -95,6 +101,9 @@ def init_project(
 
     _ensure_gitignore_entries(root, result)
 
+    if dbt_detected:
+        _hint_missing_dbt_adapter(root, result)
+
     if eject_inspect:
         from dbt_charts.agent_api import inspect as _api_inspect
 
@@ -110,6 +119,17 @@ def init_project(
             )
 
     return result
+
+
+def _hint_missing_dbt_adapter(root: Path, result: InitResult) -> None:
+    """Warn now, not at the first render, when the dbt profile's adapter is absent."""
+    dialect = infer_dialect_from_dbt(root)
+    if dialect is None or dialect.lower() not in SUPPORTED_ADAPTER_TYPES:
+        return
+    try:
+        import_adapter_module(dialect)
+    except AdapterNotInstalledError as exc:
+        result.hints.append(str(exc))
 
 
 def _ensure_gitignore_entries(root: Path, result: InitResult) -> None:

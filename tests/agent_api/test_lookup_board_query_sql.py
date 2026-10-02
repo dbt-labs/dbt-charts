@@ -10,6 +10,8 @@ from unittest.mock import patch
 from dbt_charts.agent_api.query import lookup_board_query_sql
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
+from .._paths import DBT_CHARTS_DIR
+
 BOARD = """
 variables:
   year:
@@ -103,7 +105,7 @@ charts:
 """
 
 _MANIFEST_FIXTURE = (
-    Path(__file__).parent.parent / "fixtures" / "dbt_core_manifest" / "manifest.json"
+    DBT_CHARTS_DIR / "tests" / "fixtures" / "dbt_core_manifest" / "manifest.json"
 )
 
 
@@ -191,3 +193,54 @@ def test_preview_of_a_ref_opens_no_warehouse_connection(
     ):
         result = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)
     assert result.success, result.errors
+
+
+def test_preview_resolves_refs_against_the_sources_target_path(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """The previewed SQL targets the manifest the source's target built, not the
+    default one."""
+    import json
+
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "b.yml").write_text(
+        "queries:\n"
+        "  main:\n"
+        "    sql: SELECT * FROM {{ ref('orders') }}\n"
+        "    source: db\n"
+        "charts:\n"
+        "  c:\n"
+        "    type: table\n"
+        "    query: main\n"
+    )
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n"
+        "  db:\n"
+        "    type: dbt_profile\n"
+        "    profile: p\n"
+        "    target_path: target/prod\n"
+    )
+    for directory, schema in (("target", "dev"), ("target/prod", "prod")):
+        (tmp_path / directory).mkdir(exist_ok=True)
+        (tmp_path / directory / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "nodes": {
+                        "model.p.orders": {
+                            "resource_type": "model",
+                            "name": "orders",
+                            "schema": schema,
+                            "alias": "orders",
+                        }
+                    },
+                    "sources": {},
+                }
+            )
+        )
+
+    result = lookup_board_query_sql(
+        "main", Path("charts/b.yml"), project=local_project(tmp_path)
+    )
+
+    assert result.success, result.errors
+    assert result.sql == "SELECT * FROM prod.orders"

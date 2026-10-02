@@ -4,8 +4,24 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
-from dbt_charts.core.compile.models.style.theme import SliceMarkStyle, TotalStyle
+from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
+from dbt_charts.core.compile.models.style.theme import (
+    SliceMarkStyle,
+    TotalStyle,
+    TotalValueSlotStyle,
+)
+
+
+class ResolvedTotalValueSlot(TotalValueSlotStyle):
+    format: ResolvedFormat | None = Field(
+        default=None, description="Resolved donut center value format."
+    )
+
+
+class ResolvedTotalStyle(TotalStyle):
+    value: ResolvedTotalValueSlot = Field(
+        description="Donut center value paint and its resolved format."
+    )
 
 
 class ResolvedPieStyle(BaseModel):
@@ -19,10 +35,10 @@ class ResolvedPieStyle(BaseModel):
     slice_mark: SliceMarkStyle = Field(
         description="Cascade-merged slice mark geometry (opacity, corner radius, labels).",
     )
-    tooltip_format: str = Field(
+    tooltip_format: ResolvedFormat = Field(
         description="Resolved d3 tooltip number format ('' = VL default).",
     )
-    total_style: TotalStyle = Field(
+    total_style: ResolvedTotalStyle = Field(
         description="Donut center total paint: value number (font + resolved format) and caption label (font).",
     )
     title_font: ResolvedFontStyle | None = Field(
@@ -31,4 +47,4 @@ class ResolvedPieStyle(BaseModel):
     )
 
 
-__all__ = ["ResolvedPieStyle"]
+__all__ = ["ResolvedPieStyle", "ResolvedTotalStyle", "ResolvedTotalValueSlot"]

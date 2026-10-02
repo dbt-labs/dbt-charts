@@ -61,6 +61,7 @@ from dbt_charts.core.compile.sql_guard import (
     sqlglot_dialect,
 )
 from dbt_charts.core.dbt_manifest import LoadedManifest, load_manifest
+from dbt_charts.core.dbt_ref_check import query_target_paths
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_DBT_MODEL_COLUMN_MISSING,
@@ -451,16 +452,6 @@ def check_model_columns(compile_result: CompileResult, project: Project) -> None
         # A board that failed compile has no query registry to analyze; its
         # own compile errors are the report.
         return
-    try:
-        loaded = load_manifest(project)
-    except ExecutionError as exc:
-        diagnostic = exc.to_diagnostic()
-        if all(e.code != diagnostic.code for e in compile_result.errors):
-            compile_result.errors.append(diagnostic)
-        return
-    if loaded is None:
-        return
-
     dbt_queries = {
         name
         for name, query in compile_result.query_registry.items()
@@ -470,18 +461,26 @@ def check_model_columns(compile_result: CompileResult, project: Project) -> None
             or (query.setup_sql is not None and has_dbt_jinja(query.setup_sql))
         )
     }
-    if not dbt_queries:
-        # No query calls ref()/source() — nothing here makes a dbt claim.
+    target_paths = query_target_paths(compile_result, project, dbt_queries)
+    manifests: dict[str | None, LoadedManifest] = {}
+    # The default manifest is read even when no query calls ref(): an unreadable
+    # one is a fault the author should hear about.
+    for target_path in dict.fromkeys([None, *target_paths.values()]):
+        reads_it = target_path is not None or None in target_paths.values()
+        try:
+            loaded = load_manifest(project, target_path, optional=not reads_it)
+        except ExecutionError as exc:
+            diagnostic = exc.to_diagnostic()
+            if diagnostic not in compile_result.errors:
+                compile_result.errors.append(diagnostic)
+            continue
+        if loaded is not None:
+            manifests[target_path] = loaded
+    if not manifests or not dbt_queries:
         return
 
     column_refs = extract_base_column_refs(compile_result)
-    # The per-node derivation walk is only owed when some determinate query
-    # actually reached a table through ref().
-    models = (
-        resolve_model_output_columns(loaded)
-        if any(refs.via_dbt for refs in column_refs.values())
-        else {}
-    )
+    models_by_path: dict[str | None, dict[str, ModelColumns]] = {}
     warned: set[tuple[str, str]] = set()
 
     for query_name, refs in column_refs.items():
@@ -505,7 +504,13 @@ def check_model_columns(compile_result: CompileResult, project: Project) -> None
             table_l = table.lower()
             if table_l not in refs.via_dbt:
                 continue
-            model = models.get(table_l)
+            target_path = target_paths.get(query_name)
+            if target_path not in models_by_path:
+                loaded = manifests.get(target_path)
+                models_by_path[target_path] = (
+                    resolve_model_output_columns(loaded) if loaded else {}
+                )
+            model = models_by_path[target_path].get(table_l)
             if model is None:
                 continue
             if model.unresolved is not None:

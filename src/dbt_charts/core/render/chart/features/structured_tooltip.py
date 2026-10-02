@@ -43,6 +43,7 @@ from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatma
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
@@ -81,7 +82,7 @@ _CHART_TYPE_LUT_KEY: dict[type[_SeriesCartesianChart], str] = {
 
 # Percent-of-total tooltip rows always use a whole-percent d3-format — this is
 # a fixed tooltip convention, not a themeable presentation value.
-_PERCENT_TOOLTIP_FORMAT = ".0%"
+_PERCENT_TOOLTIP_FORMAT = ResolvedFormat(spec=".0%")
 
 # Fields added by _stack_group_total to a stacked bar/area's own data
 # pipeline (server-side joinaggregate + calculate — VL's stack:normalize/zero
@@ -92,7 +93,7 @@ _GROUP_PCT_FIELD = "__dct_group_pct"
 
 
 def _value_tooltip_field(
-    field: str, title: str, data: ChartRenderData, fmt: str
+    field: str, title: str, data: ChartRenderData, fmt: ResolvedFormat
 ) -> TooltipField:
     """One dependent/peer VALUE row honoring the datum's inferred VL type.
 
@@ -251,7 +252,12 @@ def _span_values(
     """
     assert chart.y is not None and chart.y_start is not None
     if chart.measure_type == "temporal":
-        end = TooltipField(chart.y, end.title, kind="temporal", format=SPAN_DATE_FORMAT)
+        end = TooltipField(
+            chart.y,
+            end.title,
+            kind="temporal",
+            format=ResolvedFormat(spec=SPAN_DATE_FORMAT),
+        )
     start = replace(end, field=chart.y_start, title=default_axis_title(chart.y_start))
     layers = [layer for layer in chart.layers if _shares_rows(layer, chart)]
     inner = next(
@@ -549,7 +555,11 @@ def _scatter_roles(
     # cannot raise here: the emitter made it on these identical values first,
     # under the identical gate, and `applies_to` excludes layers and multiples.
     if infer_vega_type_from_data(data, chart.x) == "quantitative":
-        x_row = TooltipField(chart.x, x_title, kind="quantitative", format=fmt)
+        # The affix is y's own currency/unit label and must not paint x's
+        # unrelated measure too; x keeps only the shared digit spec.
+        x_row = TooltipField(
+            chart.x, x_title, kind="quantitative", format=ResolvedFormat(spec=fmt.spec)
+        )
     else:
         x_data = normalize_labeled_temporal(data, chart.x)
         x_row = header_tooltip_field(chart.x, x_title, x_data)

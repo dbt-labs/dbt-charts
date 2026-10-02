@@ -293,7 +293,6 @@ style:
       visible: true
 
     legend:
-      position: right
       direction: vertical
       columns: 0
       compact_columns: 2

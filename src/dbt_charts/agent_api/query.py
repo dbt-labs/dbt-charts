@@ -81,6 +81,7 @@ def lookup_board_query_sql(
     from dbt_charts.core.compile.template.parameterized import (
         render_parameterized_with_queries,
     )
+    from dbt_charts.core.dbt_ref_check import named_source_target_path
     from dbt_charts.core.diagnostics.execution import ExecutionError
     from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
     from dbt_charts.core.execute.executor import resolve_query_references
@@ -132,6 +133,9 @@ def lookup_board_query_sql(
     source_type = dialect_for_source(query.source, project.sources.sources)
     warehouse = get_dialect(source_type) if source_type else None
     dbt_refs = DbtRefResolver(project)
+    target_path = named_source_target_path(
+        query.source, board.sources, project.sources.sources
+    )
     try:
         merged_vars = merge_board_variables(board, vars or {})
         # {{ queries.X }} is expanded to text first, recursively, exactly as the
@@ -145,7 +149,7 @@ def lookup_board_query_sql(
             query_name=name,
         )
         assert isinstance(expanded_query, SqlQuery)
-        resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql)
+        resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql, target_path)
         rendered = render_parameterized_with_queries(
             resolved_sql,
             merged_vars,
@@ -159,7 +163,7 @@ def lookup_board_query_sql(
         # reference reaches `render_parameterized_with_queries` unexpanded and
         # is inlined there instead — carrying any `ref()` call X's own SQL had.
         # Do not remove this as redundant with the first resolve above.
-        composed_sql, _inlined_relations = dbt_refs.resolve(rendered.sql)
+        composed_sql, _inlined_relations = dbt_refs.resolve(rendered.sql, target_path)
     except (JinjaError, ExecutionError) as exc:
         return BoardQueryLookupResult(success=False, errors=[str(exc)])
 

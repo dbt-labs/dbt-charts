@@ -29,6 +29,8 @@ import vl_convert as vlc
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import BarChart
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from dbt_charts.core.compile.models.style.resolved import ResolvedBarLabels
 from dbt_charts.core.compile.models.style.theme.marks import BarLabelsStyle
 from dbt_charts.core.compile.resolve.chart._axes import _bake_cartesian_axes
 from dbt_charts.core.compile.resolve.chart._marks import _label_format_fallback
@@ -66,20 +68,15 @@ def _resolved_axis_y_for_format(format_spec: str) -> object:
     survives to the resolved axis unlike a bare theme-level override."""
     chart_style_context = resolve_chart_style_context(get_theme_style("stark"))
     chart = BarChart(id="fixture", type="bar", format=format_spec)
-    (
-        _ax_merged,
-        ay_merged,
-        _ax_band,
-        ay_band,
-        ay_format_raw,
-    ) = _bake_cartesian_axes(
+    baked = _bake_cartesian_axes(
         chart_style_context, chart, "bar", "ordinal", "quantitative", AxisOverrides()
     )
     return build_resolved_axis(
-        ay_merged,
-        band_position=ay_band,
+        baked.y.style,
+        format=baked.y.format,
+        band_position=baked.y.band_position,
         chart_id="t",
-        format_raw=ay_format_raw,
+        formats=None,
     )
 
 
@@ -114,11 +111,15 @@ def test_mark_value_label_inline_si_passes_through() -> None:
     Python-side format_d3 and Vega render the same digit count."""
     labels = BarLabelsStyle(format=".3s")
     resolved_labels, _ = _label_format_fallback(
-        labels, axis_format=None, axis_house_default=False, formats={}
+        labels,
+        ResolvedBarLabels,
+        axis_format=None,
+        axis_house_default=False,
+        formats={},
     )
-    assert resolved_labels.format == ".3s"
+    assert resolved_labels.format == ResolvedFormat(spec=".3s", raw=".3s")
 
-    rendered = _render_text_via_vega(1_000_000.0, resolved_labels.format)
+    rendered = _render_text_via_vega(1_000_000.0, resolved_labels.format.spec)
     assert rendered == "1.00M"
 
 

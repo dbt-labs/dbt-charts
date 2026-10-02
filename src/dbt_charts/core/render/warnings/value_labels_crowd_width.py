@@ -22,7 +22,7 @@ from __future__ import annotations
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
-from dbt_charts.core.compile.models.style.theme import MarkLabelsStyle
+from dbt_charts.core.compile.models.style.resolved import ResolvedMarkLabels
 from dbt_charts.core.diagnostics import WARN_VALUE_LABELS_CROWD_WIDTH, Diagnostic
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart.emitters._cartesian import widest_panel_distinct_count
@@ -48,7 +48,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         # Family + value-label slot. Horizontal bars run the label along the bar
         # length (a different axis) and are out of scope; area labels ride the
         # overlaid line mark.
-        labels: MarkLabelsStyle
+        labels: ResolvedMarkLabels
         # `mark_key` is the authored `marks.<key>` the labels came from, so the
         # warning marks where they were switched on. Area labels ride the
         # overlaid *line* mark, which is why it is not always the family name.

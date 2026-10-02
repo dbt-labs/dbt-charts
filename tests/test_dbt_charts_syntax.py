@@ -46,6 +46,15 @@ def test_sources_registry_has_its_own_topic() -> None:
         assert f"type: {source_type}" in section, f"no `type: {source_type}` example"
 
 
+def test_format_object_form_is_documented_in_syntax() -> None:
+    """A format slot accepts a `{spec, prefix, suffix, notation}` object, not just a
+    string or a named alias.
+    """
+    section = _SYNTAX_TEXT.split("\n## Charts\n", 1)[1].split("\n## ", 1)[0]
+    assert "prefix" in section and "suffix" in section and "notation" in section
+    assert "style.formats" in section
+
+
 @pytest.mark.parametrize("value", sorted(set(get_args(VariableInputType))))
 def test_variable_input_type_documented_in_syntax(value: str) -> None:
     """Every VariableInputType literal must appear in DBT_CHARTS_SYNTAX.md."""

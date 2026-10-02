@@ -367,6 +367,36 @@ class TestV2MirrorAxis:
         padding_by_orient = _y_axis_key_by_orient(spec, "labelPadding")
         assert padding_by_orient["left"] > 0
 
+    def test_mirror_with_affixed_format_measures_the_ghost_gutter(self):
+        """An affixed format paints via labelExpr, not ``format``; the ghost still
+        measures the affixed labels instead of finding nothing to measure."""
+        base = {
+            "id": "t",
+            "type": "line",
+            "x": "month",
+            "y": "value",
+        }
+
+        def left_padding(fmt: object) -> float:
+            chart = LineChart.model_validate(
+                {
+                    **base,
+                    "style": {
+                        "axis_y": {
+                            "mirror": True,
+                            "position": "right",
+                            "labels": {"align": "left", "format": fmt},
+                        }
+                    },
+                }
+            )
+            spec = _v2_vl(chart, _wide_data())
+            return _y_axis_key_by_orient(spec, "labelPadding")["left"]
+
+        plain = left_padding(",.0f")
+        affixed = left_padding({"spec": ",.0f", "prefix": "EUR "})
+        assert affixed > plain > 0
+
     def test_mirror_measures_tick_label_not_label_format(self):
         """Same measurement-must-match-paint contrast as vl_field_maps.py's
         own-side-align guard (see test_vega_lite_axes.py's
@@ -407,6 +437,34 @@ class TestV2MirrorAxis:
         unauthored_padding = _padding({"align": "left"})
         authored_si_padding = _padding({"align": "left", "format": ".3~s"})
         assert unauthored_padding > authored_si_padding
+
+    def test_mirror_format_ghost_measures_its_own_tick_label(self):
+        """A ladder-less mirror.format preset paints sub-1 values as plain digits
+        (``mirror.tick_label``); the ghost gutter must measure those, not the
+        SI milli strings the bare spec would give."""
+
+        def _padding(mirror_format: str) -> float:
+            chart = LineChart.model_validate(
+                {
+                    "id": "t",
+                    "type": "line",
+                    "x": "month",
+                    "y": "value",
+                    "style": {
+                        "axis_y": {
+                            "mirror": {"format": mirror_format},
+                            "position": "left",
+                            "labels": {"align": "right"},
+                            "ticks": {"count": None},
+                        }
+                    },
+                }
+            )
+            data = [{"month": i, "value": 0.1 + i * 0.1} for i in range(6)]
+            spec = _v2_vl(chart, data)
+            return float(_y_axis_key_by_orient(spec, "labelPadding")["right"])
+
+        assert _padding("number") < _padding(".3~s")
 
     def test_mirror_with_explicit_label_align_computes_padding_on_stark_theme(self):
         """Same as above, but on a theme (``stark``) that never bakes
@@ -768,6 +826,38 @@ class TestV2MirrorAxis:
         formats = _y_axis_key_by_orient(spec, "format")
         assert formats == {"right": "$.2s", "left": ".2s"}
 
+    def test_mirror_format_override_with_affix_measures_the_composed_labelExpr(
+        self,
+    ) -> None:
+        """Regression: `mirror: {format: {spec, prefix}}` composes a `labelExpr` on the
+        ghost (`compose_axis_format`), not VL's native `format`.
+        """
+
+        def _padding(mirror_format: Any) -> float:
+            chart = LineChart.model_validate(
+                {
+                    "id": "t",
+                    "type": "line",
+                    "x": "month",
+                    "y": "value",
+                    "style": {
+                        "axis_y": {
+                            "position": "right",
+                            "labels": {"align": "left", "format": ",.0f"},
+                            "mirror": {"format": mirror_format},
+                        }
+                    },
+                }
+            )
+            data = [{"month": i, "value": 10_000 + i * 10_000} for i in range(6)]
+            spec = _v2_vl(chart, data)
+            padding_by_orient = _y_axis_key_by_orient(spec, "labelPadding")
+            return float(padding_by_orient["left"])
+
+        bare_padding = _padding(",.0f")
+        affixed_padding = _padding({"spec": ",.0f", "prefix": "EUR "})
+        assert affixed_padding > bare_padding
+
     def test_mirror_format_override_drops_inherited_label_expr(self):
         """When the primary axis carries a labelExpr (style.axis_y.labels.expr)
         and the mirror override is `format:`, the ghost must drop the inherited
@@ -929,7 +1019,7 @@ class TestV2MirrorAxisRulerMechanism:
         assert exprs["left"] is None
 
     def test_right_primary_case_wraps_ghost_the_same_as_primary(self):
-        """Regression: the ghost's rebuilt labelExpr (mirror_ruler differs
+        """Regression: the ghost's rebuilt labelExpr (mirror.ruler differs
         from the inherited copy's mechanism, same as the two tests above)
         dropped the ``inject_axis_label_case`` wrapper entirely -- it called
         ``inject_axis_numeral_expr`` alone, never the case wrap line.py's
@@ -1024,7 +1114,7 @@ class TestRenderAccurateAnchoring:
         assert "pad(" not in axis["labelExpr"]
 
     def test_outward_align_mirror_bakes_no_ruler_on_either_edge(self):
-        """Regression: ``mirror_ruler`` used to derive the ghost's
+        """Regression: ``mirror.ruler`` used to derive the ghost's
         anchoring by re-resolving the AUTHORED ``inward``/``outward``
         directive against the ghost's OWN (opposite) edge
         (``_resolve_own_side_align(axis.labels.align, opposite_edge)``).
@@ -1070,7 +1160,7 @@ class TestRenderAccurateAnchoring:
         only reached ``line.py``. ``area.py``/``bar.py``/``scatter.py``
         still called ``inject_axis_numeral_expr`` alone for their own
         y-axis build, so the mirror ghost (which always rebuilds through
-        the full chain once ``mirror_ruler`` bakes) case-wrapped its text
+        the full chain once ``mirror.ruler`` bakes) case-wrapped its text
         while the primary did not -- the exact bug fixed last round,
         reintroduced in the opposite direction on every non-line chart.
         """

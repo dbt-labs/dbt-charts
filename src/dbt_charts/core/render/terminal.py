@@ -25,6 +25,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     VariableValues,
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import FormatAliases
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.conditions import evaluate_visible
@@ -217,7 +218,12 @@ def render_layout_item_terminal(
         return ""
     if item.type == "chart" and item.chart:
         return render_chart_item_terminal(
-            item.chart, executor, variables, available_width, available_height
+            item.chart,
+            executor,
+            variables,
+            available_width,
+            available_height,
+            formats=resolved_style.chart_defaults.formats,
         )
     elif item.type == "board" and item.board:
         return render_nested_board_terminal(
@@ -237,6 +243,8 @@ def render_chart_item_terminal(
     variables: VariableValues,
     available_width: int,
     available_height: int,
+    *,
+    formats: FormatAliases | None,
 ) -> str:
     """Render a chart item to terminal.
 
@@ -246,6 +254,7 @@ def render_chart_item_terminal(
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
+        formats: Board-level style.formats alias map (ResolvedStyle.formats).
 
     Returns:
         Terminal-formatted chart string
@@ -268,6 +277,7 @@ def render_chart_item_terminal(
             width=available_width,
             height=available_height,
             colors=True,
+            formats=formats,
         )
 
     except (ValueError, KeyError, TypeError, AttributeError, DbtChartsError) as e:

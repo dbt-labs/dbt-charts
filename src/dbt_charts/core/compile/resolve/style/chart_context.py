@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import Chart, _CartesianChartFields
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import AuthoredFormat, FormatConfig
 from dbt_charts.core.compile.models.style.authored import ChartStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme import ChartsStyle
@@ -27,6 +27,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
+from dbt_charts.core.compile.resolve.style.legend_position import without_position
 from dbt_charts.core.compile.resolve.style.palette import ink_canvas
 from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
@@ -130,7 +131,7 @@ def _defer_base_none_children(base: BaseModel, patch: BaseModel) -> BaseModel:
 
 def chart_authored_axis_format(
     chart: Chart, channel_type: str
-) -> str | FormatConfig | None:
+) -> AuthoredFormat | None:
     """Return the chart-level axis-format fallback for one channel, or None.
 
     Precedence: style.number_format (quantitative) / style.time_format
@@ -151,11 +152,7 @@ def chart_authored_axis_format(
     ``resolved_axis_style()`` and win over this fallback automatically; folding
     them in here too would just duplicate that merge.
 
-    ``chart.format`` accepts the documented object form (``FormatConfig``,
-    e.g. ``format: {spec: ",.0f"}``) as well as a plain D3 string; the caller
-    resolves either through ``resolve_format()``, which already extracts
-    ``FormatConfig.spec``. ``style.number_format``/``style.time_format`` are
-    plain-string theme fields with no object form.
+    Returns the raw authored value (a spec string or a ``FormatConfig``).
     """
     if channel_type not in ("quantitative", "temporal"):
         return None
@@ -169,7 +166,7 @@ def chart_authored_axis_format(
         if primary is not None and isinstance(primary.time_format, str):
             return primary.time_format
         return None
-    if primary is not None and isinstance(primary.number_format, str):
+    if primary is not None and isinstance(primary.number_format, (str, FormatConfig)):
         return primary.number_format
     if isinstance(chart.format, (str, FormatConfig)):
         return chart.format
@@ -442,6 +439,9 @@ def build_chart_style_context(
         _global = getattr(base_charts, _field)
         _effective = _global
         _family_patch = _family_field_patch(base_charts, chart_type, _field)
+        if _field == "legend":
+            # Placement is decided per chart (`_base_kwargs`), not merged here.
+            _family_patch = without_position(_family_patch)
         if _family_patch is not None:
             _effective = merge_onto_base(_effective, _family_patch)
         _local = None
@@ -449,6 +449,8 @@ def build_chart_style_context(
             _local = getattr(
                 primary, _field, None
             )  # type-state: silent_fallback — primary is a per-family patch union; see the support_table precedent above
+        if _field == "legend":
+            _local = without_position(_local)
         if _local is not None:
             _effective = merge_onto_base(_effective, _local)
         if _effective is not _global:

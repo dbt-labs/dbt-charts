@@ -4,7 +4,10 @@ import re
 import threading
 from typing import TYPE_CHECKING
 
-from dbt_charts.core.dbt_manifest import MANIFEST_CANDIDATES
+from dbt_charts.core.compile.models.source import (
+    DbtProfileSourceConfig,
+    DbtTargetSourceConfig,
+)
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_DBT_CALL_UNSUPPORTED,
     ERR_DBT_MANIFEST_MISSING,
@@ -22,10 +25,18 @@ from dbt_charts.core.execute.dbt_jinja import (
 )
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.source import ResolvedSourceConfig
     from dbt_charts.core.dbt_manifest import RefIndex
     from dbt_charts.core.project import Project
 
 DBT_PROJECT_DB_NAMES = ["sample.duckdb", "dbt_charts_examples.duckdb", "dev.duckdb"]
+
+
+def source_target_path(source_config: "ResolvedSourceConfig | None") -> str | None:
+    """The manifest directory a dbt_profile source authored, before or after expansion."""
+    if isinstance(source_config, DbtProfileSourceConfig | DbtTargetSourceConfig):
+        return source_config.target_path
+    return None
 
 
 def resolve_dbt_refs_with_provenance(
@@ -92,6 +103,10 @@ class DbtRefResolver:
     `_compose_query_refs` that runs ahead of (and independently from) any
     adapter's own resolve-then-render.
 
+    ``resolve(sql, target_path)`` selects the manifest, with one index built
+    lazily per ``target_path``: a source's authored one picks the manifest its
+    target built, none picks dbt's default location.
+
     The manifest is the gate. SQL without dbt Jinja is returned untouched and
     reads no files; SQL with it and no manifest to resolve against raises
     ERR-DBT-MANIFEST-MISSING rather than passing the call downstream.
@@ -107,14 +122,17 @@ class DbtRefResolver:
                 there is nothing to resolve it against.
         """
         self._project = project
-        self._index: RefIndex | None = None
-        self._loaded = False
+        # Keyed by the authored target_path (None = dbt's default location);
+        # an index of None marks a manifest that does not exist.
+        self._indexes: dict[str | None, tuple[str, RefIndex | None]] = {}
         # One resolver is shared across the executor's worker threads; the
-        # lock makes the first load atomic so a concurrent resolve() never
-        # sees _loaded=True with the index still unbuilt.
+        # lock makes each first load atomic so a concurrent resolve() never
+        # sees a path marked loaded with its index still unbuilt.
         self._load_lock = threading.Lock()
 
-    def resolve(self, sql: str) -> tuple[str, list[ResolvedRelation]]:
+    def resolve(
+        self, sql: str, target_path: str | None = None
+    ) -> tuple[str, list[ResolvedRelation]]:
         """Return `sql` with refs replaced by relations, plus their lineage.
 
         Raises:
@@ -129,34 +147,32 @@ class DbtRefResolver:
         if not has_dbt_jinja(sql):
             return sql, []
 
-        self._load()
-        if self._index is None:
+        relpath, index = self._index_for(target_path)
+        if index is None:
             raise ExecutionError.from_code(
                 ERR_DBT_MANIFEST_MISSING,
                 kind=dbt_macro_kind(sql),
-                paths=list(MANIFEST_CANDIDATES),
+                paths=[relpath],
             )
-        return resolve_dbt_refs_with_provenance(sql, self._index)
+        return resolve_dbt_refs_with_provenance(sql, index)
 
-    def _load(self) -> None:
-        """Build the dev ref/source index once."""
+    def _index_for(self, target_path: str | None) -> tuple[str, "RefIndex | None"]:
+        """The manifest path and its ref/source index, built once per target_path."""
+        from dbt_charts.core.dbt_manifest import (  # noqa: PLC0415
+            load_manifest,
+            manifest_relpath,
+            ref_index,
+        )
+
         with self._load_lock:
-            if self._loaded:
-                return
-
-            project = self._project
-            if project is None:
-                self._loaded = True
-                return
-
-            from dbt_charts.core.dbt_manifest import (  # noqa: PLC0415
-                load_manifest,
-                ref_index,
-            )
-
-            loaded = load_manifest(project)
-            if loaded is None:
-                self._loaded = True
-                return
-            self._index = ref_index(loaded)
-            self._loaded = True
+            if target_path not in self._indexes:
+                project = self._project
+                relpath = manifest_relpath(project, target_path)
+                loaded = (
+                    load_manifest(project, target_path) if project is not None else None
+                )
+                self._indexes[target_path] = (
+                    relpath,
+                    ref_index(loaded) if loaded is not None else None,
+                )
+            return self._indexes[target_path]

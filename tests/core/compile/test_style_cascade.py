@@ -60,6 +60,8 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 
+from ..conftest import baked_format
+
 # `_base` is the hidden completeness floor beneath every built-in theme, not
 # itself an author-facing pick; `diagnostics-*` themes are render-diagnostic
 # fixtures. Everything else -- including `stark`, the structural root every
@@ -151,7 +153,7 @@ class TestChartLocalAxisYMerge:
         merged = resolved_axis_style(
             result, "axis_y", "quantitative", chart_type="", label_authored=False
         )
-        assert merged.labels.format == "$,.0f"
+        assert merged.labels.format.spec == "$,.0f"
 
     def test_axis_y_does_not_leak_to_axis_x(self) -> None:
         patch = BarChartStylePatch(
@@ -409,7 +411,8 @@ class TestChartTypeAxisAlignCascade:
     ``edge=None`` can't see that (it's a generic cascade reader, not a
     per-chart resolver), so propagation here is checked at the merge stage
     (``_merge_axis_cascade`` + the raw patch) and via an explicit
-    ``build_resolved_axis(..., edge=...)`` call. Edge resolution itself is
+    ``build_resolved_axis(...,
+        format=baked_format(...), edge=...)`` call. Edge resolution itself is
     covered by ``TestOwnSideAlignEdgeMapping`` below.
     """
 
@@ -444,30 +447,33 @@ class TestChartTypeAxisAlignCascade:
         assert (
             build_resolved_axis(
                 merged,
+                format=baked_format(merged),
                 band_position=band_position,
                 edge="left",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "left"
         )
         assert (
             build_resolved_axis(
                 merged,
+                format=baked_format(merged),
                 band_position=band_position,
                 edge="right",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "right"
         )
         assert (
             build_resolved_axis(
                 merged,
+                format=baked_format(merged),
                 band_position=band_position,
                 edge=None,
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             is None
         )
@@ -494,10 +500,11 @@ class TestChartTypeAxisAlignCascade:
         assert (
             build_resolved_axis(
                 merged,
+                format=baked_format(merged),
                 band_position=band_position,
                 edge="left",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "left"
         )
@@ -524,10 +531,11 @@ class TestChartTypeAxisAlignCascade:
         assert (
             build_resolved_axis(
                 merged,
+                format=baked_format(merged),
                 band_position=band_position,
                 edge="left",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "left"
         )
@@ -558,9 +566,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="left",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "left"
         )
@@ -570,9 +579,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="right",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "right"
         )
@@ -583,9 +593,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="left",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "right"
         )
@@ -595,9 +606,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="right",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "left"
         )
@@ -609,9 +621,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge=None,
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             is None
         )
@@ -621,9 +634,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge=None,
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             is None
         )
@@ -633,9 +647,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="right",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "left"
         )
@@ -645,9 +660,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="left",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "right"
         )
@@ -657,9 +673,10 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="right",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).title.align
             == "right"
         )
@@ -674,27 +691,30 @@ class TestOwnSideAlignEdgeMapping:
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="left",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "center"
         )
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge="right",
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "center"
         )
         assert (
             build_resolved_axis(
                 axis,
+                format=baked_format(axis),
                 edge=None,
                 chart_id="test",
-                format_raw=None,
+                formats=None,
             ).labels.align
             == "center"
         )
@@ -737,13 +757,6 @@ class TestChartLocalLegendMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         assert result.legend.visible is False
-
-    def test_legend_orientation_propagates(self) -> None:
-        patch = BarChartStylePatch(legend=LegendStylePatch(position="left"))
-        result = build_chart_style_context(
-            _board(), BarChart(id="t", type="bar", style=patch)
-        )
-        assert result.legend.position == "left"
 
 
 class TestAxisScaleCascade:
@@ -1166,7 +1179,7 @@ class TestChartFormatPropagation:
         board = _board()
         chart = LineChart(id="t", type="line", format=",.0f")
         resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
-        assert resolved.style.axis_y.labels.format == ",.0f", (
+        assert resolved.style.axis_y.labels.format.spec == ",.0f", (
             f"axis_y.labels.format should be ',.0f' (from chart.format), "
             f"got {resolved.style.axis_y.labels.format!r}"
         )
@@ -1188,7 +1201,7 @@ class TestChartFormatPropagation:
         )
         chart = BarChart(id="t", type="bar", format=",.0f", style=patch)
         resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
-        assert resolved.style.axis_y.labels.format == ",.2f", (
+        assert resolved.style.axis_y.labels.format.spec == ",.2f", (
             f"explicit style.axis_quantitative.format=',.2f' should win over "
             f"chart.format=',.0f', got {resolved.style.axis_y.labels.format!r}"
         )
@@ -1231,7 +1244,7 @@ class TestChartFormatPropagation:
 
         resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
 
-        assert resolved.style.axis_y.labels.format == ",.0f"
+        assert resolved.style.axis_y.labels.format.spec == ",.0f"
 
     def test_chart_format_object_form_propagates_via_compile_path(self) -> None:
         """chart.format as a FormatConfig object propagates like the string form.
@@ -1243,7 +1256,7 @@ class TestChartFormatPropagation:
         board = _board()
         chart = LineChart(id="t", type="line", format=FormatConfig(spec=",.0f"))
         resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
-        assert resolved.style.axis_y.labels.format == ",.0f", (
+        assert resolved.style.axis_y.labels.format.spec == ",.0f", (
             f"axis_y.labels.format should be ',.0f' (from chart.format "
             f"as a FormatConfig object), got {resolved.style.axis_y.labels.format!r}"
         )
@@ -1262,7 +1275,7 @@ class TestChartFormatPropagation:
         resolved = resolve(
             chart, [{"price": 10.0}, {"price": 20.0}], chart_style_context=board
         )
-        assert resolved.style.axis_y.labels.format == ",.2f", (
+        assert resolved.style.axis_y.labels.format.spec == ",.2f", (
             f"histogram axis_y.labels.format should be ',.2f' (from chart.format), "
             f"got {resolved.style.axis_y.labels.format!r}"
         )
@@ -1283,7 +1296,7 @@ class TestChartFormatPropagation:
         chart = LineChart(id="t", type="line", x="month", y="revenue", style=patch)
         data = [{"month": "2024-01-01", "revenue": 100}]
         resolved = resolve(chart, data, chart_style_context=board)
-        assert resolved.style.axis_x.labels.format == "%b %Y", (
+        assert resolved.style.axis_x.labels.format.spec == "%b %Y", (
             f"axis_x.labels.format should be '%b %Y' (from style.time_format), "
             f"got {resolved.style.axis_x.labels.format!r}"
         )
@@ -1308,7 +1321,7 @@ class TestChartFormatPropagation:
             f"axis_x.labels.format should stay unset (chart.format must not leak "
             f"onto the temporal x-axis), got {resolved.style.axis_x.labels.format!r}"
         )
-        assert resolved.style.axis_y.labels.format == "$,.0f", (
+        assert resolved.style.axis_y.labels.format.spec == "$,.0f", (
             "chart.format should still apply to the quantitative y-axis"
         )
 
@@ -1343,7 +1356,7 @@ class TestChartFormatPropagation:
             f"x-axis (it stays on the theme's generic quantitative-axis "
             f"default), got {resolved.style.axis_x.labels.format!r}"
         )
-        assert resolved.style.axis_y.labels.format == "$,.0f", (
+        assert resolved.style.axis_y.labels.format.spec == "$,.0f", (
             "number_format should still apply to the quantitative y-axis"
         )
 

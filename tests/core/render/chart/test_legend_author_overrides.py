@@ -107,23 +107,27 @@ class TestAuthoredVisibleTrueBeatsTheEndpointRail:
 class TestAuthoredPositionIsHonored:
     def test_line_position_bottom_renders_a_bottom_legend(self, make_chart):
         """Naming a position asks for a legend — it cannot resolve to nothing."""
-        resolved, spec = _render(make_chart, "line", {"legend": {"position": "bottom"}})
+        resolved, spec = _render(
+            make_chart, "line", {"legend": {"position": {"edge": "bottom"}}}
+        )
 
         assert resolved.legend.visible is True
-        assert resolved.legend.position == "bottom"
+        assert resolved.legend.position.edge == "bottom"
         assert _color_legend(spec)["orient"] == "bottom"
 
     def test_bar_position_bottom_beats_the_automatic_top_legend(self, make_chart):
         """A grouped bar routes its legend to the top strip unless told otherwise."""
-        resolved, spec = _render(make_chart, "bar", {"legend": {"position": "bottom"}})
+        resolved, spec = _render(
+            make_chart, "bar", {"legend": {"position": {"edge": "bottom"}}}
+        )
 
-        assert resolved.legend.position == "bottom"
+        assert resolved.legend.position.edge == "bottom"
         assert _color_legend(spec)["orient"] == "bottom"
 
     def test_bar_keeps_its_top_legend_when_no_position_is_authored(self, make_chart):
         resolved, spec = _render(make_chart, "bar", {})
 
-        assert resolved.legend.position == "top"
+        assert resolved.legend.position.edge == "top"
         assert _color_legend(spec)["orient"] == "top"
 
     def test_bar_position_top_is_the_unauthored_top_strip(self, make_chart):
@@ -135,10 +139,12 @@ class TestAuthoredPositionIsHonored:
         so ``position: top`` used to buy a vertical stack with a title above the
         plot: strictly worse than authoring nothing. Agreement is not a conflict.
         """
-        authored, _ = _render(make_chart, "bar", {"legend": {"position": "top"}})
+        authored, _ = _render(
+            make_chart, "bar", {"legend": {"position": {"edge": "top"}}}
+        )
         unauthored, _ = _render(make_chart, "bar", {})
 
-        assert authored.legend.position == "top"
+        assert authored.legend.position.edge == "top"
         assert authored.legend.direction == unauthored.legend.direction == "horizontal"
         assert authored.legend.columns == unauthored.legend.columns == 0
         assert authored.legend.title.visible is unauthored.legend.title.visible is False
@@ -146,7 +152,9 @@ class TestAuthoredPositionIsHonored:
     def test_position_with_visible_false_stays_hidden(self, make_chart):
         """``visible: false`` is the author's own say-so too, and it is nearer."""
         resolved, spec = _render(
-            make_chart, "line", {"legend": {"position": "bottom", "visible": False}}
+            make_chart,
+            "line",
+            {"legend": {"position": {"edge": "bottom"}, "visible": False}},
         )
 
         assert resolved.legend.visible is False

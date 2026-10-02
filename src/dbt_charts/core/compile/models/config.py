@@ -416,6 +416,33 @@ class ChartRenderingConfig(ConfigNode):
         min_ratio: float = Field(ge=1)
         large_text_min_ratio: float = Field(ge=1)
 
+    class ThumbnailConfig(ConfigNode):
+        """Tuning knobs for ``render/thumbnail.py``'s abstracted board picture.
+
+        Shares are fractions of the measured line box or table width; weights
+        are how much of a source color survives blending into the page.
+        """
+
+        placeholder_ink: float = Field(gt=0, le=1)
+        bar_color_weight: float = Field(gt=0, le=1)
+        status_color_weight: float = Field(gt=0, le=1)
+        chromatic_saturation: float = Field(gt=0, lt=1)
+        text_height: float = Field(gt=0, le=1)
+        large_text_height: float = Field(gt=0, le=1)
+        large_text_size: float = Field(gt=0)
+        min_text_height: float = Field(gt=0)
+        bar_height: float = Field(gt=0, le=1)
+        bar_max_corner_radius: float = Field(ge=0)
+        min_bar_width: float = Field(gt=0)
+        bar_gap: float = Field(ge=0)
+        bar_room_share: float = Field(gt=0, le=1)
+        block_share: float = Field(gt=0, le=1)
+        min_block_width: float = Field(gt=0)
+        variable_pill_height: float = Field(gt=0, le=1)
+        glyph_dot_share: float = Field(gt=0, le=1)
+        min_glyph_dot_radius: float = Field(gt=0)
+        same_line_share: float = Field(gt=0, le=1)
+
     pie: PieConfig
     bar: BarConfig
     plot_height_floor: PlotHeightFloorConfig
@@ -431,6 +458,7 @@ class ChartRenderingConfig(ConfigNode):
     hover_emphasis: HoverEmphasisConfig
     color_variants: ColorVariantsConfig
     text_contrast: TextContrastConfig
+    thumbnail: ThumbnailConfig
 
 
 class InspectorConfig(ConfigNode):

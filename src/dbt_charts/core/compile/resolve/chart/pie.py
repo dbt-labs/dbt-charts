@@ -6,7 +6,7 @@ from types import EllipsisType
 from typing import Any, Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import resolve_format_for_values
+from dbt_charts.core.compile.format import resolve_format_parts_for_values
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     PieChart,
@@ -15,13 +15,19 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedPieChart,
 )
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, resolved_as
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPieStyle,
+    ResolvedTotalStyle,
+    ResolvedTotalValueSlot,
 )
-from dbt_charts.core.compile.models.style.theme import SliceLabelsStyle, SliceMarkStyle
+from dbt_charts.core.compile.models.style.theme import (
+    LegendAlign,
+    SliceLabelsStyle,
+    SliceMarkStyle,
+)
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
     _column_numeric_values,
@@ -31,6 +37,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     ChartTextVariables,
     _base_kwargs,
     _bound_scales,
+    _resolved_chart_format,
     _shared_kwargs,
     _title_font,
 )
@@ -60,6 +67,9 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    merge_authored_position,
+)
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
@@ -86,7 +96,7 @@ def _resolve_pie(
     pie = merge_onto_base(chart_style_context.pie, primary)
     # The center total and every slice tooltip vote on one set (theta values
     # plus their sum) so they never disagree about the same sub-$1 value --
-    # see resolve_format_for_values's per-set contract.
+    # see resolve_format_parts_for_values's per-set contract.
     theta_values = _column_numeric_values(data, normalized.theta)
     format_vote_values = [*theta_values, sum(theta_values)] if theta_values else []
     channels = _channels_for(normalized, data)
@@ -171,28 +181,26 @@ def _resolve_pie(
 
     total = normalized.total
 
-    # Donut center value format: style-cascade field (pie.total.value.format),
-    # resolved the same way and against the same vote set as the slice tooltip
-    # so the two never disagree about the same sub-$1 value. A donut whose
-    # cascade never authored a format still defaults to plain integers -- the
-    # same fallback the field used to get from normalize-time auto-injection,
-    # moved here because the cascade isn't resolved yet at normalize time.
+    # Voted against the slice tooltip's set so the two never disagree.
     is_donut_shape = pie.inner_radius is not None and pie.inner_radius > 0
     raw_total_format = pie.total.value.format
     if raw_total_format is None and is_donut_shape:
         raw_total_format = str(PredefinedNumberFormat.integer)
-    total_style = pie.total
-    if raw_total_format is not None:
-        resolved_total_format = resolve_format_for_values(
-            raw_total_format, chart_style_context.formats, format_vote_values
+    total_format = (
+        None
+        if raw_total_format is None
+        else resolve_format_parts_for_values(
+            raw_total_format,
+            chart_style_context.formats,
+            format_vote_values,
+            no_format_default=PredefinedNumberFormat.integer,
         )
-        total_style = pie.total.model_copy(
-            update={
-                "value": pie.total.value.model_copy(
-                    update={"format": resolved_total_format}
-                )
-            }
-        )
+    )
+    total_style = resolved_as(
+        ResolvedTotalStyle,
+        pie.total,
+        value=resolved_as(ResolvedTotalValueSlot, pie.total.value, format=total_format),
+    )
 
     label_font_family = resolved_labels.font.family
     label_font_size = resolved_labels.font.size
@@ -228,6 +236,17 @@ def _resolve_pie(
     # there is no color field at all): the table then keeps its existing
     # positional swatch, matching an unbound pie's uniform wedge fill.
     chart_category_colors = _bound_scales(normalized, chart_style_context, eff_palette)
+    # The key's edge as authored at any tier; None leaves the attached table to
+    # the width heuristic. (The resolved legend always carries a concrete edge,
+    # which cannot say whether anyone chose it.)
+    authored_position = merge_authored_position(
+        chart_style_context.pre_style.charts.legend.position, pie.legend
+    )
+    authored_edge = authored_position.edge
+
+    slice_format = _resolved_chart_format(
+        normalized.format, chart_style_context.formats
+    )
 
     def plan_for(arc_mode: ArcRenderMode) -> AttachmentPlan:
         return plan_attachment(
@@ -237,10 +256,12 @@ def _resolve_pie(
             eff_palette,
             resolved_color_field,
             normalized.theta,
-            normalized.format,
+            slice_format,
             chart_style_context.table,
             width,
             chart_category_colors,
+            authored_edge,
+            authored_position.align,
         )
 
     mode = dominance_mode(width)
@@ -270,7 +291,8 @@ def _resolve_pie(
 
     attached_table = None
     attached_row_indices: tuple[int, ...] = ()
-    placement: Literal["none", "below", "right"] = "none"
+    placement: Literal["none", "left", "right", "top", "bottom"] = "none"
+    table_align: LegendAlign = "start"
     table_width = 0.0
     wheel_width = 0.0
     heading = ""
@@ -278,6 +300,7 @@ def _resolve_pie(
     if plan is not None:
         attached_row_indices = plan.row_indices
         placement = plan.placement
+        table_align = plan.align
         table_width = plan.table_width
         wheel_width = plan.wheel_width
         synthetic_table = TableChart(
@@ -333,6 +356,10 @@ def _resolve_pie(
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=pie.padding,
             suppress_legend=mode != "direct",
+            radial_legend=True,
+            legend_position_overridden_by_width=(
+                plan.overridden_edge if plan is not None else None
+            ),
         ),
         **_shared_kwargs(normalized, variables, chart_local_style_context),
         chart_type="pie",
@@ -340,14 +367,15 @@ def _resolve_pie(
         color=normalized.color,
         identity_field=resolved_color_field,
         total=total,
-        format=normalized.format,
+        format=slice_format,
         style=ResolvedPieStyle(
             inner_radius=pie.inner_radius if pie.inner_radius is not None else 0.0,
             slice_mark=effective_slice_mark,
-            tooltip_format=resolve_format_for_values(
+            tooltip_format=resolve_format_parts_for_values(
                 chart_style_context.tooltip.format,
                 chart_style_context.formats,
                 format_vote_values,
+                no_format_default=PredefinedNumberFormat.number,
             ),
             total_style=total_style,
             title_font=_tf,
@@ -364,6 +392,7 @@ def _resolve_pie(
         attached_table=attached_table,
         attached_row_indices=attached_row_indices,
         attached_table_placement=placement,
+        attached_table_align=table_align,
         attached_table_width=table_width,
         wheel_width=wheel_width,
         attached_heading=heading,

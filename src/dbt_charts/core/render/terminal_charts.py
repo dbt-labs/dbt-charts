@@ -10,6 +10,10 @@ to terminal output using Plotext for charts and Rich for tables.
 import logging
 from typing import Any
 
+from dbt_charts.core.compile.format import (
+    finalize_kpi_value_format,
+    kpi_format_native,
+)
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
@@ -20,8 +24,11 @@ from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
     SparkBarChart,
 )
+from dbt_charts.core.compile.models.primitives import FormatAliases
+from dbt_charts.core.compile.models.style.theme import KpiValueStyle
 from dbt_charts.core.compile.resolve.chart.channel import parse_style_channel
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.chart.kpi import kpi_value_text
 from dbt_charts.core.render.utils import normalize_data_types, slug_to_text
 from dbt_charts.core.text.format_d3 import NULL_DISPLAY
 
@@ -85,6 +92,8 @@ def render_chart_terminal(
     width: int | None = None,
     height: int | None = None,
     colors: bool = True,
+    *,
+    formats: FormatAliases | None,
 ) -> str:
     """Render a chart to terminal output.
 
@@ -95,6 +104,8 @@ def render_chart_terminal(
         height: Optional terminal height in characters
         colors: Whether to use ANSI colors
         display_title: Final title text to render.
+        formats: Board-level style.formats alias map (ResolvedStyle.formats),
+            for a KPI/table value format authored as a bare alias name.
 
     Returns:
         Terminal-formatted chart string
@@ -108,7 +119,7 @@ def render_chart_terminal(
     if chart_type == "table":
         return render_table_terminal(chart, data, display_title, width=width)
     elif chart_type == "kpi":
-        return render_kpi_terminal(chart, data, display_title)
+        return render_kpi_terminal(chart, data, display_title, formats=formats)
 
     # Narrow to charts that have x/y fields before entering the plotext path.
     # Non-xy charts that map to a plotext type (e.g. PieChart → "bar",
@@ -304,7 +315,11 @@ def render_table_terminal(
 
 
 def render_kpi_terminal(
-    chart: Chart, data: list[dict[str, Any]], display_title: str
+    chart: Chart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query row dicts
+    display_title: str,
+    *,
+    formats: FormatAliases | None,
 ) -> str:
     """Render a KPI chart as text.
 
@@ -338,8 +353,22 @@ def render_kpi_terminal(
     row = data[0]
     cell, _ = _resolve_value(raw_value, row, chart_id)
 
+    # chart.style.value is None when a KPI's style: never touches value:, though
+    # the patch stub types it non-Optional; the local re-declaration narrows it.
+    value_style: KpiValueStyle | None = chart.style.value if chart.style else None
+    value_format = value_style.format if value_style is not None else None
     if isinstance(cell, (int, float)):
-        if isinstance(cell, float) and cell.is_integer():
+        if value_format is not None:
+            # Mirrors the finalization resolve() bakes onto ResolvedKpiChart.format.
+            display_value = kpi_value_text(
+                cell,
+                finalize_kpi_value_format(value_format, float(cell), formats),
+                chart_id,
+                formats,
+                native=kpi_format_native(value_format, formats),
+                format_may_be_cascaded=True,
+            )
+        elif isinstance(cell, float) and cell.is_integer():
             display_value = f"{int(cell):,}"
         else:
             display_value = f"{cell:,.2f}"

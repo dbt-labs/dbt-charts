@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from d3_format import format as _d3_format
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.models.primitives import AffixRepeat
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedRulerAxis,
     ResolvedScaleContinuousStyle,
@@ -86,6 +87,8 @@ def _build_ruler(
     font_family: str,
     font_tabular: bool,
     chart_id: str,
+    notation: Notation | None = None,
+    repeat: AffixRepeat | None = None,
 ) -> ResolvedRulerAxis | None:
     """Bake the ruler decision for one edge of one axis: does the tick
     ladder compact, and if so does it ship the trailing suffix reservation
@@ -112,6 +115,10 @@ def _build_ruler(
     else ``None`` -- the caller runs ``is_d3_si_spec`` once and hands the
     verdict down, so this function does not re-derive it (both call sites
     share the one decision).
+
+    ``notation`` is the authored register override; it replaces the
+    mode-derived one and is baked into ``register``. ``repeat`` likewise
+    overrides the column-forming default of ``prefix_repeats``.
     """
     raw_scale = shared_scale_for_ladder(list(tick_values)) if tick_values else None
     if (
@@ -128,7 +135,7 @@ def _build_ruler(
     # ResolvedAxisStyle.ruler's docstring for why this is a position
     # (baked once here) rather than the tick's raw value.
     anchor_at_start = tick_values.index(max(tick_values, key=abs)) == 0
-    effective_register: Notation = (
+    register: Notation = notation or (
         "analytic" if effective_mode is SuffixMode.ANCHOR else "narrative"
     )
 
@@ -141,7 +148,7 @@ def _build_ruler(
         )
     reservation = (
         compose_suffix_reservation(
-            suffix_at_register(raw_scale.exponent, effective_register), font_family
+            suffix_at_register(raw_scale.exponent, register), font_family
         )
         if reserve
         else ""
@@ -170,11 +177,12 @@ def _build_ruler(
         exponent=raw_scale.exponent,
         mode=effective_mode,
         reserve=reserve,
-        prefix_repeats=not column_forming,
+        prefix_repeats=not column_forming if repeat is None else repeat == "every",
         prefix=prefix,
         digit_spec=digit_spec,
         anchor_at_start=anchor_at_start,
         reservation=reservation,
+        register=register,
         decimal_pad_table=decimal_pad_table,
     )
 

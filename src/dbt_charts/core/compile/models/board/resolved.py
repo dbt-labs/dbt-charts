@@ -16,6 +16,10 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
     ResolvedStyleChannel,
 )
+from dbt_charts.core.compile.models.chart.resolved.callout import (
+    ResolvedCalloutChart,
+)
+from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
 from dbt_charts.core.compile.models.primitives import HtmlPolicy
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -73,6 +77,8 @@ class ChartIdentity:
     notes: str
     variable_dependencies: frozenset[str]
     magnitude_colored: bool
+    # None where the resolved chart carries no canvas (KPI, callout).
+    canvas: str | None
 
     @classmethod
     def from_resolved(cls, chart: ResolvedChart) -> "ChartIdentity":
@@ -85,6 +91,9 @@ class ChartIdentity:
             notes=chart.notes,
             variable_dependencies=chart.variable_dependencies,
             magnitude_colored=_is_magnitude_colored(chart.resolved_channels),
+            canvas=None
+            if isinstance(chart, ResolvedKpiChart | ResolvedCalloutChart)
+            else chart.canvas,
         )
 
     @classmethod
@@ -98,8 +107,9 @@ class ChartIdentity:
         because no family alias is ever ``"callout"``.
 
         There is no resolved channel data on this path — resolution never
-        finished — so ``magnitude_colored`` is unconditionally ``False``: an
-        error placard has no marks to recede in the first place.
+        finished — so ``magnitude_colored`` is unconditionally ``False`` and
+        ``canvas`` is ``None``: an error placard has no marks to recede in the
+        first place.
         """
         return cls(
             chart_type=chart.type,
@@ -110,6 +120,7 @@ class ChartIdentity:
             notes=chart.notes,
             variable_dependencies=chart.variable_dependencies,
             magnitude_colored=False,
+            canvas=None,
         )
 
 

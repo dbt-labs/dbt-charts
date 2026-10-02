@@ -32,12 +32,12 @@ from typing import Any
 
 from d3_format import format as _d3_format
 
-# resolve_format / get_format_prefix_suffix live in the compile layer
+# resolve_format / resolve_format_parts live in the compile layer
 # (format-alias resolution is a cascade concern); imported here for internal
 # use by format_value/format_kpi_parts. Render callers must import from
 # dbt_charts.core.compile.format directly.
-from dbt_charts.core.compile.format import get_format_prefix_suffix, resolve_format
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.format import resolve_format, resolve_format_parts
+from dbt_charts.core.compile.models.primitives import AuthoredFormat, FormatAliases
 from dbt_charts.core.compile.models.style.resolved.table import (
     ResolvedColumnSharedScale,
 )
@@ -47,14 +47,14 @@ from dbt_charts.core.text.format_d3 import (
     _D3_TO_ANALYTIC,
     _D3_TO_NARRATIVE,
     NULL_DISPLAY,
-    Notation,
+    SignPlacement,
     _is_si_spec,
     format_d3,
+    split_leading_sign,
 )
 from dbt_charts.core.text.numeral_scale import SuffixMode, suffix_at_register
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
-    PREDEFINED_NUMBER_NAMES,
     PREDEFINED_SPECS,
     PREDEFINED_SUB_UNIT_FALLBACK,
     PredefinedNumberFormat,
@@ -90,17 +90,6 @@ def _check_percent_range(value: int | float, format_spec: str) -> None:
         raise RenderError.from_code(
             ERR_PERCENT_RANGE, value=value, format_spec=format_spec
         )
-
-
-def _get_notation(
-    format_input: str | FormatConfig | dict[str, Any] | None,
-) -> Notation | None:
-    """Extract notation family from format configuration."""
-    if isinstance(format_input, FormatConfig):
-        return format_input.notation
-    elif isinstance(format_input, dict):
-        return format_input.get("notation")
-    return None
 
 
 # ============================================================================
@@ -139,10 +128,14 @@ def default_number_format() -> str:
 
 def format_value(
     value: int | float | None,
-    format_input: str | FormatConfig | dict[str, Any] | None,
-    formats: dict[str, str] | None = None,
+    format_input: AuthoredFormat
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+    formats: FormatAliases | None = None,
 ) -> str:
     """Format a value using the given format configuration.
+
+    A spec-less affix takes the theme's ``number`` (SI) spec.
 
     Args:
         value: Numeric value to format
@@ -152,51 +145,74 @@ def format_value(
     Returns:
         Formatted string
     """
-    # Detect the raw format name before resolve so we know which path it takes.
-    _raw = (
-        format_input.spec
-        if isinstance(format_input, FormatConfig)
-        else format_input
-        if isinstance(format_input, str)
-        else None
+    parts = resolve_format_parts(
+        format_input, formats, no_format_default=PredefinedNumberFormat.number
     )
-    _is_house = _raw is not None and _raw in PREDEFINED_NUMBER_NAMES
-    format_spec = resolve_format(format_input, formats)
+    format_spec = parts.spec
+    prefix, suffix = parts.prefix, parts.suffix
     if format_spec in PREDEFINED_NATIVE:
         number, unit = PREDEFINED_NATIVE[format_spec](value)
-        return f"{number}{unit}"
-    prefix, suffix = get_format_prefix_suffix(format_input)
-    if value is not None and _raw in PREDEFINED_SUB_UNIT_FALLBACK:
+        return f"{prefix}{number}{unit}{suffix}"
+    if value is not None and parts.raw in PREDEFINED_SUB_UNIT_FALLBACK:
         floor = si_sub_unit_floor(format_spec, prefix, suffix)
         # Strict floor: zero is exactly representable, not "below the minor
         # unit", so it must not take the fallback (si_sub_unit_floor's money
         # floor is 0.0 -- `<` excludes zero there; the non-money floor is
         # 1.0, where this comparison is always false either way).
         if floor < abs(value) < 1.0:
-            format_spec = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[_raw]]
+            format_spec = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[parts.raw]]
     if value is not None:
         _check_percent_range(value, format_spec)
-    notation = _get_notation(format_input)
     effective_notation = (
-        notation if notation is not None else ("analytic" if _is_house else None)
+        parts.notation
+        if parts.notation is not None
+        else ("analytic" if parts.is_house else None)
     )
-    return format_d3(value, format_spec, prefix, suffix, notation=effective_notation)
+    return format_d3(
+        value,
+        format_spec,
+        prefix,
+        suffix,
+        notation=effective_notation,
+        sign_placement=parts.placement,
+    )
+
+
+def _sign_into_prefix(
+    explicit_prefix: str,
+    d3_prefix: str,
+    number: str,
+    sign_placement: SignPlacement,
+) -> tuple[str, str, str]:
+    """Place ``number``'s sign ahead of both prefixes, or (``after_prefix``)
+    between the authored prefix and d3's ``$``, which joins the number lane."""
+    if not (explicit_prefix or d3_prefix):
+        return explicit_prefix, d3_prefix, number
+    sign, digits = split_leading_sign(number)
+    if explicit_prefix and sign_placement == "after_prefix":
+        return explicit_prefix, "", sign + d3_prefix + digits
+    return sign + explicit_prefix, d3_prefix, digits
 
 
 def format_kpi_parts(
     value: int | float | None,
-    format_input: str | FormatConfig | dict[str, Any] | None,
-    formats: dict[str, str] | None = None,
+    format_input: AuthoredFormat
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+    formats: FormatAliases | None = None,
     default_number: bool = False,
     native: bool = False,
     shared_scale: ResolvedColumnSharedScale | None = None,
     is_anchor: bool = False,
+    keep_affix_gaps: bool = False,
+    sign_in_prefix: bool = False,
 ) -> tuple[str, str, str]:
     """Format a KPI value into (prefix, number, suffix) parts.
 
     Separates prefix symbols ($), magnitude suffixes (M, K, bn), and unit
     suffixes (%, USD) from the formatted number so they can be rendered or
-    positioned independently.
+    positioned independently. An authored prefix/suffix rides in its lane
+    beside the unit (``percent_number`` + ``" YoY"`` is ``("", "12.3", "% YoY")``).
 
     Args:
         value: Numeric value to format
@@ -218,21 +234,27 @@ def format_kpi_parts(
             meaningful when ``shared_scale`` is set). In ANCHOR mode the
             magnitude suffix appears only when ``is_anchor`` is True; in
             REPEAT mode it appears on every non-zero row regardless.
+        keep_affix_gaps: keep an authored affix's whitespace against the number
+            (``"EUR "``); off, lanes are edge-stripped because the painter
+            kerns between them.
+        sign_in_prefix: place the sign per ``sign_placement`` (a KPI, whose
+            prefix lane always paints). Off, it stays in the number lane, which
+            ``anchors`` mode keeps when it clears the prefix.
     """
     if value is None:
         return "", NULL_DISPLAY, ""
 
-    explicit_prefix, explicit_suffix = get_format_prefix_suffix(format_input)
-    # Detect the raw format name before resolve so we know which path it takes.
-    _raw = (
-        format_input.spec
-        if isinstance(format_input, FormatConfig)
-        else format_input
-        if isinstance(format_input, str)
-        else None
+    parts = resolve_format_parts(
+        format_input,
+        formats,
+        no_format_default=(PredefinedNumberFormat.number if default_number else None),
     )
-    _is_house = _raw is not None and _raw in PREDEFINED_NUMBER_NAMES
-    format_spec = resolve_format(format_input, formats)
+    explicit_prefix, explicit_suffix = parts.prefix, parts.suffix
+    # parts.raw keeps the predefined identity the sub-unit-floor guard keys on,
+    # through the spec-less-affix default substitution.
+    _raw = parts.raw
+    _is_house = parts.is_house
+    format_spec = parts.spec
     if not format_spec and default_number:
         # number is always a predefined (house) format. _raw must follow
         # format_spec here, or the sub-unit-floor guard below (keyed on
@@ -253,10 +275,18 @@ def format_kpi_parts(
         if floor < abs(value) < 1.0:
             format_spec = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[_raw]]
 
-    # Predefined native formatters bypass D3 and know their own unit.
+    # Predefined native formatters bypass D3 and know their own unit; the
+    # authored affix rides around number-and-unit.
     if format_spec in PREDEFINED_NATIVE:
         number, unit = PREDEFINED_NATIVE[format_spec](value)
-        return "", number, unit
+        if sign_in_prefix:
+            explicit_prefix, _, number = _sign_into_prefix(
+                explicit_prefix, "", number, parts.placement
+            )
+        native_prefix = (
+            explicit_prefix.lstrip() if keep_affix_gaps else explicit_prefix.strip()
+        )
+        return native_prefix, number, unit + explicit_suffix.rstrip()
     _check_percent_range(value, format_spec)
 
     d3_prefix = ""
@@ -271,11 +301,12 @@ def format_kpi_parts(
         else:
             format_spec_clean = format_spec
 
-        notation = _get_notation(format_input)
         # House notation applies only to predefined enum members; inline d3
         # and user aliases are native-d3 and get no post-process.
         effective_notation = (
-            notation if notation is not None else ("analytic" if _is_house else None)
+            parts.notation
+            if parts.notation is not None
+            else ("analytic" if _is_house else None)
         )
 
         # Shared-scale table column: format through the column's one baked
@@ -297,7 +328,11 @@ def format_kpi_parts(
                 # every plain `number` column -- shared_scale's own
                 # mode-based register is the smarter default here and must
                 # not be shadowed by that generic one.
-                register = notation if notation is not None else shared_scale.register
+                register = (
+                    parts.notation
+                    if parts.notation is not None
+                    else shared_scale.register
+                )
                 # .strip(): suffix_at_register's analytic form carries a
                 # leading space (e.g. " M") for prose use; every other
                 # magnitude_suffix assignment in this function stores the
@@ -365,7 +400,15 @@ def format_kpi_parts(
         else:
             number_str = _with_minus(f"{v:,.2f}")
 
-    prefix = ((explicit_prefix or "") + d3_prefix).strip()
-    suffix = (magnitude_suffix + d3_suffix + (explicit_suffix or "").strip()).strip()
-
-    return prefix, number_str.strip(), suffix
+    number_str = number_str.strip()
+    if sign_in_prefix:
+        explicit_prefix, d3_prefix, number_str = _sign_into_prefix(
+            explicit_prefix, d3_prefix, number_str, parts.placement
+        )
+    if keep_affix_gaps:
+        prefix = (explicit_prefix + d3_prefix).lstrip()
+        suffix = (magnitude_suffix + d3_suffix + explicit_suffix).rstrip()
+    else:
+        prefix = (explicit_prefix + d3_prefix).strip()
+        suffix = (magnitude_suffix + d3_suffix + explicit_suffix).strip()
+    return prefix, number_str, suffix

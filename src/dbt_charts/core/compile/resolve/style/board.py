@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from dbt_charts.core.compile.merge import merge_onto_base, merge_patches, to_title_style
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
+    FormatAliases,
     ResolvedFontStyle,
     ToneLiteral,
 )
@@ -56,6 +57,9 @@ from dbt_charts.core.compile.models.style.theme import (
 )
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    decide_legend_position,
+)
 from dbt_charts.core.compile.resolve.style.palette import color, ink_canvas, mark_ink
 from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
@@ -175,7 +179,7 @@ def _seed_spark_colors(style: Style) -> Style:
 
 def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
     return ResolvedLegendStyle(
-        position=legend.position,
+        position=decide_legend_position(legend.position, top_strip=False),
         direction=legend.direction,
         columns=legend.columns,
         compact_columns=legend.compact_columns,
@@ -270,7 +274,7 @@ def _build_chart_style_context(
     pre_style: Style,
     charts_board_overrides: ChartsStylePatch,
     card_padding: float,
-    formats: dict[str, str] | None = None,
+    formats: FormatAliases | None = None,
 ) -> ChartStyleContext:
     # Deferred: a module-level import here would cycle back through
     # context.py -> resolved._base/.callout -> resolved/__init__.py ->

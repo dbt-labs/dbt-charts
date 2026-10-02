@@ -3588,9 +3588,21 @@
         "magnitude_colored": {
           "title": "Magnitude Colored",
           "type": "boolean"
+        },
+        "canvas": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Canvas"
         }
       },
       "required": [
+        "canvas",
         "chart_type",
         "defined_in_other_file",
         "id",

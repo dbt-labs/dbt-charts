@@ -4,15 +4,15 @@ Hover emphasis itself is decided entirely in the runtime; render's job is to
 make sure the facts the runtime needs are present in the SVG. Some of those
 facts Vega-Lite already writes on its own: which marks are big painted shapes
 worth receding (``aria-roledescription="bar"`` or ``"rect mark"`` -- bars and
-heatmap cells, the two families whose hover emphasis has been reviewed) and
-what color the view's ground is (the spec's ``background``, painted as the
-view's first child ``<rect>``). Others render must stamp on explicitly, since
-no VL attribute says them directly: ``data-dbt-magnitude-colored`` answers
-"is rewriting this chart's color safe", and ``data-dbt-value-label`` marks a
-mark's own printed value so its twin search can be scoped to it. If any of
-these stopped arriving, hovering would silently do nothing (or worse, recede
-a gradient chart's color) -- so these tests are the render-side half of that
-contract.
+heatmap cells, the two families whose hover emphasis has been reviewed).
+Others render must stamp on explicitly, since no VL attribute says them
+directly: ``data-dbt-chart-canvas`` is the color receded marks blend toward
+(Vega paints no ground rect for a chart transparent over its board),
+``data-dbt-magnitude-colored`` answers "is rewriting this chart's color safe",
+and ``data-dbt-value-label`` marks a mark's own printed value so its twin
+search can be scoped to it. If any of these stopped arriving, hovering would
+silently do nothing (or worse, recede a gradient chart's color) -- so these
+tests are the render-side half of that contract.
 """
 
 from __future__ import annotations
@@ -91,21 +91,79 @@ def test_a_heatmaps_cells_are_named_rect_mark() -> None:
     assert 'aria-roledescription="rect mark"' in svg
 
 
+_PLACEMENTS = {
+    "direct row": "rows:\n  - c",
+    "cols row": "rows:\n  - cols:\n      - c",
+}
+
+
+def _render_placed(body: str, rows: str) -> str:
+    return render_board_to_svg(f"""
+title: T
+{_QUERY}
+charts:
+  c:
+    query: q
+    {body}
+{rows}
+""")
+
+
+def _canvas_stamp(svg: str) -> str | None:
+    wrapper = re.search(r'<g class="dbt-chart"[^>]*>', svg)
+    assert wrapper is not None, "no chart wrapper in rendered SVG"
+    stamp = re.search(r'data-dbt-chart-canvas="([^"]*)"', wrapper.group(0))
+    return stamp.group(1) if stamp else None
+
+
+def _has_ground_rect(svg: str) -> bool:
+    return re.search(r'<svg [^>]*class="marks"[^>]*>\s*<rect ', svg) is not None
+
+
 @pytest.mark.parametrize(("name", "case"), [(n, c) for n, c in _CASES.items() if c[1]])
-def test_a_bar_chart_leads_its_view_with_the_ground(
+def test_a_chart_wrapper_carries_the_canvas_its_marks_recede_toward(
     name: str, case: tuple[str, bool]
 ) -> None:
+    """A chart inside ``cols:`` is transparent over its board and paints no
+    ground rect, yet its wrapper still names the board's canvas."""
     body, _ = case
-    svg = _render(body)
-    wrapper = re.search(r'<g class="dbt-chart"[^>]*>', svg)
-    assert wrapper is not None, f"{name}: no chart wrapper in rendered SVG"
-    view = re.search(r"<svg [^>]*>\s*<(\w+)([^>]*)>", svg[wrapper.end() :])
+    svgs = {where: _render_placed(body, rows) for where, rows in _PLACEMENTS.items()}
 
-    assert view is not None, f"{name}: no Vega view inside the chart wrapper"
-    assert view.group(1) == "rect", f"{name}: the view does not lead with its ground"
-    assert re.search(r'fill="#[0-9A-Fa-f]{6}"', view.group(2)), (
-        f"{name}: the ground carries no color to recede toward"
+    assert _has_ground_rect(svgs["direct row"])
+    assert not _has_ground_rect(svgs["cols row"]), (
+        f"{name}: the cols chart paints a ground rect, so this no longer "
+        "exercises the transparent case"
     )
+    stamps = {where: _canvas_stamp(svg) for where, svg in svgs.items()}
+    for where, stamp in stamps.items():
+        assert stamp is not None, f"{name} ({where}): wrapper carries no canvas"
+        assert re.fullmatch(r"#[0-9A-Fa-f]{6}", stamp), (
+            f"{name} ({where}): canvas {stamp!r} is not an opaque color"
+        )
+    assert len(set(stamps.values())) == 1, f"{name}: placement changed the canvas"
+
+
+def test_a_kpi_has_no_canvas_to_stamp_and_still_renders() -> None:
+    """A KPI paints no marks that recede, so its resolved chart carries no
+    canvas; the wrapper must simply omit the stamp rather than fail."""
+    svg = render_board_to_svg("""
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {val: 10}
+charts:
+  c:
+    query: q
+    type: kpi
+    value: val
+rows:
+  - c
+""")
+
+    assert '<g class="dbt-chart"' in svg
+    assert "data-dbt-chart-canvas" not in svg
 
 
 def test_an_authored_translucency_reaches_the_mark() -> None:

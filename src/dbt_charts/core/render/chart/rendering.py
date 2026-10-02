@@ -727,6 +727,8 @@ def _wrap_rendered_chart_svg(
     # safe to recede, so it is only ever emitted, never emitted as "false".
     if identity.magnitude_colored:
         attrs_parts.append('data-dbt-magnitude-colored="true"')
+    if identity.canvas is not None and not is_error_fallback:
+        attrs_parts.append(f'data-dbt-chart-canvas="{escape_attr(identity.canvas)}"')
 
     attrs_str = " " + " ".join(attrs_parts)
     return f"<g{attrs_str}>{boundary}</g>", actual_height

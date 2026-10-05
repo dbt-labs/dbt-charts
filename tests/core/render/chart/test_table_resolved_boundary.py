@@ -6,6 +6,7 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import TableChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
+from dbt_charts.core.compile.models.style.theme.style import FormatsStyle
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.table import render_table_svg
@@ -16,7 +17,8 @@ def _board_style(*, title_case: str, boundary_format: str):
     title = theme.title.model_copy(
         update={"font": theme.title.font.model_copy(update={"case": title_case})}
     )
-    formats = {**(theme.formats or {}), "boundary": boundary_format}
+    inherited = theme.formats.aliases if theme.formats is not None else None
+    formats = FormatsStyle(aliases={**(inherited or {}), "boundary": boundary_format})
     return resolve_style_and_context(
         theme.model_copy(update={"title": title, "formats": formats})
     )

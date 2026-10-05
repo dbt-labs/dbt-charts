@@ -35,7 +35,7 @@ class TestMeasureBlocks:
         blocks = list(parse(LONG))
         narrow = renderer.measure_blocks(blocks, width=200.0)[0]
         wide = renderer.measure_blocks(blocks, width=600.0)[0]
-        assert narrow.line_count > wide.line_count > 1
+        assert len(narrow.line_advances) > len(wide.line_advances) > 1
 
     def test_headings_keep_with_next(self, renderer: SVGRenderer) -> None:
         blocks = list(parse(f"## Heading\n\n{LONG}"))
@@ -55,7 +55,7 @@ class TestRenderBlockWindow:
         self, renderer: SVGRenderer
     ) -> None:
         block = list(parse(LONG))[0]
-        total = renderer.measure_blocks([block], width=300.0)[0].line_count
+        total = len(renderer.measure_blocks([block], width=300.0)[0].line_advances)
         assert total >= 4, "fixture must wrap to several lines to be meaningful"
 
         head = renderer.render_block_window(block, width=300.0, start=0, count=2)
@@ -71,7 +71,7 @@ class TestRenderBlockWindow:
         import re
 
         block = list(parse(LONG))[0]
-        total = renderer.measure_blocks([block], width=300.0)[0].line_count
+        total = len(renderer.measure_blocks([block], width=300.0)[0].line_advances)
 
         def words(svg: str) -> str:
             return " ".join(re.sub(r"<[^>]+>", " ", svg).split())
@@ -91,7 +91,7 @@ class TestRenderBlockWindow:
         import re
 
         block = list(parse(LONG))[0]
-        total = renderer.measure_blocks([block], width=300.0)[0].line_count
+        total = len(renderer.measure_blocks([block], width=300.0)[0].line_advances)
         tail = renderer.render_block_window(block, 300.0, total - 2, 2)
         first = re.search(r'<text[^>]*\by="([\d.]+)"', tail.elements)
         assert first is not None, "the window must render text"

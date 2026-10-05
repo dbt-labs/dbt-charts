@@ -1303,28 +1303,28 @@ def test_callout_resolve_returns_resolved_callout_chart() -> None:
 
 
 def test_callout_resolve_carries_full_style_from_board_cascade() -> None:
-    """resolved.style must be the full cascaded ResolvedCalloutStyle.
-
-    v1's oracle: board_style.callout (style_cascade.py's default charts
-    cascade, no chart-local override). Field-by-field so a partial port (e.g.
-    only tone carried) fails loudly instead of passing on a truncated compare.
-    """
+    """resolved.style is the board's whole cascaded callout style, with the
+    colors it left unset filled from its tone: a chart of tone negative
+    resolves to exactly the board's own negative-tone error card style."""
     from dbt_charts.core.compile.models.chart.normalized import CalloutChart
+    from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
     from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.palette import color
 
     board_style = _default_board_style()
-    compiled = CalloutChart(id="co", type="callout", message="no override")
-    resolved = resolve(compiled, [], board_style)
+    compiled = CalloutChart(
+        id="co",
+        type="callout",
+        message="no override",
+        style=CalloutChartStylePatch(tone="negative"),
+    )
+    resolved = resolve(compiled, [], board_style).style
 
-    expected = board_style.callout
-    assert resolved.style == expected
-    assert resolved.style.tone == expected.tone
-    assert resolved.style.background == expected.background
-    assert resolved.style.border == expected.border
-    assert resolved.style.padding == expected.padding
-    assert resolved.style.section_gap == expected.section_gap
-    assert resolved.style.title == expected.title
-    assert resolved.style.message == expected.message
+    assert resolved == board_style.callout_error
+    assert resolved.background == color("negative.bg")
+    assert resolved.border.color == color("negative.border")
+    assert resolved.title.font.color == color("negative.solid")
+    assert resolved.message.font.color == color("negative.text")
 
 
 def test_callout_resolve_carries_chart_local_style_override() -> None:

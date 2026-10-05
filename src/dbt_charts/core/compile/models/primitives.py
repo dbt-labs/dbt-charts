@@ -202,7 +202,7 @@ AuthoredFormat = str | FormatConfig
 """A format as authored: a spec, preset or alias name, or a format block."""
 
 FormatAliases = dict[str, AuthoredFormat]
-"""The ``style.formats`` alias table."""
+"""The ``style.formats.aliases`` alias table."""
 
 
 AUTHORED_FORMATS = "authored_formats"

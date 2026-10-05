@@ -623,7 +623,9 @@ class ResolvedChartDefaults:
     the raw ``axis``/``axis_x``/``axis_y``/``axis_quantitative`` theme
     passthroughs; the ``charts_board_overrides`` board-patch accumulator;
     the ``axis_overrides_*``/``scale``/``color`` chart-local patch sentinels;
-    ``palettes``/``roles``/``pre_style``; and ``card_padding``, which is a
+    ``palettes``/``roles``/``pre_style``; ``callout``, the pre-tone callout
+    style each callout chart resolves its own colors from; ``bold_font_weight``,
+    already baked onto every resolved callout; and ``card_padding``, which is a
     board *frame* value the chart cascade borrows, already reachable here as
     ``ResolvedStyle.frame.card_padding``. Every remaining field is fully
     concrete and board-wide (never chart-local-patched at this level), so
@@ -682,7 +684,6 @@ class ResolvedChartDefaults:
     spark: SparkStyle
     spark_bar: SparkBarChartStyle
     support_table: SupportTableStyle
-    callout: ResolvedCalloutStyle
     callout_error: ResolvedCalloutStyle
 
     # --- Board/board chrome ---

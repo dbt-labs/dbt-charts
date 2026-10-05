@@ -182,6 +182,16 @@ def unset_dbt_target_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def disable_usage_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppress CLI usage telemetry for every test, subprocesses included.
+
+    ``monkeypatch.setenv`` writes ``os.environ``, which real ``dct``
+    subprocesses inherit. ``tests/telemetry/`` unsets it to test emission.
+    """
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+
+
+@pytest.fixture(autouse=True)
 def isolate_resolve_style_cache() -> Iterator[None]:
     """Clear the resolve_style cache around every test.
 

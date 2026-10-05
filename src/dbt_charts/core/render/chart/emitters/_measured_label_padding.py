@@ -72,6 +72,7 @@ label-*text* generation those functions measure.
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 
 from d3_format import format as d3_format
@@ -81,6 +82,7 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedRulerAxis,
+    ResolvedScaleContinuousStyle,
     ResolvedTickLabel,
 )
 from dbt_charts.core.numeric import nice_tick_values
@@ -265,6 +267,7 @@ def estimated_quantitative_tick_labels(
     values: list[float],
     fmt: ResolvedFormat,
     tick_label: ResolvedTickLabel | None,
+    continuous: ResolvedScaleContinuousStyle | None,
 ) -> list[str]:
     """Upper-bound candidate tick labels for a quantitative axis whose real
     Vega-Lite ticks aren't known (dbt charts hasn't baked ``tick_values``).
@@ -291,14 +294,23 @@ def estimated_quantitative_tick_labels(
     (>= 1 -> ``si_format``; below ``SUB_UNIT_SCIENTIFIC_FLOOR`` ->
     ``scientific_format``; else ``tick_label.format``). ``fmt``'s affix and
     notation compose into every arm.
+
+    ``continuous`` is the axis's resolved continuous scale (``None`` when
+    unauthored). A ``log`` scale ticks at ``k * base**n`` across the decades
+    its domain nices out to, not on the linear ladder. ``pow``/``sqrt``/
+    ``symlog`` tick linearly in d3-scale, so the linear ladder already covers
+    them.
     """
     if not values:
         return []
-    domain_min = min(min(values), 0.0)
-    domain_max = max(max(values), 0.0)
-    candidates = {domain_min, domain_max}
-    for count in _ESTIMATE_TARGET_COUNTS:
-        candidates.update(nice_tick_values(domain_min, domain_max, count))
+    if continuous is not None and continuous.type == "log":
+        log = continuous.log
+        base = log.base if log is not None and log.base is not None else 10.0
+        candidates = _log_tick_candidates(min(values), max(values), base)
+    else:
+        candidates = _linear_tick_candidates(
+            min(min(values), 0.0), max(max(values), 0.0)
+        )
     if tick_label is None or tick_label.si_format is None:
         if fmt.has_affix:
             return [
@@ -316,6 +328,29 @@ def estimated_quantitative_tick_labels(
             ]
         return [d3_format(fmt.spec, v) for v in candidates]
     return [_sub_unit_guarded_format(v, fmt, tick_label) for v in candidates]
+
+
+def _linear_tick_candidates(lo: float, hi: float) -> set[float]:
+    candidates = {lo, hi}
+    for count in _ESTIMATE_TARGET_COUNTS:
+        candidates.update(nice_tick_values(lo, hi, count))
+    return candidates
+
+
+def _log_tick_candidates(lo: float, hi: float, base: float) -> set[float]:
+    """d3's log-scale tick candidates over ``[lo, hi]``: ``k * base**n``
+    across the whole decades the domain nices out to (``k`` in
+    ``1..base-1`` for an integer base, powers only otherwise), plus the
+    linear ladder d3 falls back to when an un-niced domain spans too few
+    decades to fill its tick count. d3 draws no log ticks for a base below 1;
+    its reciprocal's powers stand in as a conservative superset.
+    """
+    multipliers = range(1, int(base)) if base % 1 == 0 else range(1, 2)
+    step = 1 / base if base < 1 else base
+    lo_exp = math.floor(math.log(lo, step))
+    hi_exp = math.ceil(math.log(hi, step))
+    candidates = {k * step**n for n in range(lo_exp, hi_exp + 1) for k in multipliers}
+    return candidates | {v for v in _linear_tick_candidates(lo, hi) if v > 0}
 
 
 def _sub_unit_guarded_format(

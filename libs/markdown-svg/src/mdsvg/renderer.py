@@ -6,7 +6,7 @@ import hashlib
 import html as _html
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 
@@ -36,6 +36,7 @@ from .types import (
     Heading,
     HorizontalRule,
     ImageBlock,
+    ListItem,
     OrderedList,
     Paragraph,
     RawHtmlBlock,
@@ -363,13 +364,15 @@ class BlockMetrics:
 
     Enough for a caller to decide where to break a document across boxes of
     limited height -- columns, pages, slides -- without mdsvg knowing what a
-    box is. ``line_count`` and ``line_advance`` describe a block that may be
-    split; an unsplittable block reports one unit whose advance is its whole
-    height, so a packer can treat every block the same way.
+    box is. ``line_advances`` is one height per line, from the same line
+    layout render draws -- so a caller summing a slice of it gets exactly
+    what :meth:`render_block_window` draws for that slice, even when an
+    inline image makes one line taller than the rest. An unsplittable block
+    reports a single-element tuple, its whole height, so a packer can treat
+    every block the same way.
     """
 
-    line_count: int
-    line_advance: float
+    line_advances: tuple[float, ...]
     space_before: float
     splittable: bool
     keep_with_next: bool
@@ -384,9 +387,9 @@ class BlockMetrics:
 
 @dataclass(frozen=True)
 class TableRowLayout:
-    """Measured layout for one rendered table row."""
+    """Measured layout for one rendered table row: each cell's own lines."""
 
-    cell_lines: tuple[tuple[tuple["TextRun", ...], ...], ...]
+    cell_lines: tuple[tuple["_Line", ...], ...]
     row_height: float
 
 
@@ -936,18 +939,22 @@ class SVGRenderer:
         for block in blocks:
             gap = self._inter_block_gap(prev, block) if prev is not None else 0.0
             if isinstance(block, Paragraph):
-                runs = self._build_text_runs(block.spans, self.style.base_font_size)
                 # "normal" is what _render_text_block defaults to for paragraphs,
                 # and the pair's contract is that a caller may place a slice of
                 # what it measured. Wrapping the two halves at different weights
                 # makes the slice short and drops the tail of the paragraph.
-                lines = self._wrap_runs(
-                    runs, width, self.style.base_font_size, "normal"
+                lines = self._text_lines(
+                    block.spans,
+                    width,
+                    self.style.base_font_size,
+                    "normal",
+                    self.style.line_height,
                 )
                 metrics.append(
                     BlockMetrics(
-                        line_count=max(1, len(lines)),
-                        line_advance=self.style.base_font_size * self.style.line_height,
+                        # An empty paragraph still occupies one blank line.
+                        line_advances=tuple(line.height for line in lines)
+                        or (self.style.base_font_size * self.style.line_height,),
                         space_before=gap,
                         splittable=True,
                         keep_with_next=False,
@@ -958,8 +965,7 @@ class SVGRenderer:
                 _, height = self._render_block(block, ctx)
                 metrics.append(
                     BlockMetrics(
-                        line_count=1,
-                        line_advance=height,
+                        line_advances=(height,),
                         space_before=gap,
                         splittable=False,
                         keep_with_next=isinstance(block, Heading),
@@ -1330,26 +1336,49 @@ class SVGRenderer:
         )
         return margin_top, margin_bottom
 
-    def heading_baseline(self, level: int) -> float:
-        """How far below a heading block's top edge its first baseline sits.
+    def first_baseline(self, blocks: Document, width: float) -> float:
+        """How far below a document's top edge its first baseline sits.
 
-        For a heading that *opens* its document — a board title is one — which
-        is where the baseline falls inside its line box, and nothing else: the
-        top margin collapses against the top of the box. Callers aligning
-        something else to a heading — a row of controls beside a board title —
-        need this exact number; approximating it as a fraction of the block
-        height holds only for the one font size it was measured at.
+        The number the first line was actually drawn with, at ``width``: a
+        heading opening the document collapses its top margin, and an inline
+        image taller than the text pushes the baseline down with it. Callers
+        aligning something else to that line -- a row of controls beside a
+        board title -- need this exact number; approximating it as a fraction
+        of the block height holds only for the one font size it was measured
+        at. The first block must be a heading or a paragraph.
         """
-        font_size = self.style.get_heading_size(level)
-        # `is not None`, matching _render_text_block — with `or`, a configured
-        # heading_line_height of 0.0 would report a baseline the heading was not
-        # drawn on, which is the one thing this method must never do.
-        multiplier = (
-            self.style.heading_line_height
-            if self.style.heading_line_height is not None
-            else self.style.line_height
+        first = blocks[0]
+        if isinstance(first, Heading):
+            font_size = self.style.get_heading_size(first.level)
+            font_weight: str | int = self.style.heading_font_weight
+            # `is not None`, matching _render_heading -- with `or`, a configured
+            # heading_line_height of 0.0 would report a baseline the heading
+            # was not drawn on.
+            multiplier = (
+                self.style.heading_line_height
+                if self.style.heading_line_height is not None
+                else self.style.line_height
+            )
+        elif isinstance(first, Paragraph):
+            font_size = self.style.base_font_size
+            font_weight = "normal"
+            multiplier = self.style.line_height
+        else:
+            raise ValueError(
+                f"first_baseline needs a heading or paragraph, got {first.block_type}"
+            )
+        lines = self._text_lines(
+            first.spans,
+            width,
+            font_size,
+            font_weight,
+            multiplier,
+            is_heading=isinstance(first, Heading),
         )
-        return self._baseline_offset(font_size, multiplier)
+        # An empty heading paints no text; its line box still has a baseline.
+        if not lines:
+            return self._baseline_offset(font_size, multiplier)
+        return lines[0].ascent
 
     def heading_line_box(self, level: int, block_height: float) -> Tuple[float, float]:
         """The ``(top, height)`` of the text's line box inside a heading block.
@@ -1687,12 +1716,7 @@ class SVGRenderer:
         bq_case = self.style.blockquote_font_case
         if bq_case:
             transformed = tuple(
-                Span(
-                    text=_apply_case(s.text, bq_case),
-                    span_type=s.span_type,
-                    url=s.url,
-                )
-                for s in para.spans
+                replace(s, text=_apply_case(s.text, bq_case)) for s in para.spans
             )
         else:
             transformed = para.spans
@@ -1792,6 +1816,20 @@ class SVGRenderer:
             child_y += c_height
         return child_elements, child_y - item_height
 
+    def _item_lines(self, item: ListItem, width: float) -> Tuple[List[_Line], float]:
+        """A list item's lines, and how far its first baseline sits below a
+        plain text line's -- an inline image makes that line taller, and the
+        item's marker has to move down with the words it labels."""
+        font_size = self.style.base_font_size
+        lines = self._text_lines(
+            item.spans, width, font_size, "normal", self.style.line_height
+        )
+        if not lines:
+            return lines, 0.0
+        return lines, lines[0].ascent - self._baseline_offset(
+            font_size, self.style.line_height
+        )
+
     def _render_unordered_list(
         self,
         ul: UnorderedList,
@@ -1809,6 +1847,8 @@ class SVGRenderer:
             bullet_radius = 1.5
             bullet_gap = 6.5
             bullet_x = ctx.x + bullet_indent - bullet_gap - bullet_radius
+            item_ctx = ctx.with_indent(bullet_indent).with_offset(dy=current_y)
+            lines, drop = self._item_lines(item, item_ctx.width)
             # Half a line box down is also the center of the line's text: the
             # half-leading above the ascent and below the descent are equal, so
             # the two midpoints coincide. Pinned by
@@ -1817,6 +1857,7 @@ class SVGRenderer:
                 ctx.y
                 + current_y
                 + (self.style.base_font_size * self.style.line_height / 2)
+                + drop
             )
 
             elements.append(
@@ -1825,9 +1866,8 @@ class SVGRenderer:
                 f'fill="{escape_xml(self.style.text_color)}"/>'
             )
 
-            item_ctx = ctx.with_indent(bullet_indent).with_offset(dy=current_y)
-            item_elements, item_height = self._render_text_block(
-                item.spans,
+            item_elements, item_height = self._paint_text_lines(
+                lines,
                 item_ctx,
                 font_size=self.style.base_font_size,
                 css_class=self._scoped_class("text"),
@@ -1862,6 +1902,8 @@ class SVGRenderer:
 
             number_text = f"{number}."
             number_x = ctx.x + bullet_indent - 8
+            item_ctx = ctx.with_indent(bullet_indent).with_offset(dy=current_y)
+            lines, drop = self._item_lines(item, item_ctx.width)
             # The same expression `_render_text_block` uses for the item's own
             # first baseline, so a marker and the words it labels sit on one line
             # by construction rather than by two formulas agreeing.
@@ -1871,6 +1913,7 @@ class SVGRenderer:
                 + self._baseline_offset(
                     self.style.base_font_size, self.style.line_height
                 )
+                + drop
             )
 
             elements.append(
@@ -1881,9 +1924,8 @@ class SVGRenderer:
                 f'text-anchor="end">{number_text}</text>'
             )
 
-            item_ctx = ctx.with_indent(bullet_indent).with_offset(dy=current_y)
-            item_elements, item_height = self._render_text_block(
-                item.spans,
+            item_elements, item_height = self._paint_text_lines(
+                lines,
                 item_ctx,
                 font_size=self.style.base_font_size,
                 css_class=self._scoped_class("text"),
@@ -1968,7 +2010,7 @@ class SVGRenderer:
         self._render_table_row(
             elements,
             table.header,
-            header_layout.cell_lines,
+            header_layout,
             ctx.x,
             current_y,
             col_width,
@@ -1983,7 +2025,7 @@ class SVGRenderer:
             self._render_table_row(
                 elements,
                 row,
-                row_layout.cell_lines,
+                row_layout,
                 ctx.x,
                 current_y,
                 col_width,
@@ -2032,72 +2074,13 @@ class SVGRenderer:
         self,
         cell: TableCell,
         is_header: bool,
+        max_width: float,
     ) -> List[TextRun]:
         """Build text runs for a table cell, forcing bold widths for headers."""
-        runs = self._build_text_runs(cell.spans, self.style.base_font_size)
+        runs = self._build_text_runs(cell.spans, max_width)
         if not is_header:
             return runs
-        return [
-            TextRun(
-                text=run.text,
-                is_bold=True,
-                is_italic=run.is_italic,
-                is_code=run.is_code,
-                is_link=run.is_link,
-                is_image=run.is_image,
-                url=run.url,
-            )
-            for run in runs
-        ]
-
-    def _table_cell_lines_to_inner_svg(
-        self,
-        line_runs: Sequence[TextRun],
-        font_size: float,
-    ) -> str:
-        """Inline spans for a wrapped table-cell line."""
-        parts: list[str] = []
-        for run in line_runs:
-            if not run.text:
-                continue
-            raw_text = (
-                _apply_case(run.text, self.style.code_font_case)
-                if (run.is_code and self.style.code_font_case)
-                else run.text
-            )
-            escaped = escape_svg_text(raw_text)
-            style_parts: list[str] = []
-
-            if run.is_bold:
-                style_parts.append(f"font-weight: {self.style.bold_font_weight}")
-
-            if run.is_italic:
-                style_parts.append("font-style: italic")
-
-            if run.is_code:
-                style_parts.extend(self._code_inline_style_parts(font_size))
-
-            if run.is_link:
-                style_parts.append(f"fill: {self.style.link_color}")
-                style_parts.extend(self._link_text_decoration_style())
-
-            if run.is_image:
-                style_parts.append("font-style: italic")
-                style_parts.append(f"fill: {self.style.code_color}")
-
-            style_attr = (
-                f' style="{escape_xml("; ".join(style_parts))}"' if style_parts else ""
-            )
-            if run.is_link and run.url:
-                parts.append(
-                    f'<a href="{escape_svg_text(_safe_href(run.url))}"><tspan{style_attr}>{escaped}</tspan></a>'
-                )
-            elif style_parts:
-                parts.append(f"<tspan{style_attr}>{escaped}</tspan>")
-            else:
-                parts.append(escaped)
-
-        return "".join(parts)
+        return [replace(run, is_bold=True) for run in runs]
 
     def _measure_table_row_layout(
         self,
@@ -2107,44 +2090,38 @@ class SVGRenderer:
         font_size: float,
         is_header: bool,
     ) -> TableRowLayout:
-        """Wrap each cell in a row and return its rendered line layout."""
+        """Lay out each cell on its own lines; the row is its tallest cell."""
         max_width = max(col_width - (padding * 2), 1.0)
         line_height = font_size * self.style.line_height
-        cell_lines: list[tuple[tuple[TextRun, ...], ...]] = []
-        max_lines = 1
-
-        for cell in row.cells:
-            runs = self._table_cell_runs(cell, is_header=is_header)
-            wrapped = self._wrap_runs(runs, max_width, font_size)
-            if not wrapped:
-                wrapped = [[]]
-            cell_lines.append(
-                tuple(tuple(line_run for line_run in line) for line in wrapped)
+        # A cell's text sits one font size below its line's top, not on the
+        # half-leading baseline prose uses. An empty cell still paints one
+        # (empty) line, so every cell holds at least one.
+        cell_lines = tuple(
+            tuple(
+                self._layout_lines(
+                    self._table_cell_runs(cell, is_header, max_width),
+                    max_width,
+                    font_size,
+                    font_size,
+                    line_height,
+                )
             )
-            max_lines = max(max_lines, len(wrapped))
-
-        row_height = (max_lines * line_height) + (padding * 2)
-        return TableRowLayout(cell_lines=tuple(cell_lines), row_height=row_height)
-
-    def _run_sequence_width(self, runs: Sequence[TextRun], font_size: float) -> float:
-        """Sum measured widths of a run sequence, for content-width tracking."""
-        return sum(
-            self._measure_text(
-                run.text,
-                font_size,
-                is_bold=run.is_bold,
-                is_italic=run.is_italic,
-                is_mono=run.is_code,
-            )
-            for run in runs
-            if run.text
+            or (_Line((), font_size, line_height),)
+            for cell in row.cells
+        )
+        content_height = max(
+            (sum(line.height for line in lines) for lines in cell_lines),
+            default=line_height,
+        )
+        return TableRowLayout(
+            cell_lines=cell_lines, row_height=content_height + (padding * 2)
         )
 
     def _render_table_row(
         self,
         elements: List[str],
         row: TableRow,
-        cell_lines: Sequence[Sequence[Sequence[TextRun]]],
+        layout: TableRowLayout,
         start_x: float,
         y: float,
         col_width: float,
@@ -2153,47 +2130,68 @@ class SVGRenderer:
         is_header: bool,
     ) -> None:
         """Render a single table row."""
+        weight = self.style.bold_font_weight if is_header else "normal"
+        text_attrs = (
+            f'class="{escape_xml(self._scoped_class("text"))}" '
+            f'font-size="{format_number(font_size)}" '
+            f'font-weight="{escape_xml(str(weight))}"'
+        )
         x = start_x
-        line_height = font_size * self.style.line_height
-
-        for idx, cell in enumerate(row.cells):
-            line_runs = cell_lines[idx]
-
-            # Get alignment
-            align = cell.align
-
-            if align == "center":
-                text_x = x + col_width / 2
-                anchor = "middle"
-            elif align == "right":
-                text_x = x + col_width - padding
-                anchor = "end"
-            else:  # left or default
-                text_x = x + padding
-                anchor = "start"
-
-            css_class = self._scoped_class("text")
-            weight = self.style.bold_font_weight if is_header else "normal"
-
-            text_y = y + padding + font_size
-            for runs in line_runs:
-                inner = self._table_cell_lines_to_inner_svg(runs, font_size)
-                elements.append(
-                    f'  <text x="{format_number(text_x)}" y="{format_number(text_y)}" '
-                    f'class="{escape_xml(css_class)}" font-size="{format_number(font_size)}" '
-                    f'font-weight="{escape_xml(str(weight))}" text-anchor="{escape_xml(anchor)}">{inner}</text>'
-                )
-                line_width = self._run_sequence_width(runs, font_size)
-                if anchor == "middle":
-                    right_edge = text_x + line_width / 2
-                elif anchor == "end":
-                    right_edge = text_x
-                else:
-                    right_edge = text_x + line_width
-                self._max_content_width = max(self._max_content_width, right_edge)
-                text_y += line_height
-
+        for cell, lines in zip(row.cells, layout.cell_lines):
+            if cell.align == "center":
+                anchor_x, anchor = x + col_width / 2, "middle"
+            elif cell.align == "right":
+                anchor_x, anchor = x + col_width - padding, "end"
+            else:
+                anchor_x, anchor = x + padding, "start"
+            # Measured at no particular weight, the same as the cell was wrapped.
+            self._emit_lines(
+                elements,
+                lines,
+                anchor_x,
+                anchor,
+                y + padding,
+                font_size,
+                None,
+                False,
+                text_attrs,
+                chips=False,
+            )
             x += col_width
+
+    def _strip_segment_leading_space(
+        self,
+        run: TextRun,
+        segment_x: float,
+        font_size: float,
+        font_weight: str | int | None,
+        is_heading: bool,
+    ) -> Tuple[TextRun, float]:
+        """Strip a run's leading whitespace and advance segment_x past it.
+
+        A text run opening a new <text> segment right after an inline image
+        (or opening a line that starts with one) can carry the wrap
+        algorithm's separator as a literal leading space (_wrap_runs
+        prepends it via TextRun.append when merging same-style runs). SVG
+        collapses a <text> element's leading whitespace for rendering but
+        not for layout, which already measured it as part of the run's
+        width -- left in, the space vanishes on screen and the visible text
+        sits one space-width off from where it was measured to be.
+        """
+        stripped = run.text.lstrip(" ")
+        if stripped == run.text:
+            return run, segment_x
+        leading_ws = run.text[: len(run.text) - len(stripped)]
+        ws_width = self._measure_text(
+            leading_ws,
+            font_size,
+            is_bold=run.is_bold,
+            is_italic=run.is_italic,
+            is_mono=run.is_code,
+            font_weight=font_weight,
+            is_heading=is_heading,
+        )
+        return run.with_text(stripped), segment_x + ws_width
 
     def _get_image_size(self, url: str) -> Optional[ImageSize]:
         """Get image dimensions, using cache to avoid re-fetching."""
@@ -2204,7 +2202,12 @@ class SVGRenderer:
         if self.style.image_enforce_aspect_ratio:
             return None
 
-        if not self._fetch_image_sizes:
+        # A data: URI is measured by decoding its own payload — no I/O, so
+        # this always runs regardless of fetch_image_sizes (which gates
+        # local-file and remote-network fetches only). Scheme match is
+        # case-insensitive (RFC 3986 schemes are; get_image_size's own
+        # urlparse already lowercases before dispatch).
+        if not self._fetch_image_sizes and not url.lower().startswith("data:"):
             return None
 
         size = get_image_size(
@@ -2230,7 +2233,9 @@ class SVGRenderer:
 
         Image sizing priority:
         1. Explicit dimensions from markdown: ![alt](url){width=X height=Y}
-        2. Fetched dimensions from the actual image (if fetch_image_sizes=True)
+        2. Measured dimensions from the actual image -- a data: URI is always
+           measured (decoding its own payload needs no I/O); a local file or
+           remote http(s) URL is measured only when fetch_image_sizes=True
         3. Style defaults (image_width, image_height)
         4. Fallback: full width with image_fallback_aspect_ratio
 
@@ -2272,23 +2277,77 @@ class SVGRenderer:
             # Fallback to configured aspect ratio
             img_height = img_width / self.style.image_fallback_aspect_ratio
 
-        # Map URL for embedding (e.g., local path -> CDN URL)
-        embed_url = self._map_image_url(img.url)
+        elements = self._image_elements(
+            ctx.x, ctx.y, img_width, img_height, img.url, img.alt
+        )
+        return elements, img_height
 
-        element = (
-            f'  <image x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
-            f'width="{format_number(img_width)}" height="{format_number(img_height)}" '
-            f'href="{escape_svg_text(embed_url)}" '
-            f'preserveAspectRatio="{escape_xml(self.style.image_preserve_aspect_ratio)}"/>'
+    def _inline_image(self, span: Span, available_width: float) -> InlineImage:
+        """Resolve the on-page box for an inline image span.
+
+        Priority: explicit ``{width=/height=}`` -> the image's own measured
+        intrinsic size (rendered near its natural pixel size, like a
+        browser's ``<img>`` mid-sentence -- NOT stretched to the container,
+        which is what a standalone image block does) -> style defaults ->
+        the configured fallback aspect ratio, the same last-resort tier
+        ``_render_image_block`` falls back to for an unmeasurable standalone
+        image.
+
+        The box is then scaled down, preserving aspect ratio, if it would not
+        fit *available_width* -- an inline image never forces its line wider
+        than the container, the same way a long unbreakable word doesn't.
+        """
+        assert span.url is not None, "Span.__post_init__ requires an IMAGE url"
+        actual_size = self._get_image_size(span.url)
+
+        if span.width is not None:
+            img_width = span.width
+        elif span.height is not None:
+            aspect = (
+                actual_size.aspect_ratio
+                if actual_size is not None
+                else self.style.image_fallback_aspect_ratio
+            )
+            img_width = span.height * aspect
+        elif actual_size is not None:
+            img_width = actual_size.width
+        elif self.style.image_width is not None:
+            img_width = self.style.image_width
+        else:
+            img_width = available_width
+
+        if span.height is not None:
+            img_height = span.height
+        elif actual_size is not None:
+            img_height = img_width / actual_size.aspect_ratio
+        elif self.style.image_height is not None:
+            img_height = self.style.image_height
+        else:
+            img_height = img_width / self.style.image_fallback_aspect_ratio
+
+        if img_width > available_width > 0:
+            scale = available_width / img_width
+            img_width *= scale
+            img_height *= scale
+
+        return InlineImage(
+            url=span.url, width=img_width, height=img_height, alt=span.text
         )
 
-        elements = [element]
-
-        # Add alt text as title for accessibility
-        if img.alt:
-            elements.append(f"  <title>{escape_svg_text(img.alt)}</title>")
-
-        return elements, img_height
+    def _image_elements(
+        self, x: float, y: float, width: float, height: float, url: str, alt: str
+    ) -> List[str]:
+        """One ``<image>`` and its alt text as a ``<title>``, for accessibility --
+        standalone block or inline in a line alike."""
+        elements = [
+            f'  <image x="{format_number(x)}" y="{format_number(y)}" '
+            f'width="{format_number(width)}" height="{format_number(height)}" '
+            f'href="{escape_svg_text(self._map_image_url(url))}" '
+            f'preserveAspectRatio="{escape_xml(self.style.image_preserve_aspect_ratio)}"/>'
+        ]
+        if alt:
+            elements.append(f"  <title>{escape_svg_text(alt)}</title>")
+        return elements
 
     def _baseline_offset(
         self, font_size: float, line_height_multiplier: float
@@ -2311,6 +2370,58 @@ class SVGRenderer:
         half_leading = (font_size * line_height_multiplier - ascent - descent) / 2
         return half_leading + ascent
 
+    def _text_lines(
+        self,
+        spans: Sequence[Span],
+        width: float,
+        font_size: float,
+        font_weight: str | int,
+        line_height_multiplier: float,
+        is_heading: bool = False,
+    ) -> List[_Line]:
+        """Prose lines -- paragraphs, headings, list items -- at *width*."""
+        return self._layout_lines(
+            self._build_text_runs(spans, width),
+            width,
+            font_size,
+            self._baseline_offset(font_size, line_height_multiplier),
+            font_size * line_height_multiplier,
+            font_weight,
+            is_heading,
+        )
+
+    def _layout_lines(
+        self,
+        runs: List[TextRun],
+        max_width: float,
+        font_size: float,
+        text_ascent: float,
+        line_height: float,
+        font_weight: str | int | None = None,
+        is_heading: bool = False,
+    ) -> List[_Line]:
+        """Wrap *runs* into lines and size each line's box.
+
+        The one line layout: prose and table cells read their lines from here,
+        and ``measure_blocks`` reports the same heights render draws. A line
+        is ``line_height`` tall with its baseline ``text_ascent`` below its
+        top, unless an inline image on it is taller than ``text_ascent`` --
+        the image's bottom sits on the baseline, so the box grows upward by
+        the difference.
+        """
+        lines: List[_Line] = []
+        for line_runs in self._wrap_runs(
+            runs, max_width, font_size, font_weight, is_heading
+        ):
+            ascent = max(
+                [text_ascent]
+                + [run.image.height for run in line_runs if run.image is not None]
+            )
+            lines.append(
+                _Line(tuple(line_runs), ascent, line_height + (ascent - text_ascent))
+            )
+        return lines
+
     def _render_text_block(
         self,
         spans: Sequence[Span],
@@ -2332,35 +2443,190 @@ class SVGRenderer:
         if not spans:
             return [], 0
 
-        elements: List[str] = []
         multiplier = (
             line_height_multiplier
             if line_height_multiplier is not None
             else self.style.line_height
         )
-        line_height = font_size * multiplier
-
-        # Build runs of text with their styles
-        runs = self._build_text_runs(spans, font_size)
-
-        # Wrap and layout text
-        lines = self._wrap_runs(runs, ctx.width, font_size, font_weight, is_heading)
-
+        lines = self._text_lines(
+            spans, ctx.width, font_size, font_weight, multiplier, is_heading
+        )
         if line_window is not None:
             start, count = line_window
             lines = lines[start:] if count is None else lines[start : start + count]
 
-        current_y = ctx.y + self._baseline_offset(font_size, multiplier)
+        return self._paint_text_lines(
+            lines, ctx, font_size, css_class, font_weight, is_heading
+        )
 
-        # Calculate x position based on text alignment
-        text_anchor = self.style.get_text_anchor()
+    def _paint_text_lines(
+        self,
+        lines: Sequence[_Line],
+        ctx: RenderContext,
+        font_size: float,
+        css_class: str,
+        font_weight: str | int = "normal",
+        is_heading: bool = False,
+    ) -> Tuple[List[str], float]:
+        """Paint laid-out prose lines at the block's own text alignment."""
+        anchor = self.style.get_text_anchor()
         if self.style.text_align == "center":
-            text_x = ctx.x + ctx.width / 2
+            anchor_x = ctx.x + ctx.width / 2
         elif self.style.text_align == "right":
-            text_x = ctx.x + ctx.width
-        else:  # left (default)
-            text_x = ctx.x
+            anchor_x = ctx.x + ctx.width
+        else:
+            anchor_x = ctx.x
 
+        elements: List[str] = []
+        height = self._emit_lines(
+            elements,
+            lines,
+            anchor_x,
+            anchor,
+            ctx.y,
+            font_size,
+            font_weight,
+            is_heading,
+            f'font-size="{format_number(font_size)}" class="{escape_xml(css_class)}"',
+            chips=True,
+        )
+        return elements, height
+
+    def _emit_lines(
+        self,
+        elements: List[str],
+        lines: Sequence[_Line],
+        anchor_x: float,
+        anchor: str,
+        top: float,
+        font_size: float,
+        font_weight: str | int | None,
+        is_heading: bool,
+        text_attrs: str,
+        chips: bool,
+    ) -> float:
+        """Paint *lines* downward from *top*; return the height they took."""
+        line_top = top
+        for line in lines:
+            self._emit_line(
+                elements,
+                line.runs,
+                anchor_x,
+                anchor,
+                line_top + line.ascent,
+                font_size,
+                font_weight,
+                is_heading,
+                text_attrs,
+                chips,
+            )
+            line_top += line.height
+        return sum(line.height for line in lines)
+
+    def _emit_line(
+        self,
+        elements: List[str],
+        runs: Sequence[TextRun],
+        anchor_x: float,
+        anchor: str,
+        baseline: float,
+        font_size: float,
+        font_weight: str | int | None,
+        is_heading: bool,
+        text_attrs: str,
+        chips: bool,
+    ) -> None:
+        """Paint one line's runs on *baseline*, aligned at *anchor_x*.
+
+        ``text_attrs`` is the caller's own ``<text>`` attributes between ``y``
+        and ``text-anchor``. ``chips`` draws inline-code background boxes.
+        """
+        # Widths are measured on the display text (after case transform)
+        # because that's what the font engine advances over.
+        widths = [
+            run.image.width
+            if run.image is not None
+            else self._measure_text(
+                _apply_case(run.text, self.style.code_font_case)
+                if (run.is_code and self.style.code_font_case)
+                else run.text,
+                font_size,
+                is_bold=run.is_bold,
+                is_italic=run.is_italic,
+                is_mono=run.is_code,
+                font_weight=font_weight,
+                is_heading=is_heading,
+            )
+            for run in runs
+        ]
+        line_width = sum(widths)
+        if anchor == "middle":
+            left = anchor_x - line_width / 2
+        elif anchor == "end":
+            left = anchor_x - line_width
+        else:
+            left = anchor_x
+        self._max_content_width = max(self._max_content_width, left + line_width)
+
+        if chips:
+            self._emit_code_chips(elements, runs, widths, left, baseline, font_size)
+
+        if all(run.image is None for run in runs):
+            content = self._tspan_content(runs, font_size, font_weight)
+            elements.append(
+                f'  <text x="{format_number(anchor_x)}" y="{format_number(baseline)}" '
+                f'{text_attrs} text-anchor="{escape_xml(anchor)}">{content}</text>'
+            )
+            return
+
+        # SVG has no inline <image> inside <text>: walk the line left to right,
+        # emitting one start-anchored <text> per stretch of text runs and a
+        # sibling <image> per image run, bottom-aligned to the baseline.
+        segment: List[TextRun] = []
+        segment_x = run_x = left
+
+        def flush_segment() -> None:
+            if segment:
+                content = self._tspan_content(segment, font_size, font_weight)
+                elements.append(
+                    f'  <text x="{format_number(segment_x)}" '
+                    f'y="{format_number(baseline)}" {text_attrs} '
+                    f'text-anchor="start">{content}</text>'
+                )
+                segment.clear()
+
+        for run, width in zip(runs, widths):
+            if run.image is not None:
+                flush_segment()
+                elements.extend(
+                    self._image_elements(
+                        run_x,
+                        baseline - run.image.height,
+                        run.image.width,
+                        run.image.height,
+                        run.image.url,
+                        run.image.alt,
+                    )
+                )
+            else:
+                if not segment:
+                    run, segment_x = self._strip_segment_leading_space(
+                        run, run_x, font_size, font_weight, is_heading
+                    )
+                segment.append(run)
+            run_x += width
+        flush_segment()
+
+    def _emit_code_chips(
+        self,
+        elements: List[str],
+        runs: Sequence[TextRun],
+        widths: Sequence[float],
+        left: float,
+        baseline: float,
+        font_size: float,
+    ) -> None:
+        """Background boxes behind a line's inline-code runs, before its text."""
         chip_padding = self.style.inline_code_padding
         chip_radius = self.style.inline_code_border_radius
         code_font_size = self._inline_code_size(font_size)
@@ -2370,173 +2636,101 @@ class SVGRenderer:
         chip_height = (
             _CHIP_CAP_HEIGHT_RATIO + _CHIP_DESCENDER_RATIO
         ) * code_font_size + 2 * chip_padding
+        rx_attr = f' rx="{format_number(chip_radius)}"' if chip_radius else ""
+        run_x = left
+        for run, rw in zip(runs, widths):
+            if run.is_code and rw > 0:
+                rect_x = run_x - chip_padding
+                # Place rect top at cap height above the baseline (not the full
+                # em-square), so the chip hugs the glyph's visual body rather
+                # than floating above it.
+                rect_y = (
+                    baseline - _CHIP_CAP_HEIGHT_RATIO * code_font_size - chip_padding
+                )
+                elements.append(
+                    f'  <rect x="{format_number(rect_x)}" y="{format_number(rect_y)}" '
+                    f'width="{format_number(rw + 2 * chip_padding)}" '
+                    f'height="{format_number(chip_height)}" '
+                    f'fill="{escape_xml(self.style.code_background)}"{rx_attr}/>'
+                )
+            run_x += rw
 
-        for line_runs in lines:
-            if not line_runs:
-                current_y += line_height
+    def _tspan_content(
+        self,
+        runs: Sequence[TextRun],
+        font_size: float,
+        font_weight: str | int | None,
+    ) -> str:
+        """Join a run of non-image text into <tspan>/<a> inner markup."""
+        tspan_parts: List[str] = []
+        for run in runs:
+            if not run.text:
                 continue
 
-            # Measure each run's width so we can compute per-run x for chip rects.
-            # Widths are measured on the display text (after case transform) because
-            # that's what the font engine advances over.
-            run_widths: List[float] = []
-            for run in line_runs:
-                if not run.text:
-                    run_widths.append(0.0)
-                    continue
-                display_text = (
-                    _apply_case(run.text, self.style.code_font_case)
-                    if (run.is_code and self.style.code_font_case)
-                    else run.text
-                )
-                run_widths.append(
-                    self._measure_text(
-                        display_text,
-                        font_size,
-                        is_bold=run.is_bold,
-                        is_italic=run.is_italic,
-                        is_mono=run.is_code,
-                        font_weight=font_weight,
-                        is_heading=is_heading,
-                    )
-                )
+            # Case transform must run on raw text BEFORE escaping — uppercasing
+            # an escaped string would corrupt entities (&amp; -> &AMP;).
+            raw_text = (
+                _apply_case(run.text, self.style.code_font_case)
+                if (run.is_code and self.style.code_font_case)
+                else run.text
+            )
+            escaped = escape_svg_text(raw_text)
 
-            # Compute the left edge of this line based on text_align.
-            # text_x is the SVG anchor point; we back-calculate the visual left edge.
-            line_width = sum(run_widths)
-            if self.style.text_align == "center":
-                line_left = text_x - line_width / 2
-            elif self.style.text_align == "right":
-                line_left = text_x - line_width
+            style_parts: List[str] = []
+
+            if run.is_bold:
+                style_parts.append(f"font-weight: {self.style.bold_font_weight}")
+            elif font_weight not in (None, "normal"):
+                style_parts.append(f"font-weight: {font_weight}")
+
+            if run.is_italic:
+                style_parts.append("font-style: italic")
+
+            if run.is_code:
+                style_parts.extend(self._code_inline_style_parts(font_size))
+
+            if run.is_link:
+                style_parts.append(f"fill: {self.style.link_color}")
+                style_parts.extend(self._link_text_decoration_style())
+
+            style_attr = (
+                f' style="{escape_xml("; ".join(style_parts))}"' if style_parts else ""
+            )
+
+            if run.is_link and run.url:
+                tspan_parts.append(
+                    f'<a href="{escape_svg_text(_safe_href(run.url))}">'
+                    f"<tspan{style_attr}>{escaped}</tspan></a>"
+                )
+            elif style_parts:
+                tspan_parts.append(f"<tspan{style_attr}>{escaped}</tspan>")
             else:
-                line_left = text_x  # left alignment: anchor IS the left edge
+                tspan_parts.append(escaped)
 
-            self._max_content_width = max(
-                self._max_content_width, line_left + line_width
-            )
-
-            # Emit background rects for code runs BEFORE the text element.
-            run_x = line_left
-            for run, rw in zip(line_runs, run_widths):
-                if run.is_code and rw > 0:
-                    rect_x = run_x - chip_padding
-                    # current_y is the text baseline.  Place rect top at cap height
-                    # above baseline (not the full em-square), so the chip hugs the
-                    # glyph's visual body rather than floating above it.
-                    rect_y = (
-                        current_y
-                        - _CHIP_CAP_HEIGHT_RATIO * code_font_size
-                        - chip_padding
-                    )
-                    rx_attr = (
-                        f' rx="{format_number(chip_radius)}"' if chip_radius else ""
-                    )
-                    elements.append(
-                        f'  <rect x="{format_number(rect_x)}" y="{format_number(rect_y)}" '
-                        f'width="{format_number(rw + 2 * chip_padding)}" '
-                        f'height="{format_number(chip_height)}" '
-                        f'fill="{escape_xml(self.style.code_background)}"{rx_attr}/>'
-                    )
-                run_x += rw
-
-            # Build a single <text> element with <tspan> children for proper spacing
-            # This lets the browser handle text positioning correctly
-            tspan_parts: List[str] = []
-
-            for run in line_runs:
-                if not run.text:
-                    continue
-
-                # Case transform must run on raw text BEFORE escaping — uppercasing
-                # an escaped string would corrupt entities (&amp; -> &AMP;).
-                raw_text = (
-                    _apply_case(run.text, self.style.code_font_case)
-                    if (run.is_code and self.style.code_font_case)
-                    else run.text
-                )
-                escaped = escape_svg_text(raw_text)
-
-                # Build tspan styling
-                style_parts: List[str] = []
-
-                if run.is_bold:
-                    style_parts.append(f"font-weight: {self.style.bold_font_weight}")
-                elif font_weight != "normal":
-                    style_parts.append(f"font-weight: {font_weight}")
-
-                if run.is_italic:
-                    style_parts.append("font-style: italic")
-
-                if run.is_code:
-                    style_parts.extend(self._code_inline_style_parts(font_size))
-
-                if run.is_link:
-                    style_parts.append(f"fill: {self.style.link_color}")
-                    style_parts.extend(self._link_text_decoration_style())
-
-                # Create tspan element
-                style_attr = (
-                    f' style="{escape_xml("; ".join(style_parts))}"'
-                    if style_parts
-                    else ""
-                )
-
-                if run.is_link and run.url:
-                    # Wrap link text in an anchor
-                    tspan_parts.append(
-                        f'<a href="{escape_svg_text(_safe_href(run.url))}">'
-                        f"<tspan{style_attr}>{escaped}</tspan></a>"
-                    )
-                elif style_parts:
-                    tspan_parts.append(f"<tspan{style_attr}>{escaped}</tspan>")
-                else:
-                    # Plain text without tspan wrapper
-                    tspan_parts.append(escaped)
-
-            # Build the complete text element
-            text_content = "".join(tspan_parts)
-            text_element = (
-                f'  <text x="{format_number(text_x)}" y="{format_number(current_y)}" '
-                f'font-size="{format_number(font_size)}" class="{escape_xml(css_class)}" '
-                f'text-anchor="{escape_xml(text_anchor)}">'
-                f"{text_content}</text>"
-            )
-            elements.append(text_element)
-
-            current_y += line_height
-
-        total_height = len(lines) * line_height
-        return elements, total_height
+        return "".join(tspan_parts)
 
     def _build_text_runs(
         self,
         spans: Sequence[Span],
-        font_size: float,
+        max_width: float,
     ) -> List[TextRun]:
-        """Convert spans to text runs with computed styles."""
-        runs: List[TextRun] = []
-
-        for span in spans:
-            is_bold = span.span_type in (SpanType.BOLD, SpanType.BOLD_ITALIC)
-            is_italic = span.span_type in (SpanType.ITALIC, SpanType.BOLD_ITALIC)
-            is_code = span.span_type == SpanType.CODE
-            is_link = span.span_type == SpanType.LINK
-            is_image = span.span_type == SpanType.IMAGE
-            text = span.text
-
-            runs.append(
-                TextRun(
-                    text=text,
-                    is_bold=is_bold,
-                    is_italic=is_italic,
-                    is_code=is_code,
-                    is_link=is_link,
-                    is_image=is_image,
-                    url=span.url,
-                )
+        """Convert spans to text runs, sizing each inline image for *max_width*."""
+        return [
+            TextRun(
+                text=span.text,
+                is_bold=span.span_type in (SpanType.BOLD, SpanType.BOLD_ITALIC),
+                is_italic=span.span_type in (SpanType.ITALIC, SpanType.BOLD_ITALIC),
+                is_code=span.span_type == SpanType.CODE,
+                is_link=span.span_type == SpanType.LINK,
+                url=span.url if span.span_type == SpanType.LINK else None,
+                image=(
+                    self._inline_image(span, max_width)
+                    if span.span_type == SpanType.IMAGE
+                    else None
+                ),
             )
-
-        return runs
+            for span in spans
+        ]
 
     def _wrap_runs(
         self,
@@ -2573,6 +2767,21 @@ class SVGRenderer:
                     font_weight=font_weight,
                     is_heading=is_heading,
                 )
+
+            # An inline image is a single unbreakable box in the line, like a
+            # very long word.
+            if run.image is not None:
+                pieces.append(
+                    WrapPiece(
+                        text=run.text,
+                        width=run.image.width,
+                        separator=separator,
+                        separator_width=measure(separator) if separator else 0.0,
+                        meta=run,
+                    )
+                )
+                separator = ""
+                continue
 
             # A code span is one thing to read, and it paints one background box.
             # Splitting `width: "25%"` at its space puts half the span on each line
@@ -2647,22 +2856,38 @@ class SVGRenderer:
         return lines
 
 
+@dataclass(frozen=True)
+class InlineImage:
+    """An inline image's resolved on-page box."""
+
+    url: str
+    alt: str
+    width: float
+    height: float
+
+
 @dataclass
 class TextRun:
-    """A run of text with consistent styling."""
+    """A run of text with consistent styling, or one inline image."""
 
     text: str
     is_bold: bool = False
     is_italic: bool = False
     is_code: bool = False
     is_link: bool = False
-    is_image: bool = False
     url: Optional[str] = None
+    image: Optional[InlineImage] = None
 
     def same_style(self, other: TextRun) -> bool:
-        """Check if another run has the same styling."""
+        """Check if another run has the same styling.
+
+        An image run never merges with anything, including another image --
+        each is its own ``<image>`` element.
+        """
         return (
-            self.is_bold == other.is_bold
+            self.image is None
+            and other.image is None
+            and self.is_bold == other.is_bold
             and self.is_italic == other.is_italic
             and self.is_code == other.is_code
             and self.is_link == other.is_link
@@ -2671,19 +2896,20 @@ class TextRun:
 
     def with_text(self, text: str) -> TextRun:
         """Create a copy with different text."""
-        return TextRun(
-            text=text,
-            is_bold=self.is_bold,
-            is_italic=self.is_italic,
-            is_code=self.is_code,
-            is_link=self.is_link,
-            is_image=self.is_image,
-            url=self.url,
-        )
+        return replace(self, text=text)
 
     def append(self, text: str) -> TextRun:
         """Create a copy with appended text."""
         return self.with_text(self.text + text)
+
+
+@dataclass(frozen=True)
+class _Line:
+    """One laid-out line: its runs, its baseline below its top, its height."""
+
+    runs: tuple[TextRun, ...]
+    ascent: float
+    height: float
 
 
 # Convenience functions

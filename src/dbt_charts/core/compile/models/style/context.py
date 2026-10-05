@@ -62,6 +62,7 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisYStyle,
     BarChartStyle,
     BaseAxisStyle,
+    CalloutChartStyle,
     GeoshapeChartStyle,
     GlobalMarksStyle,
     HeatmapChartStyle,
@@ -210,12 +211,15 @@ class ChartStyleContext:
     spark: SparkStyle
     spark_bar: SparkBarChartStyle
     support_table: SupportTableStyle
-    # Callout chart-family style (type: callout charts only — board-level
-    # default tone, before any chart-local style.tone override).
-    callout: ResolvedCalloutStyle
+    # Callout chart-family style with its colors still ``by_tone``: a
+    # chart-local patch (possibly a different tone) merges onto this, and
+    # only then does the tone fill the ``by_tone`` colors.
+    callout: CalloutChartStyle
     # Runtime chart-error fallback card style — same family, tone forced to
     # "negative" regardless of the theme's chosen callout default.
     callout_error: ResolvedCalloutStyle
+    # CSS weight of the theme's one bold token (text.bold.weight).
+    bold_font_weight: str
 
     # --- Board/board chrome carried for the VL config mapper ---
     tooltip: TooltipStyle

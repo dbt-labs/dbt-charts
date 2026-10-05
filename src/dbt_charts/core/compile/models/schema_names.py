@@ -332,7 +332,7 @@ ScalePaletteName = Literal[
 
 # Engine-predefined format names (PredefinedNumberFormat + PredefinedTimeFormat).
 # A predefined name resolves to a d3 spec or native formatter at render time;
-# a raw d3 spec or user style.formats alias is equally legal, so every field
+# a raw d3 spec or user style.formats.aliases name is equally legal, so every field
 # carrying this reads `FormatAlias | str` — the Literal names the shortcuts,
 # it does not close the set. Kind-agnostic slots (`format:`) take this one;
 # a slot that knows its kind takes the matching half below.

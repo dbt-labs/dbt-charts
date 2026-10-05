@@ -54,7 +54,14 @@ def render(
         update={"column": resolved.text.column.model_copy(update=column)}
     )
     svg, _ = render_prose_svg(
-        markdown, width, text_style, resolved, plan_for(width, grid)
+        markdown,
+        width,
+        text_style,
+        resolved,
+        plan_for(width, grid),
+        authored=markdown,
+        base_dir=None,
+        error_collector=None,
     )
     return svg
 
@@ -175,7 +182,16 @@ class TestAlignmentIsRelativeToTheSpan:
     def _anchor(self, width: float, align: str) -> float:
         resolved = resolve_style(get_theme_style("clarity"))
         text_style = resolved.text.model_copy(update={"align": align})
-        svg, _ = render_prose_svg(SHORT, width, text_style, resolved, plan_for(width))
+        svg, _ = render_prose_svg(
+            SHORT,
+            width,
+            text_style,
+            resolved,
+            plan_for(width),
+            authored=SHORT,
+            base_dir=None,
+            error_collector=None,
+        )
         xs = [float(x) for x in re.findall(r'<text[^>]*\bx="([\d.]+)"', svg)]
         offsets = [
             float(m) for m in re.findall(r'<g transform="translate\(([\d.]+),', svg)
@@ -218,7 +234,16 @@ class TestEveryWordSurvivesTheWeight:
             }
         )
         styled = dataclasses.replace(resolved, text=text_style)
-        svg, _ = render_prose_svg(LONG, 1096.0, styled.text, styled, plan_for(1096.0))
+        svg, _ = render_prose_svg(
+            LONG,
+            1096.0,
+            styled.text,
+            styled,
+            plan_for(1096.0),
+            authored=LONG,
+            base_dir=None,
+            error_collector=None,
+        )
         painted = " ".join(
             " ".join(
                 html.unescape(re.sub(r"<[^>]+>", "", t))
@@ -293,3 +318,76 @@ class TestATableKeepsItsNaturalWidth:
         render(self.TABLE, 1096.0)
         # the natural probe, at most three span candidates, and the block itself
         assert len(calls) <= 5
+
+
+class TestMultiColumnWithInlineImage:
+    """A column's height, summed by prose.py's packing bookkeeping from
+    ``line_advances``, must equal what mdsvg draws for that window even when
+    one line holds a tall inline image -- else a gap under a short column, a
+    clip under a tall one."""
+
+    def test_column_heights_match_the_real_rendered_window_heights(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import base64
+
+        from mdsvg.renderer import RenderResult, SVGRenderer
+        from mdsvg.types import Block
+
+        real_window = SVGRenderer.render_block_window
+        captured: list[float] = []
+
+        def spy(
+            self: SVGRenderer,
+            block: Block,
+            width: float = 400.0,
+            start: int = 0,
+            count: int | None = None,
+        ) -> RenderResult:
+            result = real_window(self, block, width=width, start=start, count=count)
+            captured.append(result.height)
+            return result
+
+        monkeypatch.setattr(SVGRenderer, "render_block_window", spy)
+
+        svg_payload = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="412" height="128">'
+            "<rect width='412' height='128'/></svg>"
+        )
+        url = (
+            "data:image/svg+xml;base64,"
+            + base64.b64encode(svg_payload.encode()).decode()
+        )
+        words = "word " * 40
+        markdown = f"{words}![logo]({url}) {words}"
+
+        resolved = resolve_style(get_theme_style("clarity"))
+        text_style = resolved.text.model_copy(
+            update={
+                "column": resolved.text.column.model_copy(
+                    update={"max_number": 2, "max_chars": 40}
+                )
+            }
+        )
+        styled = dataclasses.replace(resolved, text=text_style)
+
+        svg, height = render_prose_svg(
+            markdown,
+            1096.0,
+            styled.text,
+            styled,
+            plan_for(1096.0),
+            authored=markdown,
+            base_dir=None,
+            error_collector=None,
+        )
+
+        assert column_count(svg) == 2, "fixture must actually split across two columns"
+        assert len(captured) == 2, (
+            "one paragraph split into exactly one window per column"
+        )
+        assert height == pytest.approx(max(captured), abs=0.01), (
+            f"reported height {height} does not match the actual tallest "
+            f"rendered column {max(captured)} -- the packer's own height "
+            "bookkeeping disagrees with what mdsvg drew"
+        )

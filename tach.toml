@@ -295,6 +295,7 @@ depends_on = [
     "dbt_charts.agent_api",
     "dbt_charts.cli.filesystem_project",
     "dbt_charts.cloud_client",
+    "dbt_charts.telemetry",
 ]
 
 # The Cloud client: HTTP, the user-level token store, and per-invocation
@@ -306,6 +307,13 @@ depends_on = [
 # import of it anywhere in src/ fails the allowlist.
 [[modules]]
 path = "dbt_charts.cloud_client"
+depends_on = []
+
+# Anonymous usage telemetry: imported only by dbt_charts.cli. Empty depends_on,
+# like cloud_client — it may import nothing else first-party, so core and
+# agent_api stay free of any outbound-reporting edge.
+[[modules]]
+path = "dbt_charts.telemetry"
 depends_on = []
 
 # FilesystemProject — the concrete local-filesystem Project — lives here at the

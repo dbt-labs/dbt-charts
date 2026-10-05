@@ -49,12 +49,17 @@ from typing import Any
 import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.board import raise_on_dashboard_failure, render_dashboard
+from dbt_charts.core.board import (
+    BoardRenderResult,
+    raise_on_dashboard_failure,
+    render_dashboard,
+)
 from dbt_charts.core.compile.parse.markdown import (
     MARKDOWN_NOT_BOARD_MESSAGE,
     is_markdown_board_content,
     markdown_to_yaml,
 )
+from dbt_charts.core.diagnostics.codes_compile import ERR_UNRESOLVED_REFERENCE
 from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
@@ -72,7 +77,6 @@ logger = logging.getLogger("dbt_charts.integrations.markdown")
 
 _PLAYGROUND_URL = "https://play.dbtcharts.com"
 _VALID_LAYOUTS = {"side-by-side", "stacked", "render-only", "yaml-only"}
-_EXTERNAL_QUERY_NOT_FOUND_RE = re.compile(r"External query file not found", re.I)
 
 _PROJECT_DIR_OVERRIDE: ContextVar[Path | None] = ContextVar(
     "dbt_charts_markdown_project_dir", default=None
@@ -219,14 +223,22 @@ _SOURCE_NOT_FOUND_RE = re.compile(
 )
 
 
-def _should_retry_with_examples(exc: Exception, current_project_dir: Path) -> bool:
+def _names_missing_query_file(result: BoardRenderResult | None) -> bool:
+    """A ``file.yml#q`` ref whose file this project lacks (the resolver's code)."""
+    return result is not None and any(
+        e.code == ERR_UNRESOLVED_REFERENCE.code and "#" in str(e.fields.get("ref"))
+        for e in result.validation_errors
+    )
+
+
+def _should_retry_with_examples(
+    exc: Exception, result: BoardRenderResult | None, current_project_dir: Path
+) -> bool:
     """Retry against ``examples/`` for shared docs fixtures the repo root lacks."""
     if current_project_dir.name == "examples":
         return False
-    message = str(exc)
-    return bool(
-        _EXTERNAL_QUERY_NOT_FOUND_RE.search(message)
-        or _SOURCE_NOT_FOUND_RE.search(message)
+    return _names_missing_query_file(result) or bool(
+        _SOURCE_NOT_FOUND_RE.search(str(exc))
     )
 
 
@@ -239,6 +251,7 @@ def _render_with_fallback(
     for candidate_project_dir, candidate_base_dir in contexts:
         project = FilesystemProject(candidate_project_dir.resolve())
         registry = build_adapter_registry(project, read_only=True)
+        result: BoardRenderResult | None = None
         try:
             # Fence-rendered YAML has no on-disk leaf — a pathless in-memory
             # board (no charts/meta.yml cascade). Relative extends/import refs
@@ -260,7 +273,7 @@ def _render_with_fallback(
             return result.data
         except (FileNotFoundError, ValueError, OSError, RenderError) as exc:
             last_exc = exc
-            if not _should_retry_with_examples(exc, candidate_project_dir):
+            if not _should_retry_with_examples(exc, result, candidate_project_dir):
                 raise
         finally:
             registry.close()

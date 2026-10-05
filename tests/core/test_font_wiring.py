@@ -326,7 +326,14 @@ class TestRenderTitleUsesTextStack:
         from dbt_charts.core.render.svg_utils import escape_attr, render_title
 
         rs = resolve_style(get_theme_style())
-        svg = render_title("Hello", width=400, resolved_style=rs)
+        svg = render_title(
+            "Hello",
+            width=400,
+            resolved_style=rs,
+            variable_values={},
+            base_dir=None,
+            error_collector=None,
+        )
         assert escape_attr(rs.text.font.family.split(",")[0].strip()) in svg
 
 
@@ -344,7 +351,14 @@ class TestRenderTitleUsesTitleStack:
 
         patch = StylePatch.model_validate({"title": {"font": {"family": "Poppins"}}})
         rs = resolve_style(get_theme_style(), patch)
-        svg = render_title("Hello", width=400, resolved_style=rs)
+        svg = render_title(
+            "Hello",
+            width=400,
+            resolved_style=rs,
+            variable_values={},
+            base_dir=None,
+            error_collector=None,
+        )
         assert "Poppins" in svg
 
 
@@ -382,7 +396,14 @@ class TestProseHeadingsUseTitleStack:
             )
             rs = resolve_style(get_theme_style(), patch)
             _svg, height = render_prose_svg(
-                heading, width, rs.text, rs, plan=full_width_plan(rs, width)
+                heading,
+                width,
+                rs.text,
+                rs,
+                authored=heading,
+                base_dir=None,
+                error_collector=None,
+                plan=full_width_plan(rs, width),
             )
             return height
 
@@ -405,7 +426,14 @@ class TestProseHeadingsUseTitleStack:
         patch = StylePatch.model_validate({"title": {"font": {"family": "Poppins"}}})
         rs = resolve_style(get_theme_style(), patch)
         svg, _height = render_prose_svg(
-            "# A heading", 400.0, rs.text, rs, plan=full_width_plan(rs, 400.0)
+            "# A heading",
+            400.0,
+            rs.text,
+            rs,
+            authored="# A heading",
+            base_dir=None,
+            error_collector=None,
+            plan=full_width_plan(rs, 400.0),
         )
         assert "Poppins" in svg
 
@@ -608,20 +636,29 @@ class TestLayoutDimensionStability:
         import re
 
         from dbt_charts.core.render.svg_utils import render_title
+        from dbt_charts.core.text.case import apply_case
         from mdsvg.fonts import FontMeasurer
 
+        style = resolve_style(get_theme_style())
         font_path = str(get_face(INTER_VARIABLE_FONT_FAMILY).measure_path)
         title = (
             "Board title wrapping should use the real measured width, not an "
             "inflated safety margin"
         )
-        exact_width = FontMeasurer(font_path).measure(title, 32.0)
+        # render_title applies style.title.font.case; measure what it draws.
+        drawn = title
+        if style.title.font.case is not None:
+            drawn = apply_case(title, style.title.font.case)
+        exact_width = FontMeasurer(font_path).measure(drawn, 32.0)
 
         svg = render_title(
             title,
             width=exact_width + 1.0,
-            resolved_style=resolve_style(get_theme_style()),
+            resolved_style=style,
+            variable_values={},
+            base_dir=None,
+            error_collector=None,
         )
 
         assert len(re.findall(r'class="md-[0-9a-f]{8}-heading"', svg)) == 1
-        assert title in svg
+        assert drawn in svg

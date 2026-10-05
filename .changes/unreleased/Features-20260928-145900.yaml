@@ -1,0 +1,3 @@
+kind: Features
+body: "Markdown images now render inline: mid-sentence, in a heading, a list item, or a table cell, instead of as alt text, and an inline image takes the same `{width=X height=Y}` size shorthand a standalone image does. A line holding an image taller than its text grows to fit it, and multi-column text packs each column by its lines' own heights. An embedded `data:` image sizes at its own aspect ratio instead of 16:9. A render never fetches a remote image, a board title's included."
+time: 2026-09-28T14:59:00.000000-00:00

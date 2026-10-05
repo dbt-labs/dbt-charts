@@ -763,6 +763,27 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
                 "scale.continuous.type: log is incompatible with zero: true — a log "
                 "domain cannot include 0. Remove zero or drop the log scale."
             )
+        if (
+            self.type == "log"
+            and self.domain is not None
+            and any(
+                isinstance(bound, (int, float)) and bound <= 0 for bound in self.domain
+            )
+        ):
+            raise ValueError(
+                "scale.continuous.type: log requires a positive domain — a log "
+                f"scale is undefined at and below 0, got domain {list(self.domain)}. "
+                "Use positive bounds or drop the log scale."
+            )
+        if (
+            self.log is not None
+            and self.log.base is not None
+            and (self.log.base <= 0 or self.log.base == 1)
+        ):
+            raise ValueError(
+                "scale.continuous.log.base must be positive and not 1, got "
+                f"{self.log.base}."
+            )
         return self
 
 

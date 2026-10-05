@@ -159,6 +159,26 @@ def apply_case(text: str, case: CaseValue) -> str:
     )
 
 
+def apply_case_to_runs(runs: list[str], case: CaseValue) -> list[str]:
+    """Apply *case* to one string that inline formatting split into *runs*.
+
+    The runs are cased as one string, so a word split by emphasis is one word
+    and the title's first and last words are the string's, then cut back at
+    the runs' edges. A transform that changes the string's length (``ß``
+    upper-cased, ``İ`` lower-cased) moves those edges; then each run is cased
+    on its own instead.
+    """
+    cased = apply_case("".join(runs), case)
+    if len(cased) != sum(len(run) for run in runs):
+        return [apply_case(run, case) for run in runs]
+    pieces: list[str] = []
+    start = 0
+    for run in runs:
+        pieces.append(cased[start : start + len(run)])
+        start += len(run)
+    return pieces
+
+
 def apply_font_case(text: str, font: ResolvedFontStyle) -> str:
     """Apply the letter-case transform specified by font.case.
 

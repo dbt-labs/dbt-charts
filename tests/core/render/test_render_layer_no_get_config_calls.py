@@ -141,6 +141,8 @@ def test_e_render_text_svg_uses_text_font_family_param() -> None:
         400.0,
         style,
         text_style=style.text,
+        base_dir=None,
+        error_collector=None,
         painted_canvas=None,
         plan=full_width_plan(style, 400.0),
     )
@@ -167,7 +169,14 @@ def test_g_render_title_uses_title_font_family_param() -> None:
     )
     style = resolve_style(seed)
 
-    result = render_title("My Title", 400.0, resolved_style=style)
+    result = render_title(
+        "My Title",
+        400.0,
+        resolved_style=style,
+        variable_values={},
+        base_dir=None,
+        error_collector=None,
+    )
     assert "SentinelFontG" in result
 
 
@@ -205,7 +214,14 @@ def test_g_render_title_uses_title_font_path(
     )
     style = resolve_style(seed)
 
-    render_title("My Title", 400.0, resolved_style=style)
+    render_title(
+        "My Title",
+        400.0,
+        resolved_style=style,
+        variable_values={},
+        base_dir=None,
+        error_collector=None,
+    )
 
     assert captured["regular"] == str(get_face(SOURCE_SERIF_4_FONT_FAMILY).measure_path)
 
@@ -251,7 +267,14 @@ def test_g_render_title_uses_title_font_path_not_body(
     )
     style = resolve_style(seed)
 
-    render_title("My Title", 400.0, resolved_style=style)
+    render_title(
+        "My Title",
+        400.0,
+        resolved_style=style,
+        variable_values={},
+        base_dir=None,
+        error_collector=None,
+    )
 
     assert captured["regular"] == str(get_face(INTER_VARIABLE_FONT_FAMILY).measure_path)
 
@@ -356,6 +379,7 @@ def test_l_render_callout_svg_uses_resolved_style() -> None:
     svg = render_callout_svg(
         message="test message",
         width=300.0,
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout,
+        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        base_dir=None,
     )
     assert "<svg" in svg

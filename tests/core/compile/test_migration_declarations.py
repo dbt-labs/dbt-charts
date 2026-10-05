@@ -34,3 +34,18 @@ def test_constructing_a_registry_does_not_check_declarations() -> None:
 
     with pytest.raises(MigrationError, match="still exists in"):
         validate_declarations(registry)
+
+
+def test_every_reported_successor_is_live_in_the_current_grammar() -> None:
+    """A rename chain (one move's successor retired by another) would make the
+    successor ``retired_keys`` names itself retired."""
+    _, registry = _build_board_migration_context()
+    retired_sources = {move.old_path for move in registry.moves}
+
+    chained = [
+        move.new_path
+        for move in registry.moves
+        if move.old_path != move.new_path and move.new_path in retired_sources
+    ]
+
+    assert chained == []

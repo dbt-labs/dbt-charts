@@ -27,7 +27,10 @@ class CalloutElementStyle(BaseModel):
 
     # InheritSlot: callout title/message font fills from charts.font.
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
-        default_factory=FontStyle, description="Element font style overrides."
+        default_factory=FontStyle,
+        description=(
+            "Element font style overrides. A color of `by_tone` is the tone's color."
+        ),
     )
     y_offset: float = Field(
         description="Vertical offset from the element's anchor in pixels."
@@ -37,9 +40,9 @@ class CalloutElementStyle(BaseModel):
 class CalloutChartStyle(BaseModel):
     """Chart-family style for ``type: callout`` charts and runtime chart-error fallback cards.
 
-    Background/border/text colors are resolved from ``{tone}.*`` palette roles
-    (bg, border, solid, text) at render time.  This model carries structural
-    defaults (padding, section_gap, font metrics) plus the semantic tone selector.
+    The theme sets background, border color, and title and message font color to
+    ``by_tone``; at resolve time each takes its ``{tone}.*`` palette role (bg,
+    border, solid, text), and any color a board or chart authors wins instead.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -50,9 +53,11 @@ class CalloutChartStyle(BaseModel):
         description="Semantic tone for palette-role lookup (info | positive | negative | warning).",
     )
     background: Annotated[str, Color()] = Field(
-        description="Callout card background color (info.bg default)."
+        description="Callout card background color. `by_tone` is the tone's color."
     )
-    border: BorderStyle = Field(description="Callout card border style.")
+    border: BorderStyle = Field(
+        description="Callout card border style. A color of `by_tone` is the tone's color."
+    )
     padding: Annotated[PaddingStyle, InheritSlot(from_path="Style.charts.padding")] = (
         Field(description="Per-chart-type padding override; 4 sides in pixels.")
     )

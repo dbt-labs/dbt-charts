@@ -80,7 +80,9 @@ rows:
         )
         assert board.title is not None
         title_h = max(
-            get_title_height(board.title, title_w, board.variable_defaults),
+            get_title_height(
+                board.title, title_w, board.variable_defaults, base_dir=None
+            ),
             float(board.resolved_style.title.min_height),
         )
         var_h = compute_variable_controls_height(
@@ -93,7 +95,14 @@ rows:
         _t_dy, _v_dy, expected = compute_title_variables_inline_baseline_layout(
             title_h,
             var_h,
-            title_baseline_offset(board.resolved_style, board.level),
+            title_baseline_offset(
+                board.title,
+                inner,
+                board.variable_defaults,
+                board.resolved_style,
+                board.level,
+                None,
+            ),
             float(vs.font.size),
             vs.font.family,
             float(vs.title_inline_band_bottom_pad),
@@ -119,7 +128,7 @@ rows:
         title_dy, vars_dy, band_h = compute_title_variables_inline_baseline_layout(
             title_h=38.4,  # mdsvg's natural block height for 24px Inter at line-height 1.3
             vars_h=36.0,  # default variables container_height
-            title_baseline=title_baseline_offset(style, 1),
+            title_baseline=title_baseline_offset("Board", 400.0, {}, style, 1, None),
             label_font_size=11.0,  # default variables font size
             label_font_family=style.variables.font.family,
             pad=24.0,  # default title_inline_band_bottom_pad from _base.yaml
@@ -1203,6 +1212,7 @@ rows:
                 board.variable_defaults,
                 level=board.level,
                 resolved_style=board.resolved_style,
+                base_dir=None,
             ),
             float(board.resolved_style.title.min_height),
         )
@@ -1213,6 +1223,7 @@ rows:
                 board.variable_defaults,
                 level=board.level,
                 resolved_style=board.resolved_style,
+                base_dir=None,
             ),
             float(board.resolved_style.title.min_height),
         )
@@ -1233,7 +1244,14 @@ rows:
         _, _, expected_band_h = compute_title_variables_inline_baseline_layout(
             h_at_inner,
             var_h,
-            title_baseline_offset(board.resolved_style, board.level),
+            title_baseline_offset(
+                board.title,
+                inner,
+                board.variable_defaults,
+                board.resolved_style,
+                board.level,
+                None,
+            ),
             float(vs.font.size),
             vs.font.family,
             float(vs.title_inline_band_bottom_pad),

@@ -7,9 +7,11 @@ typed authored fields to the per-family normalized model.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.validate.authoring_warnings import YamlValue
     from dbt_charts.core.project import ProjectDirectory
 
 
@@ -56,6 +58,14 @@ from dbt_charts.core.text.case import apply_case, inferred_display_name
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
 
 
+@dataclass(frozen=True)
+class RegisteredChart:
+    """A chart registry entry and the directory of the file that declares it."""
+
+    definition: AuthoredChart | YamlValue
+    base_dir: ProjectDirectory | None  # type-state: optional — None is no location
+
+
 def normalize_chart(
     chart_id: str,
     chart_def: Any,
@@ -68,8 +78,13 @@ def normalize_chart(
     sources: dict[str, Any],
     cache_root: CachePatch | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
+    written_in: ProjectDirectory | None = None,
 ) -> Chart:
     """Authored chart dict → discriminated normalized family model.
+
+    *base_dir* anchors the chart's refs (the board normalizing it); *written_in*
+    is the directory of the file that declares it, which a callout's markdown
+    images resolve against at render.
 
     Parses chart_def through the AuthoredChart discriminated union (validation
     is the authored model's job), then resolves query, computes deps, and builds
@@ -124,6 +139,7 @@ def normalize_chart(
             title=authored.title or None,
             source_path=source_path,
             defined_in_other_file=defined_in_other_file,
+            base_dir=None if written_in is None else written_in.relpath,
             variable_dependencies=frozenset(callout_deps),
             query_is_inline=False,
             style=authored.style,

@@ -6,6 +6,7 @@ import io
 import logging
 import sys
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -56,6 +57,7 @@ from dbt_charts.cli.commands import (
 from dbt_charts.cli.commands.ci_init import run_init_ci as _ci_run_init
 from dbt_charts.cli.commands.mcp_init import run_init as _mcp_run_init
 from dbt_charts.cli.commands.skills_init import run_init_skills as _skills_run_init
+from dbt_charts.telemetry.emitter import begin_invocation, command_path
 
 # Pin static rendering (SVG/PNG/PDF export, incl. `dct render`/`dct serve`) to
 # TZ=UTC before any subcommand can reach vl-convert -- see _render_tz.py for
@@ -191,6 +193,9 @@ def _panel_rank(panel: str) -> int:
     return PANEL_ORDER.index(panel) if panel in PANEL_ORDER else len(PANEL_ORDER)
 
 
+_COMMAND_PATH_KEY = "dct.command_path"
+
+
 class _RootHelpGroup(TyperGroup):
     """Root-only group: alphabetize the Options panel + commands and gate the init banner.
 
@@ -236,6 +241,12 @@ class _RootHelpGroup(TyperGroup):
             panel_by_name,
             key=lambda n: (_panel_rank(panel_by_name[n]), n),
         )
+
+    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
+        # The root callback runs after click has consumed argv, so the
+        # subcommand path can only be resolved here.
+        ctx.meta[_COMMAND_PATH_KEY] = command_path(self, args)
+        return super().parse_args(ctx, args)
 
     def format_help(self, ctx: Any, formatter: Any) -> None:
         if not has_charts_marker(Path.cwd()):
@@ -1790,8 +1801,20 @@ def version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _never_fail(fn: Callable[..., None], *args: Any) -> None:
+    with contextlib.suppress(Exception):  # noqa: BLE001 — telemetry must never fail the command it measures
+        fn(*args)
+
+
+def _track_invocation(ctx: typer.Context, no_send: bool) -> None:
+    invocation = begin_invocation(ctx.meta[_COMMAND_PATH_KEY], no_send, Path.cwd())
+    if invocation is not None:
+        ctx.call_on_close(lambda: _never_fail(invocation.end, sys.exc_info()[1]))
+
+
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: Annotated[
         bool | None,
         typer.Option(
@@ -1813,9 +1836,17 @@ def main(
             ),
         ),
     ] = False,
+    no_send_anonymous_usage_stats: Annotated[
+        bool,
+        typer.Option(
+            "--no-send-anonymous-usage-stats",
+            help="Do not send anonymous usage statistics.",
+        ),
+    ] = False,
 ) -> None:
     """dct - Declarative, dbt-native dashboards in YAML."""
     _reconfigure_console_encoding()
+    _never_fail(_track_invocation, ctx, no_send_anonymous_usage_stats)
     # Runs before any subcommand, so every warehouse query this process sends is
     # attributed to the CLI. `dct serve` narrows it to "serve" in its own command.
     set_surface("cli")

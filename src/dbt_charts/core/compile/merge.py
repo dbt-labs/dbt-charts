@@ -45,6 +45,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from dbt_charts.core.compile.errors import CompilationError, MergeValidationError
+from dbt_charts.core.compile.file_refs import anchor_images, resolve_ref
 from dbt_charts.core.compile.models.markers import Merge, Strategy
 from dbt_charts.core.compile.models.style.authored import (
     PaddingStylePatch,
@@ -472,7 +473,7 @@ class _ExtendCtx:
 
 
 def _fragment_from_yaml(
-    content: str, relpath: str, *, is_builtin: bool = False
+    content: str, relpath: str, written_in: ProjectDirectory | None
 ) -> BaseModel:
     """Parse extends-fragment YAML text into a BoardPatch.
 
@@ -481,9 +482,10 @@ def _fragment_from_yaml(
     BoardPatch (all-optional, no content requirement). *relpath* is the
     fragment's identity, used only in error messages.
 
-    *is_builtin* skips migration-currency detection entirely: built-in
-    theme YAML is package data we ship and keep current by construction,
-    so there is nothing to detect. A user-authored fragment (the default)
+    *written_in* is the fragment's directory, which its markdown images are
+    anchored at (``anchor_images``) before they are inherited; ``None`` is a
+    built-in theme, package data we ship and keep current by construction, so
+    it skips migration-currency detection entirely. A user-authored fragment
     still gets checked, against BoardPatch rather than AuthoredBoard — the
     latter's "must have layout/chart/etc" invariant would make every
     current-schema patch look like a migration candidate.
@@ -514,10 +516,11 @@ def _fragment_from_yaml(
         raise CompilationError(
             f"extends: {relpath} must be a YAML mapping, got {type(data).__name__}"
         )
-    if not is_builtin:
+    if written_in is not None:
         from dbt_charts.core.compile.migrations import prepare_board_mapping
 
         data = prepare_board_mapping(data, model=BoardPatch)
+        anchor_images(data, written_in)
     try:
         return BOARD_PATCH_ADAPTER.validate_python(data)
     except PydanticValidationError as e:
@@ -538,19 +541,16 @@ def _fragment_from_yaml(
 
 
 def _load_fragment(path: ProjectPath) -> BaseModel:
-    """Load a YAML extends fragment or meta file from a project path as a BoardPatch.
+    """Load a resolved ``extends:`` fragment as a BoardPatch.
 
     Raises:
-        CompilationError: file not found, unreadable, invalid YAML, or
-            schema validation failure.
+        CompilationError: unreadable, invalid YAML, or schema validation failure.
     """
-    if not path.exists():
-        raise CompilationError(f"extends: file not found: {path.relpath}")
     try:
         content = path.read_text()
     except OSError as e:
         raise CompilationError(f"extends: cannot read {path.relpath}: {e}") from e
-    return _fragment_from_yaml(content, path.relpath)
+    return _fragment_from_yaml(content, path.relpath, path.parent)
 
 
 def _fragment_own_patch(fragment: BaseModel) -> BaseModel:
@@ -585,13 +585,7 @@ def _resolve_fragment_file(entry: str, ctx: _ExtendCtx) -> ProjectPath:
         CompilationError: Entry is not a known theme, relative path, or named board.
     """
     if is_path_ref(entry):
-        # Relative path — anchored to the authoring file's own directory.
-        if ctx.board_dir is None:
-            raise CompilationError(
-                f"extends: relative path {entry!r} cannot be resolved without a "
-                "project directory (built-in themes may only extend theme names)"
-            )
-        return ctx.board_dir / entry
+        return resolve_ref(entry, ctx.board_dir, "file")
 
     from dbt_charts.core.compile.config import user_facing_theme_names
 
@@ -702,7 +696,7 @@ def _resolve_entry(
             )
         theme_file = _built_in_unified_theme_dir.joinpath(theme_relpath)
         fragment = _fragment_from_yaml(
-            theme_file.read_text(encoding="utf-8"), theme_relpath, is_builtin=True
+            theme_file.read_text(encoding="utf-8"), theme_relpath, None
         )
         extends_patch = _merge_extends_inner(
             fragment, ctx, seen | {theme_relpath}, theme_sink
@@ -872,9 +866,9 @@ def merge_metas(
 
         with migration_notice_file(meta_path.relpath):
             try:
-                fragment = BOARD_PATCH_ADAPTER.validate_python(
-                    prepare_board_mapping(meta_data, model=BoardPatch)
-                )
+                meta_mapping = prepare_board_mapping(meta_data, model=BoardPatch)
+                anchor_images(meta_mapping, meta_path.parent)
+                fragment = BOARD_PATCH_ADAPTER.validate_python(meta_mapping)
             except PydanticValidationError as e:
                 from dbt_charts.core.compile.parse.source_map import (
                     build_source_index,

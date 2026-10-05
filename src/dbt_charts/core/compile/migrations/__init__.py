@@ -8,6 +8,7 @@ from .migrations import (
     MigrationNotice,
     MigrationRegistry,
     Move,
+    RetiredKey,
     SchemaMigrationWarning,
     SchemaVersionTooOldError,
     UnsupportedSchemaError,
@@ -17,6 +18,7 @@ from .migrations import (
     migrate_yaml_text,
     migration_notice_file,
     prepare_board_mapping,
+    retired_keys,
 )
 
 __all__ = [
@@ -29,6 +31,7 @@ __all__ = [
     "MigrationNotice",
     "MigrationRegistry",
     "Move",
+    "RetiredKey",
     "SchemaVersionTooOldError",
     "SchemaMigrationWarning",
     "UnsupportedSchemaError",
@@ -38,4 +41,5 @@ __all__ = [
     "migrate_yaml_text",
     "migration_notice_file",
     "prepare_board_mapping",
+    "retired_keys",
 ]

@@ -11,17 +11,27 @@ import re
 import xml.etree.ElementTree as ET
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-from dbt_charts.core.compile.merge import merge_onto_base
-from dbt_charts.core.compile.resolve.chart.simple import _callout_tone_colors_patch
+from dbt_charts.core.compile.models.chart.normalized import CalloutChart
+from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
+from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
 
+def resolved_callout(ctx, tone: str | None = None):
+    """The ResolvedCalloutStyle a ``type: callout`` chart resolves to under
+    ``ctx`` (tone is baked in at chart-resolve time, not passed to the renderer)."""
+    chart = CalloutChart(
+        id="callout",
+        type="callout",
+        message="-",
+        style=CalloutChartStylePatch(tone=tone) if tone is not None else None,
+    )
+    return resolve(chart, [], chart_style_context=ctx).style
+
+
 def callout_style_for_tone(tone: str, theme: str | None = None):
-    """A ResolvedCalloutStyle for a given tone, without touching render_callout_svg's
-    signature (tone is baked in at chart-resolve time, not passed to the renderer)."""
-    theme_name = theme or get_default_theme_name()
-    default_ctx = resolve_chart_style_context(get_theme_style(theme_name))
-    return merge_onto_base(default_ctx.callout, _callout_tone_colors_patch(tone))
+    theme_style = get_theme_style(theme or get_default_theme_name())
+    return resolved_callout(resolve_chart_style_context(theme_style), tone)
 
 
 def _local(tag: str) -> str:

@@ -278,6 +278,7 @@ def render_registered_view(
     )
     from dbt_charts.core.render import render
     from dbt_charts.core.render.errors import RenderError as RenderExecError
+    from dbt_charts.core.render.image_assets import image_scope
 
     compiled = _compile_registered_view(request_path, adapter_registry, result_cache)
     if compiled is None:
@@ -299,15 +300,16 @@ def render_registered_view(
                 project, file_materializer
             ),
         )
-        render_result = render(
-            compiled.board,
-            executor,
-            format=format,
-            variables=request_variables,
-            max_workers=max_workers,
-            link_context=link_context,
-            controls=controls,
-        )
+        with image_scope(project):
+            render_result = render(
+                compiled.board,
+                executor,
+                format=format,
+                variables=request_variables,
+                max_workers=max_workers,
+                link_context=link_context,
+                controls=controls,
+            )
     except (ExecutionError, RenderExecError) as exc:
         return RenderError(
             dashboard=BoardRenderResult(

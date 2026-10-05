@@ -7,6 +7,10 @@ Tests verify that validation errors include:
 4. Graceful handling of common mistakes
 """
 
+from collections.abc import Callable
+from datetime import date
+from pathlib import Path
+
 import pytest
 
 from dbt_charts.core.compile import compile
@@ -15,6 +19,8 @@ from dbt_charts.core.compile.parse.yaml_error_formatter import (
     get_yaml_context,
     suggest_similar_value,
 )
+from dbt_charts.core.diagnostics import Diagnostic
+from dbt_charts.core.project import Project
 
 
 class TestDynamicTypeExtraction:
@@ -295,7 +301,7 @@ rows:
         assert "`height:` is not supported on `type: table`" in height_error.hint
         assert "Supported chart types for `height:`" in height_error.hint
 
-    def test_conditional_formatting_on_bar_gets_the_generic_unsupported_field_hint(
+    def test_conditional_formatting_on_bar_gets_the_retired_key_hint(
         self,
     ):
         """Pins _unsupported_known_chart_field_hint's exact text for
@@ -358,14 +364,10 @@ rows:
             error for error in errors if error.path.endswith("conditional_formatting")
         )
         assert cf_error.hint is not None
-        assert (
-            "`conditional_formatting:` is not supported on `type: bar`."
-            in cf_error.hint
+        assert "`charts.bar_chart.conditional_formatting` was removed in 0.7.0" in (
+            cf_error.hint
         )
-        assert (
-            "Supported chart types for `conditional_formatting:`: kpi, table."
-            in cf_error.hint
-        )
+        assert "Use table or kpi for conditional formatting." in cf_error.hint
 
     @pytest.mark.parametrize(
         "chart_type",
@@ -1052,7 +1054,7 @@ rows:
         assert not result.success
         err = next(e for e in result.errors if e.path.endswith("axis_quantitative"))
         assert err.hint is not None
-        assert "not supported on `type: heatmap`" in err.hint
+        assert "was removed in 0.6.0" in err.hint
         assert "axis_band" in err.hint
 
     def test_heatmap_theme_level_axis_quantitative_migrates_silently(self):
@@ -1864,3 +1866,205 @@ class TestSchemaVersionUpgradeHint:
 
         assert format_validation_errors_structured(excinfo.value, "") is not None
         assert format_validation_errors_structured(excinfo.value, None) is not None
+
+
+_RETIRED_KEY_BOARD = """{extra}queries:
+  q: {{sql: "SELECT 1 AS a, 2 AS b"}}
+charts:
+  rev:
+    type: bar
+    query: q
+    x: a
+    y: b
+    style:
+      axis_y:
+        grid:
+{grid}rows: [rev]
+"""
+_ZERO = "          zero: {color: red}\n"
+_THRESHOLD = "          threshold: {color: red}\n"
+
+
+def _frozen_clock(monkeypatch: pytest.MonkeyPatch, today: date) -> None:
+    """Pin ``migrations.date.today()``; ``compile()`` takes no ``today``."""
+    from dbt_charts.core.compile.migrations import migrations
+
+    class _Today(date):
+        @classmethod
+        def today(cls) -> date:
+            return today
+
+    monkeypatch.setattr(migrations, "date", _Today)
+
+
+def _diagnostic_for(errors: list[Diagnostic], key: str) -> Diagnostic:
+    return next(e for e in errors if f"Unknown field '{key}'" in e.message)
+
+
+def _hint_for(errors: list[Diagnostic], key: str) -> str:
+    hint = _diagnostic_for(errors, key).hint
+    assert hint is not None
+    return hint
+
+
+class TestRetiredKeysNameTheirSuccessor:
+    """A key the grammar retired names its successor and version, derived from
+    the migration declarations, even where the transparent migration cannot run."""
+
+    def test_rename_beside_an_unrelated_typo_names_the_successor(self) -> None:
+        result = compile(_RETIRED_KEY_BOARD.format(extra="titel: x\n", grid=_ZERO))
+
+        zero = _diagnostic_for(result.errors, "zero")
+        assert zero.hint is not None
+        assert (
+            "`zero` was renamed to `threshold` in 0.7.0. Rename the key." in zero.hint
+        )
+        assert "Allowed keys" not in zero.hint
+        assert zero.fields["retired_in"] == "0.7.0"
+        assert zero.fields["successor"] == "charts.rev.style.axis_y.grid.threshold"
+        assert "Did you mean 'title'?" in _hint_for(result.errors, "titel")
+
+    def test_both_spellings_present_still_names_the_successor(self) -> None:
+        result = compile(_RETIRED_KEY_BOARD.format(extra="", grid=_ZERO + _THRESHOLD))
+
+        assert "`zero` was renamed to `threshold` in 0.7.0" in _hint_for(
+            result.errors, "zero"
+        )
+
+    def test_a_grammar_past_the_support_window_names_the_successor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _frozen_clock(monkeypatch, date(2027, 3, 1))
+        result = compile(
+            """_schema_version: "0.3.1"
+queries:
+  q: {sql: "SELECT 1 AS a, 2 AS b"}
+charts:
+  rev:
+    type: bar
+    query: q
+    x: a
+    y: b
+    style:
+      axis_y:
+        domain: {color: red}
+rows: [rev]
+"""
+        )
+
+        assert "`domain` was renamed to `line` in 0.4.0" in _hint_for(
+            result.errors, "domain"
+        )
+
+    def test_a_move_that_changes_the_parent_names_the_full_destination(self) -> None:
+        result = compile(
+            """titel: x
+queries:
+  q: {sql: "SELECT 1 AS a, 2 AS b"}
+charts:
+  p:
+    type: pie
+    query: q
+    theta: b
+    color: a
+    total:
+      format: ",.0f"
+rows: [p]
+"""
+        )
+
+        assert (
+            "`total.format` was moved to `style.total.value.format` in 0.7.0"
+            in _hint_for(result.errors, "format")
+        )
+
+    def test_removed_key_carries_the_declaration_reason(self) -> None:
+        result = compile(
+            """titel: x
+queries:
+  q: {sql: "SELECT 1 AS a, 2 AS b"}
+charts:
+  c:
+    type: bar
+    query: q
+    x: a
+    y: b
+    conditional_formatting:
+      b:
+        when:
+          - gt: 1
+            background: "#007FFF"
+rows: [c]
+"""
+        )
+
+        hint = _hint_for(result.errors, "conditional_formatting")
+        assert (
+            "`charts.c.conditional_formatting` was removed in 0.7.0: bar charts" in hint
+        )
+        assert "Delete the key." in hint
+
+    def test_removed_board_key_in_an_otherwise_valid_old_file(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _frozen_clock(monkeypatch, date(2028, 1, 1))
+        result = compile("title: t\nstyle:\n  page:\n    background: red\nrows: []\n")
+
+        assert "`style.page` was removed in 0.7.0" in _hint_for(result.errors, "page")
+
+    def test_removed_key_beside_an_unrelated_error_keeps_the_generic_hint(
+        self,
+    ) -> None:
+        """Removals gate on whole-subtree validity, so another bad key in the
+        same node hides them. Flip this on purpose if that blind spot is fixed."""
+        result = compile("titel: t\nstyle:\n  page:\n    background: red\nrows: []\n")
+
+        hint = _hint_for(result.errors, "page")
+        assert "was removed" not in hint
+        assert "Allowed keys" in hint
+
+    def test_current_key_beside_a_typo_has_no_retired_text(self) -> None:
+        result = compile(_RETIRED_KEY_BOARD.format(extra="titel: x\n", grid=_THRESHOLD))
+
+        assert all(
+            "was renamed" not in (e.hint or "") and "was removed" not in (e.hint or "")
+            for e in result.errors
+        )
+
+    def test_callout_description_stays_generic(self) -> None:
+        result = compile(
+            "title: t\nrows: [c1]\ncharts:\n  c1:\n    type: callout\n"
+            '    description: "x"\n    message: hi\n'
+        )
+
+        assert "was renamed" not in _hint_for(result.errors, "description")
+
+    def test_hint_never_advises_dct_migrate(self) -> None:
+        result = compile(_RETIRED_KEY_BOARD.format(extra="titel: x\n", grid=_ZERO))
+
+        assert "dct migrate" not in _hint_for(result.errors, "zero")
+
+    def test_retired_key_in_a_fragment_yields_a_diagnostic(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        from dbt_charts.core.compile.errors import MergeValidationError
+        from dbt_charts.core.compile.merge import _fragment_from_yaml
+        from dbt_charts.core.compile.migrations import SchemaMigrationWarning
+        from dbt_charts.core.project import ProjectDirectory
+
+        _frozen_clock(monkeypatch, date(2028, 1, 1))
+        with (
+            pytest.warns(SchemaMigrationWarning),
+            pytest.raises(MergeValidationError) as excinfo,
+        ):
+            _fragment_from_yaml(
+                "style:\n  page:\n    background: red\n",
+                "meta.yml",
+                ProjectDirectory(in_memory_project(Path(), {}), "."),
+            )
+
+        assert "`style.page` was removed in 0.7.0" in _hint_for(
+            excinfo.value.merge_diagnostics, "page"
+        )

@@ -1398,3 +1398,39 @@ class TestValidateDialectHandling:
         assert "WARN-MISSING-JOIN-PREDICATE" in codes, (
             f"bigquery dialect must allow structural lint to run; got: {codes}"
         )
+
+
+_RETIRED_KEY_MIXED_BOARD = """
+titel: Revenue
+queries:
+  revenue:
+    sql: SELECT month, SUM(revenue) AS revenue FROM orders GROUP BY 1
+    source: analytics
+charts:
+  revenue_trend:
+    query: revenue
+    type: bar
+    x: month
+    y: revenue
+    style:
+      axis_y:
+        grid:
+          zero: {color: red}
+rows:
+  - revenue_trend
+"""
+
+
+def test_validate_content_names_the_successor_of_a_retired_key(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    from dbt_charts.agent_api.validate import validate_content
+
+    result = validate_content(_RETIRED_KEY_MIXED_BOARD, project=local_project(tmp_path))
+
+    zero = next(e for e in result.errors if "Unknown field 'zero'" in e.message)
+    assert zero.hint is not None
+    assert "`zero` was renamed to `threshold` in 0.7.0" in zero.hint
+    assert (
+        zero.fields["successor"] == "charts.revenue_trend.style.axis_y.grid.threshold"
+    )

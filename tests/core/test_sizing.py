@@ -37,7 +37,6 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render.sizing import get_chart_content_height
-from mdsvg.fonts import FontFaces
 
 from ._board_utils import (
     _default_chart_style_context,
@@ -963,6 +962,7 @@ class TestVariableResolutionInSizing:
             width=800.0,
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
@@ -973,6 +973,7 @@ class TestVariableResolutionInSizing:
             variable_values={"name": "World"},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
@@ -982,6 +983,7 @@ class TestVariableResolutionInSizing:
             width=800.0,
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
@@ -1003,63 +1005,18 @@ class TestVariableResolutionInSizing:
 
         # With variables - resolves template
         height_with_vars = get_title_height(
-            title_with_var, width=800.0, variable_values={"region": "North America"}
+            title_with_var,
+            width=800.0,
+            variable_values={"region": "North America"},
+            base_dir=None,
         )
 
         # Height with resolved text
-        height_resolved = get_title_height(title_resolved, width=800.0)
+        height_resolved = get_title_height(title_resolved, width=800.0, base_dir=None)
 
         # With variables, height should match the resolved text height
         assert abs(height_with_vars - height_resolved) < 1.0, (
             "Title height with vars should match resolved title height"
-        )
-
-    def test_title_height_uses_title_font_path(self, monkeypatch):
-        """Title layout measurement matches render_title: style.title.font.family,
-        never the body family, whatever text.font.family happens to be set to.
-        """
-        import mdsvg
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.fonts import SOURCE_SERIF_4_FONT_FAMILY, get_face
-        from dbt_charts.core.render.sizing import get_title_height
-
-        captured: dict[str, str] = {}
-
-        class FakeSize:
-            height = 42.0
-
-        def fake_measure(
-            *_args: object, fonts: FontFaces, **_kwargs: object
-        ) -> FakeSize:
-            captured["regular"] = fonts.regular.path
-            return FakeSize()
-
-        monkeypatch.setattr(mdsvg, "measure", fake_measure)
-
-        base = get_theme_style()
-        seed = base.model_copy(
-            update={
-                "text": base.text.model_copy(
-                    update={
-                        "font": FontStyle(
-                            family="'Inter Variable', Inter, system-ui, sans-serif"
-                        )
-                    }
-                ),
-                "title": base.title.model_copy(
-                    update={"font": FontStyle(family="Source Serif 4, Georgia, serif")}
-                ),
-            }
-        )
-        style = resolve_style(seed)
-
-        height = get_title_height(
-            "Measured in the title family", 400.0, resolved_style=style
-        )
-
-        assert height == 42.0
-        assert captured["regular"] == str(
-            get_face(SOURCE_SERIF_4_FONT_FAMILY).measure_path
         )
 
     def test_apply_static_layout_uses_variable_registry(self):
@@ -1141,6 +1098,7 @@ This is visible text."""
             width=800.0,
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=card_plan(_DEFAULT_STYLE, 800.0),
         )
         height_without_comment = get_markdown_text_height(
@@ -1148,6 +1106,7 @@ This is visible text."""
             width=800.0,
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=card_plan(_DEFAULT_STYLE, 800.0),
         )
 
@@ -1179,6 +1138,7 @@ Main text here."""
             variable_values={"show_header": True},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
@@ -1189,6 +1149,7 @@ Main text here."""
             variable_values={"show_header": False},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=full_width_plan(_DEFAULT_STYLE, 800.0),
         )
 
@@ -1231,6 +1192,7 @@ Main text here."""
             variable_values={"description": short_value},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=full_width_plan(_DEFAULT_STYLE, narrow_width),
         )
 
@@ -1240,6 +1202,7 @@ Main text here."""
             variable_values={"description": long_value},
             text_style=_DEFAULT_STYLE.text,
             resolved_style=_DEFAULT_STYLE,
+            base_dir=None,
             plan=full_width_plan(_DEFAULT_STYLE, narrow_width),
         )
 
@@ -1260,8 +1223,10 @@ Main text here."""
         title_with_comment = "Dashboard Title {# internal note #}"
         title_clean = "Dashboard Title "
 
-        height_with_comment = get_title_height(title_with_comment, width=800.0)
-        height_clean = get_title_height(title_clean, width=800.0)
+        height_with_comment = get_title_height(
+            title_with_comment, width=800.0, base_dir=None
+        )
+        height_clean = get_title_height(title_clean, width=800.0, base_dir=None)
 
         # Heights should be essentially the same
         assert abs(height_with_comment - height_clean) < 1.0, (
@@ -3431,6 +3396,8 @@ rows:
             497.92,
             resolve_style(get_theme_style()),
             text_style=resolve_style(get_theme_style()).text,
+            base_dir=None,
+            error_collector=None,
             painted_canvas=None,
             plan=full_width_plan(resolve_style(get_theme_style()), 497.92),
         )
@@ -4550,6 +4517,7 @@ def test_markdown_text_height_uses_merged_text_typography() -> None:
         width=180.0,
         text_style=_DEFAULT_STYLE.text,
         resolved_style=_DEFAULT_STYLE,
+        base_dir=None,
         plan=full_width_plan(_DEFAULT_STYLE, 180.0),
     )
     merged_height = get_markdown_text_height(
@@ -4557,6 +4525,7 @@ def test_markdown_text_height_uses_merged_text_typography() -> None:
         width=180.0,
         resolved_style=merged,
         text_style=merged.text,
+        base_dir=None,
         plan=full_width_plan(merged, 180.0),
     )
 
@@ -4578,9 +4547,9 @@ def test_title_height_uses_merged_title_typography() -> None:
     merged = dataclasses.replace(base, title=title)
     heading = "Quarterly revenue performance by region"
 
-    default_height = get_title_height(heading, width=240.0, level=1)
+    default_height = get_title_height(heading, width=240.0, level=1, base_dir=None)
     merged_height = get_title_height(
-        heading, width=240.0, level=1, resolved_style=merged
+        heading, width=240.0, level=1, resolved_style=merged, base_dir=None
     )
 
     assert merged_height > default_height
@@ -4627,6 +4596,7 @@ def test_column_gutter_is_derived_from_the_line_box() -> None:
         600.0,
         text_style=text_style,
         resolved_style=base,
+        base_dir=None,
         plan=full_width_plan(base, 600.0),
     )
     with_big_row_gap = get_markdown_text_height(
@@ -4634,6 +4604,7 @@ def test_column_gutter_is_derived_from_the_line_box() -> None:
         600.0,
         text_style=text_style,
         resolved_style=row_gap_changed,
+        base_dir=None,
         plan=full_width_plan(row_gap_changed, 600.0),
     )
     assert with_big_row_gap == unchanged, "the gutter must not read layout.rows.gap"
@@ -5064,49 +5035,90 @@ rows:
         assert ">r1<" in svg and ">r2<" in svg
 
 
-class TestTitleCaseMeasurement:
-    """Regression: get_title_height must apply the same case transform as the renderer.
+class TestTitleMeasureMatchesPaint:
+    """get_title_height reserves exactly the height render_title draws.
 
-    The draw half (_render_title_svg in boards.py) applies apply_case() before
-    drawing. The measure half must match, otherwise measured height < drawn height
-    when the transform widens glyphs (upper/title case on a lowercase title).
+    Styles chosen where a second measurement path would drift: an upper-case
+    transform that widens the title into an extra wrapped line, and a title
+    family different from the body family.
     """
 
-    def test_get_title_height_applies_case_transform_to_measured_string(
-        self, monkeypatch
-    ):
-        """Measured string must be the case-transformed title, not the raw authored text."""
-        import mdsvg
+    @pytest.mark.parametrize(
+        "title_font",
+        [
+            {"case": "upper"},
+            {"family": "Source Serif 4, Georgia, serif"},
+        ],
+    )
+    def test_reserved_height_is_the_painted_height(
+        self, title_font: dict[str, str]
+    ) -> None:
+        import re
+
         from dbt_charts.core.compile.models.primitives import FontStyle
         from dbt_charts.core.render.sizing import get_title_height
-
-        captured: list[str] = []
-
-        class FakeSize:
-            height = 30.0
-
-        def fake_measure(text: str, *_args: object, **_kwargs: object) -> FakeSize:
-            captured.append(text)
-            return FakeSize()
-
-        monkeypatch.setattr(mdsvg, "measure", fake_measure)
+        from dbt_charts.core.render.svg_utils import render_title
 
         base = get_theme_style()
-        # Force case: upper so the transform is unambiguous.
-        seed = base.model_copy(
-            update={
-                "title": base.title.model_copy(update={"font": FontStyle(case="upper")})
-            }
+        style = resolve_style(
+            base.model_copy(
+                update={
+                    "text": base.text.model_copy(
+                        update={"font": FontStyle(family="Inter, sans-serif")}
+                    ),
+                    "title": base.title.model_copy(
+                        update={"font": FontStyle.model_validate(title_font)}
+                    ),
+                }
+            )
         )
-        style = resolve_style(seed)
+        title = "monthly revenue by region and segment"
 
-        authored_title = "monthly revenue by region"
-        get_title_height(authored_title, 400.0, resolved_style=style)
-
-        assert captured, "mdsvg.measure was not called"
-        # board_title_markdown wraps the title as "# {title}", so the measured
-        # string must contain the uppercased text, not the authored lowercase.
-        assert "MONTHLY REVENUE BY REGION" in captured[0], (
-            f"Measured string {captured[0]!r} does not contain the upper-cased title; "
-            "get_title_height is not applying the case transform before measuring"
+        reserved = get_title_height(
+            title, 260.0, {}, resolved_style=style, base_dir=None
         )
+        painted_svg = render_title(
+            title,
+            260.0,
+            resolved_style=style,
+            variable_values={},
+            base_dir=None,
+            error_collector=None,
+        )
+
+        painted = re.search(r'<svg[^>]* height="([\d.]+)"', painted_svg)
+        assert painted is not None
+        assert reserved == pytest.approx(float(painted.group(1)), abs=0.01)
+
+    def test_an_image_title_reserves_the_height_it_paints(self) -> None:
+        """An inline image taller than the text sets the title's line height;
+        a fixed heading metric would reserve the text-only height instead."""
+        import base64
+        import re
+
+        from dbt_charts.core.render.sizing import get_title_height
+        from dbt_charts.core.render.svg_utils import render_title
+
+        logo = base64.b64encode(
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">'
+            b'<rect width="80" height="80"/></svg>'
+        ).decode()
+        title = f"![logo](data:image/svg+xml;base64,{logo}) Revenue"
+        style = resolve_style(get_theme_style())
+
+        reserved = get_title_height(
+            title, 400.0, {}, resolved_style=style, base_dir=None
+        )
+        painted_svg = render_title(
+            title,
+            400.0,
+            resolved_style=style,
+            variable_values={},
+            base_dir=None,
+            error_collector=None,
+        )
+
+        painted = re.search(r'<svg[^>]* height="([\d.]+)"', painted_svg)
+        assert painted is not None
+        assert reserved == pytest.approx(float(painted.group(1)), abs=0.01)
+        assert reserved > 80

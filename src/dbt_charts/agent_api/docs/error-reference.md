@@ -33,7 +33,7 @@ Fired by the extends layer when a board's `extends:` entry resolves to nothing: 
 Unknown field {field_path!r} in board YAML. Remove it or check the schema for supported keys.
 ```
 
-Fired when the board YAML contains a field name that the schema does not recognize. Remove the unknown field or refer to the YAML reference for the supported keys.
+Fired when the board YAML contains a field name that the schema does not recognize. Remove the unknown field or refer to the YAML reference for the supported keys. When the key is one a past grammar renamed, moved, or removed, the hint names its successor and the version that retired it.
 
 ### ERR-INVALID-DEFAULT-THEME: Invalid theme name in configuration
 
@@ -428,7 +428,7 @@ Fired when a stacked bar chart authors `sort:` by a column that carries no numer
 style.tooltip.format at {field_path} authors a prefix/suffix/notation, but a {chart_type} tooltip takes a plain d3 spec and has no place for an affix. Drop the prefix/suffix/notation, or author a plain spec.
 ```
 
-A point/bubble map or choropleth tooltip takes a plain d3 format string, so a prefix, suffix or notation on `style.tooltip.format` (reachable through a `style.formats` alias) cannot paint. Author `style.tooltip.format` as a plain spec or alias without an affix. The tooltips of bar, line, area, scatter and pie charts do paint an affix.
+A point/bubble map or choropleth tooltip takes a plain d3 format string, so a prefix, suffix or notation on `style.tooltip.format` (reachable through a name in `style.formats.aliases`) cannot paint. Author `style.tooltip.format` as a plain spec or alias without an affix. The tooltips of bar, line, area, scatter and pie charts do paint an affix.
 
 ### ERR-FORMAT-AFFIX-NATIVE-TOOLTIP-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach this chart's tooltip
 
@@ -472,7 +472,7 @@ Format at {field_path} combines a prefix/suffix/notation with time-format spec {
 
 A prefix, suffix or notation next to a strftime spec ('%b %Y') is rejected on `time_format` and on a temporal axis's format: those paint through a date formatter, which has no place for an affix. Author a prefix/suffix on a number slot (`number_format`), or on a KPI value or table column format, which paint it around the date (`FY Jan 2026`). `notation` only affects an SI number spec; it does nothing to a date anywhere, so drop it.
 
-### ERR-FORMAT-INVALID: Format spec is not a predefined name, a style.formats alias, or a valid d3-format/d3-time-format spec
+### ERR-FORMAT-INVALID: Format spec is not a predefined name, a name in style.formats.aliases, or a valid d3-format/d3-time-format spec
 
 - **Level:** error
 - **Domain:** compile
@@ -484,7 +484,7 @@ A prefix, suffix or notation next to a strftime spec ('%b %Y') is rejected on `t
 Unknown {kind_noun} format {spec!r} at {field_path}: {explanation}
 ```
 
-Fired when an authored `format:` string is not one of the engine's predefined format names (e.g. `currency`, `number`, `percent_number`), not a key defined in `style.formats`, and fails to parse as a d3-format spec. Check for typos against the predefined names or your `style.formats` keys, or use a valid d3-format spec (https://d3js.org/d3-format). In a slot that accepts a raw strftime spec (`%b %Y`), the same code also fires for a directive the engine does not implement (`%K`); the message names the accepted directives.
+Fired when an authored `format:` string is not one of the engine's predefined format names (e.g. `currency`, `number`, `percent_number`), not a key defined in `style.formats.aliases`, and fails to parse as a d3-format spec. Check for typos against the predefined names or your `style.formats.aliases` keys, or use a valid d3-format spec (https://d3js.org/d3-format). In a slot that accepts a raw strftime spec (`%b %Y`), the same code also fires for a directive the engine does not implement (`%K`); the message names the accepted directives.
 
 ### ERR-FORMAT-KIND-MISMATCH: Predefined format name is the wrong kind for this slot
 
@@ -514,7 +514,7 @@ Format {spec!r} at {field_path} is a Python-only native formatter and cannot be 
 
 Fired when `percent_number`, `percent_number_delta`, or `percentage_points_delta` appears in a Vega-rendered format slot such as an axis label, mark value-label format, number_format, time_format, or support_table format. These names bypass d3 entirely and are only valid in Python-rendered slots (KPI headline and table cells). To keep the value in a Vega-rendered slot, transform it in the query to match a plain d3 spec: for a whole-number percent, divide by 100 and then use a d3 percent spec such as `.1%`.
 
-### ERR-FORMAT-PREDEFINED-SHADOW: style.formats key shadows an engine-predefined format name
+### ERR-FORMAT-PREDEFINED-SHADOW: style.formats.aliases name shadows an engine-predefined format name
 
 - **Level:** error
 - **Domain:** compile
@@ -523,10 +523,10 @@ Fired when `percent_number`, `percent_number_delta`, or `percentage_points_delta
 **Message template:**
 
 ```
-Cannot define {spec!r} in style.formats at {field_path}: this name is engine-predefined and cannot be overridden. Choose a project-specific name (e.g. 'revenue', 'arr') for custom format aliases.
+Cannot define {spec!r} in style.formats.aliases at {field_path}: this name is engine-predefined and cannot be overridden. Choose a project-specific name (e.g. 'revenue', 'arr') for custom format aliases.
 ```
 
-Fired when a `style.formats` key collides with an engine-owned predefined format name such as `number`, `currency`, or `date_short`. Predefined names resolve via engine rules and cannot be shadowed. Define your custom alias under a different name.
+Fired when a `style.formats.aliases` name collides with an engine-owned predefined format name such as `number`, `currency`, or `date_short`. Predefined names resolve via engine rules and cannot be shadowed. Define your custom alias under a different name.
 
 ### ERR-FORMAT-SIGN-BEFORE-ANCHORED-PREFIX: A sign cannot lead a prefix that paints on one value only
 
@@ -612,6 +612,20 @@ Histogram chart {chart_id!r} received data where {field!r} forms a gapless run o
 
 Fired when a histogram chart receives data where its x field forms a gapless run of whole numbers alongside an unused numeric column, the shape of already-aggregated, one-row-per-bucket data. Histograms rely on Vega-Lite's own binning + counting over raw, ungrouped rows; pre-aggregated data silently produces a wrong, miscounted histogram instead of erroring. Aggregate in the query and use `type: bar` instead.
 
+### ERR-IMAGE-REF-UNRESOLVED: an image reference could not be resolved
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+image {ref!r} could not be resolved: {reason}
+```
+
+Fired when an image in a `text:` block, a title, or a callout message or title cannot be embedded. A relative path resolves against the directory of the file it is written in, and a path starting with `/` against the project's `charts/` directory; this fires when that path does not exist, escapes the project root, carries an unsupported file suffix (a `?query` or `#fragment` included), the render has no project or the content no location to resolve it against, a Jinja template renders it (a project image path is written out; a template may put `{% if %}` around whole images), or the image's own content is malformed. An `http(s)://` reference is never fetched or resolved, and never raises this code.
+
 ### ERR-INPUT-INVALID: Invalid render input
 
 - **Level:** error
@@ -635,10 +649,10 @@ Fired when the render layer receives input data that fails a structural check. T
 **Message template:**
 
 ```
-KPI chart {chart_id!r} support value is a date/time, but its format {spec!r} is not a date format. Use date_short, a strftime spec via a style.formats alias, or remove format: to use date_short.
+KPI chart {chart_id!r} support value is a date/time, but its format {spec!r} is not a date format. Use date_short, a strftime spec via a name in style.formats.aliases, or remove format: to use date_short.
 ```
 
-Fired when a KPI's support.format is a number format (not date_short, time_short, or a style.formats alias resolving to a strftime spec) and support.value is a date/datetime column. support.format is always authored for that one chart, unlike the headline value's format, which can be a board-wide cascade default -- so a mismatch here is never ambiguous.
+Fired when a KPI's support.format is a number format (not date_short, time_short, or a name in style.formats.aliases resolving to a strftime spec) and support.value is a date/datetime column. support.format is always authored for that one chart, unlike the headline value's format, which can be a board-wide cascade default -- so a mismatch here is never ambiguous.
 
 ### ERR-KPI-MULTIROW: KPI query returned more than one row
 

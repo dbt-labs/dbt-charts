@@ -26,6 +26,10 @@ from .types import (
 )
 from .utils import normalize_whitespace, split_lines
 
+# ``{width=X height=Y}`` after an image, captured only when the braces hold
+# nothing but numeric sizes: any other braces are the author's text.
+_IMAGE_SIZE_ATTRS = r"(?:\{\s*((?:(?i:width|height)\s*=\s*\d+(?:\.\d+)?\s*)+)\})"
+
 
 class MarkdownParser:
     """
@@ -62,7 +66,7 @@ class MarkdownParser:
     # Image block with optional {width=X height=Y} attributes
     IMAGE_BLOCK = re.compile(
         r"^!\[([^\]]*)\]\(([^)\s]+)(?:\s+[\"']([^\"']+)[\"'])?\)"
-        r"(?:\{([^}]+)\})?\s*$"
+        rf"{_IMAGE_SIZE_ATTRS}?\s*$"
     )
     # ::: html fenced block — scoped raw-HTML opt-in without policy elevation
     FENCED_HTML_START = re.compile(r"^:::\s*html\s*$")
@@ -97,7 +101,12 @@ class MarkdownParser:
     BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
     ITALIC = re.compile(r"\*([^*]+)\*|_([^_]+)_")
     LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)(?:\s+[\"']([^\"']+)[\"'])?\)")
-    IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+[\"']([^\"']+)[\"'])?\)")
+    # Inline image with optional {width=X height=Y} attributes -- same
+    # authoring shorthand as the standalone IMAGE_BLOCK.
+    IMAGE = re.compile(
+        r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+[\"']([^\"']+)[\"'])?\)"
+        rf"{_IMAGE_SIZE_ATTRS}?"
+    )
 
     def parse(self, text: str) -> Document:
         """
@@ -144,6 +153,27 @@ class MarkdownParser:
                 i += consumed
 
         return blocks
+
+    def _parse_image_attrs(
+        self, attrs_str: Optional[str]
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Parse an optional ``{width=X height=Y}`` attribute string.
+
+        Shared by the standalone image block and the inline image span --
+        both authoring forms accept the same shorthand.
+        """
+        width: Optional[float] = None
+        height: Optional[float] = None
+        if not attrs_str:
+            return width, height
+        for attr_match in self.IMAGE_ATTR.finditer(attrs_str):
+            key = attr_match.group(1).lower()
+            value = float(attr_match.group(2))
+            if key == "width":
+                width = value
+            elif key == "height":
+                height = value
+        return width, height
 
     def _try_parse_block(
         self, lines: List[str], start: int
@@ -242,19 +272,7 @@ class MarkdownParser:
             alt = match.group(1)
             url = match.group(2)
             title = match.group(3) if match.group(3) else None
-
-            # Parse optional {width=X height=Y} attributes
-            width: Optional[float] = None
-            height: Optional[float] = None
-            attrs_str = match.group(4)
-            if attrs_str:
-                for attr_match in self.IMAGE_ATTR.finditer(attrs_str):
-                    key = attr_match.group(1).lower()
-                    value = float(attr_match.group(2))
-                    if key == "width":
-                        width = value
-                    elif key == "height":
-                        height = value
+            width, height = self._parse_image_attrs(match.group(4))
 
             return (
                 ImageBlock(url=url, alt=alt, title=title, width=width, height=height),
@@ -660,9 +678,15 @@ class MarkdownParser:
                     if earliest_match.lastindex and earliest_match.lastindex >= 3
                     else None
                 )
+                width, height = self._parse_image_attrs(earliest_match.group(4))
                 spans.append(
                     Span(
-                        text=alt or url, span_type=SpanType.IMAGE, url=url, title=title
+                        text=alt,
+                        span_type=SpanType.IMAGE,
+                        url=url,
+                        title=title,
+                        width=width,
+                        height=height,
                     )
                 )
 

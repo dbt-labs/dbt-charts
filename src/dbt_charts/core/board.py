@@ -95,6 +95,7 @@ from dbt_charts.core.render import RenderError, render
 from dbt_charts.core.render.board_links import LinkContext
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.dir_context import lazy_dir_context
+from dbt_charts.core.render.image_assets import image_scope
 from dbt_charts.core.render_format import RenderFormat
 
 # "failed" — no output produced (board_error, or validation_errors from a failed
@@ -497,18 +498,20 @@ def render_dashboard(
                 if _board_dir is not None
                 else None
             )
-        render_result = render(
-            compiled_board,
-            executor,
-            format=format,
-            variables=variables or {},
-            ignore_codes=ignore_codes,
-            builtin_variables=_builtin_variables,
-            max_workers=max_workers,
-            warnings_ignore=_warnings_ignore,
-            max_rows_per_query=max_rows_per_query,
-            **render_options,
-        )
+        with image_scope(project):
+            render_result = render(
+                compiled_board,
+                executor,
+                format=format,
+                variables=variables
+                or {},  # type-state: silent_fallback — no values is an empty mapping, not masked bad input
+                ignore_codes=ignore_codes,
+                builtin_variables=_builtin_variables,
+                max_workers=max_workers,
+                warnings_ignore=_warnings_ignore,
+                max_rows_per_query=max_rows_per_query,
+                **render_options,
+            )
         _t_done = time.perf_counter()
         # Render-side diagnostics (a chart runtime error's authored_path, a
         # from-query warning's queries.<name> path, ...) are stamped against

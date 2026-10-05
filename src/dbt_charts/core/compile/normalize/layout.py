@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory
 
 from dbt_charts.core.compile.errors import CompilationError, ReferenceError
+from dbt_charts.core.compile.file_refs import resolve_ref
 from dbt_charts.core.compile.models.board.authored import (
     AUTHORED_BOARD_ADAPTER,
     AuthoredBoard,
@@ -32,6 +33,7 @@ from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.normalize.charts import (
+    RegisteredChart,
     generate_inline_chart_id,
     normalize_chart,
 )
@@ -78,7 +80,7 @@ def build_unified_layout(
     base_dir: ProjectDirectory | None = None,
     default_source: str | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
-    chart_registry: dict[str, Any] | None = None,
+    chart_registry: dict[str, RegisteredChart] | None = None,
     theme: str | None = None,
     parent_variables: dict[str, Any] | None = None,
     *,
@@ -287,7 +289,7 @@ def _resolve_layout_items(
     base_dir: ProjectDirectory | None = None,
     default_source: str | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
-    chart_registry: dict[str, Any] | None = None,
+    chart_registry: dict[str, RegisteredChart] | None = None,
     theme: str | None = None,
     used_chart_ids: set[str] | None = None,
     parent_variables: dict[str, Any] | None = None,
@@ -362,7 +364,7 @@ def _resolve_single_item(
     base_dir: ProjectDirectory | None = None,
     default_source: str | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
-    chart_registry: dict[str, Any] | None = None,
+    chart_registry: dict[str, RegisteredChart] | None = None,
     theme: str | None = None,
     used_chart_ids: set[str] | None = None,
     parent_variables: dict[str, Any] | None = None,
@@ -446,6 +448,7 @@ def _resolve_single_item(
             cache_root=cache_root,
             sources=sources,
             board_cache=board_cache,
+            written_in=base_dir,
         )
         return LayoutItem(type="chart", chart=chart, source_path=source_path)
 
@@ -526,6 +529,7 @@ def _resolve_single_item(
             cache_root=cache_root,
             sources=sources,
             board_cache=board_cache,
+            written_in=base_dir,
         )
         return LayoutItem(
             type="chart", chart=chart, source_path=source_path, visible=item.visible
@@ -575,7 +579,7 @@ def _resolve_board_file_import(
     base_dir: ProjectDirectory | None = None,
     default_source: str | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
-    chart_registry: dict[str, Any] | None = None,
+    chart_registry: dict[str, RegisteredChart] | None = None,
     theme: str | None = None,
     parent_variables: dict[str, Any] | None = None,
     parent_level: int = 0,
@@ -621,21 +625,7 @@ def _resolve_board_file_import(
     parent_variables = parent_variables or {}
     resolved_path = resolve_jinja_template(file_path, parent_variables, strict=False)
 
-    if base_dir is None:
-        raise CompilationError(
-            f"Cannot resolve board file import '{resolved_path}': "
-            "no base directory context (board was compiled without a base directory)"
-        )
-
-    try:
-        nested_path = base_dir / resolved_path
-    except ValueError as e:
-        raise CompilationError(str(e)) from e
-
-    if not nested_path.exists():
-        raise CompilationError(
-            f"Board file not found: '{resolved_path}' (resolved from '{file_path}')"
-        )
+    nested_path = resolve_ref(resolved_path, base_dir, "file")
 
     # Load and parse the YAML file
     try:
@@ -710,7 +700,7 @@ def _resolve_grid_items(
     base_dir: ProjectDirectory | None = None,
     default_source: str | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
-    chart_registry: dict[str, Any] | None = None,
+    chart_registry: dict[str, RegisteredChart] | None = None,
     theme: str | None = None,
     used_chart_ids: set[str] | None = None,
     parent_variables: dict[str, Any] | None = None,
@@ -816,7 +806,7 @@ def _resolve_tab_items(
     base_dir: ProjectDirectory | None = None,
     default_source: str | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
-    chart_registry: dict[str, Any] | None = None,
+    chart_registry: dict[str, RegisteredChart] | None = None,
     theme: str | None = None,
     *,
     resolved_style: ResolvedStyle,
@@ -904,6 +894,7 @@ def _resolve_tab_items(
                 id=f"{board_id}_tab{idx}",
                 title=tab_item.title,
                 notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
+                base_dir=None if base_dir is None else base_dir.relpath,
                 text=tab_item.text,
                 layout=Layout(type=LayoutType.ROWS, items=[]),
                 theme=theme,
@@ -929,6 +920,7 @@ def _resolve_tab_items(
                 id=f"{board_id}_tab{idx}",
                 title=tab_item.title,
                 notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
+                base_dir=None if base_dir is None else base_dir.relpath,
                 layout=Layout(type=LayoutType.ROWS, items=[]),
                 theme=theme,
                 authored_style=tab_item.style,

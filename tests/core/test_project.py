@@ -17,7 +17,6 @@ from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
-    IMAGE_ASSET_SUFFIXES,
     SERVED_FILE_SUFFIXES,
     GrepHit,
     Project,
@@ -29,6 +28,7 @@ from dbt_charts.core.project import (
     iter_dir_from_relpaths,
     posix_relpath,
 )
+from dbt_charts.core.utils import IMAGE_SUFFIXES
 
 from ..conftest import InMemoryFileQueries
 
@@ -371,7 +371,7 @@ class TestServedFileSuffixes:
 
     def test_image_asset_extensions_are_served(self) -> None:
         # Committed images referenced from markdown/boards are fetched as assets.
-        assert set(IMAGE_ASSET_SUFFIXES) <= SERVED_FILE_SUFFIXES
+        assert set(IMAGE_SUFFIXES) <= SERVED_FILE_SUFFIXES
 
     def test_suffixes_are_lowercase_with_leading_dot(self) -> None:
         # The fetch compares name.lower().endswith(...), so the set must be

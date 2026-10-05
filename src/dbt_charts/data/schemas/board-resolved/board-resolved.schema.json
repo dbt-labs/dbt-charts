@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.9.1.dev48",
+  "version": "0.9.1.dev77",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11145,6 +11145,17 @@
           "title": "Text",
           "type": "string"
         },
+        "base_dir": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Base Dir"
+        },
         "html_policy": {
           "enum": [
             "none",
@@ -11321,6 +11332,7 @@
         }
       },
       "required": [
+        "base_dir",
         "card_gap",
         "card_padding",
         "charts",
@@ -11369,6 +11381,19 @@
           "description": "Internal: True when a ChartRef pulled this definition in from another file. Declared here rather than inherited: this model deliberately does not extend _BaseResolvedChartFields.",
           "title": "Defined In Other File",
           "type": "boolean"
+        },
+        "base_dir": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Internal: directory of the file this chart was written in, which its markdown images resolve against.",
+          "title": "Base Dir"
         },
         "message": {
           "description": "Callout message text (required).",
@@ -11707,9 +11732,6 @@
         "support_table": {
           "$ref": "#/$defs/SupportTableStyle"
         },
-        "callout": {
-          "$ref": "#/$defs/ResolvedCalloutStyle"
-        },
         "callout_error": {
           "$ref": "#/$defs/ResolvedCalloutStyle"
         },
@@ -11779,7 +11801,6 @@
         "background",
         "bar",
         "border",
-        "callout",
         "callout_error",
         "dark_companion_palette",
         "dashes",

@@ -741,6 +741,19 @@ def _make_data_aware_height_provider(
             + board_padding.bottom
         )
 
+    def _sizing_render_failed(
+        chart: Chart,
+        exc: DbtChartsError,
+        width: float,
+        resolved_style: ResolvedStyle,
+    ) -> float:
+        _log.warning("Chart %r failed to render during sizing: %s", chart.id, exc)
+        render_ctx.resolve_errors[chart.id] = ChartResolveFailure(
+            diagnostic=stamp_chart_diagnostic(exc, chart.id, chart.source_path),
+            identity=ChartIdentity.from_normalized(chart),
+        )
+        return _unresolved_height(chart, width, resolved_style)
+
     def provider(
         item: LayoutItem,
         card_gap: float,
@@ -781,16 +794,10 @@ def _make_data_aware_height_provider(
                     width=width,
                 ) + _vertical_inset(resolved_table)
 
-            # callout has no try/except around _render_chart_to_svg, unlike
-            # spark_bar just below. This is latent, not dead: callout renders
-            # from a static authored `message:` and does no data-shape
-            # validation today, so nothing here raises ChartDataError yet.
-            # The moment callout gains data-driven validation, one bad
-            # callout will return output=None from renderer.py's board-level
-            # handler and take down the whole board — the same failure mode
-            # the spark_bar branch below is guarded against. Add the same
-            # try/except DbtChartsError guard then; don't assume it was
-            # considered and declined.
+            # callout and spark_bar render their real SVG to measure it, and
+            # either can fail doing so (a callout's image ref, spark_bar's data
+            # shape). A failure is that one chart's error tile: escaping to
+            # renderer.py's board-level handler would blank every chart.
             if item.chart.type == "callout":
                 resolved_callout = _require_resolved(
                     render_ctx,
@@ -803,14 +810,17 @@ def _make_data_aware_height_provider(
                 )
                 if resolved_callout is None:
                     return _unresolved_height(item.chart, width, resolved_style)
-                _chart_svg, _, actual_height, _ = _render_chart_to_svg(
-                    resolved_callout,
-                    executor,
-                    variables,
-                    width,
-                    height=None,
-                    resolved_style=resolved_style,
-                )
+                try:
+                    _chart_svg, _, actual_height, _ = _render_chart_to_svg(
+                        resolved_callout,
+                        executor,
+                        variables,
+                        width,
+                        height=None,
+                        resolved_style=resolved_style,
+                    )
+                except DbtChartsError as exc:
+                    return _sizing_render_failed(item.chart, exc, width, resolved_style)
                 render_ctx.render_cache[
                     (item.chart.id, width, actual_height, NO_TITLE_SHIFT)
                 ] = (
@@ -855,18 +865,7 @@ def _make_data_aware_height_provider(
                         resolved_style=resolved_style,
                     )
                 except DbtChartsError as exc:
-                    _log.warning(
-                        "Chart %r failed to render during sizing: %s",
-                        item.chart.id,
-                        exc,
-                    )
-                    render_ctx.resolve_errors[item.chart.id] = ChartResolveFailure(
-                        diagnostic=stamp_chart_diagnostic(
-                            exc, item.chart.id, item.chart.source_path
-                        ),
-                        identity=ChartIdentity.from_normalized(item.chart),
-                    )
-                    return _unresolved_height(item.chart, width, resolved_style)
+                    return _sizing_render_failed(item.chart, exc, width, resolved_style)
                 return actual_height + _vertical_inset(resolved_spark_bar)
 
             # Render-first Vega sizing.
@@ -2012,6 +2011,7 @@ def calculate_data_aware_layout(
             variable_values,
             level=board.level,
             resolved_style=board.resolved_style,
+            base_dir=board.base_dir,
         )
         container_height += board_title_height + gap + card_gap
 

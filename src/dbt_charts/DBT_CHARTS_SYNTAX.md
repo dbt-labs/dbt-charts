@@ -821,7 +821,7 @@ style:
 The sign leads: a prefix reads `−€500` (sign, then prefix, then digits); a
 suffix trails the digits unaffected: `−500 USD`. A table column keeps the sign
 against the digits (`€−500`) because its prefix lane is shared down the column.
-`style.formats` aliases work the same way: an entry can name an object with
+`style.formats.aliases` names work the same way: an entry can name an object with
 the same keys instead of a bare spec string, and every slot above resolves it
 identically to writing the object inline.
 Pairing a prefix with a spec that already carries its own native `$`/`#`
@@ -1014,6 +1014,8 @@ type: callout
 message: "Query is disabled in this environment."
 style:
   tone: warning  # optional; defaults to info
+  # background, border.color, title.font.color, message.font.color: each one
+  # you set wins; `by_tone` (the default) is the tone's color.
 
 ```
 

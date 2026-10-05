@@ -42,7 +42,7 @@ def _default_callout_style() -> ResolvedCalloutStyle:
 
     return resolve_style(
         get_theme_style(get_default_theme_name())
-    ).chart_defaults.callout
+    ).chart_defaults.callout_error
 
 
 def _default_charts():

@@ -308,7 +308,7 @@ def _format_value_parts(
     """Format a KPI cell into ``(prefix, number_str, suffix, is_numeric)``.
 
     Temporal cells are formatted with a strftime spec (``date_short``, or a
-    ``style.formats`` alias resolving to one -- an inline ``%``-spec is
+    ``style.formats.aliases`` alias resolving to one -- an inline ``%``-spec is
     compile-rejected on this slot), defaulting to ``date_short`` when
     unformatted. ``format_may_be_cascaded`` is True only for the headline
     value slot, whose format can be a board-wide cascade default shared

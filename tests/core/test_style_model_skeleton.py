@@ -767,27 +767,17 @@ def test_cascade_subtitle_font(model_copy_at):
 
 
 def test_cascade_charts_callout_fonts(model_copy_at):
-    """charts.callout title/message fonts cascade from charts_font, matching other chart families."""
+    """charts.callout title/message fonts cascade from charts.font, except color:
+    the theme sets it to ``by_tone``, which the font fill leaves alone."""
     from dbt_charts.core.compile.models.primitives import FontStyle
-
-    # Set charts.font to a distinctive value — this is what should propagate into
-    # charts.callout, matching the behavior of kpi, table, label, series_label, etc.
 
     base = get_theme_style()
     seed = model_copy_at(
-        model_copy_at(
-            model_copy_at(
-                base, "charts.font", FontStyle(family="ChartsFont", color="#charts")
-            ),
-            "charts.callout.title.font.color",
-            None,
-        ),
-        "charts.callout.message.font.color",
-        None,
+        base, "charts.font", FontStyle(family="ChartsFont", color="#charts")
     )
     cascaded = apply_inherit(seed, get_inherit_graph())
-    assert cascaded.charts.callout.title.font.color == "#charts"
-    assert cascaded.charts.callout.message.font.color == "#charts"
+    assert cascaded.charts.callout.title.font.color == "by_tone"
+    assert cascaded.charts.callout.message.font.color == "by_tone"
     assert cascaded.charts.callout.title.font.family == "ChartsFont"
     assert cascaded.charts.callout.message.font.family == "ChartsFont"
 
@@ -879,11 +869,10 @@ def test_cascade_layout_fonts():
 
 
 def test_charts_callout_defaults():
-    """charts.callout has correct concrete defaults from theme YAML."""
+    """A resolved callout has concrete defaults from theme YAML and its tone."""
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    ctx = resolve_chart_style_context(get_theme_style())
-    callout = ctx.callout
+    callout = resolve_chart_style_context(get_theme_style()).callout_error
     # Values come from theme tokens — assert structure/types not literal values
     assert callout.background is not None
     assert callout.border.color is not None
@@ -896,6 +885,15 @@ def test_charts_callout_defaults():
     assert callout.message.font.color is not None
     assert callout.message.font.size is not None
     assert callout.message.y_offset == 0.0
+
+
+def test_theme_callout_colors_are_by_tone():
+    callout = get_theme_style().charts.callout
+
+    assert callout.background == "by_tone"
+    assert callout.border.color == "by_tone"
+    assert callout.title.font.color == "by_tone"
+    assert callout.message.font.color == "by_tone"
 
 
 def test_resolved_charts_callout_style_padding_from_theme():
@@ -973,13 +971,15 @@ def test_render_callout_svg_uses_inline_spacing_from_style():
         title="Test chart",
         message="some callout message",
         width=240,
-        callout_style=tight_ctx.callout,
+        callout_style=tight_ctx.callout_error,
+        base_dir=None,
     )
     loose_svg = render_callout_svg(
         title="Test chart",
         message="some callout message",
         width=240,
-        callout_style=loose_ctx.callout,
+        callout_style=loose_ctx.callout_error,
+        base_dir=None,
     )
 
     def _message_y(svg: str) -> float:

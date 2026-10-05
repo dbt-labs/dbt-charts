@@ -2594,28 +2594,27 @@ def test_two_chart_type_scoped_deletions_sharing_a_path_both_fire_with_their_own
     assert any("callout reason" in m for m in messages), messages
 
 
-def test_deletion_would_fire_respects_chart_type_scope() -> None:
-    """_deletion_would_fire consumer (the read-only recognition mirror)."""
-    from dbt_charts.core.compile.migrations.migrations import _deletion_would_fire
+def test_deletions_that_fire_respects_chart_type_scope() -> None:
+    """The read-only recognition mirror of ``_delete_tails_recursive``."""
+    from dbt_charts.core.compile.migrations.migrations import _deletions_that_fire
 
     catalog = _scoped_deletion_catalog()
-    v1_schema = catalog.schema_for(V1)
-    live = catalog.current_schema
     bar_deletion = Deletion(V1, V2, ("some_field",), chart_type="bar")
+    registry = MigrationRegistry([], [bar_deletion], catalog=catalog)
 
     table_only: JsonObject = cast(
         JsonObject, {"charts": {"t": {"type": "table", "some_field": "y"}}}
     )
-    assert not _deletion_would_fire(
-        table_only, [bar_deletion], v1_schema, [v1_schema], live, [live]
-    ), "a bar-scoped Deletion must not fire on table's own (still-valid) field"
+    assert not list(_deletions_that_fire(table_only, V1, catalog, registry)), (
+        "a bar-scoped Deletion must not fire on table's own (still-valid) field"
+    )
 
     with_bar: JsonObject = cast(
         JsonObject, {"charts": {"b": {"type": "bar", "some_field": "x"}}}
     )
-    assert _deletion_would_fire(
-        with_bar, [bar_deletion], v1_schema, [v1_schema], live, [live]
-    )
+    assert list(_deletions_that_fire(with_bar, V1, catalog, registry)) == [
+        (("charts", "b", "some_field"), bar_deletion)
+    ]
 
 
 def test_apply_map_key_deletions_uses_each_groups_own_source_schema() -> None:

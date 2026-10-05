@@ -305,7 +305,7 @@ def _render_chart_item(
     ``chart_style_context`` is the board's own compiled cascade context
     (``board.chart_style_context``, threaded down by ``_render_board_items``)
     — the same one every other render-layer consumer resolves a chart
-    against, so a board's own ``style.formats`` aliases apply here too.
+    against, so a board's own ``style.formats.aliases`` names apply here too.
 
     ``include_text_format`` is True only when ``render_board_text`` is the
     caller. It gates the ``kpi_text``/``y_range_display`` keys, which are
@@ -353,6 +353,7 @@ def _render_chart_item(
                     "layout_padding",  # internal layout info
                     "preferred_width",  # internal baked width
                     "query",  # AnyQuery object — use query_name instead
+                    "base_dir",  # provenance for image refs; artifact-only
                 },
             ),
             "data": data,

@@ -77,6 +77,7 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.charts import (
+    RegisteredChart,
     _collect_charts_from_layout,
     normalize_chart,
 )
@@ -555,7 +556,7 @@ def normalize_board(
     board_id: str | None = None,
     parent_context: dict[str, Any] | None = None,
     query_registry: dict[str, AnyQuery] | None = None,
-    chart_registry: dict[str, Any] | None = None,
+    chart_registry: dict[str, RegisteredChart] | None = None,
     depth: int = 0,
     base_dir: ProjectDirectory | None = None,
     parent_level: int = 0,
@@ -803,10 +804,10 @@ def normalize_board(
     # `charts:` block's coordinates when its declaring board normalizes it, and
     # prefixing it here would name a `charts:` key this board does not have.
     normalized_charts: dict[str, Chart] = {}
-    for chart_name, chart_def in chart_registry.items():
+    for chart_name, registered in chart_registry.items():
         normalized_charts[chart_name] = normalize_chart(
             chart_name,
-            chart_def,
+            registered.definition,
             query_registry,
             base_dir,
             default_source,
@@ -815,6 +816,7 @@ def normalize_board(
             sources=sources,
             cache_root=cache_root,
             board_cache=board_cache,
+            written_in=registered.base_dir,
         )
 
     local_charts: dict[str, Chart] = {}
@@ -980,6 +982,7 @@ def normalize_board(
         tags=board.tags if board.tags is not None else [],
         aliases=board.aliases if board.aliases is not None else [],
         text=board.text if board.text is not None else "",
+        base_dir=None if base_dir is None else base_dir.relpath,
         html_policy=cap_html_policy(
             board.html_policy, resolve_html_policy_ceiling().value
         ),

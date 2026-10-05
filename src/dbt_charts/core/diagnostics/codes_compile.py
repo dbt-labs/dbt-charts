@@ -60,7 +60,9 @@ ERR_EXTRA_FIELD = REGISTRY.register(
         doc=(
             "Fired when the board YAML contains a field name that the schema does "
             "not recognize. Remove the unknown field or refer to the YAML reference "
-            "for the supported keys."
+            "for the supported keys. When the key is one a past grammar renamed, "
+            "moved, or removed, the hint names its successor and the version that "
+            "retired it."
         ),
         docs_topic="board",
     )
@@ -988,15 +990,15 @@ ERR_FORMAT_INVALID = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-INVALID",
         domain="compile",
-        title="Format spec is not a predefined name, a style.formats alias, or a valid d3-format/d3-time-format spec",
+        title="Format spec is not a predefined name, a name in style.formats.aliases, or a valid d3-format/d3-time-format spec",
         message_template=(
             "Unknown {kind_noun} format {spec!r} at {field_path}: {explanation}"
         ),
         doc=(
             "Fired when an authored `format:` string is not one of the engine's "
             "predefined format names (e.g. `currency`, `number`, `percent_number`), "
-            "not a key defined in `style.formats`, and fails to parse as a d3-format "
-            "spec. Check for typos against the predefined names or your `style.formats` "
+            "not a key defined in `style.formats.aliases`, and fails to parse as a d3-format "
+            "spec. Check for typos against the predefined names or your `style.formats.aliases` "
             "keys, or use a valid d3-format spec (https://d3js.org/d3-format). "
             "In a slot that accepts a raw strftime spec (`%b %Y`), the same code "
             "also fires for a directive the engine does not implement (`%K`); "
@@ -1157,8 +1159,8 @@ ERR_FORMAT_AFFIX_GEO_TOOLTIP_UNSUPPORTED = REGISTRY.register(
         doc=(
             "A point/bubble map or choropleth tooltip takes a plain d3 "
             "format string, so a prefix, suffix or notation on "
-            "`style.tooltip.format` (reachable through a `style.formats` "
-            "alias) cannot paint. Author `style.tooltip.format` as a plain "
+            "`style.tooltip.format` (reachable through a name in "
+            "`style.formats.aliases`) cannot paint. Author `style.tooltip.format` as a plain "
             "spec or alias without an affix. The tooltips of bar, line, "
             "area, scatter and pie charts do paint an affix."
         ),
@@ -1259,20 +1261,20 @@ ERR_FORMAT_PREDEFINED_SHADOW = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-PREDEFINED-SHADOW",
         domain="compile",
-        title="style.formats key shadows an engine-predefined format name",
+        title="style.formats.aliases name shadows an engine-predefined format name",
         message_template=(
-            "Cannot define {spec!r} in style.formats at {field_path}: "
+            "Cannot define {spec!r} in style.formats.aliases at {field_path}: "
             "this name is engine-predefined and cannot be overridden. "
             "Choose a project-specific name (e.g. 'revenue', 'arr') for "
             "custom format aliases."
         ),
         doc=(
-            "Fired when a `style.formats` key collides with an engine-owned "
+            "Fired when a `style.formats.aliases` name collides with an engine-owned "
             "predefined format name such as `number`, `currency`, or "
             "`date_short`. Predefined names resolve via engine rules and cannot "
             "be shadowed. Define your custom alias under a different name."
         ),
-        summary="style.formats key shadows an engine-predefined format name.",
+        summary="style.formats.aliases name shadows an engine-predefined format name.",
         docs_topic="charts",
     )
 )

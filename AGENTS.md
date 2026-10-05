@@ -127,7 +127,7 @@ Any validation, path resolution, compilation, execution, or rendering in these l
 
 ### Module boundaries
 
-tach enforces: `dbt_charts.cli` may depend only on `dbt_charts.agent_api` and `dbt_charts.cloud_client` (both explicit `depends_on` edges on unlayered modules — in tach 0.35, layer ordering implicitly allows skip-level and same-layer edges, so this is the enforcing shape); `dbt_charts.cloud_client` may import nothing first-party at all (`cli/commands/cloud.py` parses arguments, calls one client method, prints the result — same thin-wrapper rule); `dbt_charts.core` cannot import `dbt_charts.cli` or `dbt_charts.ai` (layer ordering); `dbt_charts.ai.tools` cannot import `dbt_charts.ai.mcp`.
+tach enforces: `dbt_charts.cli` may depend only on `dbt_charts.agent_api`, `dbt_charts.cloud_client`, and `dbt_charts.telemetry` (all explicit `depends_on` edges on unlayered modules — in tach 0.35, layer ordering implicitly allows skip-level and same-layer edges, so this is the enforcing shape); `dbt_charts.cloud_client` may import nothing first-party at all (`cli/commands/cloud.py` parses arguments, calls one client method, prints the result — same thin-wrapper rule); `dbt_charts.telemetry` likewise imports nothing first-party and is imported only by `cli/main.py`; `dbt_charts.core` cannot import `dbt_charts.cli` or `dbt_charts.ai` (layer ordering); `dbt_charts.ai.tools` cannot import `dbt_charts.ai.mcp`.
 
 `dbt_charts.cli` → `dbt_charts.core` is forbidden — route through `dbt_charts.agent_api`. The remaining direct import (`commands/mcp.py`'s lazy `dbt_charts.ai.mcp` import) carries a `# tach-ignore(cli->ai debt…)` marker.
 

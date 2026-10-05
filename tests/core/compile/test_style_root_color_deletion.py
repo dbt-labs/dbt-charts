@@ -27,11 +27,12 @@ from dbt_charts.core.compile.migrations import (
 )
 from dbt_charts.core.compile.migrations.migrations import (
     _board_migration_context,
-    _deletion_would_fire,
+    _deletions_that_fire,
     _schema_path_exists,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+    JsonObject,
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
@@ -146,17 +147,14 @@ def test_a_live_chart_color_alone_is_not_read_as_a_historical_board(
     authoring error in it gets reported as retired syntax.
     """
     _, registry = _board_migration_context()
-    deletions = registry.deletions_from("0.6.0")
-    source = catalog.schema_for("0.6.0")
-    live = catalog.current_schema
-    document = {
+    document: JsonObject = {
         "title": "Test",
         "queries": {"q": {"type": "values", "rows": [{"n": 1}]}},
         "charts": {"k": _line_chart("#123456")},
         "rows": ["k"],
     }
 
-    assert not _deletion_would_fire(document, deletions, source, [source], live, [live])
+    assert not list(_deletions_that_fire(document, "0.6.0", catalog, registry))
 
 
 @pytest.mark.parametrize("position", ["root", "nested"])

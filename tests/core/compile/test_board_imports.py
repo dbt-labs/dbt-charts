@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile.compiler import compile_file
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.normalize.dispatch import normalize_board
 from dbt_charts.core.compile.parse.parser import parse_yaml
@@ -220,6 +221,31 @@ rows:
             normalize_board(board, base_dir=local_project(root=tmp_path).directory())
 
         assert "not found" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize(
+        ("entry", "why"),
+        [
+            ("nonexistent.yml", "'charts/nonexistent.yml' does not exist"),
+            ("../../../outside.yml", "escape above the project root"),
+        ],
+    )
+    def test_unresolvable_board_import_is_a_reference_diagnostic(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        entry: str,
+        why: str,
+    ) -> None:
+        """A missing or escaping import is the resolver's ERR-UNRESOLVED-REFERENCE,
+        not a bare compile error that reaches the user as ERR-INTERNAL."""
+        (tmp_path / "dbt_charts.yml").write_text("")
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "a.yml").write_text(f"title: A\nrows:\n  - {entry}\n")
+        project = local_project(root=tmp_path)
+        result = compile_file(project.path("charts/a.yml").read_board())
+        (error,) = result.errors
+        assert error.code == "ERR-UNRESOLVED-REFERENCE"
+        assert why in error.message
 
     def test_board_import_relative_to_base_path(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

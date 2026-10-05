@@ -35,9 +35,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-import yaml
 from pydantic import ValidationError as PydanticValidationError
 
 from dbt_charts.core.compile.config import (
@@ -49,6 +48,11 @@ from dbt_charts.core.compile.errors import (
     MergeValidationError,
     ParseError,
     ReferenceError,
+)
+from dbt_charts.core.compile.file_refs import (
+    read_section,
+    resolve_ref,
+    split_external_query_ref,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.board.normalized import Board
@@ -67,6 +71,7 @@ from dbt_charts.core.compile.models.refs import (
     normalize_query_value,
 )
 from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.normalize.charts import RegisteredChart
 from dbt_charts.core.compile.normalize.dispatch import (
     board_style_cache,
     normalize_board,
@@ -74,7 +79,6 @@ from dbt_charts.core.compile.normalize.dispatch import (
 )
 from dbt_charts.core.compile.normalize.queries import (
     dialect_for_source,
-    split_external_query_ref,
 )
 from dbt_charts.core.compile.normalize.variables import VariableReferenceErrors
 from dbt_charts.core.compile.parse.meta import (
@@ -1185,7 +1189,7 @@ def _process_queries_for_registry(
 
 def _process_charts_for_registry(
     board: AuthoredBoard,
-    registry: dict[str, Any],
+    registry: dict[str, RegisteredChart],
     cross_board_queries: dict[str, AnyQuery],
     base_dir: ProjectDirectory | None = None,
     *,
@@ -1220,11 +1224,6 @@ def _process_charts_for_registry(
 
         # Handle cross-file references
         if isinstance(chart_def, ChartRef):
-            if base_dir is None:
-                raise CompilationError(
-                    f"Cannot resolve cross-file reference '{chart_def.ref}': "
-                    "no base directory context (board was compiled without a base directory)"
-                )
             registry[name] = _load_chart_ref_with_lexical_queries(
                 chart_def,
                 base_dir=base_dir,
@@ -1235,7 +1234,7 @@ def _process_charts_for_registry(
                 yaml_path=["charts", name],
             )
         else:
-            registry[name] = chart_def
+            registry[name] = RegisteredChart(chart_def, base_dir)
 
 
 def build_query_registry(
@@ -1284,12 +1283,12 @@ def build_chart_registry(
     board: AuthoredBoard,
     cross_board_queries: dict[str, AnyQuery],
     base_dir: ProjectDirectory | None = None,
-    registry: dict[str, Any] | None = None,
+    registry: dict[str, RegisteredChart] | None = None,
     *,
     sources: dict[str, Any],
     cache_root: CachePatch | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
-) -> dict[str, Any]:
+) -> dict[str, RegisteredChart]:
     """Build complete chart registry from board and nested boards.
 
     Traverses the entire board structure to collect all chart definitions,
@@ -1326,8 +1325,8 @@ def build_chart_registry(
 
 def _resolve_ref_item(
     ref: str,
-    section_name: str,
-    base_dir: ProjectDirectory,
+    section_name: Literal["queries", "charts", "variables"],
+    base_dir: ProjectDirectory | None,
     yaml_path: Sequence[str],
 ) -> tuple[Any, str, ProjectPath, dict[str, YamlValue]]:
     """Locate `<file>.{section_name}.<name>` and return the raw item plus
@@ -1336,8 +1335,7 @@ def _resolve_ref_item(
 
     Shared file/section/item lookup for VariableRef/QueryRef/ChartRef and for
     the lexical query-chain walk below — grammar already validated by the
-    ref's own Pydantic model. Callers own the "no base directory context"
-    check (each has its own wording for which reference failed).
+    ref's own Pydantic model.
 
     Args:
         yaml_path: Dotted key path to the referencing site in the importing
@@ -1350,53 +1348,21 @@ def _resolve_ref_item(
             `build_query_registry`.
 
     Raises:
-        ReferenceError: The ref's file path escapes the project root (e.g.
-            one too many `../`), the target board file doesn't exist at the
-            resolved path (bad directory), or the file exists but the named
-            query/chart/variable isn't declared in it.
+        ReferenceError: No location, the file does not resolve (`resolve_ref`),
+            or the file lacks the named query/chart/variable.
         CompilationError: The target file exists but fails to parse (a parse
             failure, not a reference-resolution failure).
     """
     # Grammar already validated by the typed model; split is deterministic.
-    file_path_str, item_name = ref.rsplit(f".{section_name}.", 1)
-
-    if not (file_path_str.endswith(".yml") or file_path_str.endswith(".yaml")):
-        file_path_str += ".yml"
-
-    try:
-        resolved_path = base_dir / file_path_str
-    except ValueError as e:
-        raise ReferenceError(ref, f"{file_path_str!r} — {e}", ref_path=yaml_path) from e
-
-    if not resolved_path.exists():
+    item_name = ref.rsplit(f".{section_name}.", 1)[1]
+    resolved_path = resolve_ref(ref, base_dir, section_name, ref_path=yaml_path)
+    section, content = read_section(resolved_path, section_name, ref, yaml_path)
+    if item_name not in section:
+        singular = {"queries": "query", "charts": "chart", "variables": "variable"}
         raise ReferenceError(
             ref,
-            f"{resolved_path.relpath!r} — the file does not exist",
-            ref_path=yaml_path,
-        )
-
-    try:
-        content = resolved_path.read_yaml()
-    except (OSError, yaml.YAMLError) as e:
-        raise CompilationError(f"Failed to load {file_path_str}: {e}") from e
-
-    singular = {"queries": "query", "charts": "chart", "variables": "variable"}.get(
-        section_name, section_name[:-1]
-    )
-
-    if not content or section_name not in content:
-        raise ReferenceError(
-            ref,
-            f"{resolved_path.relpath!r} — that file has no {section_name}: section",
-            ref_path=yaml_path,
-        )
-
-    section = content[section_name]
-
-    if not isinstance(section, dict) or item_name not in section:
-        raise ReferenceError(
-            ref,
-            f"{resolved_path.relpath!r} — no {singular} named {item_name!r} there",
+            f"{resolved_path.relpath!r} — no {singular[section_name]} named "
+            f"{item_name!r} there",
             ref_path=yaml_path,
         )
 
@@ -1460,16 +1426,10 @@ def load_from_reference(
         - VariableRef → Variable
 
     Raises:
-        ReferenceError: The target board file or the named item is missing.
-        CompilationError: No base directory context, or the target file
-            fails to parse.
+        ReferenceError: No location, or the target file or item is missing.
+        CompilationError: The target file fails to parse.
     """
-    if base_dir is None:
-        raise CompilationError(
-            f"Cannot resolve cross-file reference '{reference.ref}': "
-            "no base directory context (board was compiled without a base directory)"
-        )
-
+    section_name: Literal["queries", "charts", "variables"]
     if isinstance(reference, VariableRef):
         section_name = "variables"
     elif isinstance(reference, QueryRef):
@@ -1564,50 +1524,6 @@ def _is_lexically_scoped_query_name(value: str) -> bool:
     return ".queries." not in stripped and not looks_like_sql(stripped)
 
 
-def _read_queries_section(
-    file_dir: ProjectDirectory, target_file_str: str, ref: str, chart_ref: str
-) -> tuple[ProjectPath, dict[str, YamlValue], dict[str, YamlValue]]:
-    """The `queries:` section of `target_file_str`, resolved relative to
-    `file_dir` — the *declaring* file's own directory, never the importer's.
-
-    Also returns the file's full parsed mapping, so callers can read its
-    board-level `source:` default for the queries declared in it.
-
-    `ref` is the authored ref string this file part came from and `chart_ref`
-    the chart import that pulled it in; both are named in every failure, since
-    the author is looking at neither file when the resolution breaks.
-    """
-    where = f"Chart ref '{chart_ref}' requires '{ref}'"
-    try:
-        target_path = file_dir / target_file_str
-    except ValueError as e:
-        raise CompilationError(f"{where}: {e}") from e
-    if not target_path.exists():
-        raise CompilationError(
-            f"{where}, but {target_file_str} does not exist "
-            f"(resolved relative to {file_dir.relpath})."
-        )
-    try:
-        target_content = target_path.read_yaml()
-    except (OSError, yaml.YAMLError) as e:
-        raise CompilationError(f"{where}: failed to load {target_file_str}: {e}") from e
-    # read_yaml is -> Any: a file whose top level is a list or scalar parses
-    # fine and would only fail at the .get below, as an AttributeError escaping
-    # compile() rather than a diagnostic.
-    if target_content is not None and not isinstance(target_content, dict):
-        raise CompilationError(f"{where}, but {target_file_str} is not a YAML mapping.")
-    if target_content is None:
-        raise CompilationError(
-            f"{where}, but {target_file_str} has no queries: section."
-        )
-    target_queries = target_content.get("queries")
-    if not isinstance(target_queries, dict):
-        raise CompilationError(
-            f"{where}, but {target_file_str} has no queries: section."
-        )
-    return target_path, target_queries, target_content
-
-
 def _resolve_cross_board_query(
     name: str,
     file_dir: ProjectDirectory,
@@ -1617,6 +1533,7 @@ def _resolve_cross_board_query(
     key_cache: dict[tuple[str, str], str],
     resolving: set[tuple[str, str]],
     chart_ref: str,
+    yaml_path: Sequence[str],
     *,
     default_source: str | None,
     sources: dict[str, Any],
@@ -1660,11 +1577,12 @@ def _resolve_cross_board_query(
     raw_def = normalize_query_value(queries_section[name])
 
     if isinstance(raw_def, dict) and "ref" in raw_def:
-        target_file_str, target_name = raw_def["ref"].rsplit(".queries.", 1)
-        if not (target_file_str.endswith(".yml") or target_file_str.endswith(".yaml")):
-            target_file_str += ".yml"
-        target_path, target_queries, target_content = _read_queries_section(
-            file_dir, target_file_str, raw_def["ref"], chart_ref
+        target_name = raw_def["ref"].rsplit(".queries.", 1)[1]
+        target_path = resolve_ref(
+            raw_def["ref"], file_dir, "queries", ref_path=yaml_path
+        )
+        target_queries, target_content = read_section(
+            target_path, "queries", chart_ref, yaml_path
         )
         target_key = _resolve_cross_board_query(
             target_name,
@@ -1675,7 +1593,10 @@ def _resolve_cross_board_query(
             key_cache,
             resolving,
             chart_ref,
-            default_source=_board_level_default_source(target_content, target_file_str),
+            yaml_path,
+            default_source=_board_level_default_source(
+                target_content, target_path.relpath
+            ),
             sources=sources,
             cache_root=cache_root,
             board_cache=board_cache,
@@ -1701,6 +1622,7 @@ def _resolve_cross_board_query(
                 key_cache,
                 resolving,
                 chart_ref,
+                yaml_path,
                 default_source=default_source,
                 sources=sources,
                 cache_root=cache_root,
@@ -1735,14 +1657,14 @@ def _resolve_cross_board_query(
 
 def _load_chart_ref_with_lexical_queries(
     chart_ref: ChartRef,
-    base_dir: ProjectDirectory,
+    base_dir: ProjectDirectory | None,
     cross_board_queries: dict[str, AnyQuery],
     *,
     sources: dict[str, Any],
     cache_root: CachePatch | None,
     board_cache: CachePatch,
     yaml_path: Sequence[str],
-) -> YamlValue:
+) -> RegisteredChart:
     """Load a cross-board chart, resolving its `query:`/`layers[].query` names
     lexically against the *source* board's own `queries:` section — never the
     importing board's registry (see compile/AGENTS.md's "Cross-board chart
@@ -1765,13 +1687,14 @@ def _load_chart_ref_with_lexical_queries(
     item_def, _item_name, resolved_path, content = _resolve_ref_item(
         chart_ref.ref, "charts", base_dir, yaml_path
     )
+    file_dir = resolved_path.parent
     if not isinstance(item_def, dict):
-        return item_def  # non-dict chart defs are invalid; let downstream validation handle
+        # Invalid, and left for downstream validation to report.
+        return RegisteredChart(item_def, file_dir)
 
     queries_section = content.get("queries")
     if not isinstance(queries_section, dict):
         queries_section = {}
-    file_dir = resolved_path.parent
     file_relpath = resolved_path.relpath
     source_default = _board_level_default_source(content, str(file_relpath))
     key_cache: dict[tuple[str, str], str] = {}
@@ -1797,14 +1720,16 @@ def _load_chart_ref_with_lexical_queries(
                 key_cache,
                 resolving,
                 chart_ref.ref,
+                yaml_path,
                 default_source=source_default,
                 sources=sources,
                 cache_root=cache_root,
                 board_cache=board_cache,
             )
-        target_file_str, target_name = split_external_query_ref(stripped)
-        target_path, target_queries, target_content = _read_queries_section(
-            file_dir, target_file_str, stripped, chart_ref.ref
+        target_name = split_external_query_ref(stripped)[1]
+        target_path = resolve_ref(stripped, file_dir, "query_file", ref_path=yaml_path)
+        target_queries, target_content = read_section(
+            target_path, "queries", chart_ref.ref, yaml_path
         )
         return _resolve_cross_board_query(
             target_name,
@@ -1815,7 +1740,10 @@ def _load_chart_ref_with_lexical_queries(
             key_cache,
             resolving,
             chart_ref.ref,
-            default_source=_board_level_default_source(target_content, target_file_str),
+            yaml_path,
+            default_source=_board_level_default_source(
+                target_content, target_path.relpath
+            ),
             sources=sources,
             cache_root=cache_root,
             board_cache=board_cache,
@@ -1839,4 +1767,4 @@ def _load_chart_ref_with_lexical_queries(
             for layer in layers
         ]
 
-    return chart_raw
+    return RegisteredChart(chart_raw, file_dir)

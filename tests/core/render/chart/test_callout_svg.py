@@ -136,8 +136,12 @@ def test_two_callouts_same_tone_are_byte_identical_css() -> None:
     them into one block once they share a document. No cache or coordination
     is involved: each call is independent."""
     style = callout_style_for_tone("positive")
-    svg1 = render_callout_svg(message="First", width=300, callout_style=style)
-    svg2 = render_callout_svg(message="Second", width=300, callout_style=style)
+    svg1 = render_callout_svg(
+        message="First", width=300, callout_style=style, base_dir=None
+    )
+    svg2 = render_callout_svg(
+        message="Second", width=300, callout_style=style, base_dir=None
+    )
 
     assert "First" in svg1
     assert "Second" in svg2
@@ -157,9 +161,11 @@ def test_two_callouts_different_tones_render_correct_colors_with_no_bleed() -> N
     success_style = callout_style_for_tone("positive")
     error_style = callout_style_for_tone("negative")
     svg1 = render_callout_svg(
-        message="All good", width=300, callout_style=success_style
+        message="All good", width=300, callout_style=success_style, base_dir=None
     )
-    svg2 = render_callout_svg(message="Uh oh", width=300, callout_style=error_style)
+    svg2 = render_callout_svg(
+        message="Uh oh", width=300, callout_style=error_style, base_dir=None
+    )
     document = f'<svg xmlns="http://www.w3.org/2000/svg">{svg1}{svg2}</svg>'
 
     success_color = success_style.message.font.color
@@ -180,7 +186,11 @@ def test_callout_never_emits_a_bare_md_class_selector() -> None:
     that would defeat it."""
     style = callout_style_for_tone("positive")
     svg = render_callout_svg(
-        message="Body copy", title="Card title", width=300, callout_style=style
+        message="Body copy",
+        title="Card title",
+        width=300,
+        callout_style=style,
+        base_dir=None,
     )
     # `[a-z]+` alone would also match the hex-letter run inside a real
     # `md-<hash>-text` selector (e.g. "abcdef") right up to its own trailing
@@ -198,7 +208,11 @@ def test_callout_title_and_message_do_not_collide() -> None:
     colors, not that anything in callout.py itself does the scoping."""
     style = callout_style_for_tone("warning")
     svg = render_callout_svg(
-        message="Body copy", title="Card title", width=300, callout_style=style
+        message="Body copy",
+        title="Card title",
+        width=300,
+        callout_style=style,
+        base_dir=None,
     )
 
     rendered = compute_svg_text_fills(svg)
@@ -219,7 +233,7 @@ def test_callout_does_not_bleed_onto_unscoped_prose_text() -> None:
     )
     style = callout_style_for_tone("negative")
     callout_svg = render_callout_svg(
-        message="Something broke", width=300, callout_style=style
+        message="Something broke", width=300, callout_style=style, base_dir=None
     )
     document = f"<svg>{prose_svg}{callout_svg}</svg>"
 
@@ -237,6 +251,7 @@ def test_every_class_used_on_an_element_has_a_matching_rule() -> None:
         title="Note",
         width=300,
         callout_style=style,
+        base_dir=None,
     )
     used = {
         cls

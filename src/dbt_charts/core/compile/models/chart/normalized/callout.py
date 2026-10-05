@@ -44,6 +44,14 @@ class CalloutChart(BaseModel):
             "deliberately does not extend _BaseChartFields."
         ),
     )
+    base_dir: str | None = Field(  # type-state: optional — None is no location
+        default=None,
+        exclude=True,
+        description=(
+            "Internal: directory of the file this chart was written in, which "
+            "its markdown images resolve against. Never serialized."
+        ),
+    )
     variable_dependencies: VariableDependencies = Field(
         default_factory=frozenset,
         description="Variable names this chart depends on.",

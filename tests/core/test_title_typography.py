@@ -335,12 +335,18 @@ class TestFaceTitleSpec:
             200.0,  # well below the narrow tier boundary
             level=2,
             resolved_style=_BOARD_STYLE,
+            variable_values={},
+            base_dir=None,
+            error_collector=None,
         )
         wide_svg = render_title(
             "Apex",
             1152.0,  # wide
             level=2,
             resolved_style=_BOARD_STYLE,
+            variable_values={},
+            base_dir=None,
+            error_collector=None,
         )
 
         def _extract_font_size(svg: str) -> int:
@@ -865,10 +871,16 @@ rows:
         min_h = float(nrs.title.min_height)
         assert nested.title is not None
         as_h1 = max(
-            get_title_height(nested.title, inner, None, 1, resolved_style=nrs), min_h
+            get_title_height(
+                nested.title, inner, None, 1, resolved_style=nrs, base_dir=None
+            ),
+            min_h,
         )
         as_h2 = max(
-            get_title_height(nested.title, inner, None, 2, resolved_style=nrs), min_h
+            get_title_height(
+                nested.title, inner, None, 2, resolved_style=nrs, base_dir=None
+            ),
+            min_h,
         )
 
         assert as_h1 != as_h2, "the fixture must discriminate the two levels"

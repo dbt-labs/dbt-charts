@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.file_refs import check_images_written_out
 from dbt_charts.core.compile.format import (
     finalize_kpi_value_format,
     kpi_format_native,
@@ -25,7 +26,6 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.primitives import resolved_as
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
-    ResolvedCalloutStyle,
     ResolvedKpiStyle,
     ResolvedSparkBarStyle,
 )
@@ -41,7 +41,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
 )
-from dbt_charts.core.compile.resolve.style.board import _callout_tone_colors_patch
+from dbt_charts.core.compile.resolve.style.board import _build_resolved_callout_chart
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
@@ -190,24 +190,27 @@ def _resolve_callout(
     chart_style_context: ChartStyleContext,
     variables: ChartTextVariables,
 ) -> ResolvedCalloutChart:
-    base_callout = chart_style_context.callout
-    resolved_callout: ResolvedCalloutStyle = merge_onto_base(
-        base_callout, normalized.style
+    callout = merge_onto_base(
+        chart_style_context.callout,
+        _with_color_tokens(normalized.style, chart_style_context),
     )
-    resolved_callout = merge_onto_base(
-        resolved_callout, _callout_tone_colors_patch(resolved_callout.tone)
+    resolved_callout = _build_resolved_callout_chart(
+        callout, chart_style_context.bold_font_weight, callout.tone
     )
+    message = _resolve_text(normalized.message, variables)
+    check_images_written_out(normalized.message, message)
+    title = None
+    if normalized.title is not None:
+        title = _resolve_text(normalized.title, variables)
+        check_images_written_out(normalized.title, title)
     return ResolvedCalloutChart(
         id=normalized.id,
         source_path=normalized.source_path,
         defined_in_other_file=normalized.defined_in_other_file,
+        base_dir=normalized.base_dir,
         chart_type="callout",
-        message=_resolve_text(normalized.message, variables),
-        title=(
-            _resolve_text(normalized.title, variables)
-            if normalized.title is not None
-            else None
-        ),
+        message=message,
+        title=title,
         variable_dependencies=normalized.variable_dependencies,
         style=resolved_callout,
         layout_padding=to_padding_style(resolved_callout.padding),

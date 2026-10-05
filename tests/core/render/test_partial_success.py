@@ -454,7 +454,8 @@ def test_inline_callout_block_renders_code():
         message="Column missing",
         width=300.0,
         code="ERR-INTERNAL",
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout,
+        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        base_dir=None,
     )
     assert "ERR-INTERNAL" in svg
 
@@ -467,7 +468,8 @@ def test_inline_callout_block_renders_hint():
         message="Column missing",
         width=300.0,
         hint="Check your column names",
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout,
+        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        base_dir=None,
     )
     assert "Check your column names" in svg
 

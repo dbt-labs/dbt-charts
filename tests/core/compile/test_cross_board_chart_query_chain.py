@@ -581,13 +581,12 @@ charts:
         project = _project_with_db_source(tmp_path, local_project)
 
         for chart_name, expected in (
-            ("gone", "missing.yml does not exist"),
-            ("sectionless", "not_a_board.yml has no queries: section"),
-            ("unparseable", "failed to load broken.yml"),
+            ("sectionless", "'sales/not_a_board.yml' — that file has no queries:"),
+            ("unparseable", "failed to load sales/broken.yml"),
             # A list/scalar top level parses fine and only fails on the
             # `queries:` lookup — as an AttributeError out of compile(),
             # not a diagnostic, unless the shape is checked at the read.
-            ("not_a_mapping", "a_list.yml is not a YAML mapping"),
+            ("not_a_mapping", "'sales/a_list.yml' — not a YAML mapping"),
         ):
             result = compile(
                 f"title: Slide\ncharts:\n"
@@ -601,7 +600,18 @@ charts:
             # The chart import that pulled it in, and the anchor it resolved
             # against — neither is visible from the failing file itself.
             assert f"sales/weekly_funnel.yaml.charts.{chart_name}" in message, message
-            assert "sales" in message, message
+
+        # A file the chain cannot resolve is the one resolver's error: it names
+        # the ref and its anchor, and is placed on the chart import's own line.
+        result = compile(
+            "title: Slide\ncharts:\n  c: sales/weekly_funnel.yaml.charts.gone\n"
+            "rows:\n  - c\n",
+            base_dir=project.directory(),
+        )
+        (error,) = result.errors
+        assert error.code == "ERR-UNRESOLVED-REFERENCE"
+        assert "'sales/missing.yml' does not exist" in error.message
+        assert error.path == "charts.c"
 
     def test_board_level_source_inherited_by_cross_board_lexical_query(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -750,3 +760,35 @@ rows:
         )
         rows = executor.execute_chart("mqls_by_week")
         assert rows == [{"week": "2026-01-01", "mqls": 10}]
+
+
+def test_raw_ref_chain_splits_a_dotted_target_name_on_its_section(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """A source board's raw `{ref: b.queries.rev.v2}` is file `b`, query `rev.v2`.
+
+    This raw chain skips the ref models' name grammar, so the file part is
+    what precedes `.queries.` — not everything before the last two dots,
+    which names `b.queries.yml` (planted here as a decoy).
+    """
+    (tmp_path / "dbt_charts.yml").write_text(
+        'sources:\n  db:\n    type: duckdb\n    path: ":memory:"\n'
+    )
+    (tmp_path / "a.yml").write_text(
+        "title: A\nqueries:\n  q:\n    ref: b.queries.rev.v2\n"
+        "charts:\n  c:\n    type: kpi\n    value: x\n    query: q\n"
+    )
+    (tmp_path / "b.yml").write_text(
+        "title: B\nqueries:\n  rev.v2:\n    sql: select 1 as x\n    source: db\n"
+    )
+    (tmp_path / "b.queries.yml").write_text(
+        "title: D\nqueries:\n  v2:\n    sql: select 99 as x\n    source: db\n"
+    )
+    project = local_project(tmp_path)
+    result = compile(
+        "title: M\ncharts:\n  c: a.yml.charts.c\nrows:\n  - c\n",
+        base_dir=project.directory(),
+        project_sources=project.sources,
+    )
+    assert result.success, result.errors
+    assert [q.sql for q in result.board.queries.values()] == ["select 1 as x"]

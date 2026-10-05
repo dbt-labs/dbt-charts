@@ -427,6 +427,9 @@ style:
             900.0,
             text_style,
             resolve_style(get_theme_style()),
+            authored=long_para,
+            base_dir=None,
+            error_collector=None,
             plan=full_width_plan(resolve_style(get_theme_style()), 900.0),
         )
         assert "<text" in svg
@@ -452,6 +455,8 @@ style:
             400.0,
             text_style=text_style,
             resolved_style=resolve_style(get_theme_style()),
+            base_dir=None,
+            error_collector=None,
             painted_canvas=None,
             plan=full_width_plan(resolve_style(get_theme_style()), 400.0),
         )
@@ -475,6 +480,8 @@ style:
             container_width,
             text_style=resolved_style.text,
             resolved_style=resolved_style,
+            base_dir=None,
+            error_collector=None,
             painted_canvas=None,
             plan=full_width_plan(resolved_style, container_width),
         )
@@ -544,6 +551,7 @@ class TestTextSizing:
             width,
             text_style=text_style,
             resolved_style=resolved,
+            base_dir=None,
             plan=full_width_plan(resolved, width),
         )
         _, render_height = render_prose_svg(
@@ -551,6 +559,9 @@ class TestTextSizing:
             width,
             text_style,
             resolve_style(get_theme_style()),
+            authored=long_text,
+            base_dir=None,
+            error_collector=None,
             plan=full_width_plan(resolve_style(get_theme_style()), width),
         )
 
@@ -594,6 +605,7 @@ class TestTextSizing:
             narrow_width,
             text_style=text_style,
             resolved_style=resolved,
+            base_dir=None,
             plan=full_width_plan(resolved, narrow_width),
         )
         h_wide = get_markdown_text_height(
@@ -601,6 +613,7 @@ class TestTextSizing:
             wide_width,
             text_style=text_style,
             resolved_style=resolved,
+            base_dir=None,
             plan=full_width_plan(resolved, wide_width),
         )
 

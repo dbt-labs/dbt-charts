@@ -193,6 +193,7 @@ _OMITTED_FROM_PROJECTION = {
     # where it is used — `Diagnostic.path` and the `data-editor-path` handle.
     "source_path": "authoring coordinates, not chart content",
     "defined_in_other_file": "internal: ChartRef provenance, not chart content",
+    "base_dir": "internal: directory the chart was written in, not chart content",
     # Resolved/derived internals with no authored counterpart.
     "aspect_ratio": "derived at resolve time",
     "canvas": (

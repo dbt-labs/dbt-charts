@@ -18,16 +18,24 @@ ImageUrlMapper = Callable[[str], str]
 
 @dataclass(frozen=True)
 class ImageSize:
-    """Dimensions of an image."""
+    """Dimensions of an image, both strictly positive.
+
+    A zero is never a size: a raster header declaring one is corrupt (raises
+    here), and an SVG without a pixel size is unsized (None, not an ImageSize).
+    """
 
     width: int
     height: int
 
+    def __post_init__(self) -> None:
+        if self.width < 1 or self.height < 1:
+            raise ValueError(
+                f"Image header declares a zero dimension ({self.width}x{self.height})"
+            )
+
     @property
     def aspect_ratio(self) -> float:
         """Width / height ratio."""
-        if self.height == 0:
-            return 1.0
         return self.width / self.height
 
 
@@ -53,9 +61,10 @@ def get_image_size(
 
     Raises:
         ValueError: For a structurally corrupt `data:` URI (no ',' separator,
-            invalid base64, or an `image/svg+xml` payload that is not XML).
-            A payload that is merely unmeasurable returns None like any other
-            source.
+            invalid base64, an `image/svg+xml` payload that is not XML, or a
+            raster header declaring a zero width or height). A payload that is
+            merely unmeasurable returns None like any other source, and a local
+            file or remote URL returns None for a corrupt header too.
 
     Example:
         >>> size = get_image_size("/path/to/image.png")
@@ -153,15 +162,15 @@ def _svg_image_size(
     Build an ImageSize from SVG lengths, or None if either has no pixel size.
 
     The "no size" test has to run on the rounded value, not the parsed float:
-    a legal `width="0.4"` is positive but rounds to a zero-width ImageSize,
-    whose aspect_ratio is 0.0 and divides by zero in the renderer.
+    a legal `width="0.4"` is positive but rounds to zero, which is unsized
+    for an SVG rather than the corrupt header ImageSize would reject.
     """
     if width is None or height is None:
         return None
-    size = ImageSize(width=round(width), height=round(height))
-    if size.width < 1 or size.height < 1:
+    rounded_width, rounded_height = round(width), round(height)
+    if rounded_width < 1 or rounded_height < 1:
         return None
-    return size
+    return ImageSize(width=rounded_width, height=rounded_height)
 
 
 def _parse_svg_length(value: Optional[str]) -> Optional[float]:
@@ -200,7 +209,7 @@ def _get_local_image_size(
     try:
         with open(file_path, "rb") as f:
             return _parse_image_dimensions(f.read(32768))  # Read first 32KB
-    except (OSError, IOError):
+    except (OSError, ValueError):
         return None
 
 
@@ -221,6 +230,8 @@ def _get_remote_image_size(
             data = response.read(32768)
             return _parse_image_dimensions(data)
 
+    except ValueError:
+        return None
     except Exception:  # noqa: BLE001
         # Try without range header (some servers don't support it)
         try:

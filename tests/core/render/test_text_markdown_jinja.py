@@ -27,6 +27,8 @@ text: "{{ segment }}"
         500.0,
         resolved_style=resolve_style(get_theme_style()),
         text_style=resolve_style(get_theme_style()).text,
+        base_dir=None,
+        error_collector=None,
         painted_canvas=None,
         plan=card_plan(resolve_style(get_theme_style()), 500.0),
     )

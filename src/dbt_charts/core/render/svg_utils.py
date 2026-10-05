@@ -304,8 +304,10 @@ def border_dash_attrs(border: "BorderStyle") -> str:
 
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.board.normalized import VariableValues
     from dbt_charts.core.compile.models.primitives import BorderStyle
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
+    from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 
 from dbt_charts.core.render.template_loader import render_template
 
@@ -425,6 +427,9 @@ def render_title(
     *,
     level: int = 1,
     resolved_style: "ResolvedStyle",
+    variable_values: "VariableValues",
+    base_dir: str | None,
+    error_collector: "list[Diagnostic] | None",
 ) -> str:
     """Render board title using mdsvg for proper text handling.
 
@@ -435,28 +440,29 @@ def render_title(
     The title always renders in ``style.title.font.family`` — a board title
     is always drawn as a heading (``board_title_markdown`` emits ``# {title}``
     unconditionally), so there is no separate "prose" vs. "chart-title
-    narrow-card" family for it to fall back to.
+    narrow-card" family for it to fall back to. ``get_title_height`` measures
+    the same blocks (``title_blocks``) with the same renderer.
 
     Args:
-        title: Title text to render
+        title: Authored title text; Jinja and ``style.title.font.case`` apply.
         width: Layout width in pixels (passed to mdsvg for text wrap).
         text_align: Text alignment ("left", "center", "right")
+        base_dir: The directory of the title's file, its images' anchor.
+        error_collector: Receives the diagnostic for an unresolvable image.
 
     Returns:
         SVG string for the title
     """
-    from dbt_charts.core.compile.resolve.style.typography import board_title_markdown
     from dbt_charts.core.render.font_selection import record_painted_faces
-    from dbt_charts.core.render.sizing import title_renderer
-    from mdsvg import parse as parse_markdown
+    from dbt_charts.core.render.sizing import title_blocks, title_renderer
 
-    markdown_title, _, _ = board_title_markdown(
-        title, level=level, resolved_style=resolved_style
-    )
     # Driven through SVGRenderer rather than mdsvg's one-shot `render()` so the
     # faces this title reached can be read back off the renderer: a title carries
     # markdown, so it can be the only thing on a board that paints italic.
     renderer, font_path_family = title_renderer(resolved_style, level, text_align)
-    svg = renderer.render(parse_markdown(markdown_title), width=width, padding=0.0)
+    blocks = title_blocks(
+        title, variable_values, level, resolved_style, base_dir, error_collector
+    )
+    svg = renderer.render(blocks, width=width, padding=0.0)
     record_painted_faces(font_path_family, renderer.used_faces)
     return svg

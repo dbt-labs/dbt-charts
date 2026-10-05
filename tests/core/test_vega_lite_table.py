@@ -1333,7 +1333,8 @@ class TestPerChartErrorHandling:
             message="expects exactly 1 row",
             width=400,
             height=100,
-            callout_style=resolve_chart_style_context(get_theme_style()).callout,
+            callout_style=resolve_chart_style_context(get_theme_style()).callout_error,
+            base_dir=None,
         )
         assert "Callout" not in svg
         assert "revenue_kpi" not in svg

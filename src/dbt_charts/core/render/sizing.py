@@ -75,7 +75,7 @@ from __future__ import annotations
 
 import functools
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from PIL import ImageFont
@@ -83,13 +83,17 @@ from PIL import ImageFont
 from dbt_charts.core.compile.resolve.style.typography import board_title_spec
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.markdown_blocks import SpanRun
     from dbt_charts.core.compile.models.board.resolved import (
         ResolvedLayoutItem,
     )
     from dbt_charts.core.compile.models.style.theme import TextStyle
+    from dbt_charts.core.diagnostics.diagnostic import Diagnostic
     from dbt_charts.core.render.variables_layout import VariablesLayout
+    from dbt_charts.core.text.case import CaseValue
     from mdsvg.fonts import FontFace
     from mdsvg.renderer import SVGRenderer
+    from mdsvg.types import AnyBlock
 
 from dbt_charts.core.compile.config import (
     get_chart_rendering,
@@ -136,7 +140,8 @@ from dbt_charts.core.fonts import get_font_path
 from dbt_charts.core.numeric import aspect_ratio_height
 from dbt_charts.core.render.variables_layout import WRAP_EPSILON, lay_out_variables
 from dbt_charts.core.render.variables_resolve import resolve_controls
-from dbt_charts.core.text.case import apply_case
+from dbt_charts.core.text.case import apply_case_to_runs
+from mdsvg.types import SpanType
 
 # ============================================================================
 # HEIGHT PROVIDER PROTOCOL
@@ -697,6 +702,7 @@ def get_markdown_text_height(
     text_style: TextStyle,
     resolved_style: ResolvedStyle,
     plan: ProsePlan | None,
+    base_dir: str | None,
     allow_raw_html: bool = False,
 ) -> float:
     """Height the renderer will draw this markdown at, measured by rendering it.
@@ -715,7 +721,15 @@ def get_markdown_text_height(
 
     resolved_content = resolve_jinja_template(text, variable_values or {}, strict=False)
     _, height = render_prose_svg(
-        resolved_content, width, text_style, resolved_style, plan, allow_raw_html
+        resolved_content,
+        width,
+        text_style,
+        resolved_style,
+        plan,
+        text,
+        base_dir,
+        None,
+        allow_raw_html,
     )
     return height
 
@@ -727,69 +741,71 @@ def get_title_height(
     level: int = 1,
     *,
     resolved_style: ResolvedStyle | None = None,
+    base_dir: str | None,
 ) -> float:
-    """Get the actual height needed for a title by measuring it.
+    """The height ``render_title`` draws this title at, wrapped to ``width``.
 
-    Uses mdsvg's measure() to calculate height for the title rendered
-    as a markdown heading, accounting for word-wrapping and font sizing.
-
-    Args:
-        title: The title text
-        width: Available width for the title (drives tier selection)
-        variable_values: Variable values to resolve Jinja against
-        resolved_style: Optional resolved board style for title typography measurement
-
-    Returns:
-        Actual height in pixels for the rendered title
+    Measured by the renderer that draws the title, on the blocks it draws, so
+    the reserved box and the drawn one cannot disagree.
     """
     if not title:
         return 0.0
 
-    from dbt_charts.core.compile.resolve.style.typography import board_title_markdown
-    from dbt_charts.core.font_measure import markdown_font_faces
-    from mdsvg import measure as measure_markdown
-
-    # Resolve any Jinja templates using variable defaults
-    resolved_title = resolve_jinja_template(title, variable_values or {}, strict=False)
-
-    # Measure the markdown to get actual dimensions (using compact style).
-    # text_align is intentionally omitted: mdsvg measure() only computes
-    # line-wrapped height, which is independent of horizontal alignment.
     _rs = resolved_style or resolve_style(get_theme_style())
+    renderer, _ = title_renderer(_rs, level)
+    blocks = title_blocks(title, variable_values, level, _rs, base_dir, None)
+    return renderer.measure(blocks, width=width, padding=0.0).height
 
-    # Apply the same case transform the renderer applies at the same width,
-    # so measure and draw see identical text and width — the two invariants
-    # that keep the reserved title box equal to the drawn title box.
-    _title_case = _rs.title.font.case
-    if _title_case is not None:
-        resolved_title = apply_case(resolved_title, _title_case)
 
-    markdown_title, h1_size, heading_weight = board_title_markdown(
+def title_blocks(
+    title: str,
+    variable_values: VariableValues | None,
+    level: int,
+    resolved_style: ResolvedStyle,
+    base_dir: str | None,
+    error_collector: list[Diagnostic] | None,
+) -> list[AnyBlock]:
+    """The markdown blocks a board title is drawn as, asked by the measure and
+    the paint alike: Jinja resolved, formatted as the title heading,
+    ``style.title.font.case`` applied to its words, and its images resolved
+    against *base_dir*, the directory of the file the title is written in.
+    """
+    from dbt_charts.core.compile.markdown_blocks import map_span_runs
+    from dbt_charts.core.compile.resolve.style.typography import board_title_markdown
+    from dbt_charts.core.render.image_assets import rewrite_board_markdown_images
+    from mdsvg import parse as parse_markdown
+
+    resolved_title = resolve_jinja_template(title, variable_values, strict=False)
+    markdown_title, _, _ = board_title_markdown(
         resolved_title, level=level, resolved_style=resolved_style
     )
-    # Ask title_font_family, same as title_renderer does — a hand-rolled branch
-    # here is exactly the drift that let this measurement disagree with the
-    # family render_title actually paints the title in.
-    font_family = title_font_family(_rs)
-
-    title_style = get_compact_style(
-        _rs,
-        h1_size=h1_size,
-        heading_font_weight=heading_weight,
-        font_family=font_family,
-        # Must match render_title exactly — this is the measure half of the same
-        # title block; a mismatch desyncs reserved height from drawn height.
-        heading_margin_scale="chrome",
-    )
-    size = measure_markdown(
-        markdown_title,
-        width=width,
-        padding=0.0,
-        style=title_style,
-        fonts=markdown_font_faces(font_family, title_style),
+    blocks = list(parse_markdown(markdown_title))
+    title_case = resolved_style.title.font.case
+    if title_case is not None:
+        blocks = map_span_runs(
+            blocks, lambda run: _case_words(run, title_case), lambda image: image
+        )
+    return rewrite_board_markdown_images(
+        blocks, title, resolved_title, base_dir, error_collector
     )
 
-    return size.height
+
+def _case_words(spans: SpanRun, case: CaseValue) -> SpanRun:
+    """Apply *case* to the words of one run of spans as one string
+    (``apply_case_to_runs``), however inline formatting splits them.
+
+    Code spans and images keep their text: code is literal, and an image's
+    URL is data (upper-casing ``logo.svg`` names a different file).
+    """
+    words = [s for s in spans if s.span_type not in _UNCASED_SPANS]
+    cased = iter(apply_case_to_runs([s.text for s in words], case))
+    return tuple(
+        s if s.span_type in _UNCASED_SPANS else replace(s, text=next(cased))
+        for s in spans
+    )
+
+
+_UNCASED_SPANS = frozenset({SpanType.CODE, SpanType.IMAGE})
 
 
 def title_renderer(
@@ -831,24 +847,35 @@ def title_renderer(
         # Title spacing is chrome: it must not grow when body prose is resized.
         heading_margin_scale="chrome",
     )
-    return SVGRenderer(style=style, fonts=markdown_font_faces(family, style)), family
+    # fetch_image_sizes=False: a render never fetches over the network. A local
+    # image is an embedded data: URI by now, which mdsvg measures regardless.
+    renderer = SVGRenderer(
+        style=style,
+        fonts=markdown_font_faces(family, style),
+        fetch_image_sizes=False,
+    )
+    return renderer, family
 
 
-def title_baseline_offset(resolved_style: ResolvedStyle, level: int) -> float:
+def title_baseline_offset(
+    title: str,
+    width: float,
+    variable_values: VariableValues | None,
+    resolved_style: ResolvedStyle,
+    level: int,
+    base_dir: str | None,
+) -> float:
     """How far below a title block's top edge its first baseline sits.
 
-    Asked of the renderer that draws the title rather than derived from the block
-    height, because the two only stay in step by construction. Anything aligning
-    itself to a board title — the controls beside it in the title-inline band —
-    needs the number the title was actually drawn with.
+    Asked of the renderer that draws the title, on the blocks it draws, rather
+    than derived from the block height: an inline image taller than the text
+    moves the baseline down. Anything aligning itself to a board title — the
+    controls beside it in the title-inline band — needs the number the title
+    was actually drawn with.
     """
-    # Level 1 is what gets asked, whatever the board's level: board_title_markdown
-    # always emits `# {title}`, and title_renderer has already baked the
-    # level-resolved size into the style's h1. Passing the board level here would
-    # read a different rung of the heading ramp than the title was drawn at —
-    # which past h6, where board_title_spec clamps and the ramp does not, is a
-    # different number.
-    return title_renderer(resolved_style, level)[0].heading_baseline(1)
+    renderer, _ = title_renderer(resolved_style, level)
+    blocks = title_blocks(title, variable_values, level, resolved_style, base_dir, None)
+    return renderer.first_baseline(blocks, width)
 
 
 def title_line_box(
@@ -869,8 +896,9 @@ def title_line_box(
     The title text does not enter. ``board_title_spec`` sizes a board title from
     its semantic level alone, so the span is the same whatever the title says.
     """
-    # Level 1 for the same reason as `title_baseline_offset`: the title is drawn
-    # as an h1 whose size the renderer already carries.
+    # Level 1 is what gets asked, whatever the board's level: board_title_markdown
+    # always emits `# {title}`, and title_renderer has already baked the
+    # level-resolved size into the style's h1.
     return title_renderer(resolved_style, level)[0].heading_line_box(1, block_height)
 
 
@@ -1129,8 +1157,9 @@ def compute_title_variables_inline_band_height(
     )
     if not board.title:
         return 0.0
+    base_dir = board.base_dir
     # Measure at inner (the full band width) so the title's measured height
-    # matches the height _render_title_svg produces at that same width.
+    # matches the height render_title produces at that same width.
     # The narrower title column (vars_w companion) would over-reserve when
     # a case transform widens the title past its wrap threshold.
     title_h = max(
@@ -1140,6 +1169,7 @@ def compute_title_variables_inline_band_height(
             variable_values,
             level=board.level,
             resolved_style=board.resolved_style,
+            base_dir=base_dir,
         ),
         float(board.resolved_style.title.min_height),
     )
@@ -1153,7 +1183,14 @@ def compute_title_variables_inline_band_height(
     _title_dy, _vars_dy, band_h = compute_title_variables_inline_baseline_layout(
         title_h,
         var_h,
-        title_baseline_offset(board.resolved_style, board.level),
+        title_baseline_offset(
+            board.title,
+            inner,
+            variable_values,
+            board.resolved_style,
+            board.level,
+            base_dir,
+        ),
         float(vs.font.size),
         vs.font.family,
         float(vs.title_inline_band_bottom_pad),
@@ -1897,6 +1934,7 @@ def nested_board_sizing_context(
     card_pad = float(nested_board.resolved_style.frame.card_padding)
     inner = max(content_width - 2 * card_pad, 1.0)
 
+    base_dir = nested_board.base_dir
     use_title_inline = should_use_title_inline_band(
         nested_board.title,
         nested_board.visible_variables,
@@ -1923,6 +1961,7 @@ def nested_board_sizing_context(
                     variable_values,
                     level=nested_board.level,
                     resolved_style=nrs,
+                    base_dir=base_dir,
                 ),
                 float(nested_board.resolved_style.title.min_height),
             )
@@ -1945,6 +1984,7 @@ def nested_board_sizing_context(
             variable_values,
             text_style=nested_board.resolved_style.text,
             resolved_style=nrs,
+            base_dir=base_dir,
             plan=nested_board.prose_plan,
             allow_raw_html=nested_board.html_policy == "trusted-raw",
         )

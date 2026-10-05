@@ -48,12 +48,12 @@ ERR_KPI_FORMAT_KIND_MISMATCH = REGISTRY.register(
         message_template=(
             "KPI chart {chart_id!r} support value is a date/time, but its "
             "format {spec!r} is not a date format. Use date_short, a "
-            "strftime spec via a style.formats alias, or remove format: to "
+            "strftime spec via a name in style.formats.aliases, or remove format: to "
             "use date_short."
         ),
         doc=(
             "Fired when a KPI's support.format is a number format (not "
-            "date_short, time_short, or a style.formats alias resolving to "
+            "date_short, time_short, or a name in style.formats.aliases resolving to "
             "a strftime spec) and support.value is a date/datetime column. "
             "support.format is always authored for that one chart, unlike "
             "the headline value's format, which can be a board-wide cascade "
@@ -2912,6 +2912,33 @@ ERR_TABLE_FORMAT_KIND_MISMATCH = REGISTRY.register(
             "time, so `dct validate` accepts either mismatch; this is "
             "caught per cell at render time instead, once the actual value "
             "kind is known."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_IMAGE_REF_UNRESOLVED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-IMAGE-REF-UNRESOLVED",
+        domain="render",
+        title="an image reference could not be resolved",
+        message_template="image {ref!r} could not be resolved: {reason}",
+        summary=(
+            "Fired when a project image path in board markdown cannot be embedded."
+        ),
+        doc=(
+            "Fired when an image in a `text:` block, a title, or a callout "
+            "message or title cannot be embedded. A relative path resolves "
+            "against the directory of the file it is written in, and a path "
+            "starting with `/` against the project's `charts/` directory; this fires "
+            "when that path does not exist, escapes the project root, carries "
+            "an unsupported file suffix (a `?query` or `#fragment` included), "
+            "the render has no project or the content no location to resolve it "
+            "against, a Jinja template renders it (a project image path is "
+            "written out; a template may put `{% if %}` around whole images), "
+            "or "
+            "the image's own content is malformed. An `http(s)://` reference "
+            "is never fetched or resolved, and never raises this code."
         ),
         docs_topic="charts",
     )

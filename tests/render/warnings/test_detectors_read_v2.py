@@ -67,6 +67,7 @@ def _make_v2_board(charts: dict[str, Any]) -> Any:
         notes="",
         tags=(),
         text="",
+        base_dir=None,
         html_policy="none",
         level=1,
         style=_board_style(),

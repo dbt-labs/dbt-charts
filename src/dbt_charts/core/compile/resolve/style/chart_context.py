@@ -211,11 +211,6 @@ def build_chart_style_context(
     synthesized only on ``ChartStyleContext`` and has no pre-inherit
     counterpart, so its patch merges directly onto the base context.
 
-    ``callout`` is never routed through the per-chart merge (it is never a member
-    of ``_ALL_FAMILY_KEYS``): its theme (``CalloutChartStyle``) and resolved
-    (``ResolvedCalloutStyle``) representations are different Python types, so it
-    always merges post-resolve onto ``base_charts.callout``.
-
     All other global overrides (axis, legend, scale, pagination, color,
     palette, background, title) are applied via ``dataclasses.replace`` on the
     already-merged base_charts context. Post-merge patching is legal here because
@@ -355,12 +350,6 @@ def build_chart_style_context(
             if emoji_family is not None:
                 _fam = _append_emoji_family(_fam, emoji_family)
             overrides[_key] = _fam
-
-    # --- Callout (post-resolve: theme/resolved types differ, see docstring) ---
-    if chart_style_patch is not None:
-        _callout_patch = chart_style_patch.callout
-        if _callout_patch is not None:
-            overrides["callout"] = merge_onto_base(base_charts.callout, _callout_patch)
 
     # --- Palette + Color ---
     # chart-local style.color carries three sub-fields:

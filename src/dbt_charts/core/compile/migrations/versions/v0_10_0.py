@@ -13,6 +13,11 @@ Changes in this release:
   touched; `sub_board_prefixes` reaches nested boards). A cardinal pins `overlay: false`
   and leaves `align` to the engine (start; a pie table's own default); a corner pins its edge, alignment and `overlay: true`.
   A pie's key never overlays, so `overlay` is dropped there.
+- **`style.formats` names move under `style.formats.aliases`**, so the block's
+  fixed keys cannot collide with a name an author chose. A trailing-``*`` `Move`
+  per board-level `style.formats` (the board's and each tab's), following
+  `sub_board_prefixes` into every nested board; an ``aliases:`` map already in
+  the new shape stays put (``_source_locations``).
 """
 
 from __future__ import annotations
@@ -23,6 +28,8 @@ from dbt_charts.core.compile.migrations.migrations import (
     MappedScalar,
     Move,
     YamlKeyPath,
+    _relative_field_paths,
+    _schema_path_exists,
     board_nesting_prefixes,
     suffix_rename_moves,
 )
@@ -33,6 +40,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
 THEME_RENAMES: dict[MappedScalar, MappedScalar] = {}
 
 LEGEND_POSITION_TAIL: YamlKeyPath = ("legend", "position")
+
+FORMAT_ALIASES_TAIL: YamlKeyPath = ("formats", "aliases")
 
 LEGEND_POSITION_EXPANSION: dict[str, dict[str, MappedScalar]] = {
     "left": {"edge": "left", "overlay": False},
@@ -61,7 +70,7 @@ def moves(
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
     nesting = board_nesting_prefixes(AuthoredBoard)
-    return tuple(
+    return _format_alias_moves(source_schema, target_schema, catalog, nesting) + tuple(
         dataclasses.replace(
             move,
             expansion=LEGEND_POSITION_EXPANSION,
@@ -75,4 +84,38 @@ def moves(
             [(LEGEND_POSITION_TAIL, LEGEND_POSITION_TAIL)],
             catalog=catalog,
         )
+    )
+
+
+def _format_alias_moves(
+    source_schema: str,
+    target_schema: str,
+    catalog: YamlSchemaCatalog,
+    nesting: tuple[YamlKeyPath, ...],
+) -> tuple[Move, ...]:
+    """One Move per board-level `style.formats`: each flat name under `aliases`."""
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    try:
+        paths = dict.fromkeys(
+            _relative_field_paths(
+                AuthoredBoard, frozenset(), frozenset({FORMAT_ALIASES_TAIL})
+            )
+        )
+    finally:
+        _relative_field_paths.cache_clear()
+    source = catalog.schema_for(source_schema)
+    target = catalog.schema_for(target_schema)
+    return tuple(
+        Move(
+            source_schema,
+            target_schema,
+            (*path[:-1], "*"),
+            (*path, "*"),
+            sub_board_prefixes=nesting,
+        )
+        for path in paths
+        if path[-2:] == FORMAT_ALIASES_TAIL
+        and _schema_path_exists(source, (*path[:-1], "*"))
+        and _schema_path_exists(target, (*path, "*"))
     )

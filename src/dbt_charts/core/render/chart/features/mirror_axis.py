@@ -308,6 +308,7 @@ class MirrorAxisFeature:
                         values,
                         ghost_fmt,
                         tick_label=ghost_tick_label,
+                        continuous=_ay_cont_m,
                     )
             if labels:
                 padding = measured_label_padding(

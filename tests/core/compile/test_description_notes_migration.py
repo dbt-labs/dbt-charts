@@ -550,6 +550,6 @@ rows:
     assert any(e.message.endswith("Full path: description.") for e in extra), (
         f"the top-level description is stranded too: {[e.message for e in extra]}"
     )
-    assert all("notes:" in (e.hint or "") for e in extra), (
-        "every stranded position must still name the replacement"
-    )
+    assert all(
+        "`notes`" in (e.hint or "") or "notes:" in (e.hint or "") for e in extra
+    ), "every stranded position must still name the replacement"

@@ -9,7 +9,7 @@ import json
 import re
 import types
 import warnings
-from collections.abc import Generator, Iterable, Mapping, Sequence
+from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, timedelta
@@ -155,7 +155,7 @@ class Move:
         default=None, hash=False
     )
     drop_notes: Mapping[str, str] = dataclasses.field(default_factory=dict, hash=False)
-    # Where a board holds another board (`board_nesting_prefixes`): an expansion
+    # Where a board holds another board (`board_nesting_prefixes`): the move
     # follows these in the document, since `_relative_field_paths` stops at the
     # first self-nesting.
     sub_board_prefixes: tuple[YamlKeyPath, ...] = ()
@@ -183,7 +183,7 @@ class Deletion:
     # retired from `bar` but kept on `table`/`kpi`) -- mirrors
     # `ConditionalMove.chart_type`'s scoping (`_declares_chart_type`), but for
     # a deletion instead of a relocation. Threaded through both walks
-    # (`_delete_tails_recursive`, `_deletion_would_fire`) and
+    # (`_delete_tails_recursive`, `_walk_deletions`) and
     # `validate_declarations`'s existence checks -- see each for how the
     # scoping is enforced there. The text rewriter needs no scope of its own:
     # it replays the paths the walk struck.
@@ -1135,8 +1135,8 @@ def migrate_yaml_text(
                     )
                 deletion_reasons.extend(_apply_move(staged, move, catalog))
                 continue
-            for parent, key, bindings in list(
-                move_source_locations(staged, move, catalog)
+            for at, parent, key, bindings in list(
+                board_move_locations(staged, move, catalog)
             ):
                 if isinstance(parent, list) and move.old_path != move.new_path:
                     # A list-item destination only ever arises from an
@@ -1157,8 +1157,8 @@ def migrate_yaml_text(
                 else:
                     assert isinstance(key, str)
                     value = parent[key]
-                source = _substitute_wildcards(move.old_path, bindings)
-                destination = _substitute_wildcards(move.new_path, bindings)
+                source = [*at, *_substitute_wildcards(move.old_path, bindings)]
+                destination = [*at, *_substitute_wildcards(move.new_path, bindings)]
                 # A pure rename (same parent, only the final segment's spelling
                 # differs) never relocates content, so it carries no
                 # restriction on the value's shape -- a multi-line block
@@ -1222,9 +1222,12 @@ def migrate_yaml_text(
         staged["_schema_version"] = stop_target
         updates["_schema_version"] = stop_target
 
+    # A removal with an update beneath it (a flat format name called `aliases`)
+    # must go first; the rest go with the updates so blocks are edited in place.
+    cleared = {r for r in removals if any(u.startswith(r + ".") for u in updates)}
     final_text = set_board_values(
-        yaml_text,
-        {**updates, **dict.fromkeys(removals)},
+        set_board_values(yaml_text, dict.fromkeys(cleared)),
+        {**updates, **dict.fromkeys(removals - cleared)},
     )
     if "_schema_version" in updates:
         final_text = _mark_stamp_line_auto_written(final_text)
@@ -1329,7 +1332,7 @@ def _transition_applies(
     path must be gone from the target grammar (``validate_declarations``).
     ``ConditionalMove`` is not, and cannot be — ``("style", "tone")`` survives
     into the live grammar on callout charts. What separates it is the
-    ``chart_type`` scoping in ``_conditional_move_would_fire``: it fires only
+    ``chart_type`` scoping in ``_walk_conditional_move``: it fires only
     on the family the rule names, at a document position the source grammar
     actually declares as that family (``_declares_chart_type``), where the
     tail really is retired.
@@ -1338,7 +1341,7 @@ def _transition_applies(
     carry ``type: kpi`` — a query data row, say — does not match, because its
     position declares no chart at all. It is not identical to ``Deletion``'s
     gate, which additionally narrows through ``_matching_positions`` first;
-    see ``_deletion_would_fire`` for why ConditionalMove must not. Neither
+    see ``_walk_deletions`` for why ConditionalMove must not. Neither
     fires on a bare ``type:`` key alone.
 
     Both structural checks look one grammar ahead, so a path retired at one
@@ -1361,18 +1364,12 @@ def _transition_applies(
     for move in registry.transition_from(identifier):
         if any(move_source_locations(document, move, catalog)):
             return True
-    deletions = registry.deletions_from(identifier)
-    if deletions:
-        source_schema = catalog.schema_for(deletions[0].source_schema)
-        live = catalog.current_schema
-        if _deletion_would_fire(
-            document, deletions, source_schema, [source_schema], live, [live]
-        ):
-            return True
-    for cond_move in registry.conditional_moves_from(identifier):
-        schema = catalog.schema_for(cond_move.source_schema)
-        if _conditional_move_would_fire(document, cond_move, schema, [schema]):
-            return True
+    if next(_deletions_that_fire(document, identifier, catalog, registry), None):
+        return True
+    if next(
+        _conditional_moves_that_fire(document, identifier, catalog, registry), None
+    ):
+        return True
     map_key_deletions = registry.map_key_deletions_from(identifier)
     if map_key_deletions:
         source_schema = catalog.schema_for(map_key_deletions[0].source_schema)
@@ -1383,21 +1380,39 @@ def _transition_applies(
     return False
 
 
-def _deletion_would_fire(
+def _deletions_that_fire(
+    document: JsonObject,
+    identifier: str,
+    catalog: YamlSchemaCatalog,
+    registry: MigrationRegistry,
+) -> Iterator[tuple[tuple[str, ...], Deletion]]:
+    """Each ``(path, deletion)`` that *identifier*'s deletions would strike.
+
+    Read-only mirror of ``_delete_tails_recursive``, sharing its gates; it is
+    both the dry run ``_transition_applies`` asks and the source of
+    ``retired_keys``.
+    """
+    deletions = registry.deletions_from(identifier)
+    if not deletions:
+        return
+    schema = catalog.schema_for(deletions[0].source_schema)
+    live = catalog.current_schema
+    yield from _walk_deletions(document, (), deletions, schema, [schema], live, [live])
+
+
+def _walk_deletions(
     node: JsonValue,
+    path: tuple[str, ...],
     deletions: Sequence[Deletion],
     schema: JsonObject,
     positions: Sequence[JsonObject],
     live: JsonObject,
     live_positions: Sequence[JsonObject],
-) -> bool:
-    """Read-only mirror of ``_delete_tails_recursive``: would any deletion actually fire?
-
-    Same schema-position walk (``_matching_positions``, ``_declares_tail``,
-    ``_live_declares_tail``), checked with ``_tail_present`` in place of the
-    pop — nothing here mutates *node*, so the same walk serves as both
-    appliers' dry run. Takes ``Deletion`` objects, not bare paths, for the same
-    ``chart_type`` gate ``_delete_tails_recursive`` applies — see that
+) -> Iterator[tuple[tuple[str, ...], Deletion]]:
+    """Same schema-position walk as ``_delete_tails_recursive`` (``_matching_positions``,
+    ``_declares_tail``, ``_live_declares_tail``), checked with ``_tail_present`` in
+    place of the pop. Takes ``Deletion`` objects, not bare paths, for the same
+    ``chart_type`` gate ``_delete_tails_recursive`` applies -- see that
     function's docstring for why a plain path-membership check over-fires
     across chart families.
 
@@ -1422,37 +1437,53 @@ def _deletion_would_fire(
             if _declares_tail(
                 schema, matching, deletion.path
             ) and not _live_declares_tail(live, live_positions, node, deletion.path):
-                return True
-        return any(
-            _deletion_would_fire(
+                yield (*path, *deletion.path), deletion
+        for key, child in node.items():
+            yield from _walk_deletions(
                 child,
+                (*path, key),
                 deletions,
                 schema,
                 _child_positions(schema, positions, key),
                 live,
                 _child_positions(live, live_positions, key),
             )
-            for key, child in node.items()
-        )
-    if isinstance(node, list):
+    elif isinstance(node, list):
         item_positions = _item_positions(schema, positions)
         live_items = _item_positions(live, live_positions)
-        return any(
-            _deletion_would_fire(
-                item, deletions, schema, item_positions, live, live_items
+        for index, item in enumerate(node):
+            yield from _walk_deletions(
+                item,
+                (*path, str(index)),
+                deletions,
+                schema,
+                item_positions,
+                live,
+                live_items,
             )
-            for item in node
-        )
-    return False
 
 
-def _conditional_move_would_fire(
+def _conditional_moves_that_fire(
+    document: JsonObject,
+    identifier: str,
+    catalog: YamlSchemaCatalog,
+    registry: MigrationRegistry,
+) -> Iterator[tuple[tuple[str, ...], ConditionalMove]]:
+    """Each ``(chart_path, rule)`` that *identifier*'s conditional moves would fire on."""
+    for rule in registry.conditional_moves_from(identifier):
+        schema = catalog.schema_for(rule.source_schema)
+        for chart_path in _walk_conditional_move(document, (), rule, schema, [schema]):
+            yield chart_path, rule
+
+
+def _walk_conditional_move(
     node: JsonValue,
+    path: tuple[str, ...],
     rule: ConditionalMove,
     schema: JsonObject,
     positions: Sequence[JsonObject],
-) -> bool:
-    """Read-only mirror of ``_apply_conditional_move_recursive``: would *rule* fire?
+) -> Iterator[tuple[str, ...]]:
+    """Read-only mirror of ``_apply_conditional_move_recursive``: where would *rule* fire?
 
     Mirrors ``_try_conditional_move_at_chart``'s existence check, not its
     mutation: a declared chart of ``rule.chart_type`` with ``old_tail``
@@ -1465,20 +1496,79 @@ def _conditional_move_would_fire(
             and _declares_chart_type(schema, positions, rule.chart_type)
             and _tail_present(node, rule.old_tail)
         ):
-            return True
-        return any(
-            _conditional_move_would_fire(
-                child, rule, schema, _child_positions(schema, positions, key)
+            yield path
+        for key, child in node.items():
+            yield from _walk_conditional_move(
+                child,
+                (*path, key),
+                rule,
+                schema,
+                _child_positions(schema, positions, key),
             )
-            for key, child in node.items()
-        )
-    if isinstance(node, list):
+    elif isinstance(node, list):
         item_positions = _item_positions(schema, positions)
-        return any(
-            _conditional_move_would_fire(item, rule, schema, item_positions)
-            for item in node
-        )
-    return False
+        for index, item in enumerate(node):
+            yield from _walk_conditional_move(
+                item, (*path, str(index)), rule, schema, item_positions
+            )
+
+
+@dataclasses.dataclass(frozen=True)
+class RetiredKey:
+    """A key the grammar retired, as found in one document.
+
+    ``successor`` is the concrete document path the declaration moves it to, or
+    ``None`` for a removal; ``retired_in`` is the grammar version that dropped it.
+    """
+
+    path: tuple[str, ...]
+    retired_in: str
+    successor: tuple[str, ...] | None
+    reason: str | None
+
+
+def retired_keys(
+    mapping: Mapping[str, JsonValue],
+    catalog: YamlSchemaCatalog,
+    registry: MigrationRegistry,
+) -> dict[tuple[str, ...], RetiredKey]:
+    """Every key in *mapping* a declaration would fire on, by concrete document path.
+
+    "Retired" means exactly "the migration would act here": the same gates
+    recognition and application use, so the report cannot drift from them. It
+    reads only, so it works on files migration declined to touch (mixed old/new
+    keys, a grammar past the support window). Identity ``Move``s respell values
+    and ``MapKeyDeletion`` keys are legal open-map entries; neither is a retired key.
+    """
+    document = cast(JsonObject, mapping)  # type-state: cast — always a dict here
+    found: dict[tuple[str, ...], RetiredKey] = {}
+    for identifier in reversed(catalog.versions):
+        for move in registry.transition_from(identifier):
+            if move.old_path == move.new_path:
+                continue
+            for at, _parent, _key, bindings in board_move_locations(
+                document, move, catalog
+            ):
+                path = (*at, *_substitute_wildcards(move.old_path, bindings))
+                successor = (*at, *_substitute_wildcards(move.new_path, bindings))
+                found.setdefault(
+                    path, RetiredKey(path, move.target_schema, successor, None)
+                )
+        for path, deletion in _deletions_that_fire(
+            document, identifier, catalog, registry
+        ):
+            found.setdefault(
+                path, RetiredKey(path, deletion.target_schema, None, deletion.reason)
+            )
+        for chart_path, rule in _conditional_moves_that_fire(
+            document, identifier, catalog, registry
+        ):
+            path = (*chart_path, *rule.old_tail)
+            successor = (*chart_path, *rule.new_tail)
+            found.setdefault(
+                path, RetiredKey(path, rule.target_schema, successor, None)
+            )
+    return found
 
 
 def _map_key_deletion_would_fire(
@@ -2470,8 +2560,25 @@ def _apply_move(
                 assert isinstance(key, int)
                 parent[key] = expanded
         return notices
-    for parent, key, bindings in list(move_source_locations(mapping, move, catalog)):
-        destination = _substitute_wildcards(move.new_path, bindings)
+    located = [
+        (at, parent, key, _substitute_wildcards(move.new_path, bindings))
+        for at, parent, key, bindings in list(
+            board_move_locations(mapping, move, catalog)
+        )
+    ]
+    # Vacate every source before placing any: one value's destination can pass
+    # through another's source slot (a flat format name called `aliases`
+    # moving under the `aliases` map its siblings move into).
+    held: JsonObject = {}
+    staged: list[tuple[JsonObject | list[JsonValue], str | int, list[str]]] = []
+    for index, (at, parent, key, destination) in enumerate(located):
+        if isinstance(parent, dict) and move.old_path != move.new_path:
+            assert isinstance(key, str)
+            held[str(index)] = parent.pop(key)
+            staged.append((held, str(index), [*at, *destination]))
+        else:
+            staged.append((parent, key, [*at, *destination]))
+    for parent, key, destination in staged:
         _move_value(mapping, parent, key, destination, move)
     return notices
 
@@ -2654,7 +2761,7 @@ def move_source_locations(
     could be an instance of, ``_declares_tail`` requires the final segment to
     be a *declared* property there (``additionalProperties`` deliberately not
     consulted — the distinction ``Deletion`` draws, see
-    ``_deletion_would_fire``), and ``_open_map_claims`` breaks the remaining
+    ``_walk_deletions``), and ``_open_map_claims`` breaks the remaining
     board-field/chart-id tie by value, since identity alone cannot.
 
     Both grammars are carried because a position can gain an open-map arm
@@ -2682,23 +2789,43 @@ def move_source_locations(
         ):
             yield parent, key, bindings
         return
+    for _at, parent, key, bindings in board_move_locations(document, move, catalog):
+        yield parent, key, bindings
+
+
+def board_move_locations(
+    document: JsonObject, move: Move, catalog: YamlSchemaCatalog
+) -> Iterable[
+    tuple[YamlKeyPath, JsonObject | list[JsonValue], str | int, tuple[str, ...]]
+]:
+    """``move_source_locations`` with each location's board path.
+
+    *bindings* are relative to the board at that path: the root, then each board
+    ``move.sub_board_prefixes`` reaches. A position two walks both reach is
+    yielded once.
+    """
     source_schema = catalog.schema_for(move.source_schema)
     live = catalog.current_schema
     identity_move = move.old_path == move.new_path and move.value_map is not None
-    for parent, key, bindings in _source_locations(
-        document, move.old_path, source_schema, [source_schema], live, [live]
-    ):
-        if identity_move:
-            if isinstance(parent, dict):
-                assert isinstance(key, str)
-                current_value = parent[key]
-            else:
-                assert isinstance(key, int)
-                current_value = parent[key]
-            assert move.value_map is not None
-            if not _identity_value_would_change(move.value_map, current_value):
+    seen: set[tuple[int, str | int]] = set()
+    for at, node in _board_nodes(document, move.sub_board_prefixes):
+        for parent, key, bindings in _source_locations(
+            node, move.old_path, source_schema, [source_schema], live, [live]
+        ):
+            if identity_move:
+                if isinstance(parent, dict):
+                    assert isinstance(key, str)
+                    current_value = parent[key]
+                else:
+                    assert isinstance(key, int)
+                    current_value = parent[key]
+                assert move.value_map is not None
+                if not _identity_value_would_change(move.value_map, current_value):
+                    continue
+            if (id(parent), key) in seen:
                 continue
-        yield parent, key, bindings
+            seen.add((id(parent), key))
+            yield at, parent, key, bindings
 
 
 def _identity_value_would_change(
@@ -2730,8 +2857,14 @@ def _source_locations(
     part = parts[0]
     if len(parts) == 1:
         if part == "*" and isinstance(node, dict):
-            for key in node:
-                yield node, key, bindings + (str(key),)
+            # A key the live grammar declares here, holding a value it accepts,
+            # is current grammar rather than an author-named map key: an
+            # `aliases:` map beside flat format names stays put, while a flat
+            # name that happens to be called `aliases` still moves.
+            live_plausible = _plausible_positions(live, live_positions, node)
+            for key, value in node.items():
+                if not _is_current_key(live, live_plausible, key, value):
+                    yield node, key, bindings + (str(key),)
         elif part == "*" and isinstance(node, list):
             for index in range(len(node)):
                 yield node, index, bindings + (str(index),)
@@ -2777,6 +2910,17 @@ def _source_locations(
             _child_positions(live, live_positions, part),
             bindings,
         )
+
+
+def _is_current_key(
+    live: JsonObject, positions: Sequence[JsonObject], key: str, value: JsonValue
+) -> bool:
+    """Whether the live grammar declares *key* at *positions* and accepts *value*."""
+    return any(
+        _accepts(live, branch.get("properties"), key, value)
+        for position in positions
+        for branch in _schema_branches(live, position)
+    )
 
 
 def _substitute_wildcards(parts: YamlKeyPath, bindings: tuple[str, ...]) -> list[str]:
@@ -3036,6 +3180,15 @@ def _schema_path_exists(schema: JsonObject, path: YamlKeyPath) -> bool:
                         # wildcard can never prove a destination inside one,
                         # and a Move that should reach a list item can never
                         # be declared.
+                        child = {}
+                    if (
+                        child is None
+                        and branch.get("type") == "object"
+                        and "properties" not in branch
+                    ):
+                        # The object counterpart: `dict[str, str]` renders as
+                        # a bare `{"type": "object"}`, which accepts any key.
+                        # A branch that names its properties stays closed.
                         child = {}
                 else:
                     properties = branch.get("properties")

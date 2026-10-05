@@ -4,7 +4,7 @@ Stage: RENDER
 Purpose: Resolve format aliases from the theme cascade and format values
          using D3-style format strings.
 
-The format alias vocabulary lives in theme YAML (style.formats). Callers
+The format alias vocabulary lives in theme YAML (style.formats.aliases). Callers
 pass compiled_style.formats to resolve_format(); unknown keys and raw d3
 specs pass through unchanged for d3 to parse.
 

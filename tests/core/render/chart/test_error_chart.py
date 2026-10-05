@@ -35,6 +35,8 @@ from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 from dbt_charts.core.render.svg_utils import extract_svg_dimensions
 
+from ._callout_test_helpers import resolved_callout
+
 
 @pytest.fixture(autouse=True)
 def reset_config_autouse():
@@ -49,7 +51,7 @@ def test_default_theme_callout_uses_tone_info_palette() -> None:
     Tests structure and cascade behavior (info vs warning produce different colors)
     rather than pinning absolute hex values that break on any legitimate palette tweak.
     """
-    callout_style = get_theme_style().charts.callout
+    callout_style = resolved_callout(resolve_chart_style_context(get_theme_style()))
     bg = callout_style.background
     # Must be a non-empty string that looks like a hex color
     assert bg and bg.startswith("#"), (
@@ -138,7 +140,10 @@ def test_explicit_callout_chart_raises_when_font_measurer_is_unavailable() -> No
                 title="Explicit callout chart: long sentence should wrap across several lines",
                 message="Short message",
                 width=574,
-                callout_style=resolve_style(get_theme_style()).chart_defaults.callout,
+                callout_style=resolve_style(
+                    get_theme_style()
+                ).chart_defaults.callout_error,
+                base_dir=None,
             )
     finally:
         font_measure._load_measurer = original
@@ -150,7 +155,8 @@ def test_explicit_callout_chart_title_uses_full_width_budget() -> None:
         title=title,
         message="Short message",
         width=574,
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout,
+        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        base_dir=None,
     )
 
     assert f">{title}</text>" in svg
@@ -168,7 +174,8 @@ def test_explicit_callout_chart_message_does_not_emit_overflowing_line() -> None
         title="Explicit callout chart: long sentence should wrap across several lines",
         message=message,
         width=574,
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout,
+        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        base_dir=None,
     )
 
     # Message must be split into multiple <text> elements (wrapped), not emitted
@@ -298,7 +305,8 @@ rows:
             "obvious wrap pattern than a short status message would."
         ),
         width=item.width,
-        callout_style=board.chart_style_context.callout,
+        callout_style=board.chart_style_context.callout_error,
+        base_dir=None,
     )
 
     assert item.height == pytest.approx(extract_svg_dimensions(rendered).height)
@@ -461,13 +469,15 @@ def test_render_callout_svg_reads_structural_style_from_charts_callout() -> None
         title="Migration test",
         message="structural style must come from charts.callout",
         width=300,
-        callout_style=resolved.chart_defaults.callout,
+        callout_style=resolved.chart_defaults.callout_error,
+        base_dir=None,
     )
     svg_default = render_callout_svg(
         title="Migration test",
         message="structural style must come from charts.callout",
         width=300,
-        callout_style=default_resolved.chart_defaults.callout,
+        callout_style=default_resolved.chart_defaults.callout_error,
+        base_dir=None,
     )
     assert (
         extract_svg_dimensions(svg_custom).height

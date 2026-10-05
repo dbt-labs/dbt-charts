@@ -597,6 +597,33 @@ class TestAxisYLabelAlignInvasion:
         )["encoding"]["y"]["axis"]["labelPadding"]
         assert wide_domain_padding > narrow_padding
 
+    def test_log_scale_estimate_covers_sub_decade_ticks(self, make_chart):
+        from dbt_charts.core.utils import measured_label_padding
+
+        chart = make_chart(
+            "line",
+            x="year",
+            y="population",
+            style=LineChartStylePatch(
+                axis_y=AxisYStylePatch(
+                    position="right",
+                    labels=AxisLabelStylePatch(align="right"),
+                    scale=BaseScaleStylePatch(
+                        continuous=ScaleContinuousStylePatch(type="log")
+                    ),
+                )
+            ),
+        )
+        data = [
+            {"year": "1800", "population": 990_000_000},
+            {"year": "2025", "population": 8_200_000_000},
+        ]
+        y_axis = generate_vega_lite_spec(chart, data)["encoding"]["y"]["axis"]
+        assert y_axis["labelAlign"] == "right"
+        assert y_axis["labelPadding"] >= measured_label_padding(
+            ["500M"], y_axis["labelFont"], y_axis["labelFontSize"]
+        )
+
     def test_own_side_align_without_baked_ticks_estimates_from_data(self):
         """No baked tick_values (e.g. a theme like ``stark`` that leaves
         ``axis.ticks.count`` unset) no longer means an automatic reject — as
@@ -868,7 +895,9 @@ class TestAxisYLabelAlignInvasion:
                 grid=SimpleNamespace(),
                 line=SimpleNamespace(),
                 scale=(
-                    SimpleNamespace(continuous=SimpleNamespace(domain=domain))
+                    SimpleNamespace(
+                        continuous=SimpleNamespace(domain=domain, type=None)
+                    )
                     if domain is not None
                     else None
                 ),
@@ -1219,7 +1248,7 @@ class TestChartFormatApplied:
 
         base_style = get_theme_style()
         resolved_rs, resolved_ctx = resolve_style_and_context(
-            base_style, StylePatch(formats={"revenue": "$~s"})
+            base_style, StylePatch(formats={"aliases": {"revenue": "$~s"}})
         )
         formats = resolved_ctx.formats
         assert formats is not None and "revenue" in formats
@@ -1268,7 +1297,7 @@ class TestChartFormatApplied:
 
         base_style = get_theme_style()
         resolved_rs, resolved_ctx = resolve_style_and_context(
-            base_style, StylePatch(formats={"myalias": "$,.0f"})
+            base_style, StylePatch(formats={"aliases": {"myalias": "$,.0f"}})
         )
         chart_with = make_chart(
             "bar",

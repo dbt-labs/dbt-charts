@@ -12,6 +12,7 @@ from dbt_charts.core.diagnostics.registry import build_doc_url
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.fonts import get_font_path, get_mono_font_path
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
+from dbt_charts.core.render.image_assets import rewrite_markdown_images
 from dbt_charts.core.render.svg_utils import (
     authored_kind_attr,
     border_dash_attrs,
@@ -131,6 +132,7 @@ def render_callout_svg(
     height: float | None = None,
     title: str | None = None,
     callout_style: ResolvedCalloutStyle,
+    base_dir: str | None,
     code: str | None = None,
     hint: str | None = None,
     doc_url: str | None = None,
@@ -141,7 +143,8 @@ def render_callout_svg(
 
     When ``markdown=True`` (the default, for authored ``type: callout`` charts),
     title and message are parsed as Markdown — bold, italic, inline code, and
-    links render as styled SVG elements.
+    links render as styled SVG elements, and a relative image resolves against
+    ``base_dir``, the directory of the file the callout is declared in.
 
     When ``markdown=False`` (for runtime error fallbacks), Markdown inline
     specials are escaped before parsing so that ``_variable_name_`` and
@@ -229,7 +232,9 @@ def render_callout_svg(
     if title:  # skip None and empty-string titles
         if markdown:
             _tr = title_renderer.render_content(
-                list(parse_md(title)), width=content_width, padding=0.0
+                rewrite_markdown_images(list(parse_md(title)), base_dir),
+                width=content_width,
+                padding=0.0,
             )
             title_block = _ContentBlock(_tr.elements, _tr.style_block, _tr.height)
         else:
@@ -244,7 +249,9 @@ def render_callout_svg(
 
     if markdown:
         _mr = message_renderer.render_content(
-            list(parse_md(message)), width=content_width, padding=0.0
+            rewrite_markdown_images(list(parse_md(message)), base_dir),
+            width=content_width,
+            padding=0.0,
         )
         message_block = _ContentBlock(_mr.elements, _mr.style_block, _mr.height)
     else:
@@ -442,7 +449,9 @@ def render_callout_chart_svg(
     """Render-v2 wrapper for an authored ``type: callout`` chart.
 
     Byte-identical to ``render_callout_chart_svg`` for the same authored
-    input — parity is pinned by test_v2_callout_svg_parity.py.
+    input — parity is pinned by test_v2_callout_svg_parity.py. Its images
+    resolve against ``chart.base_dir``, the directory of the file that
+    declares it.
     """
     _ = data, is_placeholder
     preferred_width = chart.style.preferred_width if width is None else width
@@ -452,5 +461,6 @@ def render_callout_chart_svg(
         height=height,
         title=chart.title,
         callout_style=chart.style,
+        base_dir=chart.base_dir,
         chart_id=chart.id,
     )

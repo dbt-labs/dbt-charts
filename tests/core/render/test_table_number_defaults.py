@@ -83,6 +83,8 @@ class TestUnformattedNumericDefault:
 class TestThemeCascadeSuppliesDefault:
     def test_predefined_number_independent_of_theme_formats(self) -> None:
         # "number" is predefined; themes need not include it in formats.
-        # Stark has no formats dict but numeric defaults still work.
-        assert get_theme_style("stark").formats is None
+        # Stark defines no format names but numeric defaults still work.
+        stark_formats = get_theme_style("stark").formats
+        assert stark_formats is not None
+        assert stark_formats.aliases is None
         assert format_table_cell_value(452342060.0, None, None) == "452 M"

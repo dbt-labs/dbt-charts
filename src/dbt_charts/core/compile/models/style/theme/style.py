@@ -38,6 +38,22 @@ from dbt_charts.core.compile.models.style.theme.variables import (
 )
 
 
+class FormatsStyle(BaseModel):
+    """Format settings. Fixed keys, so an author's names sit in a map of their own."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # None = no names at this cascade level; an authored `aliases: null`
+    # clears every inherited one. Names merge key-wise down the cascade.
+    aliases: dict[str, str | FormatConfig] | None = Field(
+        default=None,
+        description=(
+            "Format names: each key is a name charts, tables and KPIs can use as a "
+            "format, each value a format spec or a format with a prefix/suffix."
+        ),
+    )
+
+
 class Style(BaseModel):
     """Authoritative compiled style. Built from a single theme YAML file.
 
@@ -115,16 +131,11 @@ class Style(BaseModel):
     ] = Field(
         description="Data-freshness chrome: visibility, placement, format, and font."
     )
-    # Cascade-managed sentinel — None means "no aliases at this cascade level" (not empty).
-    # The default theme ships None (all built-in names are engine-predefined, not theme aliases).
-    # Board YAML patches may supply user-defined aliases (→ dict) or omit (→ None).
-    # merge_onto_base key-wise merges board-level aliases onto theme aliases so board keys win
-    # while unredefined theme keys propagate. None is intentional here — unlike other
-    # Compiled fields the theme populates, this sentinel distinguishes "no override"
-    # from "empty override" across every cascade step, not just the base.
-    formats: dict[str, str | FormatConfig] | None = Field(
+    # None = no format settings at this cascade level; an authored
+    # `formats: null` clears every inherited one.
+    formats: FormatsStyle | None = Field(
         default=None,
-        description="Format alias map; None means no aliases at this cascade level.",
+        description="Format settings: the board's own format names under `aliases`.",
     )
     # Theme palette role assignments.
     # Keys (role names) stay open — no enforced enum. Values are looked up as

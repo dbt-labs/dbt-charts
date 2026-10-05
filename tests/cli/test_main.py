@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import io
 
+import click
 import pytest
+import typer
 
 from dbt_charts.cli.main import _reconfigure_console_encoding, main
 
@@ -73,7 +75,7 @@ def test_main_callback_reconfigures_through_real_entrypoint(
     monkeypatch.setattr("sys.stdout", stdout)
     monkeypatch.setattr("sys.stderr", stderr)
 
-    main(version=None)
+    main(ctx=typer.Context(click.Command("dct")), version=None)
 
     assert stdout.encoding is not None and stdout.encoding.lower() == "utf-8"
     assert stderr.encoding is not None and stderr.encoding.lower() == "utf-8"

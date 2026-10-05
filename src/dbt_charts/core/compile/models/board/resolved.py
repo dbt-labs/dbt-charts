@@ -203,6 +203,9 @@ class ResolvedBoard:
     notes: str
     tags: tuple[str, ...]
     text: str
+    # The directory of the file this board's content was written in (see
+    # Board.base_dir): its markdown images' anchor, and their key in an artifact.
+    base_dir: str | None  # type-state: optional — None is no location
     html_policy: HtmlPolicy
     level: int  # Heading level (1 = root board, matches H{level})
 

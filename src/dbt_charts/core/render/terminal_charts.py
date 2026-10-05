@@ -104,7 +104,7 @@ def render_chart_terminal(
         height: Optional terminal height in characters
         colors: Whether to use ANSI colors
         display_title: Final title text to render.
-        formats: Board-level style.formats alias map (ResolvedStyle.formats),
+        formats: Board-level style.formats.aliases map (ResolvedStyle.formats),
             for a KPI/table value format authored as a bare alias name.
 
     Returns:

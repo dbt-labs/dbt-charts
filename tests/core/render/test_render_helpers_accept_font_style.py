@@ -42,7 +42,8 @@ def test_a_callout_svg_contains_font_family() -> None:
     svg = render_callout_svg(
         message="boom",
         width=300,
-        callout_style=style.chart_defaults.callout,
+        callout_style=style.chart_defaults.callout_error,
+        base_dir=None,
     )
     assert "font-family" in svg
 

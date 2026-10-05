@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         ColumnRuleStyle,
         TextStyle,
     )
+    from dbt_charts.core.diagnostics.diagnostic import Diagnostic
     from mdsvg import ListItem
     from mdsvg.fonts import FontFaces
     from mdsvg.renderer import SVGRenderer
@@ -90,7 +91,7 @@ def _fit_tables(
     """
 
     def height(table: Table, width: float) -> float:
-        return renderer.measure_blocks([table], width=width)[0].line_advance
+        return renderer.measure_blocks([table], width=width)[0].line_advances[0]
 
     unwrapped = [height(table, slot) for table in tables]
 
@@ -155,6 +156,9 @@ def render_prose_svg(
     text_style: TextStyle,
     resolved_style: ResolvedStyle,
     plan: ProsePlan | None,
+    authored: str,
+    base_dir: str | None,
+    error_collector: list[Diagnostic] | None,
     allow_raw_html: bool = False,
 ) -> tuple[str, float]:
     """Render body-text markdown as pure SVG, measured and flowed on the card grid.
@@ -169,6 +173,11 @@ def render_prose_svg(
     Handles align and multi-column flow entirely in SVG — no foreignObject, no
     browser HTML layout dependency.
 
+    *markdown_text* is the Jinja rendering of *authored*. Its images resolve
+    against *base_dir*, the directory of the file the text is written in; a
+    bad one degrades the text to its error, reported to *error_collector*
+    (``None`` in the sizing pass, so the paint pass alone reports it).
+
     ``plan`` is the board's ``prose_plan``; it is None only when
     :func:`plan_board_prose` never ran, which is a caller bug.
 
@@ -179,6 +188,7 @@ def render_prose_svg(
     )
     from dbt_charts.core.render.column_packer import PackUnit, pack_columns
     from dbt_charts.core.render.font_selection import record_painted_faces
+    from dbt_charts.core.render.image_assets import rewrite_board_markdown_images
     from mdsvg.renderer import SVGRenderer
 
     col = text_style.column
@@ -187,7 +197,8 @@ def render_prose_svg(
         text_style, resolved_style
     )
 
-    # fetch_image_sizes=False: see comment in _render_text_svg.
+    # fetch_image_sizes=False: a render never fetches over the network. A local
+    # image is an embedded data: URI by now, which mdsvg measures regardless.
     renderer = SVGRenderer(
         style=style,
         fonts=fonts,
@@ -195,7 +206,13 @@ def render_prose_svg(
         allow_raw_html=allow_raw_html,
     )
 
-    blocks = list(parse_markdown(markdown_text))
+    blocks = rewrite_board_markdown_images(
+        list(parse_markdown(markdown_text)),
+        authored,
+        markdown_text,
+        base_dir,
+        error_collector,
+    )
 
     pad = float(resolved_style.frame.card_padding)
     boxes = span_boxes(width + 2 * pad, plan.board_width, plan.grid, plan.gap)
@@ -215,7 +232,7 @@ def render_prose_svg(
     # lands -- the line list is sliced, never re-flowed.
     metrics = renderer.measure_blocks(blocks, width=measure)
     ceiling = spans if col.max_number is None else min(spans, col.max_number)
-    n_cols = columns_earned(sum(m.line_count for m in metrics), ceiling)
+    n_cols = columns_earned(sum(len(m.line_advances) for m in metrics), ceiling)
 
     # Alignment belongs to the span the reader sees, not to a width the renderer chose.
     insets = [
@@ -243,14 +260,15 @@ def render_prose_svg(
     units: list[PackUnit] = []
     origin: list[tuple[int, int]] = []  # (block index, line index) per unit
     for block_index, m in enumerate(metrics):
-        for line_index in range(m.line_count):
+        line_total = len(m.line_advances)
+        for line_index, advance in enumerate(m.line_advances):
             units.append(
                 PackUnit(
-                    advance=m.line_advance,
+                    advance=advance,
                     space_before=m.space_before if line_index == 0 else 0.0,
                     block_id=block_index,
                     line_index=line_index,
-                    line_total=m.line_count,
+                    line_total=line_total,
                     splittable=m.splittable,
                     keep_with_next=m.keep_with_next,
                 )
@@ -297,7 +315,7 @@ def render_prose_svg(
             if not style_block:
                 style_block = rendered.style_block
             col_elements.append(translate_group(0, px(y - lift), rendered.elements))
-            y += (last - first + 1) * m.line_advance - lift
+            y += sum(m.line_advances[first : last + 1]) - lift
         column_heights.append(y)
         if col_elements:
             column_parts.append(
@@ -357,9 +375,11 @@ def _item_lines(renderer: SVGRenderer, item: ListItem, width: float) -> int:
     """Lines a list item's own text wraps to at ``width``."""
     from mdsvg import Paragraph
 
-    return renderer.measure_blocks([Paragraph(spans=item.spans)], width=width)[
-        0
-    ].line_count
+    return len(
+        renderer.measure_blocks([Paragraph(spans=item.spans)], width=width)[
+            0
+        ].line_advances
+    )
 
 
 def _run_grid(

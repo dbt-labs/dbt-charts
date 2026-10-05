@@ -193,10 +193,13 @@ def board_title_metrics(
             variable_values,
             level=board.level,
             resolved_style=style,
+            base_dir=board.base_dir,
         ),
         float(style.title.min_height),
     )
-    baseline = title_baseline_offset(style, board.level)
+    baseline = title_baseline_offset(
+        board.title, inner, variable_values, style, board.level, board.base_dir
+    )
     # A title flows straight into text below it. Layout items and controls sit one
     # gap down, and an item's ink starts a card padding inside its own box.
     child_gap = style.gap if style.gap is not None else 0.0

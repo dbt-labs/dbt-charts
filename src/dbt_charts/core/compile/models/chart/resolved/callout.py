@@ -49,6 +49,13 @@ class ResolvedCalloutChart(BaseModel):
             "deliberately does not extend _BaseResolvedChartFields."
         ),
     )
+    base_dir: str | None = Field(  # type-state: optional — None is no location
+        default=None,
+        description=(
+            "Internal: directory of the file this chart was written in, which "
+            "its markdown images resolve against."
+        ),
+    )
     message: str = Field(
         description="Callout message text (required).",
     )

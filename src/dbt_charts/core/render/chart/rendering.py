@@ -292,6 +292,7 @@ def _build_error_callout_svg(
         height=height,
         title=_callout_error_title(diagnostic.code),
         callout_style=callout_style,
+        base_dir=None,
         code=diagnostic.code,
         hint=diagnostic.hint,
         doc_url=REGISTRY.get(diagnostic.code).doc_url,

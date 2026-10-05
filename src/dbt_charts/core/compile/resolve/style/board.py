@@ -31,7 +31,6 @@ from dbt_charts.core.compile.models.primitives import (
     ToneLiteral,
 )
 from dbt_charts.core.compile.models.style.authored import (
-    CalloutChartStylePatch,
     ChartsStylePatch,
     PaginationConfig,
 )
@@ -202,58 +201,43 @@ def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
     )
 
 
-def _callout_tone_colors_patch(tone: ToneLiteral) -> CalloutChartStylePatch:
-    """Background/border/title/message colors for a callout tone.
-
-    Colors are resolved from ``{tone}.*`` palette roles (bg, border, solid,
-    text) — the same four roles the render layer used to look up itself. The
-    single mapper for this concept: both ``_build_resolved_callout_chart``
-    below (the board-default/error-card path) and
-    ``compile/resolve/chart/simple.py::_resolve_callout`` (which must re-derive
-    after a chart-local ``style.tone`` override) merge this same patch onto
-    a callout style, rather than each re-implementing the four-role mapping.
-    """
-    return CalloutChartStylePatch.model_validate(
-        {
-            "background": color(f"{tone}.bg"),
-            "border": {"color": color(f"{tone}.border")},
-            "title": {"font": {"color": color(f"{tone}.solid")}},
-            "message": {"font": {"color": color(f"{tone}.text")}},
-        }
-    )
+BY_TONE = "by_tone"
 
 
 def _build_resolved_callout_chart(
-    callout: CalloutChartStyle,
-    bold_font_weight: str,
-    *,
-    tone: ToneLiteral,
+    callout: CalloutChartStyle, bold_font_weight: str, tone: ToneLiteral
 ) -> ResolvedCalloutStyle:
-    """Build a ResolvedCalloutStyle for the given tone.
+    """Resolve a callout style for ``tone``.
 
-    Background/border/title/message colors are resolved from ``{tone}.*``
-    palette roles via ``_callout_tone_colors_patch``, once — the render layer
-    used to look these up itself at every call, keyed off whichever tone a
-    particular callout instance ended up with (the theme's own default, a
-    chart-local override, or the runtime error-fallback's forced "negative").
+    Each color the cascade left as ``by_tone`` (background, border color,
+    title and message font color) takes the tone's ``{tone}.*`` palette role
+    (bg, border, solid, text); any other value is the author's and is kept.
     """
-    callout = merge_onto_base(callout, _callout_tone_colors_patch(tone))
+
+    def tone_color(value: str, role: str) -> str:
+        return color(f"{tone}.{role}") if value == BY_TONE else value
+
+    def tone_font(font: FontStyle, role: str, path: str) -> ResolvedFontStyle:
+        if font.color is not None:
+            font = font.model_copy(update={"color": tone_color(font.color, role)})
+        return resolve_cascaded_font(font, path)
+
     return ResolvedCalloutStyle(
         preferred_width=callout.preferred_width,
         tone=tone,
-        background=callout.background,
-        border=callout.border,
+        background=tone_color(callout.background, "bg"),
+        border=callout.border.model_copy(
+            update={"color": tone_color(callout.border.color, "border")}
+        ),
         padding=callout.padding,
         section_gap=callout.section_gap,
         bold_font_weight=bold_font_weight,
         title=ResolvedCalloutElementStyle(
-            font=resolve_cascaded_font(callout.title.font, "charts.callout.title.font"),
+            font=tone_font(callout.title.font, "solid", "charts.callout.title.font"),
             y_offset=callout.title.y_offset,
         ),
         message=ResolvedCalloutElementStyle(
-            font=resolve_cascaded_font(
-                callout.message.font, "charts.callout.message.font"
-            ),
+            font=tone_font(callout.message.font, "text", "charts.callout.message.font"),
             y_offset=callout.message.y_offset,
         ),
     )
@@ -282,15 +266,14 @@ def _build_chart_style_context(
     # fully initialized.
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
 
-    # Axis/legend/callout are type-transformed; the rest are supplied by params or
-    # copied directly from charts where the field name matches.
+    # Axis/legend/callout_error are type-transformed; the rest are supplied by
+    # params or copied directly from charts where the field name matches.
     _AXIS_LEGEND_ERROR = {
         "axis",
         "axis_x",
         "axis_y",
         "axis_quantitative",
         "legend",
-        "callout",
         "callout_error",
     }
     _FROM_PARAMS = {
@@ -300,6 +283,7 @@ def _build_chart_style_context(
         "pagination",
         "formats",
         "background",
+        "bold_font_weight",
         "dashes",
         "palettes",
         "roles",
@@ -409,12 +393,10 @@ def _build_chart_style_context(
         axis_y=charts.axis_y,
         axis_quantitative=charts.axis_quantitative,
         legend=_build_resolved_legend(charts.legend),
-        callout=_build_resolved_callout_chart(
-            charts.callout, bold_font_weight, tone=charts.callout.tone
-        ),
         callout_error=_build_resolved_callout_chart(
-            charts.callout, bold_font_weight, tone="negative"
+            charts.callout, bold_font_weight, "negative"
         ),
+        bold_font_weight=bold_font_weight,
         font_family=font_family,
         title=title,
         spark=spark,
@@ -518,7 +500,7 @@ def _finalize_chart_style_context(
         roles=cascaded.roles,
         tones=cascaded.tones,
         pre_style=pre_style,
-        formats=cascaded.formats,
+        formats=None if cascaded.formats is None else cascaded.formats.aliases,
         charts_board_overrides=charts_board_overrides,
         card_padding=cascaded.frame.card_padding,
     )

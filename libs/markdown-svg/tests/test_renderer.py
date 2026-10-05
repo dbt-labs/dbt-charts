@@ -2101,7 +2101,7 @@ class TestBaselinePlacement:
 
             drawn = re.search(r'<text[^>]*\by="([\d.]+)"', svg)
             assert drawn, svg
-            assert renderer.heading_baseline(1) == pytest.approx(
+            assert renderer.first_baseline(parse("# Heading"), 400) == pytest.approx(
                 float(drawn.group(1)), abs=0.01
             ), f"heading_line_height={multiplier}"
 
@@ -2120,7 +2120,7 @@ class TestBaselinePlacement:
         top, height = renderer.heading_line_box(1, block)
         assert top == pytest.approx(0.0)
         assert height == pytest.approx(block - 10.0)
-        assert top <= renderer.heading_baseline(1) < top + height
+        assert top <= renderer.first_baseline(parse("# Heading"), 400) < top + height
 
     def test_vertical_metrics_come_from_the_face(self) -> None:
         """Both are em fractions of the loaded font, and both refuse to guess."""
@@ -2193,7 +2193,7 @@ class TestOpeningBlockMarginCollapse:
         svg = renderer.render(parse("# Heading"), width=400, padding=0.0)
 
         assert self._baselines(svg)[0] == pytest.approx(
-            renderer.heading_baseline(1), abs=0.01
+            renderer.first_baseline(parse("# Heading"), 400), abs=0.01
         )
         wider = SVGRenderer(
             style=Style(

@@ -126,6 +126,8 @@ class TestRenderedSVGContainsNotoEmoji:
             400.0,
             resolved_without_emoji_family,
             text_style=resolved_without_emoji_family.text,
+            base_dir=None,
+            error_collector=None,
             painted_canvas=None,
             plan=full_width_plan(resolved_without_emoji_family, 400.0),
         )

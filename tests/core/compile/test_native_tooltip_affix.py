@@ -157,7 +157,7 @@ def test_rejection_names_the_tooltip_slot_when_the_affix_arrives_via_it() -> Non
 
     board_style_patch = StylePatch.model_validate(
         {
-            "formats": {"eur": _AFFIX_FORMAT},
+            "formats": {"aliases": {"eur": _AFFIX_FORMAT}},
             "charts": {"tooltip": {"format": "eur"}},
         }
     )

@@ -12,7 +12,10 @@ import markdown
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.board import BoardRenderResult
+from dbt_charts.core.board import (
+    BoardRenderResult,
+    render_dashboard as real_render_dashboard,
+)
 from dbt_charts.integrations.markdown import (
     _SOURCE_NOT_FOUND_RE,
     _inline_playground_queries,
@@ -182,7 +185,9 @@ class TestFenceDbtCharts:
         """File-backed fences should retry from the shared ``examples/`` root."""
         docs_board = tmp_path / "docs" / "test.yml"
         docs_board.parent.mkdir()
-        docs_board.write_text("charts:\n  c1:\n    query: _doc_examples.yaml#sales\n")
+        docs_board.write_text(
+            "charts:\n  c1:\n    query: _doc_examples.yaml#sales\n    type: bar\n"
+        )
 
         examples_dir = tmp_path / "examples"
         examples_dir.mkdir()
@@ -202,9 +207,14 @@ class TestFenceDbtCharts:
         ):
             calls.append((project.root, builtin_variables["this_dir"]["name"]))
             if project.root == tmp_path:
-                raise ValueError(
-                    "Compilation errors:\n"
-                    "  External query file not found: '_doc_examples.yaml'"
+                # The real compile's error for the missing `file#q` file.
+                return real_render_dashboard(
+                    board=board,
+                    project=project,
+                    adapter_registry=adapter_registry,
+                    result_cache=result_cache,
+                    builtin_variables=builtin_variables,
+                    format=format,
                 )
             assert project.root == examples_dir
             assert builtin_variables["this_dir"]["name"] == examples_dir.name
@@ -450,9 +460,14 @@ class TestFenceDbtChartsExample:
         ):
             calls.append(project.root)
             if project.root == tmp_path:
-                raise ValueError(
-                    "Compilation errors:\n"
-                    "  External query file not found: '_doc_examples.yaml'"
+                # The real compile's error for the missing `file#q` file.
+                return real_render_dashboard(
+                    board=board,
+                    project=project,
+                    adapter_registry=adapter_registry,
+                    result_cache=result_cache,
+                    builtin_variables=builtin_variables,
+                    format=format,
                 )
             assert project.root == examples_dir
             assert builtin_variables["this_dir"]["name"] == examples_dir.name

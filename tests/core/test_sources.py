@@ -1585,7 +1585,9 @@ rows:
 """
         result = compile(yaml_content, base_dir=project.directory())
         assert not result.success
-        assert any("extension" in e.message for e in result.errors)
+        assert any(
+            "an inline file source needs one of" in e.message for e in result.errors
+        )
 
     def test_non_identifier_stem_is_a_compile_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

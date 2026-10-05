@@ -24,7 +24,11 @@ from dbt_charts.core.render.chart.rendering import render_chart_item
 from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.renderer import render
 
-from ._callout_test_helpers import callout_style_for_tone, compute_svg_text_fills
+from ._callout_test_helpers import (
+    callout_style_for_tone,
+    compute_svg_text_fills,
+    resolved_callout,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -164,6 +168,205 @@ def test_callout_positive_tone_resolves_positive_palette_roles(make_chart) -> No
     assert resolve_palette_color("positive.bg") in svg
     assert resolve_palette_color("positive.border") in svg
     assert resolve_palette_color("negative.bg") not in svg
+
+
+# --- Authored colors vs. tone: the tone fills only what the author left unset ---
+
+_AUTHORED_COLORS = {
+    "background": "#0b1f3a",
+    "border": {"color": "#ff8800"},
+    "title": {"font": {"color": "#fefefe"}},
+    "message": {"font": {"color": "#dddddd"}},
+}
+
+
+def _board(style: dict):
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+
+    return StylePatch.model_validate(style)
+
+
+def _render_callout(make_chart, style: dict | None, *board_patches):
+    """Resolve and render one callout; return (resolved style, svg)."""
+    chart = make_chart(
+        "callout",
+        x=None,
+        y=None,
+        query=None,
+        query_name=None,
+        title="Status",
+        message="Details",
+        style=CalloutChartStylePatch.model_validate(style) if style else None,
+    )
+    rs, ctx = resolve_style_and_context(get_theme_style(), *board_patches)
+    resolved = resolve(chart, [], chart_style_context=ctx)
+    svg = render_chart(
+        chart,
+        resolved_style=rs,
+        chart_style_context=ctx,
+        data=[],
+        format="svg",
+        width=220,
+    )
+    return resolved.style, svg
+
+
+def _colors(style) -> tuple[str, str, str, str]:
+    return (
+        style.background,
+        style.border.color,
+        style.title.font.color,
+        style.message.font.color,
+    )
+
+
+def _tone_colors(tone: str) -> tuple[str, str, str, str]:
+    bg, border, solid, text = (
+        resolve_palette_color(f"{tone}.{role}")
+        for role in ("bg", "border", "solid", "text")
+    )
+    return bg, border, solid, text
+
+
+def test_authored_colors_beat_a_non_default_tone(make_chart) -> None:
+    style, svg = _render_callout(make_chart, {"tone": "warning", **_AUTHORED_COLORS})
+
+    assert _colors(style) == ("#0b1f3a", "#ff8800", "#fefefe", "#dddddd")
+    assert 'fill="#0b1f3a" stroke="#ff8800"' in svg
+    fills = compute_svg_text_fills(svg)
+    assert fills["Status"] == "#fefefe"
+    assert fills["Details"] == "#dddddd"
+    assert resolve_palette_color("warning.bg") not in svg
+
+
+def test_tone_fills_only_the_colors_left_unset(make_chart) -> None:
+    style, _svg = _render_callout(
+        make_chart, {"tone": "warning", "background": "#0b1f3a"}
+    )
+
+    _bg, border, solid, text = _tone_colors("warning")
+    assert _colors(style) == ("#0b1f3a", border, solid, text)
+
+
+def test_board_callout_colors_beat_tone_and_chart_tone_rederives_the_rest(
+    make_chart,
+) -> None:
+    """A board-authored color survives a chart-local tone change; the colors
+    the board left unset follow the chart's tone, not the board's."""
+    board = _board(
+        {
+            "charts": {
+                "callout": {
+                    "tone": "warning",
+                    "background": "#0b1f3a",
+                    "title": {"font": {"color": "#fefefe"}},
+                }
+            }
+        }
+    )
+    style, svg = _render_callout(make_chart, {"tone": "positive"}, board)
+
+    _bg, border, _solid, text = _tone_colors("positive")
+    assert _colors(style) == ("#0b1f3a", border, "#fefefe", text)
+    assert 'fill="#0b1f3a"' in svg
+
+
+def test_board_message_color_beats_tone(make_chart) -> None:
+    board = _board({"charts": {"callout": {"message": {"font": {"color": "#dddddd"}}}}})
+    style, _svg = _render_callout(make_chart, {"tone": "warning"}, board)
+
+    assert style.message.font.color == "#dddddd"
+
+
+def test_board_tone_alone_colors_the_callout(make_chart) -> None:
+    style, _svg = _render_callout(
+        make_chart, None, _board({"charts": {"callout": {"tone": "warning"}}})
+    )
+
+    assert _colors(style) == _tone_colors("warning")
+
+
+def test_chart_color_beats_board_color(make_chart) -> None:
+    board = _board({"charts": {"callout": {"background": "#0b1f3a"}}})
+    style, _svg = _render_callout(make_chart, {"background": "#123456"}, board)
+
+    assert style.background == "#123456"
+
+
+def test_board_font_color_does_not_override_tone_ink(make_chart) -> None:
+    """A board-wide font color is not a callout color: the tone still inks
+    the title and message."""
+    board = _board(
+        {"font": {"color": "#123456"}, "charts": {"font": {"color": "#654321"}}}
+    )
+    style, _svg = _render_callout(make_chart, {"tone": "warning"}, board)
+
+    assert _colors(style) == _tone_colors("warning")
+
+
+def test_chart_by_tone_follows_the_tone_after_a_board_set_a_color(make_chart) -> None:
+    board = _board(
+        {
+            "charts": {
+                "callout": {"background": "#0b1f3a", "border": {"color": "#ff8800"}}
+            }
+        }
+    )
+    style, _svg = _render_callout(
+        make_chart,
+        {"tone": "warning", "background": "by_tone", "border": {"color": "by_tone"}},
+        board,
+    )
+
+    bg, border, solid, text = _tone_colors("warning")
+    assert _colors(style) == (bg, border, solid, text)
+
+
+def test_no_by_tone_survives_into_the_resolved_callout(make_chart) -> None:
+    style, svg = _render_callout(make_chart, {"tone": "negative"})
+
+    assert "by_tone" not in style.model_dump_json()
+    assert "by_tone" not in svg
+
+
+def test_authored_palette_tokens_resolve_to_hex(make_chart) -> None:
+    board = _board({"charts": {"callout": {"border": {"color": "positive.border"}}}})
+    style, svg = _render_callout(
+        make_chart,
+        {"background": "warning.bg", "title": {"font": {"color": "negative.solid"}}},
+        board,
+    )
+
+    assert style.background == resolve_palette_color("warning.bg")
+    assert style.border.color == resolve_palette_color("positive.border")
+    assert style.title.font.color == resolve_palette_color("negative.solid")
+    assert "warning.bg" not in svg
+    assert "positive.border" not in svg
+
+
+def test_error_card_takes_board_callout_colors_and_negative_tone_for_the_rest(
+    make_chart,
+) -> None:
+    """The runtime error card is a callout with tone: negative — board-authored
+    callout colors apply to it like to any other callout."""
+    rs, ctx = resolve_style_and_context(
+        get_theme_style(), _board({"charts": {"callout": {"background": "#abcdef"}}})
+    )
+    chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
+    executor = MagicMock(spec=Executor)
+    svg, _height = render_chart_item(
+        resolve(chart, [{"value": 1}, {"value": 2}], chart_style_context=ctx),
+        executor,
+        variables={},
+        available_width=220,
+        available_height=300,
+        resolved_style=rs,
+        render_cache={},
+    )
+
+    assert "dbt-chart-callout" in svg
+    assert 'fill="#abcdef"' in svg
+    assert f'stroke="{resolve_palette_color("negative.border")}"' in svg
 
 
 # --- Render behavior ---
@@ -317,13 +520,15 @@ def test_render_callout_svg_reads_structural_style_from_charts_callout() -> None
         title="Migration test",
         message="structural style must come from charts.callout",
         width=300,
-        callout_style=resolved_ctx.callout,
+        callout_style=resolved_callout(resolved_ctx),
+        base_dir=None,
     )
     svg_default = render_callout_svg(
         title="Migration test",
         message="structural style must come from charts.callout",
         width=300,
-        callout_style=default_ctx.callout,
+        callout_style=resolved_callout(default_ctx),
+        base_dir=None,
     )
     # Custom section_gap=42 makes the card taller than the default section_gap.
     from dbt_charts.core.render.svg_utils import extract_svg_dimensions
@@ -342,6 +547,7 @@ def test_render_callout_svg_renders_resolved_tone_colors() -> None:
         message="This is a warning",
         width=300,
         callout_style=callout_style_for_tone("warning"),
+        base_dir=None,
     )
 
     assert resolve_palette_color("warning.bg") in svg
@@ -354,6 +560,7 @@ def test_render_callout_svg_without_title_skips_fabricated_heading() -> None:
         message="All values are reported in USD.",
         width=300,
         callout_style=callout_style_for_tone("info"),
+        base_dir=None,
     )
 
     assert "All values are reported in USD." in svg
@@ -369,8 +576,9 @@ def test_render_callout_svg_wraps_code_badge_in_doc_link() -> None:
     svg = render_callout_svg(
         message="Something went wrong.",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
         code="ERR-BAR-DUPLICATE-ROWS",
+        base_dir=None,
     )
 
     doc_url = build_doc_url("ERR-BAR-DUPLICATE-ROWS")
@@ -384,7 +592,8 @@ def test_render_callout_svg_without_code_has_no_doc_link() -> None:
     svg = render_callout_svg(
         message="Something went wrong.",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
 
     assert "<a href=" not in svg
@@ -397,8 +606,9 @@ def test_render_callout_svg_renders_doc_url_as_see_docs_link() -> None:
     svg = render_callout_svg(
         message="Something went wrong.",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
         doc_url=doc_url,
+        base_dir=None,
     )
 
     assert f'<a href="{doc_url}" target="_blank">' in svg
@@ -416,8 +626,9 @@ def test_render_callout_svg_with_code_badge_converts_to_png() -> None:
     svg = render_callout_svg(
         message="Something went wrong.",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
         code="ERR-BAR-DUPLICATE-ROWS",
+        base_dir=None,
     )
 
     png_bytes = to_png(svg)
@@ -433,7 +644,8 @@ def test_message_renders_bold_and_inline_code() -> None:
     svg = render_callout_svg(
         message="This is **bold** and `code` text.",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     assert "**bold**" not in svg
     assert "`code`" not in svg
@@ -450,7 +662,8 @@ def test_title_supports_markdown() -> None:
         title="**Important** Notice",
         message="Details here.",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     assert "**Important**" not in svg
     assert "Important" in svg
@@ -463,7 +676,8 @@ def test_message_with_link_produces_anchor_element() -> None:
     svg = render_callout_svg(
         message="See the [docs](https://example.com/docs) for details.",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     assert "[docs]" not in svg
     assert "docs" in svg
@@ -479,12 +693,14 @@ def test_height_accounts_for_markdown_list_content() -> None:
     svg_single = render_callout_svg(
         message="Short message.",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     svg_list = render_callout_svg(
         message="Issues found:\n- First issue here\n- Second issue here\n- Third issue here",
         width=300,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     assert (
         extract_svg_dimensions(svg_list).height
@@ -498,7 +714,8 @@ def test_authored_callout_message_renders_markdown() -> None:
     svg = render_callout_svg(
         message="**Column not found** in source table. Column: `revenue`.",
         width=320,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     assert "**Column" not in svg
     assert "`revenue`" not in svg
@@ -517,8 +734,9 @@ def test_runtime_error_callout_underscores_render_as_literal_text() -> None:
     svg = render_callout_svg(
         message="Column _revenue_total_ not found in table *fact_orders*.",
         width=320,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
         markdown=False,
+        base_dir=None,
     )
     # Underscores and asterisks must survive as literal text, not trigger italic/bold
     assert "_revenue_total_" in svg or "revenue_total" in svg
@@ -538,8 +756,9 @@ def test_long_doc_url_renders_as_short_link_label() -> None:
     svg = render_callout_svg(
         message="Column not found.",
         width=width,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
         doc_url=long_url,
+        base_dir=None,
     )
 
     assert f'<a href="{long_url}" target="_blank">' in svg
@@ -566,6 +785,7 @@ def test_title_renders_in_tone_solid_color_not_message_color() -> None:
         message="Check your settings.",
         width=320,
         callout_style=callout_style_for_tone("warning"),
+        base_dir=None,
     )
 
     # Title and message text land on distinct scoped classes, not one shared rule.
@@ -590,11 +810,13 @@ def test_two_tone_callouts_use_distinct_css_class_names() -> None:
         message="All checks passed.",
         width=320,
         callout_style=callout_style_for_tone("positive"),
+        base_dir=None,
     )
     negative_svg = render_callout_svg(
         message="Pipeline failed.",
         width=320,
         callout_style=callout_style_for_tone("negative"),
+        base_dir=None,
     )
 
     # Extract all scoped md-* class names from each callout.
@@ -637,7 +859,8 @@ def test_link_href_with_md_path_segment_is_not_corrupted() -> None:
     svg = render_callout_svg(
         message=f"See the [guide]({url}) for details.",
         width=320,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     assert url in svg, f"href {url!r} must be preserved verbatim; got: {svg[:800]}"
 
@@ -653,7 +876,8 @@ def test_javascript_link_href_is_stripped() -> None:
     svg = render_callout_svg(
         message="[click here](javascript:alert(document.cookie))",
         width=320,
-        callout_style=ctx.callout,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     assert "javascript:" not in svg, (
         "javascript: href must be stripped from callout SVG"
@@ -672,10 +896,16 @@ def test_different_width_same_content_produces_distinct_clip_ids() -> None:
     long_message = "word " * 150  # long enough to trigger clipping at narrow widths
 
     svg_narrow = render_callout_svg(
-        message=long_message, width=180, callout_style=ctx.callout
+        message=long_message,
+        width=180,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
     svg_wide = render_callout_svg(
-        message=long_message, width=480, callout_style=ctx.callout
+        message=long_message,
+        width=480,
+        callout_style=resolved_callout(ctx),
+        base_dir=None,
     )
 
     narrow_clip_ids = set(re.findall(r'id="((?:msg|title)-clip-[^"]+)"', svg_narrow))

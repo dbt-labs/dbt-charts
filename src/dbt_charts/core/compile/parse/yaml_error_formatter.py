@@ -11,7 +11,7 @@ Refs #94
 
 import difflib
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from types import UnionType
@@ -23,6 +23,8 @@ from pydantic import BaseModel, Tag
 from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.migrations.migrations import RetiredKey
+    from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import JsonObject
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 
 
@@ -183,6 +185,20 @@ def _authored_chart_fields_by_type() -> dict[str, frozenset[str]]:
     }
 
 
+def _raw_mapping(yaml_content: str | None) -> "JsonObject | None":
+    """The document as authored, or ``None`` when it is absent, unparseable, or not a mapping.
+
+    Error formatting must never itself raise on the text it is describing.
+    """
+    if not yaml_content:
+        return None
+    try:
+        data = yaml.load(yaml_content, Loader=YAML_LOADER)
+    except yaml.YAMLError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _chart_type_from_error_path(
     field_path: list[str],
     yaml_content: str | None,
@@ -193,15 +209,11 @@ def _chart_type_from_error_path(
         if part in fields_by_type:
             return part
 
-    if not yaml_content or field_path[0:1] != ["charts"] or len(field_path) < 2:
+    if field_path[0:1] != ["charts"] or len(field_path) < 2:
         return None
 
-    try:
-        data = yaml.load(yaml_content, Loader=YAML_LOADER)
-    except yaml.YAMLError:
-        return None
-
-    if not isinstance(data, dict):
+    data = _raw_mapping(yaml_content)
+    if data is None:
         return None
     charts = data.get("charts")
     if not isinstance(charts, dict):
@@ -552,9 +564,58 @@ def _format_allowed_keys(keys: list[str], limit: int = 40) -> str:
     return ", ".join(displayed) + suffix
 
 
+def _retired_key_hint(retired: "RetiredKey", docs_topic: str) -> str:
+    """Name the successor (or the removal) a migration declaration records."""
+    version = retired.retired_in
+    if retired.successor is None:
+        reason = f": {retired.reason}" if retired.reason else "."
+        return (
+            f"`{'.'.join(retired.path)}` was removed in {version}{reason} "
+            f"Delete the key. See: dct docs {docs_topic}"
+        )
+    shared = next(
+        (
+            i
+            for i, (a, b) in enumerate(
+                zip(retired.path, retired.successor, strict=False)
+            )
+            if a != b
+        ),
+        min(len(retired.path), len(retired.successor)),
+    )
+    old, new = retired.path[shared:], retired.successor[shared:]
+    verb, action = (
+        ("renamed to", "Rename")
+        if len(old) == len(new) == 1
+        else (
+            "moved to",
+            "Move",
+        )
+    )
+    return (
+        f"`{'.'.join(old)}` was {verb} `{'.'.join(new)}` in {version}. "
+        f"{action} the key. See: dct docs {docs_topic}"
+    )
+
+
+def _retired_keys_in(yaml_content: str | None) -> "dict[tuple[str, ...], RetiredKey]":
+    """Keys the migration declarations would fire on in *yaml_content*, by document path."""
+    from dbt_charts.core.compile.migrations.migrations import (
+        _board_migration_context,
+        retired_keys,
+    )
+
+    data = _raw_mapping(yaml_content)
+    if data is None:
+        return {}
+    catalog, registry = _board_migration_context()
+    return retired_keys(data, catalog, registry)
+
+
 def _extra_field_diagnostic(
     field_path: list[str],
-    yaml_content: str | None = None,
+    yaml_content: str | None,
+    retired: "Mapping[tuple[str, ...], RetiredKey]",
 ) -> _ExtraFieldDiagnostic | None:
     if not field_path:
         return None
@@ -575,14 +636,25 @@ def _extra_field_diagnostic(
         "docs_topic": docs_topic,
     }
 
+    retired_key = retired.get(tuple(_display_path(field_path)))
+    if retired_key is not None:
+        fields["retired_in"] = retired_key.retired_in
+        if retired_key.successor is not None:
+            fields["successor"] = ".".join(retired_key.successor)
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=_retired_key_hint(retired_key, docs_topic),
+            fields=fields,
+        )
+
     # description: was renamed to notes: at every position that authors it
     # (board, chart, query, grid item, tab item, variable) -- the two words
     # share no substring difflib's cutoff would catch, so the generic
     # suggest_similar_value fallback below never fires for this rename. It is
     # the fallback wherever NOTES_RENAMES cannot reach -- a self-nested
-    # sub-board, a union arm that never declared the field, a board past the
-    # transparent-migration cutoff -- so it must name the replacement
-    # explicitly rather than fall through to a plain allowed-keys dump. Gated on `"notes" in allowed_keys` rather than
+    # sub-board or a union arm that never declared the field -- so it must
+    # name the replacement explicitly rather than fall through to a plain
+    # allowed-keys dump. Gated on `"notes" in allowed_keys` rather than
     # firing unconditionally: a chart family with no notes field (e.g.
     # CalloutChart) correctly falls through to the generic diagnostic
     # instead of naming a replacement that doesn't exist there.
@@ -878,13 +950,8 @@ def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
     no hint fires. The hint is for a reader *older* than the build that wrote
     the stamp, which by definition can't be this build.
     """
-    if not yaml_content:
-        return None
-    try:
-        data = yaml.load(yaml_content, Loader=YAML_LOADER)
-    except yaml.YAMLError:
-        return None
-    if not isinstance(data, dict):
+    data = _raw_mapping(yaml_content)
+    if data is None:
         return None
     declared = data.get("_schema_version")
     if not isinstance(declared, str):
@@ -956,6 +1023,11 @@ def format_validation_errors_structured(
 
     collapsed = _collapse_union_validation_errors(raw_errors)
     newer_schema_hint = _newer_schema_version_hint(yaml_content)
+    retired = (
+        _retired_keys_in(yaml_content)
+        if any(err.get("type") == "extra_forbidden" for err in collapsed)
+        else {}
+    )
 
     structured: list[Diagnostic] = []
     for err in collapsed:
@@ -972,7 +1044,7 @@ def format_validation_errors_structured(
         extra_field_diagnostic: _ExtraFieldDiagnostic | None = None
         if err_type == "extra_forbidden":
             extra_field_diagnostic = _extra_field_diagnostic(
-                field_path_parts, yaml_content
+                field_path_parts, yaml_content, retired
             )
 
         # Collect available keys for model_type (scalar where mapping expected)

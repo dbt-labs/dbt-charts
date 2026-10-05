@@ -13,6 +13,20 @@ from pydantic import BaseModel
 
 from dbt_charts.core.font_measure import get_font_measurer
 
+# Image suffix → MIME type: the images a project can commit and reference from
+# board markdown, embedded as ``data:`` URIs at render. Parity with the formats
+# libs/markdown-svg can size (mdsvg._parse_image_dimensions: PNG/JPEG/GIF/WebP/
+# BMP) plus SVG.
+IMAGE_SUFFIXES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+}
+
 # Query result rows, as every core layer passes them around.
 Rows = list[dict[str, Any]]
 

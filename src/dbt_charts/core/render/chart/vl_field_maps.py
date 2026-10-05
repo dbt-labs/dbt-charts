@@ -496,6 +496,7 @@ def measure_axis_to_vl(
                         values,
                         measure_fmt,
                         tick_label=axis.tick_label,
+                        continuous=_sc_cont,
                     )
     if labels:
         padding = measured_label_padding(

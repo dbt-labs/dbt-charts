@@ -499,7 +499,7 @@ def is_d3_si_spec(spec: str) -> bool:
     Anything else that ``_d3_parse`` rejects is likewise not an SI-shaped d3
     spec -- which is the whole question -- so it answers False rather than
     raising. The two compile-accepted inputs that reach here and would make
-    ``_d3_parse`` raise are an unresolved ``style.formats`` alias name and a
+    ``_d3_parse`` raise are an unresolved ``style.formats.aliases`` name and a
     predefined *date* name (``date_short``); both answer False. Total by design:
     ``build_resolved_axis`` computes this verdict once, up front, for an axis
     whose authored format may be any of these grammars, and a raise there would

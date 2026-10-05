@@ -24,7 +24,7 @@ Changes in this release:
     `single_series_palette`, each addressed both as a bare scalar and as a
     list item), and every value inside `style.palettes` (a role's value can
     itself be a retired whole-name spelling, regardless of which role holds
-    it -- `("style", "palettes", "*")`, an ungated trailing wildcard, see
+    it -- `("style", "palettes", "*")`, a trailing wildcard, see
     `_source_locations`). The path pattern reaches chart-level tokens
     (`charts.<id>.style.….color: category_dark[2]`) by construction: the
     resolved paths come from `_relative_field_paths` walking the whole
@@ -326,10 +326,10 @@ def moves(
 
     # style.palettes.* -- every role's *value* may itself be a retired
     # whole-name spelling, regardless of which role holds it. A trailing
-    # wildcard is ungated (`_source_locations`: "a trailing `*` is ungated
-    # ... no declaration produces one today") -- exactly what an open map's
-    # own values need, since `_declares_tail` cannot answer "declared
-    # property?" for a key the schema never names.
+    # wildcard reaches every key the live grammar does not declare
+    # (`_source_locations`) -- exactly what an open map's own values need,
+    # since `_declares_tail` cannot answer "declared property?" for a key the
+    # schema never names.
     result.append(
         Move(
             source_schema,

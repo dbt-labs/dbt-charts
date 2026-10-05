@@ -12,7 +12,7 @@ Three-way resolution contract (see predefined_formats.py's module docstring):
 | source         | behavior                                               |
 |----------------|---------------------------------------------------------|
 | enum member    | house rules: engine spec + round-aware trim             |
-| style.formats  | native d3: literal spec, no trim, no post-process       |
+| style.formats.aliases  | native d3: literal spec, no trim, no post-process       |
 | inline d3      | native d3: literal spec, no trim, no post-process       |
 
 House glyphs (MINUS, NULL_DISPLAY) are typography, not format semantics, and
@@ -80,7 +80,7 @@ def resolve_format(
 
     Resolution order (three-way contract):
     1. Predefined enum member — engine-owned spec with round-aware trim.
-    2. style.formats alias — its preset, resolved as in 1, else its literal
+    2. style.formats.aliases name — its preset, resolved as in 1, else its literal
        target spec, no trim.
     3. Inline d3 passthrough — literal spec, no trim.
 

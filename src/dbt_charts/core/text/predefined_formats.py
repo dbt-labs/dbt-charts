@@ -7,7 +7,7 @@ from three sources:
 | source          | behavior                                                  |
 |-----------------|-----------------------------------------------------------|
 | enum member     | house rules: engine spec + notation register + trim       |
-| style.formats   | native d3: literal spec, no post-processing               |
+| style.formats.aliases   | native d3: literal spec, no post-processing               |
 | inline d3 str   | native d3: literal spec, no post-processing               |
 
 House glyphs (MINUS U+2212, NULL_DISPLAY em-dash) stay universal for ALL
@@ -15,7 +15,7 @@ format sources. They are chart typography, not format semantics -- a user alias
 should not resurrect ASCII hyphen-minus in one cell of a table whose other
 cells use the proper glyph.
 
-A style.formats key equal to any ALL_PREDEFINED_NAMES member is a shadowing
+A style.formats.aliases name equal to any ALL_PREDEFINED_NAMES member is a shadowing
 violation -- the engine owns those names. Raise ERR-FORMAT-PREDEFINED-SHADOW at compile.
 
 NULL_DISPLAY and MINUS are intentionally re-declared here rather than imported

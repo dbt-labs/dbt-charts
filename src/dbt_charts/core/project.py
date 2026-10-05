@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yaml
 
-from dbt_charts.core.utils import UniqueKeyLoader
+from dbt_charts.core.utils import IMAGE_SUFFIXES, UniqueKeyLoader
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.config import ProjectSourcesConfig
@@ -32,13 +32,14 @@ META_FILENAMES: frozenset[str] = frozenset({"meta.yaml", "meta.yml"})
 PROJECT_CONFIG_NAME = "dbt_charts.yml"
 
 
-def assert_relpath(ref: str, anchor: str = ".") -> None:
-    """Raise ValueError unless *ref* is a relative path contained under the root.
+def assert_relpath(ref: str, anchor: str = ".") -> str:
+    """Return *ref* joined onto *anchor* and normalized; raise ValueError unless
+    it is a relative path contained under the root.
 
     Rejects empty/blank refs, absolute paths, and refs that would resolve above
     the project root once joined to *anchor* (a normalized project-relative
-    directory, "." for the root itself). A guard only — callers that need the
-    normalized form compute it themselves.
+    directory, "." for the root itself). Callers that only guard ignore the
+    result.
 
     File identity is a POSIX relpath, so the guard is host-independent: it must
     not depend on the OS ``dct`` runs on, because refs reach it from untrusted
@@ -53,10 +54,11 @@ def assert_relpath(ref: str, anchor: str = ".") -> None:
     if "\\" in ref or is_absolute_any_os(ref):
         raise ValueError(f"file ref must be relative, got {ref!r}")
 
-    raw = ref if anchor == "." else f"{anchor}/{ref}"
     # normpath collapses ".."/"." segments; an escaping path then starts with ".."
-    if normpath(raw).startswith(".."):
+    joined = normpath(ref if anchor == "." else f"{anchor}/{ref}")
+    if joined.startswith(".."):
         raise ValueError(f"file ref {ref!r} would escape above the project root")
+    return joined
 
 
 def posix_relpath(path: PurePath, root: PurePath) -> str:
@@ -123,29 +125,11 @@ INDEX_CANDIDATE_NAMES: tuple[str, ...] = tuple(
     f"index{s}" for s in BOARD_CANDIDATE_SUFFIXES
 )
 
-# Image asset suffixes a project can commit and reference from a markdown/board
-# body. On local `dct` these already render; full hosted-Cloud render wiring
-# (resolve through the reader, size without a filesystem ``open()``) is tracked
-# separately — see the "support repo-committed image assets" task. They are in the
-# served set so committed images are fetched into the store as first-class assets
-# (they are small, well under the file-size cap), ready for that render support.
-# Parity with the formats libs/markdown-svg can size
-# (mdsvg._parse_image_dimensions: PNG/JPEG/GIF/WebP/BMP) plus SVG.
-IMAGE_ASSET_SUFFIXES: tuple[str, ...] = (
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".svg",
-    ".webp",
-    ".bmp",
-)
-
 # The closed set of file suffixes dbt charts serves from a project tree:
 #   BOARD_CANDIDATE_SUFFIXES — config + board files (.yml/.yaml) and markdown
 #                  boards (.md/.markdown); composed in so this set can never
 #                  drift behind a new board suffix.
-#   IMAGE_ASSET_SUFFIXES — images embeddable from markdown/boards (see above).
+#   IMAGE_SUFFIXES — images embeddable from board markdown (core/utils.py).
 #   .csv/.json/.parquet — file sources (CsvSourceConfig etc.), whose `files:`
 #                  paths are required to carry these exact extensions
 #                  (models/source.py `_validate_files_mapping`)
@@ -154,7 +138,7 @@ IMAGE_ASSET_SUFFIXES: tuple[str, ...] = (
 # reading any blob content (GitEdge.objects.subtree_blob_shas in Cloud).
 SERVED_FILE_SUFFIXES: frozenset[str] = (
     frozenset(BOARD_CANDIDATE_SUFFIXES)
-    | frozenset(IMAGE_ASSET_SUFFIXES)
+    | frozenset(IMAGE_SUFFIXES)
     | {".csv", ".json", ".jsonl", ".parquet"}
 )
 
@@ -403,9 +387,7 @@ class ProjectDirectory:
         must not escape above the project root. Raises ValueError for absolute
         paths, empty/blank refs, or paths that escape the root.
         """
-        assert_relpath(ref, self._relpath)
-        raw = ref if self._relpath == "." else f"{self._relpath}/{ref}"
-        return ProjectPath(self._project, normpath(raw))
+        return ProjectPath(self._project, assert_relpath(ref, self._relpath))
 
 
 class BoardFile:

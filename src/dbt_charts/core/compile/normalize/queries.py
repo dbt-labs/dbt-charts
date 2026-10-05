@@ -10,9 +10,16 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlglot.dialects.dialect import Dialect as SqlglotDialect
 
 if TYPE_CHECKING:
-    from dbt_charts.core.project import ProjectDirectory, ProjectPath
+    from dbt_charts.core.project import ProjectDirectory
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.file_refs import (
+    INLINE_FILE_SOURCE_SUFFIXES,
+    read_section,
+    resolve_file_source,
+    resolve_ref,
+    split_external_query_ref,
+)
 from dbt_charts.core.compile.models.cache import (
     INHERIT_CACHE,
     CachePatch,
@@ -54,7 +61,6 @@ from dbt_charts.core.compile.sql_guard import (
 from dbt_charts.core.compile.template.jinja import extract_variable_dependencies
 from dbt_charts.core.diagnostics.ansi import strip_ansi
 from dbt_charts.core.diagnostics.codes_compile import (
-    ERR_FILE_SOURCE_AMBIGUOUS,
     ERR_SOURCE_INLINE_FORBIDDEN,
     ERR_SOURCE_NOT_FOUND,
     ERR_SOURCE_REQUIRED,
@@ -67,24 +73,15 @@ logger = logging.getLogger(__name__)
 
 _QUERY_TYPES_TAKING_CONNECTION_DEFAULT = frozenset({"sql"})
 
-# A `source:` string containing '/' or ending in a data-file extension is
-# an inline file reference, not a registry name. Type is inferred from the
-# extension.
-_FILE_SOURCE_EXTENSIONS: dict[str, str] = {
-    ".csv": "csv",
-    ".json": "json",
-    ".parquet": "parquet",
-}
-
 
 def _is_file_source_ref(source: str) -> bool:
     """True if a `source:` string is an inline file path rather than a registry name.
 
     Extension matching is case-insensitive to stay consistent with
-    ``_resolve_inline_file_source``, which lowercases the suffix — otherwise a
+    ``resolve_file_source``, which lowercases the suffix — otherwise a
     bare ``SALES.CSV`` would misclassify as a registry name.
     """
-    return "/" in source or source.lower().endswith(tuple(_FILE_SOURCE_EXTENSIONS))
+    return "/" in source or source.lower().endswith(tuple(INLINE_FILE_SOURCE_SUFFIXES))
 
 
 def _build_file_source_config(
@@ -108,65 +105,15 @@ def _resolve_inline_file_source(
 ) -> dict[str, Any]:
     """Resolve an inline file-path `source:` ref to a source config dict.
 
-    The table name is the file's stem (`sales.csv` -> table `sales`); an unknown
-    extension or a stem that is not a valid SQL identifier is a compile error —
-    no silent sanitization.
-
-    The ref is tried against two anchors, the board's own directory and the
-    project root, so `data/orders.parquet` works from any board depth while
-    `../data/orders.parquet` keeps working. Exactly one existing candidate
-    wins; both existing (at different relpaths) is a compile error naming
-    both, never a silent pick. When neither exists the board-directory
-    candidate is kept and the missing file surfaces at execution as a
-    per-chart diagnostic, so one stale path degrades one tile, not the board.
+    The table name is the file's stem (`sales.csv` -> table `sales`); a stem
+    that is not a valid SQL identifier is a compile error — no silent
+    sanitization. The anchors are `resolve_file_source`'s.
     """
-    suffix = PurePosixPath(ref).suffix.lower()
-    file_type = _FILE_SOURCE_EXTENSIONS.get(suffix)
-    if file_type is None:
-        raise CompilationError(
-            f"Query {name!r}: inline file source {ref!r} has an unrecognized "
-            "extension. Supported: .csv, .json, .parquet."
-        )
-    if base_dir is None:
-        raise CompilationError(
-            f"Query {name!r}: cannot resolve inline file source {ref!r} — "
-            "no base directory context (board was compiled without one)."
-        )
-    stem = PurePosixPath(ref).stem
-
-    # A board at the project root yields the same relpath from both anchors;
-    # keyed by relpath so that counts as one candidate. An anchor the ref
-    # escapes (`../x` from the root) is simply absent — only both failing is
-    # the author's error.
-    anchors = (
-        ("board directory", base_dir),
-        ("project root", base_dir.project.directory(".")),
-    )
-    candidates: dict[str, tuple[str, ProjectPath]] = {}
-    invalid: ValueError | None = None
-    for label, directory in anchors:
-        try:
-            path = directory / ref
-        except ValueError as e:
-            invalid = e
-            continue
-        candidates.setdefault(path.relpath, (label, path))
-    if not candidates:
-        raise CompilationError(
-            f"Query {name!r}: inline file source {ref!r} is invalid: {invalid}"
-        ) from invalid
-
-    existing = [(label, p) for label, p in candidates.values() if p.exists()]
-    if len(existing) > 1:
-        found = " and ".join(f"{p.relpath!r} ({label})" for label, p in existing)
-        raise CompilationError.from_code(
-            ERR_FILE_SOURCE_AMBIGUOUS, query_name=name, ref=ref, candidates=found
-        )
-    # The board-directory anchor is listed first, so it is the fallback when
-    # neither candidate exists and the executor reports the missing file.
-    winner = existing[0][1].relpath if existing else next(iter(candidates))
+    path, file_type = resolve_file_source(ref, base_dir, name)
     try:
-        config = _build_file_source_config(file_type, stem, winner)
+        config = _build_file_source_config(
+            file_type, PurePosixPath(ref).stem, path.relpath
+        )
     except PydanticValidationError as e:
         raise CompilationError(
             f"Query {name!r}: inline file source {ref!r} is invalid: {e}"
@@ -548,26 +495,6 @@ def normalize_query(
     return query
 
 
-def split_external_query_ref(query_ref: str) -> tuple[str, str]:
-    """`path/to/file.yml#query_name` → `("path/to/file.yml", "query_name")`.
-
-    The grammar only — which directory the file part is anchored at is the
-    caller's business, and the two resolvers deliberately disagree about it
-    (`resolve_external_query` below anchors at the compiling board's
-    `base_dir`; the cross-board chart-import walk in `compiler.py` anchors at
-    the *source* board's own directory). The parse itself must not diverge with
-    them, or the same authored string resolves for a local chart and errors
-    for an imported one.
-    """
-    file_part, _, query_name = query_ref.partition("#")
-    if not file_part or not query_name:
-        raise CompilationError(
-            f"Invalid external query reference: '{query_ref}'. "
-            "Expected format: 'path/to/file.yml#query_name'"
-        )
-    return file_part, query_name
-
-
 def resolve_external_query(
     query_ref: str,
     query_registry: dict[str, AnyQuery],
@@ -603,42 +530,14 @@ def resolve_external_query(
     """
     file_part, query_name = split_external_query_ref(query_ref)
 
-    if base_dir is None:
-        raise CompilationError(
-            f"Cannot resolve external query '{query_ref}': "
-            "no base directory context (board was compiled without a base directory)"
-        )
-
     registry_key = f"{file_part}#{query_name}"
 
     # Within-compile memo: this external ref was already resolved this compile.
     if registry_key in query_registry:
         return registry_key, query_registry
 
-    try:
-        ref_path = base_dir / file_part
-    except ValueError as e:
-        raise CompilationError(str(e)) from e
-
-    if not ref_path.exists():
-        raise CompilationError(
-            f"External query file not found: '{file_part}' "
-            f"(referenced as '{query_ref}')"
-        )
-
-    try:
-        external_data = ref_path.read_yaml()
-    except Exception as e:  # noqa: BLE001 — broad catch at IO boundary
-        raise CompilationError(
-            f"Failed to parse external query file '{file_part}': {e}"
-        ) from e
-
-    if not isinstance(external_data, dict):
-        raise CompilationError(
-            f"External query file '{file_part}' must be a YAML dictionary"
-        )
-
-    queries_section = external_data.get("queries", {})
+    ref_path = resolve_ref(query_ref, base_dir, "query_file")
+    queries_section, _content = read_section(ref_path, "queries", query_ref)
     if query_name not in queries_section:
         available = ", ".join(queries_section.keys()) if queries_section else "none"
         raise CompilationError(

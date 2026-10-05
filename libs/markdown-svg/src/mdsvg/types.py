@@ -27,6 +27,10 @@ class Span:
     span_type: SpanType = SpanType.TEXT
     url: Optional[str] = None
     title: Optional[str] = None
+    # Explicit ``{width=X height=Y}`` attributes -- IMAGE spans only, same
+    # authoring shorthand ImageBlock already supports for a standalone image.
+    width: Optional[float] = None
+    height: Optional[float] = None
 
     def __post_init__(self) -> None:
         """Validate span configuration."""
@@ -94,7 +98,7 @@ class CodeBlock(Block):
 class Blockquote(Block):
     """A blockquote containing other blocks."""
 
-    blocks: tuple[Block, ...] = field(default_factory=tuple)
+    blocks: tuple[AnyBlock, ...] = field(default_factory=tuple)
     block_type: BlockType = field(default=BlockType.BLOCKQUOTE, init=False)
 
 

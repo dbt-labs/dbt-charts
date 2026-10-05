@@ -37,6 +37,10 @@ style:
   roles:
     ink: chrome.heading
 
+  # Format names are a board's own; the engine's names are predefined.
+  formats:
+    aliases: null
+
   opacity: 1.0
 
   frame:
@@ -913,10 +917,11 @@ style:
         compact_size: 11
         compact_weight: 500
 
+    # `by_tone` is the tone's color.
     callout:
       preferred_width: 320.0
       tone: info
-      background: info.bg
+      background: by_tone
       padding:
         top: 12.0
         right: 12.0
@@ -925,11 +930,11 @@ style:
       section_gap: 10.0
       border:
         width: 1.0
-        color: info.border
+        color: by_tone
         radius: 4.0
       title:
         font:
-          color: info.solid
+          color: by_tone
           size: 13.0
           # Shares the theme's one bold token so a **bold** span inside a
           # callout title doesn't render lighter than the title's own base
@@ -940,7 +945,7 @@ style:
         y_offset: 0.0
       message:
         font:
-          color: info.text
+          color: by_tone
           size: 11.0
         y_offset: 0.0
 

@@ -60,6 +60,7 @@ from dbt_charts.core.render.svg_utils import (
     format_svg_numeric,
     padded_authoring_content,
     px,
+    render_title,
     translate_group,
 )
 from dbt_charts.core.render.variables_resolve import resolve_controls
@@ -217,34 +218,6 @@ def _is_markdown_fence_close(line: str, opening_marker: str) -> bool:
     marker_char = re.escape(opening_marker[0])
     min_width = len(opening_marker)
     return bool(re.match(rf"^\s*{marker_char}{{{min_width},}}\s*$", line))
-
-
-def _render_title_svg(
-    title: str,
-    variables: VariableValues,
-    width: float,
-    resolved_style: "ResolvedStyle",
-    text_align: Literal["left", "center", "right"] = "left",
-    level: int = 1,
-) -> str:
-    """Render a title with Jinja resolution and case transform."""
-    from dbt_charts.core.render.svg_utils import render_title
-    from dbt_charts.core.text.case import apply_case
-
-    resolved = _resolve_jinja(title, variables)
-    # Apply the case transform from style.title.font.case (cascaded from root).
-    # Board body markdown (TextStyle.font.case) is explicitly excluded — case
-    # transforms on prose blocks would corrupt code spans, links, and emphasis.
-    _title_case = resolved_style.title.font.case
-    if _title_case is not None:
-        resolved = apply_case(resolved, _title_case)
-    return render_title(
-        resolved,
-        width,
-        text_align=text_align,
-        level=level,
-        resolved_style=resolved_style,
-    )
 
 
 def _prose_authoring_padding(
@@ -450,6 +423,7 @@ def _render_title_variables_inline_band(
     text_align: Literal["left", "center", "right"],
     title_authored_attrs: str,
     variables_path: str,
+    error_collector: list[Diagnostic] | None,
 ) -> tuple[str, float]:
     """One horizontal band: board title (left column) + variable controls (right).
 
@@ -488,13 +462,16 @@ def _render_title_variables_inline_band(
     # are semantic (level-only, see board_title_spec) so width does not change
     # the rendered size. ``title_w`` is what the title CAN occupy; the wrap
     # happens inside that column at the layout step.
-    title_svg_raw = _render_title_svg(
+    base_dir = board.base_dir
+    title_svg_raw = render_title(
         board.title,
-        variables,
         inner,
-        board.style,
-        text_align=text_align,
+        text_align,
         level=board.level,
+        resolved_style=board.style,
+        variable_values=variables,
+        base_dir=base_dir,
+        error_collector=error_collector,
     )
     # Paint the title fill from cascade-resolved board style so user overrides
     # win over mdsvg's CSS-baked class fill.
@@ -504,7 +481,7 @@ def _render_title_variables_inline_band(
     if title_color:
         title_svg_raw = _paint_title_svg_fill(title_svg_raw, str(title_color))
     title_inner = extract_svg_inner_content(title_svg_raw)
-    # Measure at inner (the same width _render_title_svg draws at) so the
+    # Measure at inner (the same width render_title draws at) so the
     # reserved height matches the drawn height when a case transform widens
     # the title past the wrap threshold at the narrower title_w column.
     measured_title_h = get_title_height(
@@ -513,6 +490,7 @@ def _render_title_variables_inline_band(
         measured_values,
         level=board.level,
         resolved_style=board.style,
+        base_dir=base_dir,
     )
     title_h = max(measured_title_h, float(board.style.title.min_height))
     inline_title_line_box = title_line_box(measured_title_h, board.level, board.style)
@@ -534,7 +512,9 @@ def _render_title_variables_inline_band(
     title_dy, vars_dy, band_h = compute_title_variables_inline_baseline_layout(
         title_h,
         vars_h,
-        title_baseline_offset(board.style, board.level),
+        title_baseline_offset(
+            board.title, inner, measured_values, board.style, board.level, base_dir
+        ),
         float(vs.font.size),
         vs.font.family,
         float(vs.title_inline_band_bottom_pad),
@@ -583,6 +563,8 @@ def _render_text_svg(
     resolved_style: "ResolvedStyle",
     text_style: "TextStyle",
     plan: "ProsePlan | None",
+    base_dir: str | None,
+    error_collector: list[Diagnostic] | None,
     allow_raw_html: bool = False,
     path: str | None = None,
     *,
@@ -590,7 +572,8 @@ def _render_text_svg(
 ) -> tuple[str, float]:
     """Render markdown text with Jinja resolution and board-link rewriting.
 
-    Returns (svg_string, height).
+    Returns (svg_string, height). Images resolve against *base_dir*, the
+    directory of the text's file.
 
     ``painted_canvas`` is the background this text actually paints on: this
     item's own resolved ``style.background`` composited over its ancestors',
@@ -608,7 +591,15 @@ def _render_text_svg(
     resolved = _resolve_markdown_jinja(text, variables)
     resolved = rewrite_board_links(resolved, get_link_context())
     result = render_prose_svg(
-        resolved, width, text_style, resolved_style, plan, allow_raw_html
+        resolved,
+        width,
+        text_style,
+        resolved_style,
+        plan,
+        text,
+        base_dir,
+        error_collector,
+        allow_raw_html,
     )
     check_markdown_contrast(
         resolved,
@@ -1138,15 +1129,19 @@ def render_board_svg(
             text_align=text_align,
             title_authored_attrs=authored_attrs("title", "title"),
             variables_path="variables",
+            error_collector=error_collector,
         )
     elif board.title:
-        title_svg = _render_title_svg(
+        base_dir = board.base_dir
+        title_svg = render_title(
             board.title,
-            variables,
             prose_width,
-            resolved_style,
-            text_align=text_align,
+            text_align,
             level=board.level,
+            resolved_style=resolved_style,
+            variable_values=variables,
+            base_dir=base_dir,
+            error_collector=error_collector,
         )
         title_color = resolved_style.title.font.color
         if title_color:
@@ -1157,6 +1152,7 @@ def render_board_svg(
             _measured_variable_values(board, variables),
             level=board.level,
             resolved_style=resolved_style,
+            base_dir=base_dir,
         )
         title_height = max(measured_title_height, float(board.style.title.min_height))
         root_title_line_box = title_line_box(
@@ -1173,6 +1169,8 @@ def render_board_svg(
             prose_width,
             resolved_style=resolved_style,
             text_style=resolved_style.text,
+            base_dir=board.base_dir,
+            error_collector=error_collector,
             plan=board.prose_plan,
             allow_raw_html=board.html_policy == "trusted-raw",
             path="text",
@@ -1511,17 +1509,21 @@ def render_nested_board(
             # selection from `data-authored-path` and there is none to find.
             title_authored_attrs="",
             variables_path=_nested_variables_path(source_path),
+            error_collector=error_collector,
         )
     elif board.title:
         from dbt_charts.core.render.sizing import get_title_height, title_line_box
 
-        title_svg = _render_title_svg(
+        base_dir = board.base_dir
+        title_svg = render_title(
             board.title,
-            variables,
             prose_width,
-            resolved_style,
-            text_align=text_align,
+            text_align,
             level=board.level,
+            resolved_style=resolved_style,
+            variable_values=variables,
+            base_dir=base_dir,
+            error_collector=error_collector,
         )
         measured_title_height = get_title_height(
             board.title,
@@ -1529,6 +1531,7 @@ def render_nested_board(
             _measured_variable_values(board, variables),
             level=board.level,
             resolved_style=resolved_style,
+            base_dir=base_dir,
         )
         title_height = max(measured_title_height, float(board.style.title.min_height))
         nested_title_line_box = title_line_box(
@@ -1545,6 +1548,8 @@ def render_nested_board(
             prose_width,
             resolved_style=resolved_style,
             text_style=resolved_style.text,
+            base_dir=board.base_dir,
+            error_collector=error_collector,
             plan=board.prose_plan,
             allow_raw_html=board.html_policy == "trusted-raw",
             path=source_path or None,

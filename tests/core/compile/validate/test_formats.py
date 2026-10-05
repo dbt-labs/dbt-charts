@@ -1369,7 +1369,8 @@ def test_alias_table_values_are_validated() -> None:
 title: T
 style:
   formats:
-    my_alias: percent_1
+    aliases:
+      my_alias: percent_1
 queries:
   q:
     source: db
@@ -1724,7 +1725,8 @@ rows:
   - title: Nested
     style:
       formats:
-        mine: "$,.2f"
+        aliases:
+          mine: "$,.2f"
     charts:
       inner:
         query: q
@@ -1780,7 +1782,8 @@ def test_a_nested_board_s_own_alias_merges_onto_the_root_s() -> None:
 title: Root
 style:
   formats:
-    arr: "$,.0f"
+    aliases:
+      arr: "$,.0f"
 queries:
   q:
     source: db
@@ -1789,7 +1792,8 @@ rows:
   - title: Nested
     style:
       formats:
-        bps: ".2%"
+        aliases:
+          bps: ".2%"
     charts:
       root_alias:
         query: q
@@ -1823,7 +1827,8 @@ def test_style_formats_null_does_not_break_number() -> None:
     board_yaml = """
 title: T
 style:
-  formats: null
+  formats:
+    aliases: null
 queries:
   q:
     source: db
@@ -1856,7 +1861,8 @@ def test_tabs_nested_scope_explicit_formats_null_clears_the_table() -> None:
 title: Root
 style:
   formats:
-    arr: "$,.0f"
+    aliases:
+      arr: "$,.0f"
 queries:
   q:
     source: db
@@ -1865,7 +1871,8 @@ tabs:
   items:
     - title: Detail
       style:
-        formats: null
+        formats:
+          aliases: null
         background: "#ffffff"
       rows:
         - title: Inner
@@ -1899,7 +1906,8 @@ queries:
     sql: SELECT 'Jan' AS month, 100 AS revenue
 style:
   formats:
-    number: ",.0f"
+    aliases:
+      number: ",.0f"
 charts:
   revenue:
     query: q
@@ -1927,7 +1935,8 @@ queries:
     sql: SELECT 'Jan' AS month, 100 AS revenue
 style:
   formats:
-    mine: {alias_target}
+    aliases:
+      mine: {alias_target}
 charts:
   revenue:
     query: q
@@ -2445,7 +2454,9 @@ def test_board_alias_on_time_format_compiles_clean() -> None:
     narrowing the engine's own vocabulary must not narrow the board's.
     """
     result = compile_board(
-        _board_with_time_format("fiscal", formats='  formats:\n    fiscal: "%b \'%y"\n')
+        _board_with_time_format(
+            "fiscal", formats='  formats:\n    aliases:\n      fiscal: "%b \'%y"\n'
+        )
     )
     assert result.success, f"Compile failed: {result.errors}"
 
@@ -2543,7 +2554,9 @@ def test_d3_only_millisecond_directive_compiles_clean_on_time_format() -> None:
 def test_d3_only_millisecond_directive_compiles_clean_in_style_formats_alias() -> None:
     """The same d3-only directive is legal through a `style.formats` alias."""
     result = compile_board(
-        _board_with_time_format("ms", formats='  formats:\n    ms: "%H:%M:%S.%L"\n')
+        _board_with_time_format(
+            "ms", formats='  formats:\n    aliases:\n      ms: "%H:%M:%S.%L"\n'
+        )
     )
     assert result.success, f"Compile failed: {result.errors}"
 
@@ -2766,7 +2779,9 @@ def test_style_formats_alias_on_time_format_cannot_bypass_the_directive_gate() -
     letter while portable_strftime computes an unrelated value).
     """
     result = compile_board(
-        _board_with_time_format("myfmt", formats='  formats:\n    myfmt: "%C"\n')
+        _board_with_time_format(
+            "myfmt", formats='  formats:\n    aliases:\n      myfmt: "%C"\n'
+        )
     )
     assert not result.success, "an alias must not smuggle %C past the directive gate"
     assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"
@@ -2788,7 +2803,8 @@ queries:
     sql: SELECT '2024-01-01'::DATE AS month, 100 AS revenue
 style:
   formats:
-    myfmt: "%C"
+    aliases:
+      myfmt: "%C"
 charts:
   detail:
     query: q

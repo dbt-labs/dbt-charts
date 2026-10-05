@@ -71,7 +71,8 @@ obviously screaming*. Hold these when touching `compile/`:
   choice: it must match `build_source_index` keys and pydantic `loc` tuples, or a
   diagnostic naming an item silently resolves to no line at all.
 - **`base_dir` is board-global** — the `ProjectDirectory` a board resolves relative
-  refs against, used as `base_dir / ref` and threaded through normalized calls. A
+  refs against, passed to `compile/file_refs.py` (the one resolver; never a bare
+  `base_dir / ref`) and threaded through normalized calls. A
   nested import's child anchors at the imported file's own directory. The one ref
   with a second anchor is a query's inline file `source:`, which also tries the
   project root and errors when both hold the file; it never adds anchors beyond

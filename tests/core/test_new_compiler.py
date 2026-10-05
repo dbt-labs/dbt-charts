@@ -1137,7 +1137,7 @@ rows:
         )
 
         assert not result.success
-        assert any("External query file not found" in str(e) for e in result.errors)
+        assert any("'missing.yml' does not exist" in str(e) for e in result.errors)
 
     def test_multiple_external_queries_same_file(
         self, tmp_path, local_project: Callable[..., FilesystemProject]

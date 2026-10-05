@@ -15,6 +15,8 @@ from d3_format import format as d3_format
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedRulerAxis,
+    ResolvedScaleContinuousStyle,
+    ResolvedScaleLogStyle,
     ResolvedTickLabel,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import ladderless_tick_label
@@ -505,7 +507,7 @@ class TestEstimatedQuantitativeTickLabels:
     def test_empty_values_yields_empty_labels(self) -> None:
         assert (
             estimated_quantitative_tick_labels(
-                [], ResolvedFormat(spec="~s"), tick_label=None
+                [], ResolvedFormat(spec="~s"), tick_label=None, continuous=None
             )
             == []
         )
@@ -514,7 +516,10 @@ class TestEstimatedQuantitativeTickLabels:
         # domain_min is clamped to include 0 (common zero-anchored scale);
         # the max side must still be covered by an M-magnitude candidate.
         labels = estimated_quantitative_tick_labels(
-            [5.0, 1_500_000.0], ResolvedFormat(spec="~s"), tick_label=None
+            [5.0, 1_500_000.0],
+            ResolvedFormat(spec="~s"),
+            tick_label=None,
+            continuous=None,
         )
         assert "0" in labels
         assert any(label.endswith("M") for label in labels)
@@ -525,16 +530,22 @@ class TestEstimatedQuantitativeTickLabels:
         1,000,000 — one digit-group wider than the raw max.
         """
         labels = estimated_quantitative_tick_labels(
-            [0.0, 999_950.0], ResolvedFormat(spec=",.0f"), tick_label=None
+            [0.0, 999_950.0],
+            ResolvedFormat(spec=",.0f"),
+            tick_label=None,
+            continuous=None,
         )
         assert "1,000,000" in labels
 
     def test_wider_domain_yields_a_wider_max_label(self) -> None:
         narrow = estimated_quantitative_tick_labels(
-            [0.0, 5.0], ResolvedFormat(spec=",.0f"), tick_label=None
+            [0.0, 5.0], ResolvedFormat(spec=",.0f"), tick_label=None, continuous=None
         )
         wide = estimated_quantitative_tick_labels(
-            [0.0, 1_500_000.0], ResolvedFormat(spec=",.0f"), tick_label=None
+            [0.0, 1_500_000.0],
+            ResolvedFormat(spec=",.0f"),
+            tick_label=None,
+            continuous=None,
         )
         narrow_max_len = max(len(label) for label in narrow)
         wide_max_len = max(len(label) for label in wide)
@@ -553,12 +564,16 @@ class TestEstimatedQuantitativeTickLabels:
         gutter for a string the axis never draws.
         """
         plain_only = estimated_quantitative_tick_labels(
-            [0.0, 1_500_000.0], ResolvedFormat(spec=".3~r"), tick_label=None
+            [0.0, 1_500_000.0],
+            ResolvedFormat(spec=".3~r"),
+            tick_label=None,
+            continuous=None,
         )
         guarded = estimated_quantitative_tick_labels(
             [0.0, 1_500_000.0],
             ResolvedFormat(spec=".3~r"),
             tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+            continuous=None,
         )
         assert any(len(label) > 6 for label in plain_only)
         assert all(len(label) <= 6 for label in guarded)
@@ -569,6 +584,7 @@ class TestEstimatedQuantitativeTickLabels:
             [0.0, 0.5],
             ResolvedFormat(spec=".3~r"),
             tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+            continuous=None,
         )
         assert "0.5" in labels
 
@@ -577,6 +593,7 @@ class TestEstimatedQuantitativeTickLabels:
             [0.0, 1e-11],
             ResolvedFormat(spec=sub_unit_digit_format(".3~s")),
             tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+            continuous=None,
         )
         assert "1e-11" in labels
         assert not any("0.0000000000" in label for label in labels)
@@ -586,6 +603,7 @@ class TestEstimatedQuantitativeTickLabels:
             [0.0, 1e-11],
             ResolvedFormat(spec=sub_unit_digit_format(".3~s")),
             tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+            continuous=None,
         )
         assert "0" in labels
 
@@ -597,6 +615,7 @@ class TestEstimatedQuantitativeTickLabels:
             [0.0, 1_500_000.0],
             ResolvedFormat(spec=".3~r", prefix="EUR ", sign_placement="before_prefix"),
             tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+            continuous=None,
         )
         assert any(label.startswith("EUR ") for label in labels), labels
 
@@ -610,6 +629,7 @@ class TestEstimatedQuantitativeTickLabels:
             [0.0, 1_500_000.0],
             ResolvedFormat(spec=".3~r", notation="narrative"),
             tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+            continuous=None,
         )
         assert any(label.endswith("mn") for label in labels), labels
         assert not any(label.endswith("M") for label in labels), labels
@@ -622,6 +642,7 @@ class TestEstimatedQuantitativeTickLabels:
             [0.0, 1_500_000.0],
             ResolvedFormat(spec=".3~s", notation="narrative"),
             tick_label=None,
+            continuous=None,
         )
         assert any(label.endswith("mn") for label in labels), labels
 
@@ -640,6 +661,7 @@ def test_ladderless_estimate_measures_a_bare_zero_tick() -> None:
         [0.0, 2_000.0],
         ResolvedFormat(spec=".3~s", prefix="EUR ", sign_placement="before_prefix"),
         tick_label=ladderless_tick_label(ResolvedFormat(spec=".3~s"), ()),
+        continuous=None,
     )
     assert "0" in labels
     assert "EUR 0" not in labels
@@ -651,3 +673,46 @@ def test_after_prefix_measures_the_sign_after_the_prefix() -> None:
         "EUR −50,000",
         "0",
     ]
+
+
+class TestLogScaleEstimatedTickLabels:
+    def test_covers_sub_decade_multiples_across_niced_decades(self) -> None:
+        labels = estimated_quantitative_tick_labels(
+            [990_000_000.0, 8_200_000_000.0],
+            ResolvedFormat(spec="~s"),
+            tick_label=None,
+            continuous=ResolvedScaleContinuousStyle(type="log"),
+        )
+        assert {"100M", "500M", "900M", "1G", "9G", "10G"} <= set(labels)
+        assert "0" not in labels
+
+    def test_respects_an_authored_base(self) -> None:
+        labels = estimated_quantitative_tick_labels(
+            [3.0, 20.0],
+            ResolvedFormat(spec="~s"),
+            tick_label=None,
+            continuous=ResolvedScaleContinuousStyle(
+                type="log", log=ResolvedScaleLogStyle(base=2)
+            ),
+        )
+        assert {"2", "4", "8", "16", "32"} <= set(labels)
+
+    def test_base_below_one_ticks_at_reciprocal_powers(self) -> None:
+        labels = estimated_quantitative_tick_labels(
+            [3.0, 20.0],
+            ResolvedFormat(spec="~s"),
+            tick_label=None,
+            continuous=ResolvedScaleContinuousStyle(
+                type="log", log=ResolvedScaleLogStyle(base=0.5)
+            ),
+        )
+        assert {"2", "4", "8", "16", "32"} <= set(labels)
+
+    def test_within_one_decade_covers_the_linear_fallback(self) -> None:
+        labels = estimated_quantitative_tick_labels(
+            [1_200_000_000.0, 1_800_000_000.0],
+            ResolvedFormat(spec="~s"),
+            tick_label=None,
+            continuous=ResolvedScaleContinuousStyle(type="log"),
+        )
+        assert "1.5G" in labels

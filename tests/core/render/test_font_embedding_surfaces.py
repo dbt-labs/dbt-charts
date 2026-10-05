@@ -388,8 +388,9 @@ class TestItalicOutsideMarkdownEmphasis:
             message="Something went wrong while loading this chart.",
             hint="Check the query name and try again.",
             width=400.0,
-            callout_style=style.chart_defaults.callout,
+            callout_style=style.chart_defaults.callout_error,
             markdown=False,
+            base_dir=None,
         )
         assert 'font-style="italic"' in svg
         # Not just truthiness: without the unescape the set is still non-empty, it

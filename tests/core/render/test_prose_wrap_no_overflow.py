@@ -84,6 +84,8 @@ def test_prose_never_paints_past_the_viewport_that_clips_it(theme: str) -> None:
             width,
             resolved,
             text_style=resolved.text,
+            base_dir=None,
+            error_collector=None,
             painted_canvas=None,
             plan=full_width_plan(resolved, width),
         )

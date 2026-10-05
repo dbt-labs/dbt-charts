@@ -197,7 +197,7 @@ def test_resolve_style_border_is_compiled_border():
 
 
 def test_resolve_style_charts_callout_border_is_compiled_border():
-    """resolve_chart_style_context().callout.border is BorderStyle."""
+    """A resolved callout's border is BorderStyle."""
     from dbt_charts.core.compile.config import reset_config
     from dbt_charts.core.compile.models.primitives import BorderStyle
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -205,7 +205,7 @@ def test_resolve_style_charts_callout_border_is_compiled_border():
     reset_config()
     try:
         rs = resolve_chart_style_context(get_theme_style())
-        assert isinstance(rs.callout.border, BorderStyle)
+        assert isinstance(rs.callout_error.border, BorderStyle)
     finally:
         reset_config()
 

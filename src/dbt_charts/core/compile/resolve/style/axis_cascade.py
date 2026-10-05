@@ -929,7 +929,7 @@ def _merge_axis_cascade(
     plus any band_position found along the way.
 
     ``base.labels.format`` on the returned axis is the *raw*, pre-resolution
-    format string (a predefined name like ``"number"``, a ``style.formats``
+    format string (a predefined name like ``"number"``, a ``style.formats.aliases``
     alias key, or a literal d3 spec) — whichever layer (theme default or an
     authored one) won the merge last. This function does not resolve it and
     tracks no provenance about which tier wrote it — see

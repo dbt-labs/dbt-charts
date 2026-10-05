@@ -615,7 +615,9 @@ class TestBoldFontWeightCascade:
 
         rs = resolve_style(get_theme_style())
         csc = resolve_chart_style_context(get_theme_style())
-        assert csc.callout.bold_font_weight == font_weight_as_css(rs.text.bold.weight)
+        assert csc.callout_error.bold_font_weight == font_weight_as_css(
+            rs.text.bold.weight
+        )
 
 
 class TestNoMarkdownDefaultsYml:

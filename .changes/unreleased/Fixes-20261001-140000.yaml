@@ -1,0 +1,3 @@
+kind: Fixes
+body: Right-aligned labels on a right-hand `log` y-axis no longer cross the axis line. The label gutter is now sized for the ticks a log scale actually draws (such as "500M"). A `log` scale also now rejects, at compile time, a `domain` bound at or below 0, or a `log.base` at or below 0 or equal to 1.
+time: 2026-10-01T14:00:00.000000-07:00

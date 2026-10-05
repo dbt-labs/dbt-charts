@@ -197,7 +197,7 @@ class Format(Facet):
     """The value is a number or time format: a predefined name, or a d3 spec.
 
     The engine's own names reach the schema as `FormatAlias`, but a board's
-    `style.formats` map adds aliases of its own, and `formats` merges key-wise
+    `style.formats.aliases` map adds names of its own, and `formats` merges key-wise
     down the cascade — so the legal names on a chart depend on the board it
     sits in, which no wheel-shipped Literal can hold. The facet is what lets a
     surface holding a board widen the offer to the aliases that board defines,
@@ -209,7 +209,7 @@ class Format(Facet):
     a date on the next. Two are not — `number_format` feeds a quantitative axis
     and `time_format` a temporal one — and there the wrong half is a d3 number
     spec baked onto a date, which renders garbage rather than failing. A board's
-    own `style.formats` aliases are never kind-narrowed: the engine cannot know
+    own `style.formats.aliases` names are never kind-narrowed: the engine cannot know
     what spec a user's alias targets, so they stay legal in every slot.
     """
 

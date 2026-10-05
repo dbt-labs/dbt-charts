@@ -283,7 +283,7 @@ def test_compile_cross_file_ref_without_base_dir_errors_clearly() -> None:
     result = compile(yaml_with_ref)
 
     assert not result.success
-    assert any("base directory context" in str(e) for e in result.errors), [
+    assert any("no project location" in str(e) for e in result.errors), [
         str(e) for e in result.errors
     ]
 

@@ -639,7 +639,7 @@ Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
 | `variables` | [VariablesStyle](#variablesstyle) | Variable controls chrome style. |
 | `footer` | [FooterStyle](#footerstyle) | Page footer chrome visibility. |
 | `timestamp` | [TimestampStyle](#timestampstyle) | Data-freshness chrome: visibility, placement, format, and font. |
-| `formats` | dict[str, str \| [FormatConfig](#formatconfig)] | Format alias map; None means no aliases at this cascade level. |
+| `formats` | [FormatsStyle](#formatsstyle) | Format settings: the board's own format names under `aliases`. |
 | `palettes` | dict[str, one of: 'category-6-tonal-blue', 'category-6-tonal-blue.dark', 'category-6-tonal-blue.deep', 'category-6-tonal-blue.light', 'category-6-tonal-blue.pale', 'category-6-tonal-brown', 'category-6-tonal-brown.dark', 'category-6-tonal-brown.deep', 'category-6-tonal-brown.light', 'category-6-tonal-brown.pale', 'category-6-tonal-green', 'category-6-tonal-green.dark', 'category-6-tonal-green.deep', 'category-6-tonal-green.light', 'category-6-tonal-green.pale', 'category-6-tonal-orange', 'category-6-tonal-orange.dark', 'category-6-tonal-orange.deep', 'category-6-tonal-orange.light', 'category-6-tonal-orange.pale', 'category-6-tonal-purple', 'category-6-tonal-purple.dark', 'category-6-tonal-purple.deep', 'category-6-tonal-purple.light', 'category-6-tonal-purple.pale', 'dbt-creams', 'dbt-div-blue-red', 'dbt-div-blue-red-dark', 'dbt-div-coolwarm', 'dbt-div-coolwarm-dark', 'dbt-div-crimson-green', 'dbt-div-crimson-green-dark', 'dbt-div-orange-teal', 'dbt-div-orange-teal-dark', 'dbt-div-sunset', 'dbt-div-sunset-dark', 'dbt-grays', 'dbt-seq-amber', 'dbt-seq-amber-dark', 'dbt-seq-blue', 'dbt-seq-blue-dark', 'dbt-seq-brown', 'dbt-seq-brown-dark', 'dbt-seq-gray', 'dbt-seq-gray-dark', 'dbt-seq-green', 'dbt-seq-green-dark', 'dbt-seq-purple', 'dbt-seq-purple-dark', 'dbt-seq-rust', 'dbt-seq-rust-dark', 'dbt-seq-teal', 'dbt-seq-teal-dark', 'editorial-10', 'editorial-10.dark', 'editorial-10.deep', 'editorial-10.light', 'editorial-10.pale', 'hero-6', 'hero-6.dark', 'hero-6.deep', 'hero-6.light', 'hero-6.pale', 'info', 'negative', 'positive', 'tableau', 'tableau.dark', 'tableau.deep', 'tableau.light', 'tableau.pale', 'vivid-10', 'vivid-10.dark', 'vivid-10.deep', 'vivid-10.light', 'vivid-10.pale', 'warning'] | Theme palette role assignments: open dict mapping role name to palette file name. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge. |
 | `tones` | [KpiTonesStyle](#kpitonesstyle) | Semantic tone color palette (positive/negative/warning/info) for KPI support rows, table conditional glyphs, and spark negative_color. |
 | `roles` | dict[str, str] | Optional top-level theme role aliases: bare name → role.alias. e.g. ink: chrome.heading |
@@ -1094,8 +1094,8 @@ Authored overlay for CalloutChartStyle. Chart-family style for ``type: callout``
 |-------|------|-------------|
 | `preferred_width` | float | Preferred callout width in pixels. |
 | `tone` | enum: "positive", "negative", "warning", "info" | Semantic tone for palette-role lookup (info \| positive \| negative \| warning). |
-| `background` | str | Callout card background color (info.bg default). |
-| `border` | [BorderStyle](#borderstyle) | Callout card border style. |
+| `background` | str | Callout card background color. `by_tone` is the tone's color. |
+| `border` | [BorderStyle](#borderstyle) | Callout card border style. A color of `by_tone` is the tone's color. |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `section_gap` | float | Vertical gap between callout title and message in pixels. |
 | `title` | [CalloutElementStyle](#calloutelementstyle) | Callout title element style. |
@@ -1351,18 +1351,13 @@ Authored overlay for TimestampStyle. Authored data-freshness chrome: visibility,
 | `y` | float | Y-coordinate for top-positioned timestamp in pixels. |
 | `font` | [FontStyle](#fontstyle) | Timestamp font style overrides (size, color, weight, ...). |
 
-<a id="formatconfig"></a>
-## FormatConfig
-Format configuration for value display.
+<a id="formatsstyle"></a>
+## FormatsStyle
+Authored overlay for FormatsStyle. Format settings. Fixed keys, so an author's names sit in a map of their own.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `spec` | str | D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern. |
-| `prefix` | str | Text placed before the formatted value (e.g., '$'). |
-| `suffix` | str | Text placed after the formatted value (e.g., ' USD', '%'). |
-| `notation` | enum: "analytic", "narrative" | Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn). |
-| `sign_placement` | enum: "before_prefix", "after_prefix" | Where a negative sign sits against the prefix: 'before_prefix' (−€500) or 'after_prefix' (EUR −500). Unset: after_prefix when the prefix ends in a space or paints on one value only, else before_prefix. Table columns keep the sign with the digits and reject it. |
-| `repeat` | enum: "every", "anchor" | Whether the prefix/suffix paints on 'every' value of an axis, table column or support_table row, or on one 'anchor' value. Unset keeps each surface's default. Single-value slots ignore it. |
+| `aliases` | dict[str, str \| [FormatConfig](#formatconfig)] | Format names: each key is a name charts, tables and KPIs can use as a format, each value a format spec or a format with a prefix/suffix. |
 
 <a id="kpitonesstyle"></a>
 ## KpiTonesStyle
@@ -1550,6 +1545,19 @@ Authored overlay for BandAxisStyle. Scale-type overlay for band (categorical) ax
 | `title` | [AxisTitleStyle](#axistitlestyle) | Axis title style. |
 | `scale` | [BaseScaleStyle](#basescalestyle) | Per-axis scale overrides; None means no override. |
 | `band_position` | float | Band position within the step (0–1); None uses Vega-Lite's default. |
+
+<a id="formatconfig"></a>
+## FormatConfig
+Format configuration for value display.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `spec` | str | D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern. |
+| `prefix` | str | Text placed before the formatted value (e.g., '$'). |
+| `suffix` | str | Text placed after the formatted value (e.g., ' USD', '%'). |
+| `notation` | enum: "analytic", "narrative" | Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn). |
+| `sign_placement` | enum: "before_prefix", "after_prefix" | Where a negative sign sits against the prefix: 'before_prefix' (−€500) or 'after_prefix' (EUR −500). Unset: after_prefix when the prefix ends in a space or paints on one value only, else before_prefix. Table columns keep the sign with the digits and reject it. |
+| `repeat` | enum: "every", "anchor" | Whether the prefix/suffix paints on 'every' value of an axis, table column or support_table row, or on one 'anchor' value. Unset keeps each surface's default. Single-value slots ignore it. |
 
 <a id="supporttablestyle"></a>
 ## SupportTableStyle
@@ -1954,7 +1962,7 @@ Authored overlay for CalloutElementStyle. Font + y_offset for a callout title or
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `font` | [FontStyle](#fontstyle) | Element font style overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
+| `font` | [FontStyle](#fontstyle) | Element font style overrides. A color of `by_tone` is the tone's color. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
 | `y_offset` | float | Vertical offset from the element's anchor in pixels. |
 
 <a id="sparkbarbarstyle"></a>

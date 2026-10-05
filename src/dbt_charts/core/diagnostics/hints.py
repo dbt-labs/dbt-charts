@@ -196,7 +196,7 @@ def suggest_close_format(
     # Only when the successor is legal *here*: `available` is scoped to the
     # slot's own half of the vocabulary, so offering a number name to a
     # `time_format:` slot would trade a fuzzy wrong answer for a confident one.
-    # An empty pool means no name is legal — the `style.formats` alias-target
+    # An empty pool means no name is legal — the `style.formats.aliases` target
     # check passes one, and a predefined successor there re-raises on the very
     # next compile.
     if successor is not None and successor in available:

@@ -99,7 +99,14 @@ def _render(markdown: str, width: float, n_cols: int | None) -> str:
     )
     text_style = resolved.text.model_copy(update={"column": col})
     svg, _ = render_prose_svg(
-        markdown, width, text_style, resolved, plan=full_width_plan(resolved, width)
+        markdown,
+        width,
+        text_style,
+        resolved,
+        authored=markdown,
+        base_dir=None,
+        error_collector=None,
+        plan=full_width_plan(resolved, width),
     )
     return svg
 
@@ -159,6 +166,9 @@ def test_a_mid_blob_heading_keeps_its_full_margin() -> None:
         _WIDE_SLOT,
         text_style,
         resolved,
+        authored=ONE_PARAGRAPH,
+        base_dir=None,
+        error_collector=None,
         plan=full_width_plan(resolved, _WIDE_SLOT),
     )
 

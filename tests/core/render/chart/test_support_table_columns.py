@@ -803,12 +803,12 @@ def test_per_series_column_cells_use_dark_fills_when_font_color_unset():
 
 
 # =============================================================================
-# COLUMN RULE (style.support_table.row.rule as a vertical divider between columns)
+# COLUMN DIVIDER (style.support_table.row.divider as a vertical divider between columns)
 # =============================================================================
 
 
 def test_attach_columns_emits_vertical_rule_between_columns_when_width_positive():
-    """row.rule becomes a vertical rule between columns — the transpose of the
+    """row.divider becomes a vertical line between columns — the transpose of the
     row strip's horizontal inter-row rule. This is what lets a Total column
     read as ruled off, the way a table's totals row does.
     """
@@ -826,8 +826,8 @@ def test_attach_columns_emits_vertical_rule_between_columns_when_width_positive(
         position="left",
         row=_dt_style().row.model_copy(
             update={
-                "rule": _dt_style().row.rule.model_copy(
-                    update={"width": 1.0, "color": "#888888"}
+                "divider": _dt_style().row.divider.model_copy(
+                    update={"visible": True, "width": 1.0, "color": "#888888"}
                 )
             }
         ),
@@ -899,7 +899,11 @@ def test_attach_columns_rule_never_overprints_neighboring_column_text(position):
     style = _dt_style(
         position=position,
         row=_dt_style().row.model_copy(
-            update={"rule": _dt_style().row.rule.model_copy(update={"width": 1.0})}
+            update={
+                "divider": _dt_style().row.divider.model_copy(
+                    update={"visible": True, "width": 1.0}
+                )
+            }
         ),
     )
     # label.font.size is an InheritSlot only filled by the chart-local
@@ -1145,7 +1149,11 @@ def test_attach_columns_rule_explicitly_nulls_y_to_avoid_stray_domain_entry():
         style=_dt_style(
             position="left",
             row=_dt_style().row.model_copy(
-                update={"rule": _dt_style().row.rule.model_copy(update={"width": 1.0})}
+                update={
+                    "divider": _dt_style().row.divider.model_copy(
+                        update={"visible": True, "width": 1.0}
+                    )
+                }
             ),
         ),
         entry_numerals=numerals,
@@ -1193,7 +1201,11 @@ def test_attach_columns_rule_is_not_announced_to_screen_readers():
         style=_dt_style(
             position="left",
             row=_dt_style().row.model_copy(
-                update={"rule": _dt_style().row.rule.model_copy(update={"width": 1.0})}
+                update={
+                    "divider": _dt_style().row.divider.model_copy(
+                        update={"visible": True, "width": 1.0}
+                    )
+                }
             ),
         ),
         entry_numerals=numerals,

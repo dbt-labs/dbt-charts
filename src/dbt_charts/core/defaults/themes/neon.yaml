@@ -66,9 +66,11 @@ style:
         color: *high
         width: 3
         radius: 0
-    # Markdown rules + markdown-table gridlines (was charts.table.border.color).
-    rule:
+    divider:
       color: *faint
+    column:
+      divider:
+        color: *faint
   charts:
     color:
       categorical:
@@ -185,10 +187,21 @@ style:
           align: inward
     table:
       header:
+        divider:
+          color: *high
         background: *panel
         font:
           color: *high
       row:
+        divider:
+          color: *high
+        roles:
+          summary:
+            divider:
+              color: *high
+          total:
+            divider:
+              color: *high
         stripe:
           color: *panel
       spark:
@@ -202,6 +215,9 @@ style:
           color: *mid
       divider:
         color: *faint
+      row:
+        divider:
+          color: *faint
     # Resets border.width / shadow.visible / swatch.radius / active_marker --
     # stark (the structural root) sets 1.5 / false / 0 / triangle for its own
     # utilitarian look; those values would otherwise leak into neon, which

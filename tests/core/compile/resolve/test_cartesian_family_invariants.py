@@ -14,7 +14,7 @@ family is exactly the failure mode this file exists to catch.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -283,14 +283,15 @@ class TestLayersWithAuthoredYDomainRaises:
             }
         ),
     )
+    @pytest.mark.parametrize("side", ["left", "right"])
     def test_layers_with_authored_y_domain_and_split_axis_raises(
-        self, family: str
+        self, family: str, side: Literal["left", "right"]
     ) -> None:
         style_patch_cls = _STYLE_PATCHES[family]
         chart = _BUILDERS[family](
             layers=[
                 LineLayer(
-                    type="line", y="target", axis_y=LayerAxisYStyle(position="right")
+                    type="line", y="target", axis_y=LayerAxisYStyle(position=side)
                 )
             ],
             style=style_patch_cls.model_validate(
@@ -301,7 +302,7 @@ class TestLayersWithAuthoredYDomainRaises:
             resolve(chart, _LAYER_DATA, _board())
         assert exc_info.value.code is not None
         assert exc_info.value.code.code == "ERR-LAYERS-AMBIGUOUS-Y-DOMAIN", (
-            f"{family}: layered chart with a right-pinned overlay and an authored "
+            f"{family}: layered chart with a {side}-pinned overlay and an authored "
             f"axis_y.scale.domain did not raise ERR-LAYERS-AMBIGUOUS-Y-DOMAIN"
         )
 

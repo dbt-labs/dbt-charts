@@ -29,7 +29,7 @@ def label_jinja_env() -> BoardTemplateEnvironment:
         autoescape=False,
         finalize=_finalize_none,
     )
-    env.filters["format"] = format_filter
+    env.filters["format"] = _format_filter
     return env
 
 
@@ -38,7 +38,7 @@ def _finalize_none(value: Any) -> Any:
     return "" if value is None else value
 
 
-def format_filter(
+def _format_filter(
     value: Any,  # type-state: explicit_any — any row value
     spec: str,
 ) -> str:

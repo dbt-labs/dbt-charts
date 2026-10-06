@@ -6,7 +6,10 @@ from typing import Literal
 
 from pydantic import Field
 
-from dbt_charts.core.compile.models.chart.authored import KpiSupportConfig
+from dbt_charts.core.compile.models.chart.authored import (
+    ConditionalRule,
+    KpiSupportConfig,
+)
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedKpiStyle
 
@@ -17,6 +20,10 @@ class ResolvedKpiSupportConfig(KpiSupportConfig):
     format: ResolvedFormat | None = Field(
         default=None,
         description="Resolved support value format; a date value defaults to date_short when None.",
+    )
+    rules: tuple[ConditionalRule, ...] | None = Field(
+        default=None,
+        description="Color-resolved `conditional_formatting` rules keyed on the support column; None when the chart authors none.",
     )
 
 

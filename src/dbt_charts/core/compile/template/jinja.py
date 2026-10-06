@@ -379,6 +379,14 @@ def resolve_jinja_template(
     return result
 
 
+def extract_sql_variable_dependencies(sql: str, setup_sql: str | None) -> set[str]:
+    """Variables named by a SQL query's own `sql` and `setup_sql`."""
+    deps = extract_variable_dependencies(sql)
+    if setup_sql:
+        deps |= extract_variable_dependencies(setup_sql)
+    return deps
+
+
 def detect_query_dependencies(queries: dict[str, Any]) -> dict[str, list[str]]:
     """Detect dependencies between queries for circular reference detection.
 

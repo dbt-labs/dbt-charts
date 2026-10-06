@@ -23,6 +23,7 @@ chart's. With no side pinned every layer is checked against the chart's format.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -484,3 +485,75 @@ def test_currency_suffix_with_percent_format_still_fires() -> None:
 @pytest.mark.parametrize("suffix", sorted(detector._PERCENT_SUFFIXES))
 def test_percent_suffix_never_classifies_as_currency(suffix: str) -> None:
     assert detector._classify(f"usd_revenue_dollars{suffix}") == "percent"
+
+
+# ---------------------------------------------------------------------------
+# Table columns: unformatted 0-1 fractions render as SI ("437m")
+# ---------------------------------------------------------------------------
+
+_FRACTION_ROWS = [
+    {"plan": "a", "conv": 0.4367},
+    {"plan": "b", "conv": 0.1203},
+    {"plan": "c", "conv": None},
+]
+
+
+def _table_ctx(rows: list[dict[str, Any]], **kwargs: Any) -> WarningContext:
+    return _make_ctx(_make_chart(type="table", **kwargs), rows=rows)
+
+
+def test_table_unformatted_fraction_column_fires() -> None:
+    (w,) = detector.detect(_table_ctx(_FRACTION_ROWS))
+    assert w.code == WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.code
+    assert w.chart == "c1"
+    assert w.field == "conv"
+    assert w.path == "charts.c1.style.columns.conv.format"
+    assert ".1%" in (w.fix or "")
+    assert w.message.endswith("but the table column has no format.")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"style": {"columns": {"conv": {"format": ".1%"}}}},
+        {"style": {"columns": {"conv": {"format": ".2f"}}}},
+    ],
+)
+def test_table_fraction_column_with_authored_format_no_warning(
+    kwargs: dict[str, Any],
+) -> None:
+    assert detector.detect(_table_ctx(_FRACTION_ROWS, **kwargs)) == []
+
+
+def test_table_flag_column_no_warning() -> None:
+    rows = [{"plan": "a", "is_active": 1}, {"plan": "b", "is_active": 0}]
+    assert detector.detect(_table_ctx(rows)) == []
+
+
+def test_table_non_fraction_numeric_column_no_warning() -> None:
+    rows = [{"plan": "a", "n": 0.4}, {"plan": "b", "n": 12}]
+    assert detector.detect(_table_ctx(rows)) == []
+
+
+def test_table_fraction_column_with_column_defaults_format_no_warning() -> None:
+    kwargs = {"style": {"column_defaults": {"format": ".1%"}}}
+    assert detector.detect(_table_ctx(_FRACTION_ROWS, **kwargs)) == []
+
+
+def test_table_absent_from_chart_results_is_skipped() -> None:
+    """A table whose query failed or isn't in the layout has no chart_results
+    entry; the detector must skip it, not stop checking the board."""
+    ctx = _table_ctx(_FRACTION_ROWS)
+    ctx.chart_results.clear()
+    assert detector.detect(ctx) == []
+
+
+def test_table_nan_decimal_cell_does_not_crash() -> None:
+    rows = [{"conv": Decimal("0.4367")}, {"conv": Decimal("NaN")}]
+    assert detector.detect(_table_ctx(rows)) == []
+
+
+def test_table_numeric_string_fractions_fire() -> None:
+    rows = [{"conv": "0.4367"}, {"conv": "0.1203"}]
+    (w,) = detector.detect(_table_ctx(rows))
+    assert w.field == "conv"

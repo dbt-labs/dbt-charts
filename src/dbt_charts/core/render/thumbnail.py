@@ -58,6 +58,7 @@ _REMOVED_CLASSES = frozenset(
 )
 _FOOTER_CLASS = "dbt-footer-link"
 _A11Y_ATTRS = ("aria-label", "aria-roledescription", "aria-hidden", "role")
+_A11Y_ELEMENTS = frozenset({"title", "desc"})
 # Attributes that carry the board's own words, which a thumbnail must not keep.
 _PROSE_ATTRS = (
     "data-chart-title",
@@ -613,9 +614,13 @@ def _strip_fonts(ctx: _Ctx) -> None:
 
 def _strip_inert(ctx: _Ctx) -> None:
     """Drop what paints nothing and says nothing in a picture: accessibility
-    and prose attributes and pointer-target rects (transparent fill, no stroke)."""
+    elements and attributes, prose attributes, and pointer-target rects
+    (transparent fill, no stroke)."""
     ctx.refresh()
     for el in list(ctx.root.iter()):
+        if _local(el.tag) in _A11Y_ELEMENTS:
+            ctx.parents[el].remove(el)
+            continue
         for attr in (*_A11Y_ATTRS, *_PROSE_ATTRS):
             el.attrib.pop(attr, None)
         if (

@@ -312,11 +312,15 @@ class ProsePlan:
             in pixels. A block's own container width is measured against it.
         gap: Gap between the cards of a ``cols:`` row at the run's position, in
             pixels; the spans are separated by it.
+        snap: Whether some prose block on the board lays out in two or more
+            columns. Only then does a block that earns one column keep to its
+            span; otherwise it may widen to the readable measure.
     """
 
     grid: Literal[1, 2, 3]
     board_width: float
     gap: float
+    snap: bool
 
 
 # ============================================================================

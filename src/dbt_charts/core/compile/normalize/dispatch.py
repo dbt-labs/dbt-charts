@@ -87,6 +87,7 @@ from dbt_charts.core.compile.normalize.layout import (
     prefixed,
 )
 from dbt_charts.core.compile.normalize.queries import (
+    expand_composed_variable_dependencies,
     normalize_query as normalize_query,  # re-exported (used by compiler.py, tests)
 )
 from dbt_charts.core.compile.normalize.single_series_allocation import (
@@ -766,6 +767,8 @@ def normalize_board(
         cache_root=cache_root,
         board_cache=board_cache,
     )
+
+    expand_composed_variable_dependencies(query_registry)
 
     # Compute cascading dropdown dependencies from Jinja variable references
     compute_variable_dependencies(local_variables, query_registry)

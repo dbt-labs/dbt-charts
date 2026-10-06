@@ -35,6 +35,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
     resolve_style_and_context,
 )
+from dbt_charts.core.compile.sizing import WidthMeasurer, layout_intrinsic_width
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render.sizing import get_chart_content_height
 
@@ -533,7 +534,6 @@ class TestContentBoxAccounting:
     def test_preferred_width_measure_respects_layout_direction(self):
         from dbt_charts.core.compile.models.board.normalized import Layout, LayoutItem
         from dbt_charts.core.compile.models.chart.normalized import KpiChart
-        from dbt_charts.core.compile.sizing import measure_preferred_layout_width
 
         first = KpiChart(
             id="first", type="kpi", value="value", style={"preferred_width": 300.0}
@@ -549,49 +549,45 @@ class TestContentBoxAccounting:
         ]
 
         assert (
-            measure_preferred_layout_width(
+            layout_intrinsic_width(
                 Layout(type="rows", items=items),
                 style,
                 ctx,
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
-                card_padding=0.0,
-                variable_values={},
-            )
+                measurer=WidthMeasurer({}),
+            ).preferred
             == 600.0
         )
         assert (
-            measure_preferred_layout_width(
+            layout_intrinsic_width(
                 Layout(type="cols", items=items),
                 style,
                 ctx,
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
-                card_padding=0.0,
-                variable_values={},
-            )
+                measurer=WidthMeasurer({}),
+            ).preferred
             == 916.0
         )
         assert (
-            measure_preferred_layout_width(
+            layout_intrinsic_width(
                 Layout(type="tabs", items=items),
                 style,
                 ctx,
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
-                card_padding=0.0,
-                variable_values={},
-            )
+                measurer=WidthMeasurer({}),
+            ).preferred
             == 600.0
         )
 
     def test_preferred_width_measure_respects_grid_spans_and_wrapper_widths(self):
         from dbt_charts.core.compile.models.board.normalized import Layout, LayoutItem
         from dbt_charts.core.compile.models.chart.normalized import KpiChart
-        from dbt_charts.core.compile.sizing import measure_preferred_layout_width
 
         first = KpiChart(
             id="first", type="kpi", value="value", style={"preferred_width": 300.0}
@@ -607,16 +603,15 @@ class TestContentBoxAccounting:
         ]
 
         assert (
-            measure_preferred_layout_width(
+            layout_intrinsic_width(
                 Layout(type="grid", items=grid_items, columns=24),
                 style,
                 ctx,
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
-                card_padding=0.0,
-                variable_values={},
-            )
+                measurer=WidthMeasurer({}),
+            ).preferred
             == 616.0
         )
 
@@ -625,23 +620,21 @@ class TestContentBoxAccounting:
             LayoutItem(type="chart", chart=second, user_width="200px"),
         ]
         assert (
-            measure_preferred_layout_width(
+            layout_intrinsic_width(
                 Layout(type="cols", items=wrapped),
                 style,
                 ctx,
                 max_content_width=1000.0,
                 gap=16.0,
                 card_gap=0.0,
-                card_padding=0.0,
-                variable_values={},
-            )
+                measurer=WidthMeasurer({}),
+            ).preferred
             == 716.0
         )
 
     def test_sparse_grid_measure_preserves_item_preferred_width(self):
         from dbt_charts.core.compile.models.board.normalized import Layout, LayoutItem
         from dbt_charts.core.compile.models.chart.normalized import KpiChart
-        from dbt_charts.core.compile.sizing import measure_preferred_layout_width
         from dbt_charts.core.render.sizing import _calculate_grid_dimensions
 
         chart = KpiChart(
@@ -651,16 +644,15 @@ class TestContentBoxAccounting:
             type="chart", chart=chart, col=0, row=0, col_span=6, row_span=1
         )
         layout = Layout(type="grid", items=[item], columns=24)
-        measured = measure_preferred_layout_width(
+        measured = layout_intrinsic_width(
             layout,
             _default_resolved_style(),
             _default_chart_style_context(),
             max_content_width=2000.0,
             gap=16.0,
             card_gap=0.0,
-            card_padding=0.0,
-            variable_values={},
-        )
+            measurer=WidthMeasurer({}),
+        ).preferred
 
         assert measured == 1248.0
         _calculate_grid_dimensions(
@@ -676,27 +668,24 @@ class TestContentBoxAccounting:
 
     def test_preferred_width_measure_returns_none_without_charts(self):
         from dbt_charts.core.compile.models.board.normalized import Layout
-        from dbt_charts.core.compile.sizing import measure_preferred_layout_width
 
         assert (
-            measure_preferred_layout_width(
+            layout_intrinsic_width(
                 Layout(type="rows", items=[]),
                 _default_resolved_style(),
                 _default_chart_style_context(),
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
-                card_padding=0.0,
-                variable_values={},
-            )
+                measurer=WidthMeasurer({}),
+            ).preferred
             is None
         )
 
     def test_preferred_width_measure_adds_cols_gap_for_short_text_item(self):
         from dbt_charts.core.compile.resolve.style.markdown_style import (
-            prose_max_content_width,
+            prose_content_widths,
         )
-        from dbt_charts.core.compile.sizing import measure_preferred_layout_width
 
         result = compile(
             """
@@ -720,22 +709,25 @@ cols:
         assert result.success, result.errors
         assert result.board is not None
 
-        text_width = prose_max_content_width(
+        _, text_width = prose_content_widths(
             "Context", result.board.resolved_style, {}, None
         )
-        assert measure_preferred_layout_width(
+        assert layout_intrinsic_width(
             result.board.layout,
             result.board.resolved_style,
             result.board.chart_style_context,
             max_content_width=1000.0,
             gap=16.0,
             card_gap=0.0,
-            card_padding=0.0,
-            variable_values={},
-        ) == pytest.approx(300.0 + 16.0 + text_width)
+            measurer=WidthMeasurer({}),
+        ).preferred == pytest.approx(
+            300.0
+            + 16.0
+            + text_width
+            + 2 * float(result.board.resolved_style.frame.card_padding)
+        )
 
     def test_preferred_width_measure_adds_nested_board_chrome(self):
-        from dbt_charts.core.compile.sizing import measure_preferred_layout_width
 
         result = compile(
             """
@@ -763,16 +755,15 @@ rows:
         assert result.board is not None
 
         assert (
-            measure_preferred_layout_width(
+            layout_intrinsic_width(
                 result.board.layout,
                 result.board.resolved_style,
                 result.board.chart_style_context,
                 max_content_width=1000.0,
                 gap=16.0,
                 card_gap=0.0,
-                card_padding=0.0,
-                variable_values={},
-            )
+                measurer=WidthMeasurer({}),
+            ).preferred
             == 330.0
         )
 
@@ -5170,3 +5161,63 @@ class TestTitleMeasureMatchesPaint:
         assert painted is not None
         assert reserved == pytest.approx(float(painted.group(1)), abs=0.01)
         assert reserved > 80
+
+
+class TestIntrinsicWidthCombination:
+    """min/preferred combine through one fold, for the root and nested boards alike."""
+
+    @staticmethod
+    def _board(yaml: str) -> Board:
+        result = compile(yaml)
+        assert result.success and result.board is not None, result.errors
+        return result.board
+
+    def test_cols_sum_each_column_min_and_preferred(self) -> None:
+        from dbt_charts.core.compile.sizing import (
+            WidthMeasurer,
+            board_intrinsic_width,
+            get_board_gap,
+        )
+
+        board = self._board(
+            "cols:\n  - text: one\n  - text: two\n  - text: three\nstyle:\n  gap: 10\n"
+            "  footer:\n    visible: false\n  timestamp:\n    visible: false\n"
+        )
+        measurer = WidthMeasurer({})
+        columns = [
+            measurer.board_own_width(item.board, False)
+            for item in board.layout.items
+            if item.board is not None
+        ]
+        width = board_intrinsic_width(
+            board,
+            True,
+            max_content_width=1000.0,
+            card_gap=0.0,
+            measurer=measurer,
+        )
+        gaps = 2 * get_board_gap(board)
+        assert width.min == pytest.approx(sum(c.min for c in columns) + gaps)
+        assert width.preferred == pytest.approx(
+            sum(c.preferred for c in columns) + gaps
+        )
+
+    def test_root_and_nested_board_report_the_same_content_width(self) -> None:
+        from dbt_charts.core.compile.sizing import WidthMeasurer, board_intrinsic_width
+
+        root = self._board(
+            "text: hello\nstyle:\n"
+            "  footer:\n    visible: false\n  timestamp:\n    visible: false\n"
+            "rows:\n  - text: inner\n"
+        )
+        nested = root.layout.items[0].board
+        assert nested is not None
+        kwargs = {
+            "max_content_width": 1000.0,
+            "card_gap": 0.0,
+            "measurer": WidthMeasurer({}),
+        }
+        nested_width = board_intrinsic_width(nested, True, **kwargs)
+        inset = board_intrinsic_width(nested, False, **kwargs)
+        assert nested_width.min > 0
+        assert inset == nested_width  # no padding or margin to add

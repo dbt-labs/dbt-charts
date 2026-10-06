@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
-from dbt_charts.core.compile.models.primitives import FontStyle, RuleStyle
+from dbt_charts.core.compile.models.primitives import DividerStyle, FontStyle
 from dbt_charts.core.compile.models.style.authored import (
     ChartStylePatch,
 )
@@ -63,7 +63,7 @@ def test_compiled_support_table_style_has_all_spec_leaves():
     assert hasattr(s, "font")
     assert isinstance(s.font, FontStyle)
     assert hasattr(s, "divider")
-    assert isinstance(s.divider, RuleStyle)
+    assert isinstance(s.divider, DividerStyle)
     assert hasattr(s, "row")
     assert isinstance(s.row, SupportTableRowStyle)
     assert hasattr(s, "label")
@@ -102,7 +102,9 @@ def test_support_table_tier1_override_does_not_cross_into_bar_font():
 
 
 def test_support_table_divider_width_override():
-    theme = _theme_with_support_table(divider=RuleStyle(width=3.0, continuous=True))
+    theme = _theme_with_support_table(
+        divider=DividerStyle(visible=True, width=3.0, color="#888888")
+    )
     resolved = resolve_chart_style_context(theme)
     assert resolved.support_table.divider.width == 3.0
 

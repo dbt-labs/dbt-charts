@@ -2132,45 +2132,6 @@ def test_dual_axis_nested_base_zero_rule_compiled_scale_stays_unrounded():
     assert un_nested["domainMax"] == nested["domainMax"]
 
 
-def test_dual_axis_base_authored_domain_excluding_zero_suppresses_its_rule():
-    """`_check_layers_y_domain` only rejects a chart-level authored
-    `axis_y.scale.domain` when a layer pins `right`; when every layer pins
-    `left` instead, the base gets pushed to `right` (`base_side`) and the
-    authored domain survives compile intact -- so the base's own
-    authored-domain-excludes-zero guard is a real, reachable path here, not
-    dead code inherited from the shared-scale case."""
-    chart_dict = _dual_axis_bar_line_chart({"position": "left"})
-    chart_dict["style"] = {
-        "axis_y": {"scale": {"continuous": {"domain": [1000, 5000]}}}
-    }
-    chart = TypeAdapter(Chart).validate_python(chart_dict)
-    spec = generate_vega_lite_spec(
-        chart,
-        _DUAL_AXIS_STRADDLE_DATA,
-        width=400,
-        board_style=_BOARD_STYLE,
-        chart_style_context=_BOARD_CTX,
-    )
-    assert _nested_zero_rule_fields_by_index(spec) == {1: {"y2"}}
-
-
-def test_dual_axis_base_authored_domain_including_zero_still_fires():
-    """Control for the test above: an authored domain that DOES include 0
-    must not accidentally suppress the base's rule -- only a domain that
-    excludes 0 is a legal reason to skip it."""
-    chart_dict = _dual_axis_bar_line_chart({"position": "left"})
-    chart_dict["style"] = {"axis_y": {"scale": {"continuous": {"domain": [-10, 5000]}}}}
-    chart = TypeAdapter(Chart).validate_python(chart_dict)
-    spec = generate_vega_lite_spec(
-        chart,
-        _DUAL_AXIS_STRADDLE_DATA,
-        width=400,
-        board_style=_BOARD_STYLE,
-        chart_style_context=_BOARD_CTX,
-    )
-    assert _nested_zero_rule_fields_by_index(spec) == {0: {"y"}, 1: {"y2"}}
-
-
 def test_dual_axis_base_scale_zero_false_without_straddle_suppresses_its_rule():
     """The base's `zero_setting is False` arm of `non_bar_zero_rule_should_
     fire` is reachable on the dual-axis path too (`BaselineFeature`'s own

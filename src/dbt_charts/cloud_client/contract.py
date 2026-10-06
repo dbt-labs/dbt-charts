@@ -119,10 +119,12 @@ class DeviceAuthorization(ContractModel):
     interval: int = Field(default=5, description="Minimum seconds between polls.")
 
 
-class DeviceToken(ContractModel):
-    """The answer to a successful token poll."""
+class OAuthToken(ContractModel):
+    """The answer to a successful token request: the device grant's poll or a
+    refresh grant."""
 
     access_token: str = Field(description="The bearer token to store.")
+    refresh_token: str = Field(description="Renews access_token; rotates on use.")
     token_type: str = Field(description="Always `Bearer`.")
     expires_in: int | None = Field(default=None, description="Seconds until expiry.")
     scope: str = Field(default="", description="Scopes actually granted.")

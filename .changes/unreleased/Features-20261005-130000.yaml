@@ -1,0 +1,3 @@
+kind: Features
+body: The board JSON Schema now follows JSON Schema 2020-12, so editors reject tuple values such as `domain` with null bounds the same way the compiler does.
+time: 2026-10-05T13:00:00.000000-07:00

@@ -42,7 +42,6 @@ from dbt_charts.core.compile.models.board.normalized import (
     Layout,
     LayoutItem,
 )
-from dbt_charts.core.compile.sizing import chart_slot_width
 
 # Read by compile/validate/board_warnings.py to judge WARN-UNREFERENCED-CHART.
 PRE_FOCUS_PLACED_CHARTS_META_KEY = "pre_focus_placed_chart_ids"
@@ -54,12 +53,14 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
     Creates a new board with:
     - Only the specified chart in the layout
     - Only the variables that chart depends on
-    - The chart pinned at the slot width the dashboard layout assigned it,
-      so the focused render is geometry-identical to the dashboard (WYSIWYG);
-      a chart not placed in the layout keeps its preferred width
+    - The chart at its own intrinsic width, exactly as if it were the only
+      chart on a board with no width: its authored width, its preferred width,
+      or, for an unpinned table, its width measured from the data. The slot it
+      had on the source board and that board's authored ``frame.width`` do not
+      carry over.
     - All sources and queries unchanged (they're lazy-loaded anyway)
 
-    WYSIWYG covers geometry, not color. Narrowing the layout happens before
+    Focus does not preserve color. Narrowing the layout happens before
     board-wide category colors are planned, so a focused chart falls under the
     two-chart threshold and colors itself locally — it can differ from the same
     chart in the dashboard. Planning over the unfocused layout would mean
@@ -110,38 +111,25 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
     # The layout as written, before focus narrows it to one chart.
     pre_focus_placed = sorted(c.id for c in board.placed_charts() if c.id)
 
-    # Pin the dashboard slot width so the focused chart keeps the exact
-    # geometry it had on the board (band widths, axis-label fit). The board
-    # container hugs the pinned width the same way it hugs preferred widths.
-    slot_width = chart_slot_width(board, chart_id, board.variable_defaults)
-    chart_item = LayoutItem(
-        type="chart",
-        chart=chart,
-        user_width=None if slot_width is None else f"{slot_width}px",
-    )
+    chart_item = LayoutItem(type="chart", chart=chart)
     simple_layout = Layout(type=LayoutType.ROWS, items=[chart_item])
 
     # Create new board with focused content.
-    # No title - this is a focused view, not a board. The focused container is
-    # the pinned slot plus margins — an exact width, so a slot wider than
-    # max_width is never clamped down and a slot narrower than the board's own
-    # width never inherits a full-board canvas. An unplaced chart has no slot
-    # to pin, so its board drops any exact width and hugs the chart's
-    # preferred width instead. The style cascade re-runs on the edited patch.
+    # No title - this is a focused view, not a board. An authored exact
+    # `frame.width` belongs to the source board's layout, so it is dropped and
+    # the focused board hugs the chart's own width. The style cascade re-runs
+    # on the edited patch.
     from dbt_charts.core.compile.models.style.authored import StylePatch
     from dbt_charts.core.compile.normalize.dispatch import compile_board_resolved_style
 
     authored = board.authored_style
     patch_data = authored.model_dump(exclude_unset=True) if authored is not None else {}
-    frame_data = dict(patch_data["frame"]) if "frame" in patch_data else {}
-    if slot_width is None:
-        frame_data.pop("width", None)
-    else:
-        frame_data["width"] = slot_width + 2 * float(board.resolved_style.frame.margin)
-    if frame_data:
-        patch_data["frame"] = frame_data
-    else:
-        patch_data.pop("frame", None)
+    if "frame" in patch_data:
+        frame_data = {k: v for k, v in patch_data["frame"].items() if k != "width"}
+        if frame_data:
+            patch_data["frame"] = frame_data
+        else:
+            del patch_data["frame"]
     authored = StylePatch.model_validate(patch_data) if patch_data else None
     resolved_style, chart_style_context, _ = compile_board_resolved_style(
         authored, None, None, theme_name=board.theme

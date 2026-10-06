@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.board.normalized import ProsePlan, VariableValues
-from dbt_charts.core.compile.sizing import card_row_gap
+from dbt_charts.core.compile.sizing import card_row_gap, prose_slot_widths
 from dbt_charts.core.render.column_packer import (
     MAX_CHARS,
     choose_grid,
@@ -31,6 +31,7 @@ from dbt_charts.core.render.column_packer import (
     span_boxes,
 )
 from dbt_charts.core.render.svg_utils import (
+    divider_dash_attr,
     escape_attr,
     format_svg_numeric,
     px,
@@ -40,15 +41,16 @@ from mdsvg import OrderedList, Table, UnorderedList, parse as parse_markdown
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
+    from dbt_charts.core.compile.models.primitives import DividerStyle
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
     from dbt_charts.core.compile.models.style.theme import (
-        ColumnRuleStyle,
+        TextColumnStyle,
         TextStyle,
     )
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
-    from mdsvg import ListItem
+    from mdsvg import AnyBlock, ListItem
     from mdsvg.fonts import FontFaces
-    from mdsvg.renderer import SVGRenderer
+    from mdsvg.renderer import BlockMetrics, SVGRenderer
     from mdsvg.style import Style as MarkdownStyle
 
 
@@ -150,6 +152,44 @@ def _prose_typography(
     return family, style, fonts, char_px
 
 
+def _columns_of(
+    blocks: list[AnyBlock],
+    renderer: SVGRenderer,
+    width: float,
+    pad: float,
+    col: TextColumnStyle,
+    char_px: float,
+    grid: int,
+    board_width: float,
+    gap: float,
+) -> tuple[
+    tuple[tuple[float, float], ...], float, tuple[BlockMetrics, ...], list[Table], int
+]:
+    """Boxes, measure, per-block metrics, tables and column count of one block.
+
+    The render pass and the board-level plan both decide how many columns a
+    block earns through this, at the block's real slot ``width``.
+    """
+    boxes = span_boxes(width + 2 * pad, board_width, grid, gap)
+    tables = [b for b in blocks if isinstance(b, Table)]
+    if tables:
+        boxes, measure = _fit_tables(
+            renderer, tables, boxes, pad, col.max_chars, char_px, width
+        )
+    else:
+        # Columns share one measure, so a box a hair short of its span sets it.
+        measure = _measure(
+            min(box_width for _, box_width in boxes) - 2 * pad, col.max_chars, char_px
+        )
+    # Every column is equal width, so a block wraps identically wherever it
+    # lands -- the line list is sliced, never re-flowed.
+    metrics = renderer.measure_blocks(blocks, width=measure)
+    spans = len(boxes)
+    ceiling = spans if col.max_number is None else min(spans, col.max_number)
+    n_cols = columns_earned(sum(len(m.line_advances) for m in metrics), ceiling)
+    return boxes, measure, metrics, tables, n_cols
+
+
 def render_prose_svg(
     markdown_text: str,
     width: float,
@@ -215,28 +255,23 @@ def render_prose_svg(
     )
 
     pad = float(resolved_style.frame.card_padding)
-    boxes = span_boxes(width + 2 * pad, plan.board_width, plan.grid, plan.gap)
-    tables = [b for b in blocks if isinstance(b, Table)]
-    if tables:
-        boxes, measure = _fit_tables(
-            renderer, tables, boxes, pad, col.max_chars, char_px, width
-        )
-    else:
-        # Columns share one measure, so a box a hair short of its span sets it.
-        measure = _measure(
-            min(box_width for _, box_width in boxes) - 2 * pad, col.max_chars, char_px
-        )
-    spans = len(boxes)
-
-    # Every column is equal width, so a block wraps identically wherever it
-    # lands -- the line list is sliced, never re-flowed.
-    metrics = renderer.measure_blocks(blocks, width=measure)
-    ceiling = spans if col.max_number is None else min(spans, col.max_number)
-    n_cols = columns_earned(sum(len(m.line_advances) for m in metrics), ceiling)
-    if n_cols == 1 and not tables:
-        # Columns are for text long enough to earn them. A lone column wraps at
-        # least as wide as sizing asked for, so a line that fits stays one line;
-        # once it outgrows its span it sits in the whole card.
+    boxes, measure, metrics, tables, n_cols = _columns_of(
+        blocks,
+        renderer,
+        width,
+        pad,
+        col,
+        char_px,
+        plan.grid,
+        plan.board_width,
+        plan.gap,
+    )
+    if n_cols == 1 and not tables and not plan.snap:
+        # Columns are for text long enough to earn them. On a board where no
+        # block goes multi-column, a lone column wraps at least as wide as sizing
+        # asked for, so a line that fits stays one line; once it outgrows its
+        # span it sits in the whole card. Where some block does, the lone ones
+        # keep to their span so every edge on the board is a span edge.
         wanted = min(
             renderer.max_content_width(blocks),
             float(resolved_style.text.preferred_width),
@@ -336,13 +371,13 @@ def render_prose_svg(
 
     actual_col_height = max(column_heights) if column_heights else 0.0
 
-    if col.rule:
+    if col.divider.visible:
         for x, box_width in boxes[: n_cols - 1]:
             # Midway through the card gap between this span's box and the next;
             # boxes are container-relative and the slot starts `pad` inside it.
             column_parts.append(
-                _column_rule_line(
-                    x + box_width + plan.gap / 2 - pad, actual_col_height, col.rule
+                _column_divider_line(
+                    x + box_width + plan.gap / 2 - pad, actual_col_height, col.divider
                 )
             )
 
@@ -353,23 +388,15 @@ def render_prose_svg(
     return svg, actual_col_height
 
 
-_COLUMN_RULE_DASHARRAY = {"dotted": "2,2", "dashed": "6,3"}
-
-
-def _column_rule_line(x: float, height: float, rule: ColumnRuleStyle) -> str:
-    """Generate a vertical SVG line from a structured column rule."""
+def _column_divider_line(x: float, height: float, divider: DividerStyle) -> str:
+    """Generate a vertical SVG line between prose columns."""
     # Snap x to integer: a 1px structural mark at fractional x blurs horizontally.
     x_snapped = px(x)
     h_s = format_svg_numeric(height)
-    sw_s = format_svg_numeric(rule.width)
-    extra = (
-        f' stroke-dasharray="{escape_attr(_COLUMN_RULE_DASHARRAY[rule.style])}"'
-        if rule.style in _COLUMN_RULE_DASHARRAY
-        else ""
-    )
+    sw_s = format_svg_numeric(divider.width)
     return (
         f'<line x1="{escape_attr(x_snapped)}" y1="0" x2="{escape_attr(x_snapped)}" y2="{escape_attr(h_s)}"'
-        f' stroke="{escape_attr(rule.color)}" stroke-width="{escape_attr(sw_s)}"{extra}/>'
+        f' stroke="{escape_attr(divider.color)}" stroke-width="{escape_attr(sw_s)}"{divider_dash_attr(divider.dasharray)}/>'
     )
 
 
@@ -513,6 +540,70 @@ def _gather_runs(
     return []
 
 
+def _goes_multi_column(
+    block: Board,
+    slot: float,
+    grid: int,
+    board_width: float,
+    gap: float,
+    variable_values: VariableValues,
+) -> bool:
+    """Whether ``block``, at its real ``slot`` width, lays out in two or more columns."""
+    from dbt_charts.core.compile.image_assets import rewrite_board_markdown_images
+    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+    from mdsvg.renderer import SVGRenderer
+
+    rs = block.resolved_style
+    _, style, fonts, char_px = _prose_typography(rs.text, rs)
+    renderer = SVGRenderer(
+        style=style,
+        fonts=fonts,
+        fetch_image_sizes=False,
+        allow_raw_html=block.html_policy == "trusted-raw",
+    )
+    text = resolve_jinja_template(block.text, variable_values, strict=False)
+    # The same degradation the sizing pass applies: a bad image becomes its error.
+    blocks = rewrite_board_markdown_images(
+        list(parse_markdown(text)), block.text, text, block.base_dir, None
+    )
+    pad = float(rs.frame.card_padding)
+    *_, n_cols = _columns_of(
+        blocks, renderer, slot, pad, rs.text.column, char_px, grid, board_width, gap
+    )
+    return n_cols > 1
+
+
+def _drawn_text(board: Board, variable_values: VariableValues) -> set[int]:
+    """``id`` of every board whose text is actually drawn.
+
+    A tabs layout draws its active panel only, a collapsed details item draws
+    its summary only, and a ``visible:`` that resolves false draws nothing. A
+    query-backed ``visible:`` probe cannot be known before the data is read, so
+    it counts as drawn.
+    """
+    from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
+    from dbt_charts.core.render.conditions import evaluate_visible
+    from dbt_charts.core.render.sizing import (
+        active_layout_items,
+        is_item_collapsed_summary,
+    )
+
+    drawn: set[int] = set()
+    pending = [board]
+    for node in pending:
+        if node.text:
+            drawn.add(id(node))
+        for item in active_layout_items(node.layout, variable_values):
+            if item.board is None or is_item_collapsed_summary(item, variable_values):
+                continue
+            if not isinstance(item.visible, SingleRowBoolProbe) and (
+                not evaluate_visible(item.visible, variable_values, None)
+            ):
+                continue
+            pending.append(item.board)  # noqa: B909 — queue growth: BFS over the board tree
+    return drawn
+
+
 def plan_board_prose(
     board: Board, variable_values: VariableValues, board_width: float
 ) -> None:
@@ -529,8 +620,24 @@ def plan_board_prose(
     card_gap = float(board.resolved_style.frame.card_gap) if board.card_gap else 0.0
     found = _Runs(card_gap, variable_values)
     found.close_unended(_gather_runs(board, [], found, is_root=True), board)
-    for run, gap in found.runs:
-        grid = _run_grid(run, variable_values, board_width, gap)
-        plan = ProsePlan(grid, board_width, gap)
+    slots = prose_slot_widths(board, board_width)
+    grids: list[tuple[list[Board], Literal[1, 2, 3], float]] = [
+        (run, _run_grid(run, variable_values, board_width, gap), gap)
+        for run, gap in found.runs
+    ]
+    # Board-scoped: one block that really lays out in columns, at the slot the
+    # layout gives it, snaps every lone column on the board to its span. Only
+    # text that is drawn can do it.
+    drawn = _drawn_text(board, variable_values)
+    snap = any(
+        _goes_multi_column(
+            block, slots[id(block)], grid, board_width, gap, variable_values
+        )
+        for run, grid, gap in grids
+        for block in run
+        if id(block) in drawn
+    )
+    for run, grid, gap in grids:
+        plan = ProsePlan(grid, board_width, gap, snap)
         for block in run:
             block.prose_plan = plan

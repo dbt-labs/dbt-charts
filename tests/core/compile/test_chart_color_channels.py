@@ -311,6 +311,7 @@ class _FakeChart:
     """
 
     background: object = None  # KPI-only gradient background channel
+    support: object = None  # KPI-only support block
 
     def __init__(self, **kwargs: object) -> None:
         for k, v in kwargs.items():

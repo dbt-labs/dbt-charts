@@ -54,7 +54,7 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_SCALE_DOMAIN_REQUIRES_CONTINUOUS_X,
 )
-from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.font_measure import get_weighted_font_measurer
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.axis_label_collision import (
@@ -607,7 +607,7 @@ def wrap_axis_title(
     the wrapper (runs of spaces collapse), not byte-identical to the input.
     """
     budget = axis_title_budget(extent, panels)
-    measurer = get_font_measurer(font.family)
+    measurer = get_weighted_font_measurer(font.family, font.weight)
     # mdsvg's wrapper splits an over-wide token before wrapping — right for a
     # URL or an identifier in prose, wrong for an axis title, where a broken
     # word is simply wrong output. Ellipsize such a word here so the wrapper
@@ -1148,7 +1148,7 @@ def facet_extra_axis_width_px(
         case = font.case if isinstance(chart, ResolvedScatterChart) else None
         spec = labels.format.spec if labels.format is not None else None
         domain = {category_label_text(v, spec, case) for v in domain}
-    measurer = get_font_measurer(font.family)
+    measurer = get_weighted_font_measurer(font.family, font.weight)
     label_limit = (
         labels.max_width if labels.max_width is not None else DEFAULT_VL_LABEL_LIMIT
     )
@@ -1385,6 +1385,7 @@ def full_rule_at(
     measure_field: str,
     color: str,
     width: float,
+    announce: bool = True,
 ) -> ChartSpec:
     """Return a full VL ``rule`` sub-spec spanning the full plot width/height.
 
@@ -1396,6 +1397,11 @@ def full_rule_at(
     channel is explicitly nulled (VL's "None disables an inherited channel")
     — otherwise a ``y_start`` bar's ``y2``/``x2`` field leaks into the rule and
     its auto aria description announces ``NaN``.
+
+    ``announce=False`` hides the rule from the accessibility tree. The
+    normalize-stack rules ``_insert_top_rules`` adds need it: Vega-Lite derives
+    the ``datum: 0`` rule's label as ``NaN`` and an unformatted ``datum: 1`` as
+    a bare ``1``, neither of which says anything the axis does not.
     """
     datum_channel = axis  # "x" or "y" — the channel carrying the datum value
     datum_enc: VLDict = {"datum": value, "type": "quantitative"}
@@ -1417,14 +1423,17 @@ def full_rule_at(
             "color": {"value": color},
             "xOffset": {"value": 0},
         }
+    mark_props: VLDict = {
+        "color": color,
+        "strokeWidth": width,
+        "opacity": 1,
+        "tooltip": False,
+    }
+    if not announce:
+        mark_props["aria"] = False
     return ChartSpec(
         mark="rule",
-        mark_props={
-            "color": color,
-            "strokeWidth": width,
-            "opacity": 1,
-            "tooltip": False,
-        },
+        mark_props=mark_props,
         encoding=encoding,
         data=[{measure_field: value}],
     )

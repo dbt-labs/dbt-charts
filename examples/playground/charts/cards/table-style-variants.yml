@@ -46,20 +46,24 @@ charts:
         role: row_role
         stripe:
           color: transparent
-        rule:
-          width: 0
+        divider:
+          visible: false
         roles:
           summary:
-            rule_width: 0
             font:
               weight: '400'
+            divider:
+              visible: false
+          total:
+            divider:
+              visible: false
       header:
         background: transparent
         font:
           color: '#222222'
           weight: '400'
-        rule:
-          width: 0
+        divider:
+          visible: false
   variant_bi:
     type: table
     query: company_revenue_total
@@ -111,20 +115,27 @@ charts:
         font:
           weight: '400'
           color: '#222222'
-        rule:
+        divider:
           width: 1
           continuous: false
+          visible: true
       row:
         role: row_role
         stripe:
           color: transparent
-        rule:
-          width: 0
+        divider:
+          visible: false
         roles:
           summary:
-            rule_width: 1
             font:
               weight: '400'
+            divider:
+              visible: true
+              width: 1
+          total:
+            divider:
+              visible: true
+              width: 1
 rows:
 - title: Variants — Minimal / BI / Classic (3-up)
   cols:

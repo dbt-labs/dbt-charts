@@ -32,7 +32,7 @@ dev = [
     "streamlit>=1.51.0",  # Streamlit integration tests
     "brotli>=1.2.0",  # FontTools WOFF2 inspection tests
     "openai>=1.0.0",  # OpenAI client construction tests
-    "ruff>=0.16.2",  # Static-rule tests invoke Ruff directly
+    "ruff>=0.16.10",  # Static-rule tests invoke Ruff directly
     "pymdown-extensions>=10.0",  # Markdown superfence integration tests
     # >=1.17: earlier releases silently drop extra_checks, disable_error_code,
     # and several enable_error_code entries below (exhaustive-match needs
@@ -40,15 +40,16 @@ dev = [
     # green while checking less than this config says it does.
     "mypy>=1.17",  # Type checking (see [tool.mypy] below)
     "types-pyyaml>=6.0",  # Type stubs for PyYAML (core/utils.py, core/compile/parse/source_map.py)
-    "tach==0.35.0",  # Import-boundary enforcement; see tach.toml. Matches the root pin.
+    "tach==0.35.3",  # Import-boundary enforcement; see tach.toml. Matches the root pin.
+    "tomli>=2.0.0",  # Pyright checks the py3.10 tomllib fallback import
     "vulture>=2.16",  # Dead-code finder; see [tool.vulture] below. Matches the root pin.
-    "pyright==1.1.411",  # CI gate on rules mypy structurally can't catch; see oss/pyrightconfig.json. Matches the root pin.
+    "pyright==1.1.414",  # CI gate on rules mypy structurally can't catch; see oss/pyrightconfig.json. Matches the root pin.
 ]
 
 [project]
 name = "dbt-charts"
 dynamic = ["version"]
-description = "dbt charts - dbt-native dashboard and visualization layer"
+description = "Declarative YAML around SQL for dbt-native dashboards: easy for agents to write, easy for humans to audit."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "Apache-2.0"
@@ -56,6 +57,7 @@ license-files = ["LICENSE"]
 authors = [
     {name = "Fivetran, Inc."}
 ]
+keywords = ["dbt", "dashboards", "data-visualization", "charts", "business-intelligence", "sql", "yaml"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -97,7 +99,7 @@ dependencies = [
     "pygments>=2.0.0",
     "fonttools>=4.0",
     # PIL.ImageFont.getlength is used during compile-time title-width
-    # measurement (core/compile/sizing._measure_title_single_line_width).
+    # measurement (core/render/sizing.measure_title_single_line_width).
     "pillow>=9.0.0",
     # plotext 6.0.0 reshaped its API and dropped the module-level functions
     # core/render/terminal_charts.py calls (clear_data, clear_figure, plotsize,
@@ -157,6 +159,14 @@ dependencies = [
     # nh3 must be declared here explicitly.
     "nh3>=0.3.3",
 ]
+
+[project.urls]
+Homepage = "https://www.getdbt.com/product/dbtcharts"
+Documentation = "https://docs.dbtcharts.com"
+Playground = "https://play.dbtcharts.com"
+Repository = "https://github.com/dbt-labs/dbt-charts"
+Issues = "https://github.com/dbt-labs/dbt-charts/issues"
+Changelog = "https://github.com/dbt-labs/dbt-charts/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # `dbt-adapters` provides the generic adapter interface only; each warehouse

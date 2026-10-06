@@ -29,7 +29,6 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.style.theme import TextColumnStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 from dbt_charts.core.execute.adapters import build_adapter_registry
@@ -95,7 +94,9 @@ def _prose_column_svg(svg: str) -> str:
 def _render(markdown: str, width: float, n_cols: int | None) -> str:
     resolved = resolve_style(get_theme_style("clarity"))
     col = (
-        TextColumnStyle(max_number=n_cols) if n_cols is not None else TextColumnStyle()
+        resolved.text.column.model_copy(update={"max_number": n_cols})
+        if n_cols is not None
+        else resolved.text.column
     )
     text_style = resolved.text.model_copy(update={"column": col})
     svg, _ = render_prose_svg(
@@ -159,7 +160,7 @@ def test_a_mid_blob_heading_keeps_its_full_margin() -> None:
     resolved = resolve_style(get_theme_style("clarity"))
     style = get_compact_style(resolved)
     text_style = resolved.text.model_copy(
-        update={"column": TextColumnStyle(max_number=1)}
+        update={"column": resolved.text.column.model_copy(update={"max_number": 1})}
     )
     _, paragraph_height = render_prose_svg(
         ONE_PARAGRAPH,

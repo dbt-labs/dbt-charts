@@ -22,8 +22,12 @@ from pydantic import BaseModel, ValidationError
 from dbt_charts.cloud_client.config import (
     TOKEN_ENV_VAR,
     CloudConfig,
+    config_lock,
     config_path,
+    credential_source,
+    read_config,
     rejected_fields,
+    save_config,
 )
 from dbt_charts.cloud_client.contract import (
     ApiError,
@@ -33,7 +37,6 @@ from dbt_charts.cloud_client.contract import (
     ConnectionTestResult,
     DeleteResult,
     DeviceAuthorization,
-    DeviceToken,
     ErrorCode,
     GrantList,
     GrantRevokeResult,
@@ -41,6 +44,7 @@ from dbt_charts.cloud_client.contract import (
     InviteResult,
     MemberList,
     MemberSummary,
+    OAuthToken,
     OrgList,
     OrgStatus,
     OrgSummary,
@@ -57,6 +61,7 @@ from dbt_charts.cloud_client.errors import (
     DeviceLoginFailed,
     InvalidCredential,
     PickTimedOut,
+    SessionExpired,
     SkewDirection,
     TransportFailed,
     UnexpectedResponse,
@@ -96,7 +101,10 @@ class CloudClient:
         token: str,
         transport: httpx.BaseTransport | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        refresh: Callable[[str], str] | None = None,
     ) -> None:
+        """``refresh`` maps the token a 401 rejected to a working one; without
+        it a 401 is a plain failure."""
         if not token:
             raise CredentialMissing(config_path(), TOKEN_ENV_VAR)
         # A control character here becomes an illegal HTTP header byte on
@@ -107,6 +115,8 @@ class CloudClient:
         if any(ord(char) < 0x20 for char in token):
             raise InvalidCredential(config_path())
         self.host = host.rstrip("/")
+        self._token = token
+        self._refresh = refresh
         self._http = httpx.Client(
             base_url=f"{self.host}/api",
             headers={
@@ -392,10 +402,11 @@ class CloudClient:
     ) -> M:
         """One round trip. ``payload`` is an unvalidated JSON body by nature —
         the server's forms are what decide whether its fields are right."""
-        try:
-            response = self._http.request(method, path, json=payload)
-        except httpx.HTTPError as exc:
-            raise TransportFailed(self.host, exc) from exc
+        response = self._send(method, path, payload)
+        if response.status_code == 401 and self._refresh is not None:
+            self._token = self._refresh(self._token)
+            self._http.headers["Authorization"] = f"Bearer {self._token}"
+            response = self._send(method, path, payload)
         url = str(response.request.url)
         if response.status_code >= 400:
             raise self._failure(response, url)
@@ -417,6 +428,14 @@ class CloudClient:
                 url, response.status_code, str(exc), skew=skew
             ) from exc
 
+    def _send(
+        self, method: str, path: str, payload: dict[str, Any] | None
+    ) -> httpx.Response:
+        try:
+            return self._http.request(method, path, json=payload)
+        except httpx.HTTPError as exc:
+            raise TransportFailed(self.host, exc) from exc
+
     def _failure(
         self, response: httpx.Response, url: str
     ) -> ApiFailed | UnexpectedResponse:
@@ -429,9 +448,68 @@ class CloudClient:
             return UnexpectedResponse(url, response.status_code, str(exc))
 
 
-def client_from_config(config: CloudConfig, host: str | None = None) -> CloudClient:
-    """Build a client for the configured deployment, or say why we can't."""
-    return CloudClient(host=host or config.host, token=config.token)
+def client_from_config(
+    config: CloudConfig,
+    host: str | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> CloudClient:
+    """A client for the configured deployment.
+
+    Only a config-file login renews itself, and only against the host that
+    issued it: a ``DCT_CLOUD_TOKEN`` is the user's to manage and is never
+    exchanged or written to disk.
+    """
+    target = host or config.host
+    renews = (
+        credential_source() == "config"
+        and bool(config.refresh_token)
+        and target.rstrip("/") == config.host.rstrip("/")
+    )
+    return CloudClient(
+        host=target,
+        token=config.token,
+        transport=transport,
+        refresh=(
+            lambda rejected: refresh_stored_credential(target, rejected, transport)
+        )
+        if renews
+        else None,
+    )
+
+
+def refresh_stored_credential(
+    host: str, rejected_token: str, transport: httpx.BaseTransport | None = None
+) -> str:
+    """The stored login's next bearer token for *host*.
+
+    The refresh token is presented only if the config still holds the rejected
+    token; once a peer has rotated it, presenting it again would make Cloud
+    revoke the whole token family.
+    """
+    with config_lock():
+        current = read_config()
+        # A peer logged out or switched hosts mid-request: its token is not
+        # this session's to borrow.
+        if not current.token or current.host.rstrip("/") != host.rstrip("/"):
+            raise SessionExpired()
+        if current.token != rejected_token:
+            return current.token
+        if not current.refresh_token:
+            raise SessionExpired()
+        metadata = discover_endpoints(current.host, transport=transport)
+        renewed = refresh_access_token(
+            metadata.token_endpoint, current.refresh_token, transport=transport
+        )
+        save_config(
+            CloudConfig.model_validate(
+                {
+                    **current.model_dump(),
+                    "token": renewed.access_token,
+                    "refresh_token": renewed.refresh_token,
+                }
+            )
+        )
+        return renewed.access_token
 
 
 # --- the OAuth 2.0 device grant (RFC 8628) ----------------------------------
@@ -505,7 +583,7 @@ def poll_device_token(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
-) -> DeviceToken:
+) -> OAuthToken:
     """Poll until the user approves the login, denies it, or the code expires.
 
     ``sleep``/``now`` are injectable so a test never actually waits -- a real
@@ -533,7 +611,7 @@ def poll_device_token(
                 raise TransportFailed(token_endpoint, exc) from exc
             if response.status_code < 400:
                 try:
-                    return DeviceToken.model_validate_json(response.content)
+                    return OAuthToken.model_validate_json(response.content)
                 except ValidationError as exc:
                     # Field names only: pydantic's own text quotes the body,
                     # and this body is the token.
@@ -554,6 +632,43 @@ def poll_device_token(
                     " cloud login` again."
                 )
             raise _device_login_failure(response, "Cloud rejected the login")
+
+
+def refresh_access_token(
+    token_endpoint: str,
+    refresh_token: str,
+    transport: httpx.BaseTransport | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> OAuthToken:
+    """The refresh grant: a new access token and the rotated refresh token.
+
+    The old refresh token is spent the moment Cloud answers, so the caller
+    must persist the returned pair before doing anything else.
+    """
+    with httpx.Client(transport=transport, timeout=timeout) as http:
+        try:
+            response = http.post(
+                token_endpoint,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": CLIENT_ID,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise TransportFailed(token_endpoint, exc) from exc
+    if response.status_code >= 400:
+        if _oauth_error_code(response) == "invalid_grant":
+            raise SessionExpired()
+        raise UnexpectedResponse(
+            token_endpoint, response.status_code, "the OAuth token endpoint"
+        )
+    try:
+        return OAuthToken.model_validate_json(response.content)
+    except ValidationError as exc:
+        raise UnexpectedResponse(
+            token_endpoint, response.status_code, rejected_fields(exc)
+        ) from exc
 
 
 def revoke_token(

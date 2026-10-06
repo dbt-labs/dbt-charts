@@ -39,3 +39,5 @@ aliases:
   sage: 7       # teal
   gray: 9
   charcoal: 10  # graphite
+  cyan: 2       # same slot as sky
+  moss: 7       # same slot as sage

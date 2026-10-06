@@ -2040,12 +2040,16 @@ def _has_subday_component(parsed: list[dt.date | dt.datetime]) -> bool:
 
 
 def _midnight_count(min_dt: dt.datetime, max_dt: dt.datetime) -> int:
-    """Count of midnight (00:00) instants inside ``[min_dt, max_dt]``, inclusive.
+    """Count of distinct days' midnights inside ``[min_dt, max_dt]``.
 
     Backs rule 5 of the time-notation vocabulary: the date-context row
     appears only when the domain holds more than one midnight — a
     single-day intraday chart (exactly one midnight, at the domain's own
-    start) never pays for the second row.
+    start) never pays for the second row. A domain that both opens and
+    closes on a midnight is one wrapped day (an average day drawn 00:00 to
+    the next 00:00), so its closing midnight is not counted. A domain that
+    opens mid-day keeps its closing midnight: those two midnights are
+    different days and need the date row to tell them apart.
 
     ``min_dt``/``max_dt`` must already be in whatever clock the rendered
     expression's ``hours(datum.value)``/``utchours(datum.value)`` gate reads
@@ -2056,7 +2060,9 @@ def _midnight_count(min_dt: dt.datetime, max_dt: dt.datetime) -> int:
     if dt.datetime.combine(start_day, dt.time.min) < min_dt:
         start_day += dt.timedelta(days=1)
     end_day = max_dt.date()
-    if dt.datetime.combine(end_day, dt.time.min) > max_dt:
+    opens_on_midnight = dt.datetime.combine(min_dt.date(), dt.time.min) == min_dt
+    closes_on_midnight = dt.datetime.combine(end_day, dt.time.min) == max_dt
+    if closes_on_midnight and opens_on_midnight and max_dt > min_dt:
         end_day -= dt.timedelta(days=1)
     if start_day > end_day:
         return 0

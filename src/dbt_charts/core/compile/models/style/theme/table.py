@@ -19,12 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.markers import (
     Color,
+    Inherit,
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
     CornerStyle,
+    DividerStyle,
     FontStyle,
-    RuleStyle,
     SpacingValues,
     StaticGradientColorStyle,
     StrokeStyle,
@@ -34,6 +35,17 @@ from dbt_charts.core.compile.models.style.theme._chart_base import (
     _ChartStyleBaseAllOptional,
     _TitledChartStyleBaseAllOptional,
 )
+
+
+class TableDividerStyle(DividerStyle):
+    """A table divider that also chooses how far the line runs."""
+
+    continuous: bool = Field(
+        description=(
+            "Draw one unbroken line across the full table width (true) or only "
+            "under each column (false)."
+        ),
+    )
 
 
 class TableColumnsStyle(BaseModel):
@@ -71,7 +83,7 @@ class TableHeaderStyle(BaseModel):
 
     visible: bool = Field(
         description=(
-            "Show the header row (column labels + rule). Set to False on "
+            "Show the header row (column labels + divider). Set to False on "
             "series-keyed tables where column meanings are obvious from context "
             "(e.g. donut-attached tables: swatch / share / name / value). "
             "Theme YAML supplies the UX default (true) via _base.yaml."
@@ -86,25 +98,25 @@ class TableHeaderStyle(BaseModel):
         default=None,
         description="Compact-tier font overrides applied when body size ≤11px; None means no compact override.",
     )  # None = no compact-tier override; header uses font at all body sizes
-    # None = no header fill. Header rule alone separates header from body.
+    # None = no header fill. The header divider alone separates header from body.
     # Themes may set a fill (cream, dark) when paper-warmth or
     # contrast demands it.
     background: Annotated[str | None, Color()] = Field(
         default=None,
-        description="Header background color; None means no fill (rule alone separates header from body).",
+        description="Header background color; None means no fill (the divider alone separates header from body).",
     )
     overflow: Literal["clip", "truncate", "wrap-two", "wrap"] = Field(
         description="What happens to header text too wide for its column (clip, truncate, wrap-two, wrap)."
     )
-    rule: RuleStyle = Field(description="Header bottom rule style.")
+    divider: TableDividerStyle = Field(
+        description="Line between the header row and the body."
+    )
 
 
 class TableRowRoleStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    rule_width: float = Field(
-        description="Rule width above rows with this role in pixels."
-    )
+    divider: DividerStyle = Field(description="Line above rows with this role.")
     font: FontStyle | None = Field(
         default=None,
         description="Per-role font style override; None uses the default row font.",
@@ -141,7 +153,7 @@ class TableRowStyle(BaseModel):
         default=None,
         description="Alternating row stripe style; None means no stripe.",
     )
-    rule: RuleStyle = Field(description="Row bottom rule style.")
+    divider: TableDividerStyle = Field(description="Line under each body row.")
     role: str | None = Field(
         default=None,
         description="Default row role assignment; None means plain body row.",
@@ -388,16 +400,6 @@ class PaginatorStyle(BaseModel):
     )
 
 
-class TableRuleStyle(BaseModel):
-    """Table rule color override block."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    color: Annotated[str | None, Color()] = Field(  # None = use theme default
-        default=None, description="Table rule color; None uses the theme default."
-    )
-
-
 class TableChartStyle(
     _ChartCardStyleMixinAllOptional,
     _ChartStyleBaseAllOptional,
@@ -412,11 +414,23 @@ class TableChartStyle(
     ``_ChartCardStyleMixinAllOptional`` supplies ``border``: table draws its own
     card, so unlike the Vega-Lite families it keeps the slot. It stopped
     declaring its own ``border`` when that field was found to be inert on the
-    table and secretly styling markdown (now ``style.text.rule``), and inherits
+    table and secretly styling markdown (now ``style.text.divider``), and inherits
     the shared card border instead — None when unauthored.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    preferred_width: Annotated[
+        float, Inherit(from_path="Style.charts.preferred_width")
+    ] = Field(
+        description=(
+            "Width the board asks for when sizing to a table before its data is "
+            "known. With data, a board with no width measures the table's columns "
+            "instead. Only a value set on the chart itself pins the width; a "
+            "board- or theme-level value is just the estimate used before data is "
+            "known."
+        ),
+    )
 
     # Override the mixin's font to declare the inherit link.
     # InheritSlot: table.font fills from charts.font.
@@ -436,11 +450,6 @@ class TableChartStyle(
     color: StaticGradientColorStyle | None = Field(
         default=None,
         description="Table color: static text paint or gradient scale only (no categorical arm).",
-    )
-
-    rule: TableRuleStyle | None = Field(  # None = no rule color override
-        default=None,
-        description="Table rule style overrides (color). None = no override; inherits from theme.",
     )
 
     outer_padding: float = Field(description="Outer table padding in pixels.")
@@ -549,7 +558,7 @@ class SupportTableRowStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     padding: SupportTableRowPaddingStyle = Field(description="Row padding style.")
-    rule: RuleStyle = Field(description="Row bottom rule style.")
+    divider: DividerStyle = Field(description="Line under each strip row.")
 
 
 class SupportTableLabelStyle(BaseModel):
@@ -590,15 +599,15 @@ class SupportTableStyle(BaseModel):
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
         default_factory=FontStyle, description="Support_table font style overrides."
     )
-    divider: RuleStyle = Field(
+    divider: DividerStyle = Field(
         description=(
-            "Rule at the boundary between the chart plot and the data strip. "
-            "For position='bottom': rule sits above the strip (below the axis). "
-            "For position='top': rule sits below the strip rows (above the plot top)."
+            "Line at the boundary between the chart plot and the data strip. "
+            "For position='bottom': the line sits above the strip (below the axis). "
+            "For position='top': the line sits below the strip rows (above the plot top)."
         )
     )
     row: SupportTableRowStyle = Field(
-        description="Support_table row padding and rule style."
+        description="Support_table row padding and divider style."
     )
     label: SupportTableLabelStyle = Field(description="Row label (series name) style.")
     padding_top: float = Field(

@@ -77,6 +77,12 @@ def test_parse_source_config_accepts_all_union_member_types():
             "user": "u",
             "schema": "sc",
         },
+        "databricks": {
+            "host": "h.cloud.databricks.com",
+            "http_path": "/sql/1.0/warehouses/abc",
+            "token": "tok",
+            "catalog": "main",
+        },
         "duckdb": {"path": "db.duckdb"},
         "sqlite": {"path": "db.sqlite"},
         "csv": {"files": {"data": "x.csv"}},

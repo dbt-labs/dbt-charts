@@ -24,7 +24,7 @@ from dbt_charts.core.render.render_result import RenderResult
 
 _DATA_FORMATS = ("json", "text", "yaml", "data")
 
-# Ten realistic columns need more width than the default table slot gives —
+# Ten realistic columns need more width than a narrow table gives —
 # reliably fires WARN-TABLE-CRAMPED on svg (see test_table_cramping_capture.py,
 # whose fixture this mirrors).
 _WIDE_COLUMNS: list[tuple[str, str]] = [
@@ -50,7 +50,7 @@ def _cramped_table_board() -> str:
     return (
         "title: T\n"
         "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
-        "charts:\n  t: {query: q, type: table}\n"
+        "charts:\n  t: {query: q, type: table, style: {preferred_width: 800}}\n"
         "rows:\n  - t\n"
     )
 

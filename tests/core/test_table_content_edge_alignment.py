@@ -251,7 +251,7 @@ class TestContentEdgeAlignment:
                 "header": tc.header.model_copy(
                     update={
                         "background": "#c8c8c8",
-                        "rule": tc.header.rule.model_copy(
+                        "divider": tc.header.divider.model_copy(
                             update={"continuous": True, "width": 2.0}
                         ),
                     }

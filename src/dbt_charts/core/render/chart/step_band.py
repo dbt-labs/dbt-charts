@@ -77,6 +77,25 @@ def is_band_step(curve: str | None, x_type: str | None) -> bool:
     return curve == BAND_STEP_CURVE and x_type in _BAND_SCALE_TYPES
 
 
+def fit_dash_to_plateau(dashes: list[float]) -> list[float] | dict[str, str]:
+    """Fit a dasharray to a disconnected plateau as N dashes + N-1 gaps.
+
+    Each plateau is its own path, so dash phase restarts per plateau while its
+    length is ``bandwidth('x') * disconnected_width`` — only known to Vega at
+    runtime. The returned ``strokeDash`` expression rescales the authored
+    pattern so ink lands on both plateau edges.
+    """
+    if len(dashes) % 2:
+        dashes = dashes * 2  # SVG repeats an odd list; its last entry is a gap
+    if sum(dashes[0::2]) == 0:
+        return dashes  # no ink to redistribute; the fit would divide by zero
+    span = f"(bandwidth('x')*{get_chart_rendering().step_band.disconnected_width})"
+    period, last = sum(dashes), dashes[-1]
+    n = f"max(1,round(({span}+{last})/{period}))"
+    scale = f"{span}/({n}*{period}-{last})"
+    return {"expr": "[" + ",".join(f"{d}*{scale}" for d in dashes) + "]"}
+
+
 def apply_step_band(
     rows: list[dict[str, Any]],
     encoding: dict[str, Any],

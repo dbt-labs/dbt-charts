@@ -63,6 +63,7 @@ from dbt_charts.core.render.chart.table_support import (
     format_temporal_value,
     interpolate_scale_color,
     is_temporal_value,
+    resolve_conditional_styles,
     resolve_hinge,
     resolve_palette_stops,
 )
@@ -908,14 +909,18 @@ def _resolve_support_row(
     # above it.
     value_str = kpi_value_text(s_cell, support.format, chart_id, formats)
 
-    glyph = support.glyph or ""
+    styled = resolve_conditional_styles(support.rules, s_cell, tones)
+    authored_glyph = support.glyph or ""  # type-state: silent_fallback — unauthored
+    glyph = styled.get(
+        "glyph", authored_glyph
+    )  # type-state: silent_fallback — unauthored
     explainer = support.label or ""
     if not (value_str or explainer or glyph):
         return None
 
     tone_color = _tone_color(support.tone, tones)
-    value_fill = tone_color if tone_color is not None else muted
-    glyph_fill = tone_color if tone_color is not None else value_fill
+    value_fill = styled.get("color") or tone_color or muted
+    glyph_fill = styled.get("glyph_color") or value_fill
 
     return _SupportRow(
         glyph=glyph,
@@ -1002,7 +1007,12 @@ def _render_kpi_svg_core(
         board_style=board_style,
     )
     support_row = _resolve_support_row(
-        chart.support, row, board_style.tones, palette.muted, chart_id, formats
+        chart.support,
+        row,
+        board_style.tones,
+        palette.muted,
+        chart_id,
+        formats,
     )
     layout = _resolve_kpi_layout(
         label_text,

@@ -1,6 +1,8 @@
-"""TDD tests for render_json_schema: AuthorableSchema IR → draft-07 JSON Schema."""
+"""TDD tests for render_json_schema: AuthorableSchema IR → JSON Schema 2020-12."""
 
 import json
+
+from jsonschema.validators import validator_for
 
 from dbt_charts.core.compile.schema.introspection import introspect
 from dbt_charts.core.compile.schema.renderers.json_schema import render_json_schema
@@ -15,7 +17,7 @@ class TestRenderJsonSchemaStructure:
 
     def test_has_schema_version(self) -> None:
         result = render_json_schema(introspect())
-        assert result.get("$schema") == "http://json-schema.org/draft-07/schema#"
+        assert result.get("$schema") == "https://json-schema.org/draft/2020-12/schema"
 
     def test_has_properties(self) -> None:
         assert "properties" in render_json_schema(introspect())
@@ -24,6 +26,18 @@ class TestRenderJsonSchemaStructure:
         props = render_json_schema(introspect())["properties"]
         for key in ("title", "charts", "queries", "variables"):
             assert key in props, f"Missing root property: {key}"
+
+
+class TestTupleEnforcement:
+    def test_continuous_domain_rejects_null_bounds(self) -> None:
+        schema = render_json_schema(introspect())
+        domain = schema["$defs"]["ScaleContinuousStylePatch"]["properties"]["domain"]
+        validator = validator_for(schema)(
+            {**domain, "$defs": schema["$defs"]}, format_checker=None
+        )
+        assert validator.is_valid([0, 10])
+        assert not validator.is_valid([None, None])
+        assert not validator.is_valid([0, 10, 20])
 
 
 class TestRenderJsonSchemaDescriptions:
@@ -197,7 +211,7 @@ class TestThemeProperty:
     introspect() surfaces it as a synthetic field (SchemaSugar marker on
     AuthoredBoardInput), and this renderer derives its JSON Schema shape the
     same way it derives any other enum-backed field's -- no hand-assembled
-    property, and no explicit "type" alongside "enum" (draft-07 doesn't
+    property, and no explicit "type" alongside "enum" (JSON Schema doesn't
     require one; see _type_schema's enum branch). This must reach the
     engine-shipped schema too, not just the VS Code decorator, and must never
     drift from extends's own ThemeName enum arm."""

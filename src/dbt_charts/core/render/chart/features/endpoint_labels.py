@@ -954,7 +954,7 @@ class EndpointLabelFeature:
             ]
         )
         label_pane_width, truncated_labels = measure_label_pane_width(
-            all_series, sl.font_family, sl.font_size, box.width
+            all_series, sl.font_family, sl.font_size, sl.font_weight, box.width
         )
         label_mark_font_props: dict[str, str | float] = _series_label_font_props(sl)
 
@@ -1229,7 +1229,7 @@ class EndpointLabelFeature:
             for fill in color_range
         ]
         label_pane_width, truncated_labels = measure_label_pane_width(
-            color_domain, sl.font_family, sl.font_size, box.width
+            color_domain, sl.font_family, sl.font_size, sl.font_weight, box.width
         )
         record_series_label_truncations(chart.id, "y", truncated_labels)
         spec.endpoint_label_layout = "right_pane"

@@ -174,7 +174,11 @@ def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
     save_config(CloudConfig(host="https://cloud.example"))
     fake = FakeApi()
 
-    def factory(config: CloudConfig, host: str | None = None) -> CloudClient:
+    def factory(
+        config: CloudConfig,
+        host: str | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ) -> CloudClient:
         return CloudClient(
             host=host or config.host,
             token="t0ken",
@@ -268,6 +272,7 @@ DEVICE_AUTH_RESPONSE: dict[str, object] = {
 }
 TOKEN_RESPONSE: dict[str, object] = {
     "access_token": "new-token-xyz",
+    "refresh_token": "new-refresh-xyz",
     "token_type": "Bearer",
     "expires_in": 3600,
     "scope": "dashboards:read orgs:admin projects:admin connections:admin",
@@ -293,7 +298,9 @@ class TestLogin:
 
         assert result.exit_code == 0, out(result)
         assert read_config().token == "new-token-xyz"
+        assert read_config().refresh_token == "new-refresh-xyz"
         assert "new-token-xyz" not in out(result)
+        assert "new-refresh-xyz" not in out(result)
         assert "acme-data" in out(result)
 
     def test_refuses_when_the_env_var_would_shadow_the_new_token(
@@ -564,6 +571,27 @@ class TestLoginStartWait:
 
 
 class TestLogout:
+    def test_revokes_the_refresh_token_too_and_clears_both(self, api: FakeApi) -> None:
+        save_config(
+            CloudConfig(
+                host="https://cloud.example", token="old-token", refresh_token="old-r"
+            )
+        )
+        api.add("GET", "/.well-known/oauth-authorization-server", DISCOVERY_DOC)
+        api.add("POST", "/o/revoke_token/", {})
+
+        result = runner.invoke(app, ["cloud", "logout"])
+
+        assert result.exit_code == 0, out(result)
+        revoked = [
+            payload["token"]
+            for method, path, payload in api.calls
+            if (method, path) == ("POST", "/o/revoke_token/")
+        ]
+        assert revoked == ["old-r", "old-token"]
+        stored = read_config()
+        assert (stored.token, stored.refresh_token) == ("", "")
+
     def test_revokes_and_clears_the_token(self, api: FakeApi) -> None:
         save_config(CloudConfig(host="https://cloud.example", token="old-token"))
         api.add("GET", "/.well-known/oauth-authorization-server", DISCOVERY_DOC)
@@ -3003,7 +3031,11 @@ class TestFailureSurfaces:
         def dead(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("connection refused")
 
-        def factory(config: CloudConfig, host: str | None = None) -> CloudClient:
+        def factory(
+            config: CloudConfig,
+            host: str | None = None,
+            transport: httpx.BaseTransport | None = None,
+        ) -> CloudClient:
             return CloudClient(
                 host="https://cloud.example",
                 token="t0ken",

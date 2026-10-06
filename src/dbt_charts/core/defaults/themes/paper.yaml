@@ -32,9 +32,11 @@ style:
         color: dbt-creams.muted
       border:
         color: dbt-creams.border
-    # Markdown rules + markdown-table gridlines (was charts.table.border.color).
-    rule:
+    divider:
       color: dbt-creams.border
+    column:
+      divider:
+        color: dbt-creams.border
   charts:
     color:
       categorical:
@@ -125,9 +127,20 @@ style:
         background: dbt-creams.fill-muted
     table:
       header:
+        divider:
+          color: dbt-creams.ink
         font:
           color: dbt-creams.heading
       row:
+        divider:
+          color: dbt-creams.ink
+        roles:
+          summary:
+            divider:
+              color: dbt-creams.ink
+          total:
+            divider:
+              color: dbt-creams.ink
         stripe:
           color: dbt-creams.surface-subtle
       paginator:
@@ -165,6 +178,9 @@ style:
         color: dbt-creams.muted
       divider:
         color: dbt-creams.muted
+      row:
+        divider:
+          color: dbt-creams.muted
       label:
         font:
           color: dbt-creams.muted

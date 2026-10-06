@@ -290,7 +290,10 @@ class _ConditionalFormattingField(BaseModel):
             default=None,
             description=(
                 "Discrete rule-driven style overrides indexed by column name. "
-                "Available on type: table and type: kpi only."
+                "Available on type: table and type: kpi only. On a KPI, rules "
+                "on the `support.value` column style the support row (font.color, "
+                "glyph, glyph_color, tone); rules on other columns style the "
+                "headline."
             ),
         ),
     ]

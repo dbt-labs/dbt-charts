@@ -97,7 +97,6 @@ MDSVG_STRUCTURAL_FIELDS: frozenset[str] = frozenset(
         "inline_code_border_radius",
         "blockquote_padding",
         "table_cell_padding",
-        "hr_height",
         # Image layout constants
         "image_width",
         "image_height",
@@ -313,9 +312,17 @@ def compact_style_kwargs(
         "blockquote_font_decoration": _bq.font.decoration
         or "",  # type-state: silent_fallback — unset theme font fields map to the empty string mdsvg expects
         "blockquote_font_case": _mdsvg_case(_bq.font.case, "blockquote"),
-        "table_border_color": _rs.text.rule.color,
+        "table_border_color": _rs.text.divider.color,
+        "table_border_width": float(_rs.text.divider.width),
+        "table_border_dasharray": _rs.text.divider.dasharray
+        or "",  # type-state: silent_fallback — unset dasharray is a solid line, which mdsvg spells as the empty string
+        "table_border_visible": _rs.text.divider.visible,
         "table_header_background": _table_header_bg,
-        "hr_color": _rs.text.rule.color,
+        "hr_color": _rs.text.divider.color,
+        "hr_height": float(_rs.text.divider.width),
+        "hr_dasharray": _rs.text.divider.dasharray
+        or "",  # type-state: silent_fallback — unset dasharray is a solid line, which mdsvg spells as the empty string
+        "hr_visible": _rs.text.divider.visible,
         "text_align": text_align,
         # Top-align letterboxed markdown images (default xMidYMid centers them).
         "image_preserve_aspect_ratio": "xMidYMin meet",
@@ -359,13 +366,14 @@ def title_font_family(resolved_style: ResolvedStyle) -> str:
     return family
 
 
-def prose_max_content_width(
+def prose_content_widths(
     text: str,
     resolved_style: ResolvedStyle,
     variable_values: VariableValues,
     base_dir: str | None,
-) -> float:
-    """Width ``text`` needs to draw with no line wrapped, in the body typography,
+) -> tuple[float, float]:
+    """The narrowest width ``text`` can draw at without splitting a word, and
+    the width it needs to draw with no line wrapped, in the body typography,
     measured on the blocks the paint pass draws: images resolved against
     *base_dir*, a bad one degraded to its error message."""
     from dbt_charts.core.font_measure import markdown_font_faces
@@ -382,7 +390,7 @@ def prose_max_content_width(
         fonts=markdown_font_faces(body_text_font_family(resolved_style), style),
         fetch_image_sizes=False,
     )
-    return renderer.max_content_width(blocks)
+    return renderer.min_content_width(blocks), renderer.max_content_width(blocks)
 
 
 def title_max_content_width(

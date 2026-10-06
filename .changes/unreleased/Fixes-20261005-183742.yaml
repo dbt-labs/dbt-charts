@@ -1,0 +1,5 @@
+kind: Fixes
+body: A KPI `conditional_formatting` rule keyed on the `support.value` column now styles the support row (`font.color`, `glyph`, `glyph_color`, `tone`) instead of the headline; a `background` or other font key on such a rule is rejected.
+time: 2026-10-05T18:37:42.000000-07:00
+custom:
+  DbtChartsIssue: 58

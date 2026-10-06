@@ -16,11 +16,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from dbt_charts.core.compile.models.chart.normalized.area import AreaChart
-from dbt_charts.core.compile.models.chart.normalized.bar import BarChart
 from dbt_charts.core.compile.models.chart.normalized.geoshape import GeoshapeChart
-from dbt_charts.core.compile.models.chart.normalized.line import LineChart
-from dbt_charts.core.compile.models.chart.normalized.scatter import ScatterChart
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorBinding,
     CategoryColorScale,
@@ -46,15 +42,12 @@ _MIN_CHARTS_FOR_BINDING = 2
 # partitions the path into one-point groups and draws nothing.
 _COLOR_CHANNEL = "color"
 
-# `chart.type` is the discriminator this module reads for both `_LAYER_CAPABLE`
-# and `_BINDING_CAPABLE_CHART_TYPES` below — a module constant (not an inline
+# `chart.type` is the discriminator this module reads for
+# `_BINDING_CAPABLE_CHART_TYPES` below — a module constant (not an inline
 # string literal) so `getattr` dodges Ruff B009 the same way `_COLOR_CHANNEL`
 # does: a field only some family classes declare statically, always present at
 # runtime on any concrete chart this module is called with.
 _TYPE_FIELD = "type"
-
-# Families that accept authored overlay `layers:`.
-_LAYER_CAPABLE = (AreaChart, BarChart, LineChart, ScatterChart)
 
 # The single source of truth for which chart types actually paint from a board
 # scale. Declared by `type:` TAG, not Python class — `BarChart` backs both
@@ -121,15 +114,6 @@ def categorical_channel_fields(chart: _BaseChartFields) -> tuple[str, ...]:
     # The type TAG, not the class, decides binding capability — see
     # `_BINDING_CAPABLE_CHART_TYPES`'s docstring for why (histogram vs bar).
     if getattr(chart, _TYPE_FIELD) not in _BINDING_CAPABLE_CHART_TYPES:
-        return ()
-
-    # An authored `layers:` chart spends its color channel on layer identity —
-    # each data-series layer gets a distinct `color: {datum: <label>}` (see
-    # render/chart/AGENTS.md, "Layer color is a dbt charts contract"). Binding
-    # a category scale on top would fight that contract and put layer names
-    # and category names in one legend, so such a chart neither binds nor
-    # widens the domain.
-    if isinstance(chart, _LAYER_CAPABLE) and chart.layers:
         return ()
 
     # A choropleth authoring `value:` fills from that measure, not from

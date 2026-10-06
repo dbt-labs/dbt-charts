@@ -83,6 +83,10 @@ renders.
 A fixed category order (urgent, high, normal, low) belongs in the query: add
 an ordering column and `sort.by` it.
 
+Keep a date a date: return `date_trunc('month', ordered_at)`, not `strftime(...)`
+text. The axis labels a date by its grain; text it can't read as a date
+(`Jul 6`) becomes a category, sorted as text.
+
 ### Formats
 
 A format is one of these names: `currency`, `currency_whole`, `currency_full`,

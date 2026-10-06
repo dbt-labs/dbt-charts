@@ -494,11 +494,22 @@ def _resolved_style_with_row_rule(width: float = 1.0) -> Any:
     new_table = tc.model_copy(
         update={
             "row": base_row.model_copy(
-                update={"rule": base_row.rule.model_copy(update={"width": width})}
+                update={
+                    "divider": base_row.divider.model_copy(
+                        update={
+                            "visible": width > 0,
+                            **({"width": width} if width > 0 else {}),
+                        }
+                    )
+                }
             ),
             # Zero out header rule to exclude it from rect-order assertions.
             "header": tc.header.model_copy(
-                update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+                update={
+                    "divider": tc.header.divider.model_copy(
+                        update={"visible": False, "width": 1}
+                    )
+                }
             ),
         }
     )
@@ -683,12 +694,18 @@ class TestRowRuleZOrderAndFillAlignment:
             update={
                 "row": base_row.model_copy(
                     update={
-                        "rule": base_row.rule.model_copy(update={"width": 1.0}),
+                        "divider": base_row.divider.model_copy(
+                            update={"visible": True, "width": 1.0}
+                        ),
                         "stripe": TableRowStripeStyle(color="#f0f0f0"),
                     }
                 ),
                 "header": tc.header.model_copy(
-                    update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+                    update={
+                        "divider": tc.header.divider.model_copy(
+                            update={"visible": False, "width": 1}
+                        )
+                    }
                 ),
             }
         )
@@ -853,18 +870,28 @@ class TestRowRuleZOrderAndFillAlignment:
             update={
                 "row": base_row.model_copy(
                     update={
-                        "rule": base_row.rule.model_copy(update={"width": 1.0}),
+                        "divider": base_row.divider.model_copy(
+                            update={"visible": True, "width": 1.0}
+                        ),
                         "roles": base_row.roles.model_copy(
                             update={
                                 "summary": base_row.roles.summary.model_copy(
-                                    update={"rule_width": 1.0}
+                                    update={
+                                        "divider": base_row.roles.summary.divider.model_copy(
+                                            update={"visible": True, "width": 1.0}
+                                        )
+                                    }
                                 ),
                             }
                         ),
                     }
                 ),
                 "header": tc.header.model_copy(
-                    update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+                    update={
+                        "divider": tc.header.divider.model_copy(
+                            update={"visible": False, "width": 1}
+                        )
+                    }
                 ),
             }
         )
@@ -1090,9 +1117,8 @@ class TestPivotColumnTotalRowStyling:
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
         base_row = tc.row
-        # Distinctive rule_width on the summary role (which also governs the
-        # total row's double-rule width — see table.py: summary_rule_width is
-        # the ONE knob for both single (summary) and double (total) rules).
+        # Distinctive width on the total role's divider: it sets the width of
+        # the double rule above a total row.
         new_table = tc.model_copy(
             update={
                 "row": base_row.model_copy(
@@ -1100,8 +1126,12 @@ class TestPivotColumnTotalRowStyling:
                         "role": "_df_row_role",
                         "roles": base_row.roles.model_copy(
                             update={
-                                "summary": base_row.roles.summary.model_copy(
-                                    update={"rule_width": 3.0}
+                                "total": base_row.roles.total.model_copy(
+                                    update={
+                                        "divider": base_row.roles.total.divider.model_copy(
+                                            update={"visible": True, "width": 3.0}
+                                        )
+                                    }
                                 ),
                             }
                         ),

@@ -152,6 +152,9 @@ def _first_ink_offset_x(svg: str, authored_path: str) -> float:
     tag = re.search(rf'data-authored-path="{re.escape(authored_path)}"[^>]*>', svg)
     assert tag, f"no tagged group for authored path {authored_path!r}"
     rest = svg[tag.end() :]
+    # A subtitled chart's wrapper leads with its <desc>.
+    if description := re.match(r"<desc>[^<]*</desc>", rest):
+        rest = rest[description.end() :]
     while True:
         boundary_rect = re.match(r'<rect class="dbt-box-(?:outer|inner)"[^>]*/>', rest)
         if not boundary_rect:

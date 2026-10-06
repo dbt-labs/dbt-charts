@@ -93,7 +93,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -123,7 +123,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -153,7 +153,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             daily = resolve_axis_x_overlap(
@@ -202,7 +202,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             weekly = resolve_axis_x_overlap(
@@ -241,7 +241,7 @@ class TestTemporalOverlapResolution:
         measurer = MagicMock()
         measurer.measure = lambda text, size: 100.0 if "'" in text else 1.0
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -270,7 +270,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -299,7 +299,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -330,7 +330,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -365,7 +365,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -396,7 +396,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -445,7 +445,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": (start + step * offset).isoformat()} for offset in range(count)]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -477,7 +477,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=7.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -507,7 +507,7 @@ class TestTemporalOverlapResolution:
         ]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -534,7 +534,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": value} for value in _monthly_dates(24)]
         measurer = _make_mock_measurer(width_per_char=8.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -561,7 +561,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": value} for value in _monthly_dates(24)]
         measurer = _make_mock_measurer(width_per_char=8.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -587,7 +587,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": value} for value in _monthly_dates(24)]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -612,7 +612,7 @@ class TestTemporalOverlapResolution:
         measurer = _make_mock_measurer()
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             wide = resolve_axis_x_overlap(
@@ -651,7 +651,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": value} for value in _monthly_dates(12)]
         measurer = _make_mock_measurer()
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -692,7 +692,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": value} for value in _monthly_dates(24)]
         measurer = _make_mock_measurer(width_per_char=8.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             thinned = resolve_axis_x_overlap(
@@ -737,7 +737,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": value} for value in _monthly_dates(36)]
         measurer = _make_mock_measurer()
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -770,7 +770,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": f"{year}-01-01"} for year in range(2000, 2025)]
         measurer = _make_mock_measurer()
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -823,7 +823,7 @@ class TestTemporalOverlapResolution:
         data = [{"x": value} for value in dates]
         measurer = _make_mock_measurer(width_per_char=5.0)
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             # bucket_aligned_temporal=False mirrors the real area/line emitter
@@ -910,7 +910,7 @@ class TestCategoricalOverlapResolution:
         data = [{"x": f"Long category {i}"} for i in range(10)]
         measurer = _make_mock_measurer()
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -935,7 +935,7 @@ class TestCategoricalOverlapResolution:
         data = [{"x": f"Very long category {i}"} for i in range(20)]
         measurer = _make_mock_measurer()
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -1505,7 +1505,7 @@ class TestCadenceLadderReachesYear:
     """Regression coverage for the looped cadence ladder + sparse ceiling.
 
     Unlike the mock-measurer tests above, these use the real font measurer
-    (no ``get_font_measurer`` patch) with ``label_usable_ratio=0.8`` — the
+    (no ``get_weighted_font_measurer`` patch) with ``label_usable_ratio=0.8`` — the
     same combination the task brief's own Q2 measurement table used — so the
     chart widths below reproduce that table's outcomes directly.
     """

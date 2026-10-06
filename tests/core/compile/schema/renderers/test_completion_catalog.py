@@ -36,9 +36,9 @@ def test_theme_names_exclude_synthetic_default_and_private_and_diagnostics() -> 
 def test_build_catalog_returns_decorated_json_schema() -> None:
     catalog = build_completion_catalog()
 
-    # render_vscode_schema output: a JSON Schema with a definitions table, the
+    # render_vscode_schema output: a JSON Schema with a $defs table, the
     # top-level board properties, and the theme enum sourced from the names above.
-    assert "definitions" in catalog
+    assert "$defs" in catalog
     assert "charts" in catalog["properties"]
     assert "theme" in catalog["properties"]
 

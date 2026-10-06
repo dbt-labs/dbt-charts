@@ -65,10 +65,24 @@ class TestMidnightCount:
         end = dt.datetime(2026, 8, 11, 23, 0)
         assert _midnight_count(start, end) == 1
 
-    def test_two_day_domain_has_three_midnights(self) -> None:
+    def test_two_day_domain_has_two_midnights(self) -> None:
         start = dt.datetime(2026, 8, 11, 0, 0)
         end = dt.datetime(2026, 8, 13, 0, 0)
-        assert _midnight_count(start, end) == 3
+        assert _midnight_count(start, end) == 2
+
+    def test_closed_single_day_domain_has_one_midnight(self) -> None:
+        # Midnight to the next midnight is one day of content: the closing
+        # instant opens no day the chart shows, so no date row is owed.
+        start = dt.datetime(2026, 8, 11, 0, 0)
+        end = dt.datetime(2026, 8, 12, 0, 0)
+        assert _midnight_count(start, end) == 1
+
+    def test_mid_day_open_closing_on_midnight_keeps_both_midnights(self) -> None:
+        # Opens at 18:00, so the two drawn midnights are different days and
+        # need the date row to tell them apart.
+        start = dt.datetime(2026, 8, 11, 18, 0)
+        end = dt.datetime(2026, 8, 13, 0, 0)
+        assert _midnight_count(start, end) == 2
 
     def test_domain_that_never_reaches_a_midnight_has_zero(self) -> None:
         start = dt.datetime(2026, 8, 11, 9, 0)

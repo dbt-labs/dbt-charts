@@ -454,3 +454,58 @@ class TestGlobalColorDomainSort:
         # B (global sum 15) is ranked ahead of A (global sum 13) -> index 0.
         assert '"B" ? 0' in calc["calculate"]
         assert '"A" ? 1' in calc["calculate"]
+
+
+_TEMPORAL_MONTHS = ("2024-01-01", "2024-02-01", "2024-03-01")
+# First-encounter order [zeta, mid, alpha] differs from alphabetical
+# [alpha, mid, zeta] and from value order [mid, alpha, zeta].
+_SHUFFLED_ROWS = [
+    {"month": "2024-02-01", "s": "zeta", "v": 1},
+    {"month": "2024-01-01", "s": "zeta", "v": 1},
+    {"month": "2024-03-01", "s": "mid", "v": 10},
+    {"month": "2024-01-01", "s": "alpha", "v": 5},
+    {"month": "2024-02-01", "s": "mid", "v": 10},
+    {"month": "2024-03-01", "s": "alpha", "v": 5},
+    {"month": "2024-01-01", "s": "mid", "v": 10},
+    {"month": "2024-03-01", "s": "zeta", "v": 1},
+    {"month": "2024-02-01", "s": "alpha", "v": 5},
+]
+_FIRST_PERIOD_GAP_ROWS = [
+    row for row in _SHUFFLED_ROWS if (row["month"], row["s"]) != ("2024-01-01", "mid")
+]
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        (_SHUFFLED_ROWS, ("zeta", "mid", "alpha")),
+        (_FIRST_PERIOD_GAP_ROWS, ("zeta", "mid", "alpha")),
+    ],
+    ids=["shuffled", "series-missing-from-first-period"],
+)
+def test_stack_order_data_on_temporal_x_follows_first_appearance(
+    rows: list[dict], expected: tuple[str, ...], orientation: str
+):
+    """Gap-fill rebuilds temporal rows as buckets x sorted(series); the stack
+    order must still come from the query's own row order."""
+    chart = BarChart(
+        id="t",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="bar",
+        x="month",
+        y="v",
+        color="s",
+        style=BarChartStylePatch(
+            stack="zero", stack_order="data", orientation=orientation
+        ),
+    )
+    spec = generate_vega_lite_spec(
+        chart, rows, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX
+    )
+    pane = chart_pane(spec)
+    field = pane["encoding"]["order"]["field"]
+    calc = next(t["calculate"] for t in pane["transform"] if t.get("as") == field)
+    ranks = {name: calc.index(f'"{name}" ?') for name in expected}
+    assert sorted(ranks, key=ranks.__getitem__) == list(expected), calc

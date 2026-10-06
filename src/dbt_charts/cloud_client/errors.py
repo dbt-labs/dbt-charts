@@ -205,6 +205,18 @@ class DeviceLoginFailed(CloudError):
     code: ClassVar[ErrorCode] = ErrorCode.UNAUTHENTICATED
 
 
+class SessionExpired(CloudError):
+    """The stored login can no longer be renewed."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.UNAUTHENTICATED
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Your dbt charts Cloud session expired or was revoked. Run `dct cloud"
+            " login`."
+        )
+
+
 class NoPendingLogin(CloudError):
     """`dct cloud login --wait` found no login `--start` began."""
 

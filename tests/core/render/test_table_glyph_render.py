@@ -610,3 +610,24 @@ class TestGlyphInOverrides:
         out = resolve_conditional_styles(rules, -1)
         assert out["glyph"] == "▼"
         assert out["glyph_color"] == "#dc2626"
+
+
+def test_word_floor_measures_formatted_text_not_raw_repr() -> None:
+    """A float's raw repr is far wider than the text the cell paints."""
+    from dbt_charts.core.compile.models.style.authored.table import TableColumnConfig
+    from dbt_charts.core.render.chart.table_support import (
+        measure_column_word_floors,
+    )
+
+    measurer = get_font_measurer()
+    floors = measure_column_word_floors(
+        **{
+            **_MEASURE_ARGS,
+            "cell_pad": 0,
+            "columns": ["v"],
+            "column_configs": {"v": TableColumnConfig(format=".1f")},
+            "data": [{"v": -201.10000000000002}],
+        },
+        column_when_rules={},
+    )
+    assert floors["v"] == pytest.approx(measurer.measure("\u2212201.1", 13.0))

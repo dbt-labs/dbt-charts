@@ -20,6 +20,11 @@ from dbt_charts.core.compile.resolve.style.board import (
 _BOARD_STYLE = resolve_style(get_theme_style())
 
 
+def _divider_width(width: float) -> dict:
+    """A divider drawn at *width*; 0 is off (the divider keeps its own width)."""
+    return {"visible": width > 0, **({"width": width} if width > 0 else {})}
+
+
 def _style_with(**overrides):
     """Build a ResolvedChartsStyle with defaults plus TableChartStyle overrides.
 
@@ -37,6 +42,7 @@ def _style_with(**overrides):
     row_rule_updates: dict = {}
     summary_updates: dict = {}
     table_updates: dict = {}
+    rule_color = None
 
     for key, value in overrides.items():
         if key == "font_size":
@@ -64,7 +70,7 @@ def _style_with(**overrides):
         elif key == "header_color":
             header_font_updates["color"] = value
         elif key == "header_rule_width":
-            header_rule_updates["width"] = value
+            header_rule_updates.update(_divider_width(value))
         elif key == "header_rule_continuous":
             header_rule_updates["continuous"] = value
         elif key == "stripe_color":
@@ -74,9 +80,11 @@ def _style_with(**overrides):
                 TableRowStripeStyle(color=value) if value is not None else None
             )
         elif key == "row_rule_width":
-            row_rule_updates["width"] = value
+            row_rule_updates.update(_divider_width(value))
         elif key == "summary_rule_width":
-            summary_updates["rule_width"] = value
+            summary_updates["divider"] = tc.row.roles.summary.divider.model_copy(
+                update=_divider_width(value)
+            )
         elif key == "summary_font_weight":
             from dbt_charts.core.compile.models.primitives import FontStyle
 
@@ -91,11 +99,7 @@ def _style_with(**overrides):
         elif key == "color":
             table_updates["color"] = value
         elif key == "rule_color":
-            from dbt_charts.core.compile.models.style.theme import TableRuleStyle
-
-            table_updates["rule"] = (
-                TableRuleStyle(color=value) if value is not None else None
-            )
+            rule_color = value
         elif key == "symbol_mode":
             table_updates["symbol_mode"] = value
         elif key == "row_role":
@@ -105,16 +109,32 @@ def _style_with(**overrides):
 
     if header_font_updates:
         header_updates["font"] = tc.header.font.model_copy(update=header_font_updates)
+    if rule_color is not None:
+        header_rule_updates["color"] = rule_color
+        row_rule_updates["color"] = rule_color
+        summary_updates["divider"] = summary_updates.get(
+            "divider", tc.row.roles.summary.divider
+        ).model_copy(update={"color": rule_color})
     if header_rule_updates:
-        header_updates["rule"] = tc.header.rule.model_copy(update=header_rule_updates)
+        header_updates["divider"] = tc.header.divider.model_copy(
+            update=header_rule_updates
+        )
     if header_updates:
         table_updates["header"] = tc.header.model_copy(update=header_updates)
     if summary_updates:
-        row_updates["roles"] = tc.row.roles.model_copy(
-            update={"summary": tc.row.roles.summary.model_copy(update=summary_updates)}
-        )
+        role_updates = {
+            "summary": tc.row.roles.summary.model_copy(update=summary_updates)
+        }
+        if rule_color is not None:
+            total = tc.row.roles.total
+            role_updates["total"] = total.model_copy(
+                update={
+                    "divider": total.divider.model_copy(update={"color": rule_color})
+                }
+            )
+        row_updates["roles"] = tc.row.roles.model_copy(update=role_updates)
     if row_rule_updates:
-        row_updates["rule"] = tc.row.rule.model_copy(update=row_rule_updates)
+        row_updates["divider"] = tc.row.divider.model_copy(update=row_rule_updates)
     if row_updates:
         table_updates["row"] = tc.row.model_copy(update=row_updates)
     if font_updates:

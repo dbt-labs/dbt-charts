@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.board.normalized import Layout
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -17,21 +17,11 @@ from dbt_charts.core.compile.models.query.normalized import (
     SqlQuery,
     ValuesQuery,
 )
-from dbt_charts.core.compile.template.custom_chart_env import (
-    INLINE_TEMPLATE_NAME,
-    TEMPLATE_FILE_SUFFIX,
-    TEMPLATES_DIR,
-    CustomTemplateError,
-    CustomTemplateHeader,
-    OptionType,
-    parse_template,
-)
 from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
     Diagnostic,
 )
-from dbt_charts.core.diagnostics.codes_compile import ERR_CUSTOM_TEMPLATE
 from dbt_charts.core.project import Project, ProjectPath
 
 # Chart-encoding fields surfaced to agents. Covers the stable channel fields
@@ -73,20 +63,6 @@ class ChartDescription(BaseModel):
     encoding: dict[str, Any] = Field(
         default_factory=dict, description="Vega-Lite encoding channels keyed by role."
     )
-    template: str | None = Field(
-        default=None,
-        description=(
-            "`type: custom` with `template:` only: the template name. Null "
-            "for an inline `svg:` chart."
-        ),
-    )
-    inline_template: bool = Field(
-        default=False, description="True for a `type: custom` chart with inline `svg:`."
-    )
-    template_description: str | None = Field(
-        default=None,
-        description="`type: custom` only: the template header's description.",
-    )
 
 
 class VariableDescription(BaseModel):
@@ -106,36 +82,6 @@ class LayoutDescription(BaseModel):
         default_factory=list,
         description="Layout item identifiers (chart IDs, text keys).",
     )
-
-
-class TemplateChannelDescription(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    description: str
-    required: bool
-    multiple: bool
-
-
-class TemplateOptionDescription(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    type: OptionType
-    description: str
-    required: bool
-    default: JsonValue = None
-
-
-class TemplateDescription(BaseModel):
-    """A custom-chart template's header contract."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str = Field(description="The `template:` name, e.g. `sankey`.")
-    description: str
-    channels: list[TemplateChannelDescription]
-    options: list[TemplateOptionDescription]
 
 
 # ---------------------------------------------------------------------------
@@ -173,13 +119,6 @@ class DescribeBoardResult(BaseModel):
         default_factory=list, description="Variables defined in the board."
     )
     layout: LayoutDescription | None = None
-    template: TemplateDescription | None = Field(
-        default=None,
-        description=(
-            "Set when `path` is a `templates/<name>.svg.j2` file rather than a "
-            "board; the board fields stay empty."
-        ),
-    )
     errors: list[Diagnostic] = Field(default_factory=list)
 
 
@@ -242,70 +181,6 @@ def _encoding_for_chart(chart: Chart) -> dict[str, Any]:
     return enc
 
 
-def _template_name(relpath: str) -> str | None:
-    """The `template:` name a file answers to, or None outside `templates/`."""
-    prefix = TEMPLATES_DIR + "/"
-    if relpath.startswith(prefix) and relpath.endswith(TEMPLATE_FILE_SUFFIX):
-        return relpath.removeprefix(prefix).removesuffix(TEMPLATE_FILE_SUFFIX)
-    return None
-
-
-def _describe_template(resolved: ProjectPath) -> DescribeBoardResult:
-    """Describe a template file's header: channels and options."""
-    from dbt_charts.core.diagnostics.base import DbtChartsError
-
-    name = _template_name(resolved.relpath)
-    if name is None:
-        return DescribeBoardResult(
-            success=False,
-            path=resolved.relpath,
-            errors=[
-                DbtChartsError.from_code(
-                    ERR_CUSTOM_TEMPLATE,
-                    chart_id=resolved.relpath,
-                    reason=(
-                        f"not under {TEMPLATES_DIR}/; `template:` reads only "
-                        f"{TEMPLATES_DIR}/<name>{TEMPLATE_FILE_SUFFIX}"
-                    ),
-                ).to_diagnostic()
-            ],
-        )
-    try:
-        header = parse_template(resolved.read_text())
-    except CustomTemplateError as exc:
-        return DescribeBoardResult(
-            success=False,
-            path=resolved.relpath,
-            errors=[
-                DbtChartsError.from_code(
-                    ERR_CUSTOM_TEMPLATE, chart_id=resolved.relpath, reason=str(exc)
-                ).to_diagnostic()
-            ],
-        )
-    return DescribeBoardResult(
-        success=True,
-        path=resolved.relpath,
-        template=_template_description(name, header),
-    )
-
-
-def _template_description(
-    name: str, header: CustomTemplateHeader
-) -> TemplateDescription:
-    return TemplateDescription(
-        name=name,
-        description=header.description,
-        channels=[
-            TemplateChannelDescription(name=n, **spec.model_dump())
-            for n, spec in header.channels.items()
-        ],
-        options=[
-            TemplateOptionDescription(name=n, **spec.model_dump())
-            for n, spec in header.options.items()
-        ],
-    )
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -335,7 +210,7 @@ def describe_board(path: Path, *, project: Project) -> DescribeBoardResult:
 
 
 def _describe_resolved(resolved: ProjectPath) -> DescribeBoardResult:
-    """Describe an already-resolved board or template path — no re-resolution."""
+    """Describe an already-resolved board path — no re-resolution."""
     from dbt_charts.core.compile.compiler import compile_file
     from dbt_charts.core.diagnostics.base import DbtChartsError
 
@@ -350,9 +225,6 @@ def _describe_resolved(resolved: ProjectPath) -> DescribeBoardResult:
                 ).to_diagnostic()
             ],
         )
-
-    if resolved.relpath.endswith(TEMPLATE_FILE_SUFFIX):
-        return _describe_template(resolved)
 
     try:
         result = compile_file(resolved.read_board())
@@ -399,20 +271,6 @@ def _describe_resolved(resolved: ProjectPath) -> DescribeBoardResult:
             or getattr(chart, "label", None)
             or None,
             encoding=_encoding_for_chart(chart),
-            template=(
-                chart.template_name
-                if chart.type == "custom"
-                and chart.template_name != INLINE_TEMPLATE_NAME
-                else None
-            ),
-            template_description=(
-                chart.template_header.description or None
-                if chart.type == "custom"
-                and chart.template_name != INLINE_TEMPLATE_NAME
-                else None
-            ),
-            inline_template=chart.type == "custom"
-            and chart.template_name == INLINE_TEMPLATE_NAME,
         )
         for name, chart in board.charts.items()
     ]
@@ -459,8 +317,7 @@ def describe_paths(
 
     Each argv path expands like the single-path verb: a file describes directly,
     a directory walks recursively (skipping ``_*.yml`` partials and ejected
-    inspect-template directories) and also describes the custom chart
-    templates under it that ``template:`` can name (``templates/**/*.svg.j2``). Results are concatenated in argv order.
+    inspect-template directories). Results are concatenated in argv order.
     """
     out: list[DescribeBoardResult] = []
     for p in paths:
@@ -498,16 +355,11 @@ def _describe_one_path(
             )
         ]
 
-    if resolved.is_yaml or resolved.relpath.endswith(TEMPLATE_FILE_SUFFIX):
+    if resolved.is_yaml:
         return [_describe_resolved(resolved)]
 
     boards = iter_expanded_board_files(project, resolved.relpath)
-    templates = [
-        project.path(relpath)
-        for relpath in project.iter_files(resolved.relpath, recursive=True)
-        if _template_name(relpath) is not None
-    ]
-    if not boards and not templates:
+    if not boards:
         return [
             DescribeBoardResult(
                 success=False,
@@ -520,4 +372,4 @@ def _describe_one_path(
                 ],
             )
         ]
-    return [_describe_resolved(pf) for pf in [*boards, *templates]]
+    return [_describe_resolved(pf) for pf in boards]

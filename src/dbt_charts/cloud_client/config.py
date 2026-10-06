@@ -15,8 +15,12 @@ every verb that needs one says so when it is missing.
 from __future__ import annotations
 
 import os
+import sys
+import tempfile
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
+from typing import BinaryIO, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -25,6 +29,7 @@ from dbt_charts.cloud_client.errors import CloudConfigError
 
 CONFIG_DIR_NAME = "dbt-charts"
 CONFIG_FILE_NAME = "config.yml"
+CONFIG_LOCK_FILE_NAME = "config.lock"
 PENDING_LOGIN_FILE_NAME = "pending-login.yml"
 PENDING_CONNECT_FILE_NAME = "pending-connect.yml"
 TOKEN_ENV_VAR = "DCT_CLOUD_TOKEN"
@@ -38,10 +43,14 @@ class CloudConfig(BaseModel):
 
     host: str = Field(default=DEFAULT_HOST, description="Cloud deployment to talk to.")
     token: str = Field(default="", description="Bearer token; empty when signed out.")
+    refresh_token: str = Field(
+        default="",
+        description="Renews the bearer token; Cloud rotates it on every use.",
+    )
     org: str = Field(default="", description="Default organization slug.")
     project: str = Field(default="", description="Default project slug.")
 
-    @field_validator("token")
+    @field_validator("token", "refresh_token")
     @classmethod
     def _strip_trailing_newline(cls, value: str) -> str:
         """A YAML block scalar (``token: |``) and `export TOKEN=$(cat file)`
@@ -160,13 +169,58 @@ def _read_private_yaml(path: Path) -> dict[str, object] | None:
 def _write_private_yaml(path: Path, data: dict[str, object]) -> Path:
     """Write *data* as YAML, owner-readable only."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Create private, then narrow a pre-existing file: touch() sets the mode
-    # only on creation, and a credential must never land in a world-readable
-    # file.
-    path.touch(mode=0o600, exist_ok=True)
-    path.chmod(0o600)
-    path.write_text(yaml.safe_dump(data, sort_keys=True), encoding="utf-8")
+    # mkstemp creates 0600; os.replace means no reader ever sees a half-written
+    # config, which would lose a just-rotated refresh token.
+    descriptor, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(yaml.safe_dump(data, sort_keys=True))
+        Path(temp_name).replace(path)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
     return path
+
+
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock(handle: BinaryIO) -> None:
+        handle.seek(0)
+        try:
+            # LK_LOCK gives up after ~10 seconds of retries.
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        except OSError as exc:
+            raise CloudConfigError(
+                f"{handle.name} is locked by another dct process."
+            ) from exc
+
+    def _unlock(handle: BinaryIO) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock(handle: BinaryIO) -> None:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+
+    def _unlock(handle: BinaryIO) -> None:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@contextmanager
+def config_lock() -> Generator[None]:
+    """An exclusive lock across ``dct`` processes for a read-modify-write of
+    the config. Cloud revokes the whole token family when a rotated refresh
+    token is presented twice, so two processes must never refresh at once."""
+    config_dir().mkdir(parents=True, exist_ok=True)
+    with (config_dir() / CONFIG_LOCK_FILE_NAME).open("a+b") as handle:
+        _lock(handle)
+        try:
+            yield
+        finally:
+            _unlock(handle)
 
 
 def read_config() -> CloudConfig:

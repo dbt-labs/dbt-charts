@@ -15,6 +15,7 @@ from dbt_charts.core.compile.models.markers import (
 )
 from dbt_charts.core.compile.models.primitives import (
     CornerStyle,
+    DividerStyle,
     FontStyle,
     SpacingValues,
 )
@@ -61,17 +62,8 @@ class InputStyle(BaseModel):
     range: RangeDefaults = Field(description="Range input default min/max/step values.")
 
 
-class FooterRule(BaseModel):
-    """Hairline rule above the footer attribution text. None = no rule."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    color: Annotated[str, Color()] = Field(description="Rule stroke color.")
-    stroke_width: float = Field(description="Rule stroke width in pixels.")
-
-
 class FooterStyle(BaseModel):
-    """Page footer chrome: visibility, attribution text, font, and rule."""
+    """Page footer chrome: visibility, attribution text, font, and divider."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -90,13 +82,7 @@ class FooterStyle(BaseModel):
         description="Footer text font style (size and color required).",
     )
     y_offset: float = Field(description="Vertical offset from bottom edge in pixels.")
-    # None = no hairline rule above the footer text — a legitimate theme choice.
-    # Cascade: None in a patch inherits the parent value (merge_onto_base semantics).
-    # To disable the rule, set rule: null in the base theme YAML (no per-board clearing needed).
-    rule: FooterRule | None = Field(
-        default=None,
-        description="Hairline rule above footer text; null disables the rule.",
-    )
+    divider: DividerStyle = Field(description="Hairline above the footer text.")
 
     @model_validator(mode="after")
     def _require_font_size_and_color(self) -> FooterStyle:

@@ -1029,8 +1029,7 @@ rows:
 
 
 class TestAuthoredLayers:
-    def test_an_authored_layers_chart_does_not_bind(self) -> None:
-        """`layers:` spends the color channel on layer identity."""
+    def test_a_layers_chart_binds_on_its_base_color_field(self) -> None:
         resolved_board, _ = _resolve_board(
             _board(
                 """
@@ -1041,7 +1040,7 @@ class TestAuthoredLayers:
     y: revenue
     color: category
   layered:
-    query: all
+    query: subset
     type: bar
     x: status
     y: revenue
@@ -1062,7 +1061,116 @@ rows:
             c.id: {s.field for s in c.category_colors}
             for c in resolved_board.charts.values()
         }
-        assert bound["layered"] == set(), bound
+        assert bound["layered"] == {"category"}, bound
+
+    @staticmethod
+    def _layered_vs_plain(layer_extra: str = "") -> dict[str, dict[str, str]]:
+        """Color of every scale entry, per chart, for a layered chart drawing a
+        subset of the categories next to a plain chart drawing all of them."""
+        specs = _specs(
+            _board(
+                f"""
+  plain:
+    query: all
+    type: bar
+    x: status
+    y: revenue
+    color: category
+  layered:
+    query: subset
+    type: bar
+    x: status
+    y: revenue
+    color: category
+    layers:
+      - type: line
+        query: all
+        x: status
+        y: revenue
+        label: Trend{layer_extra}
+rows:
+  - plain
+  - layered
+"""
+            )
+        )
+        colors = {}
+        for chart_id in ("plain", "layered"):
+            base = next(
+                e
+                for e in _walk(specs[chart_id], frozenset({"bar"}))
+                if isinstance(e, dict) and e.get("field") == "category"
+            )
+            scale = base["scale"]
+            colors[chart_id] = dict(zip(scale["domain"], scale["range"], strict=True))
+        return colors
+
+    def test_the_layer_color_is_no_category_color_on_the_board(self) -> None:
+        """The layered chart draws only some categories, so low slots are free
+        in its own scale yet still belong to a category on its sibling."""
+        colors = self._layered_vs_plain()
+        layered = colors["layered"]
+        assert "Trend" in layered, layered
+        assert len(set(layered.values())) == len(layered), layered
+        assert layered["Trend"] not in colors["plain"].values(), colors
+
+    def test_a_layer_with_its_own_color_field_avoids_board_colors_too(self) -> None:
+        colors = self._layered_vs_plain("\n        color: status")
+        layered = colors["layered"]
+        assert {"Open", "Won"} <= layered.keys(), layered
+        assert len(set(layered.values())) == len(layered), layered
+        for value in ("Open", "Won"):
+            assert layered[value] not in colors["plain"].values(), colors
+
+    def test_an_exhausted_palette_rotates_instead_of_repeating(self) -> None:
+        from dbt_charts.core.render.chart.emitters._overlay import (
+            _free_palette_color,
+        )
+
+        palette = ["#aaaaaa", "#bbbbbb", "#cccccc"]
+        picks = [_free_palette_color(palette, set(palette), n) for n in (3, 4, 5)]
+        assert picks == ["#aaaaaa", "#bbbbbb", "#cccccc"]
+        assert _free_palette_color(palette, {"#AAAAAA", "#bbbbbb"}, 9) == "#cccccc"
+
+    _LAYERED_PINNED = _board(
+        """
+  layered:
+    query: all
+    type: bar
+    x: status
+    y: revenue
+    color: category
+    layers:
+      - type: line
+        query: all
+        x: status
+        y: revenue
+        label: Trend
+rows:
+  - layered
+""",
+        style="""
+style:
+  charts:
+    category_colors:
+      category:
+        values:
+          Tools: "#abcdef"
+          Electronics: "#123456"
+""",
+    )
+
+    def test_authored_pins_paint_a_layers_chart(self) -> None:
+        spec = _specs(self._LAYERED_PINNED)["layered"]
+        base = next(
+            e
+            for e in _walk(spec, frozenset({"bar"}))
+            if isinstance(e, dict) and e.get("field") == "category"
+        )
+        scale = base["scale"]
+        by_value = dict(zip(scale["domain"], scale["range"], strict=True))
+        assert by_value["Tools"] == "#abcdef"
+        assert by_value["Electronics"] == "#123456"
 
 
 class TestHistogramNeverBinds:

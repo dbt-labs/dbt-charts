@@ -322,3 +322,87 @@ rows:
     query = result.board.queries["sales"]
     assert is_sql_query(query)
     assert "region" in query.variable_dependencies
+
+
+def test_variable_dependencies_flow_through_composed_queries() -> None:
+    """Queries, charts and cache keys depend on variables read by embedded queries."""
+    from dbt_charts.core.compile import compile
+    from dbt_charts.core.execute.duckdb_cache import compute_relevant_variables
+
+    result = compile(
+        """
+title: Test
+source: test
+variables:
+  show_recent:
+    input: checkbox
+    default: true
+queries:
+  base:
+    sql: |
+      select 1 as day, 10 as n, false as is_recent
+      where true {% if not show_recent %}and 1 = 1{% endif %}
+  mid:
+    sql: select * from {{ queries.base }}
+  top:
+    sql: select * from {{ queries.mid }}
+  unrelated:
+    sql: select 1 as day, 2 as n
+charts:
+  composed:
+    query: top
+    type: bar
+    x: day
+    y: n
+  inline:
+    query: select * from {{ queries.mid }}
+    type: bar
+    x: day
+    y: n
+  plain:
+    query: unrelated
+    type: bar
+    x: day
+    y: n
+rows:
+  - cols: [composed, inline, plain]
+"""
+    )
+    assert result.success
+    board = result.board
+    assert board.queries["top"].variable_dependencies == {"show_recent"}
+    assert board.charts["composed"].variable_dependencies == {"show_recent"}
+    assert board.charts["inline"].variable_dependencies == {"show_recent"}
+    assert not board.charts["plain"].variable_dependencies
+    assert compute_relevant_variables(board.queries["top"], {"show_recent": False}) == {
+        "show_recent": False
+    }
+
+
+def test_unknown_variable_is_blamed_only_on_the_query_that_names_it() -> None:
+    """A query embedding one that names an undeclared variable is not reported for it."""
+    from dbt_charts.core.compile import compile
+
+    result = compile(
+        """
+title: Test
+source: test
+queries:
+  base:
+    sql: select {{ nope }} as day
+  top:
+    sql: select * from {{ queries.base }}
+charts:
+  c:
+    query: top
+    type: bar
+    x: day
+    y: day
+rows:
+  - c
+"""
+    )
+    assert not result.success
+    assert [(e.code, e.message.split(" references")[0]) for e in result.errors] == [
+        ("ERR-UNKNOWN-VARIABLE", "Query 'base'")
+    ]

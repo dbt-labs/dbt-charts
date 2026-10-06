@@ -24,14 +24,12 @@ from dbt_charts.core.compile.models.chart.authored import (
     SUPPORTED_AUTHORED_CHART_TYPES,
     AuthoredChart,
     CartesianLayer,
-    CustomChart as AuthoredCustomChart,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
     CalloutChart,
     Chart,
-    CustomChart,
     GeoshapeChart,
     HeatmapChart,
     KpiChart,
@@ -47,27 +45,15 @@ from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.refs import QueryRef
 from dbt_charts.core.compile.normalize.queries import (
+    expand_composed_variable_dependencies,
     normalize_query,
     resolve_external_query,
 )
 from dbt_charts.core.compile.normalize.variables import synthetic_query_name
 from dbt_charts.core.compile.parse.parser import looks_like_sql
 from dbt_charts.core.compile.support_table import apply_measure_format_to_support_table
-from dbt_charts.core.compile.template.custom_chart_env import (
-    INLINE_TEMPLATE_NAME,
-    TEMPLATE_FILE_SUFFIX,
-    TEMPLATES_DIR,
-    CustomTemplateError,
-    available_template_names,
-    parse_template,
-    validate_fields,
-)
 from dbt_charts.core.compile.template.jinja import extract_variable_dependencies
-from dbt_charts.core.diagnostics.codes_compile import (
-    ERR_CUSTOM_FIELDS,
-    ERR_CUSTOM_TEMPLATE,
-    ERR_MULTIPLES_SELF_CROSSED,
-)
+from dbt_charts.core.diagnostics.codes_compile import ERR_MULTIPLES_SELF_CROSSED
 from dbt_charts.core.text.case import apply_case, inferred_display_name
 
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
@@ -245,6 +231,8 @@ def normalize_chart(
         )
 
     # --- Variable dependencies ---
+    if query_name is not None:
+        expand_composed_variable_dependencies(query_registry, [query_name])
     chart_deps: set[str] = set()
     title = getattr(authored, "title", None)
     subtitle = getattr(authored, "subtitle", None)
@@ -512,87 +500,10 @@ def normalize_chart(
                 sort=None,
                 style=authored_style,
             )
-        case "custom":
-            return _build_custom(chart_id, base, shared, authored, base_dir)
         case _:
             raise CompilationError(
                 f"Chart '{chart_id}' has unrecognized type {chart_type!r}"
             )
-
-
-def _build_custom(
-    chart_id: str,
-    base: dict[str, Any],  # type-state: explicit_any — spread kwargs
-    shared: dict[str, Any],  # type-state: explicit_any — spread kwargs
-    authored: AuthoredCustomChart,
-    base_dir: ProjectDirectory
-    | None,  # type-state: optional — a standalone board has no project
-) -> CustomChart:
-    """Load the template, parse its header, and validate channels and options against it."""
-    if authored.template is not None:
-        relpath = f"{TEMPLATES_DIR}/{authored.template}{TEMPLATE_FILE_SUFFIX}"
-        if base_dir is None:
-            raise CompilationError.from_code(
-                ERR_CUSTOM_TEMPLATE,
-                chart_id=chart_id,
-                reason=f"`template: {authored.template}` needs a project to read "
-                f"{relpath} from; use inline `svg:` for a standalone board",
-            )
-        template_file = base_dir.project.path(relpath)
-        if not template_file.exists():
-            names = available_template_names(base_dir.project)
-            available = (
-                f"available: {', '.join(names)}"
-                if names
-                else f"{TEMPLATES_DIR}/ has no templates"
-            )
-            raise CompilationError.from_code(
-                ERR_CUSTOM_TEMPLATE,
-                chart_id=chart_id,
-                reason=f"template file {relpath} not found in the project; {available}",
-            )
-        template_name, source = authored.template, template_file.read_text()
-    else:
-        assert authored.svg is not None  # the authored model requires one source
-        template_name, source = INLINE_TEMPLATE_NAME, authored.svg
-    try:
-        header = parse_template(source)
-    except CustomTemplateError as exc:
-        raise CompilationError.from_code(
-            ERR_CUSTOM_TEMPLATE, chart_id=chart_id, reason=f"{template_name}: {exc}"
-        ) from exc
-    try:
-        channels, options = validate_fields(
-            header,
-            {
-                "x": authored.x,
-                "y": authored.y,
-                "color": authored.color,
-                "size": authored.size,
-                "shape": authored.shape,
-                "theta": authored.theta,
-                "value": authored.value,
-            },
-            {} if authored.options is None else authored.options,
-        )
-    except CustomTemplateError as exc:
-        raise CompilationError.from_code(
-            ERR_CUSTOM_FIELDS, chart_id=chart_id, reason=str(exc)
-        ) from exc
-    style = authored.style
-    return CustomChart(
-        **base,
-        **shared,
-        type="custom",
-        template_name=template_name,
-        template_source=source,
-        template_header=header,
-        channels=channels,
-        options=options,
-        aspect_ratio=style.aspect_ratio if style is not None else None,
-        min_height=style.min_height if style is not None else None,
-        max_height=style.max_height if style is not None else None,
-    )
 
 
 def _build_cartesian(

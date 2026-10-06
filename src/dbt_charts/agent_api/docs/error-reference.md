@@ -374,62 +374,6 @@ Color {value!r} is not a valid CSS color ({detail}). Use a hex color, a CSS name
 
 Fired when a value destined for a style="..." CSS declaration (a table row/cell link color, a board title's font color, or the variables strip's border color) does not parse as exactly one CSS color. Escaping alone cannot make such a value safe: a string like `red; background-image:url(//evil)` needs no quote or angle bracket to open a second declaration, so the value itself must be proven to be nothing but a color before it reaches the attribute.
 
-### ERR-CUSTOM-FIELDS: Custom chart channels or options do not match the template
-
-- **Level:** error
-- **Domain:** compile
-- **Suppressible:** no
-
-**Message template:**
-
-```
-Chart {chart_id!r} (custom): {reason}
-```
-
-Fired when a `type: custom` chart's channels (`x`, `y`, `color`, ...) or `options:` disagree with what its template declares in its header: an undeclared channel or option, a required one left out, a list on a channel without `multiple: true`, a value of the wrong type, or a color option that is not a color. A template with no header accepts no channels and no options.
-
-### ERR-CUSTOM-RENDER: Custom chart template failed to render
-
-- **Level:** error
-- **Domain:** render
-- **Suppressible:** no
-
-**Message template:**
-
-```
-Chart {chart_id!r} (custom): {reason}
-```
-
-Fired when a `type: custom` chart's template fails while rendering: a Jinja runtime error, a misspelled column, param, or style key (templates use strict undefined), a column param naming a column the query did not return, or the template calling `raise_error()`.
-
-### ERR-CUSTOM-SVG: Custom chart template produced disallowed SVG
-
-- **Level:** error
-- **Domain:** render
-- **Suppressible:** no
-
-**Message template:**
-
-```
-Chart {chart_id!r} (custom): {reason}
-```
-
-Fired when a `type: custom` chart's template output is not well-formed SVG or uses a construct outside the allowlist: `script`, `foreignObject`, `style`, `image`, `a`, or animation elements; `on*` attributes; a `href` that is not a `#local` reference; `url(...)` that is not `url(#local)`; `javascript:`; or a DOCTYPE or ENTITY declaration. Nothing is stripped; the chart fails.
-
-### ERR-CUSTOM-TEMPLATE: Custom chart template is missing or invalid
-
-- **Level:** error
-- **Domain:** compile
-- **Suppressible:** no
-
-**Message template:**
-
-```
-Chart {chart_id!r} (custom): {reason}
-```
-
-Fired when a `type: custom` chart's template cannot be loaded: `template:` names no `templates/<name>.svg.j2` file in the project, the board has no project to read it from, the `{#--- ... ---#}` header is not valid YAML or declares an unknown param type, or the Jinja source has a syntax error.
-
 ### ERR-ENDPOINT-LABELS-CENTER-STACK: stack: center is not supported for horizontal endpoint labels
 
 - **Level:** error
@@ -887,10 +831,10 @@ Fired when a layer authors `style.marks.line.curve: step` on a chart whose base 
 **Message template:**
 
 ```
-Chart {chart_id!r} sets axis_y.scale.domain={domain!r} but the layers use independent y scales (left and right sides differ). A chart-level domain is ambiguous when each side has its own scale; set axis_y.scale.domain on the individual layer instead.
+Chart {chart_id!r} sets axis_y.scale.domain={domain!r} but a layer pins its y axis to one side, so the chart has two independent y scales and one chart-level domain cannot apply to both. Remove the chart-level axis_y.scale.continuous.domain and set axis_y.scale.domain on each layer's own axis_y; the base series' domain cannot be pinned once a layer sets axis_y.position.
 ```
 
-Fired when a chart sets `axis_y.scale.domain` at the chart level but the layers use independent (split) y scales. A chart-level domain is ambiguous when left and right sides have different scales. Set `axis_y.scale.domain` on the individual layer instead.
+Fired when a chart sets `axis_y.scale.domain` at the chart level and any layer pins its y axis to a side with `axis_y.position`. The base chart takes the opposite side, so the chart has two independent y scales and a single chart-level domain is ambiguous. Remove the chart-level `axis_y.scale.continuous.domain` and set `axis_y.scale.domain` on each layer's own `axis_y`; the base series' domain cannot be pinned once a layer sets `axis_y.position`.
 
 ### ERR-LEGEND-ALIGN-UNSUPPORTED: A legend cannot be aligned this way on this chart
 
@@ -1045,6 +989,20 @@ Chart {chart_id!r}: axis_y.mirror is not supported on multi-series charts (y = {
 ```
 
 Fired when a chart carries a list-valued `y:` while `style.axis_y.mirror` is on. Mirror draws the same y-scale on both edges of a wide chart, which only means something when there is exactly one measure scale to draw. Reported at render rather than by `dct validate` because mirror is cascade-resolved: a theme layer can turn it on for a chart that never authored it, so the combination is not visible on the authored chart alone.
+
+### ERR-MIRROR-UNMEASURABLE-ALIGN: axis_y.labels.align cannot be measured on the mirrored edge
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: axis_y.labels.align: {align!r} would draw the mirrored {opposite}-edge labels across the axis into the plot, and the engine can only reserve a gutter for text it can measure. The mirrored labels come from an expression, a case transform, or have no numeric format. To right-align a percent ruler, use `axis_y.mirror.format` (for example `.0%`); otherwise omit `axis_y.labels.align`.
+```
+
+Fired when `style.axis_y.labels.align` is authored on a chart with `style.axis_y.mirror`, and the alignment would invade the plot on the mirrored edge while the label text cannot be measured to size a safe `labelPadding`. Text from `mirror.expr`, an authored `labels.expr`, an upper/lower `font.case`, or an axis without a numeric format is evaluated at paint time, so its width is unknown. `mirror.format` is measurable and supports alignment.
 
 ### ERR-MULTI-Y-COLOR-CONFLICT: Multi-y chart's color: must name a column
 

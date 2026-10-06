@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Text that sizes layout — an endpoint-label rail, a top legend row, a tilted axis label, an axis title''s wrap budget — was measured at a fixed default font weight even where it paints at an authored, non-default weight (a bold series name, `axis_x.labels.font.weight`, `legend.label.font.weight`, or an axis title''s theme-default 600). A bold run''s glyphs advance wider than the unweighted measurement assumed, so the rail, legend, or axis could undercount its own footprint and collide with or clip a neighbor. These sites now measure through `get_weighted_font_measurer` at the same weight they paint with.'
+time: '2026-09-28T15:41:34.000000-07:00'

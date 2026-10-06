@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'A stacked bar with `stack_order: data` on a date x now stacks series in the order the query returns them instead of alphabetically.'
+time: 2026-10-05T16:00:00.000000-07:00

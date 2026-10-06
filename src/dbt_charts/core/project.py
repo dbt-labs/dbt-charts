@@ -136,16 +136,11 @@ INDEX_CANDIDATE_NAMES: tuple[str, ...] = tuple(
     f"index{s}" for s in BOARD_CANDIDATE_SUFFIXES
 )
 
-# Jinja template suffix: `type: custom` charts read `templates/<name>.svg.j2`
-# through the project, so Cloud has to fetch these blobs into its store.
-TEMPLATE_SUFFIXES: tuple[str, ...] = (".j2",)
-
 # The closed set of file suffixes dbt charts serves from a project tree:
 #   BOARD_CANDIDATE_SUFFIXES — config + board files (.yml/.yaml) and markdown
 #                  boards (.md/.markdown); composed in so this set can never
 #                  drift behind a new board suffix.
 #   IMAGE_SUFFIXES — images embeddable from board markdown (core/utils.py).
-#   TEMPLATE_SUFFIXES — custom-chart SVG templates (see above).
 #   .csv/.json/.parquet — file sources (CsvSourceConfig etc.), whose `files:`
 #                  paths are required to carry these exact extensions
 #                  (models/source.py `_validate_files_mapping`)
@@ -155,7 +150,6 @@ TEMPLATE_SUFFIXES: tuple[str, ...] = (".j2",)
 SERVED_FILE_SUFFIXES: frozenset[str] = (
     frozenset(BOARD_CANDIDATE_SUFFIXES)
     | frozenset(IMAGE_SUFFIXES)
-    | frozenset(TEMPLATE_SUFFIXES)
     | {".csv", ".json", ".jsonl", ".parquet"}
 )
 

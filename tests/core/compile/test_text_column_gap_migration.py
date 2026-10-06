@@ -31,7 +31,8 @@ style:
     column:
       max_number: 2
       gap: 24
-      rule:
+      divider:
+        visible: true
         width: 1
         color: "#ccc"
 rows:
@@ -54,7 +55,7 @@ def test_an_authored_column_gap_is_dropped_with_a_warning() -> None:
     assert result.success, [f"{e.code}: {e.message}" for e in result.errors]
     column = result.board.resolved_style.text.column
     assert column.max_number == 2
-    assert column.rule is not None
+    assert column.divider.visible
 
 
 def test_the_mapping_loses_the_gap_and_keeps_its_siblings() -> None:
@@ -83,4 +84,4 @@ def test_the_text_rewrite_replay_drops_the_gap_and_keeps_its_siblings() -> None:
 
     assert "gap:" not in result
     assert "max_number: 2" in result
-    assert "rule:" in result
+    assert "divider:" in result

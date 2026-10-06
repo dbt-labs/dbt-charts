@@ -1023,6 +1023,38 @@ ERR_ENDPOINT_LABELS_CENTER_STACK = REGISTRY.register(
     )
 )
 
+ERR_MIRROR_UNMEASURABLE_ALIGN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-MIRROR-UNMEASURABLE-ALIGN",
+        domain="render",
+        title="axis_y.labels.align cannot be measured on the mirrored edge",
+        message_template=(
+            "Chart {chart_id!r}: axis_y.labels.align: {align!r} would draw the "
+            "mirrored {opposite}-edge labels across the axis into the plot, "
+            "and the engine can only reserve a gutter for text it can measure. "
+            "The mirrored labels come from an expression, a case transform, "
+            "or have no numeric format. To right-align a percent ruler, use "
+            "`axis_y.mirror.format` (for example `.0%`); otherwise omit "
+            "`axis_y.labels.align`."
+        ),
+        doc=(
+            "Fired when `style.axis_y.labels.align` is authored on a chart "
+            "with `style.axis_y.mirror`, and the alignment would invade the "
+            "plot on the mirrored edge while the label text cannot be "
+            "measured to size a safe `labelPadding`. Text from "
+            "`mirror.expr`, an authored `labels.expr`, an upper/lower "
+            "`font.case`, or an axis without a numeric format is evaluated "
+            "at paint time, so its width is unknown. `mirror.format` is "
+            "measurable and supports alignment."
+        ),
+        summary=(
+            "Fired when `axis_y.labels.align` is combined with `axis_y.mirror` "
+            "and the mirrored labels cannot be measured."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_MIRROR_MULTI_SERIES = REGISTRY.register(
     ErrorCode(
         code="ERR-MIRROR-MULTI-SERIES",
@@ -1761,16 +1793,12 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
     WarningCode(
         code="WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
         domain="render",
-        title="Y-axis field looks like money or a percentage but uses a generic format",
+        title="Field looks like money, a percentage or a fraction but has no fitting format",
         message_template=(
             "Chart {chart_id!r}: field {field!r} looks like {kind} "
-            "but the y-axis format is {format!r}."
+            "but the {surface} {format_state}."
         ),
-        fix_template=(
-            "Set `{format_key}` to {currency_format} or a percent format "
-            "(`.1%` for a 0-1 share, or `suffix: '%'` for values already in "
-            "percent points) to match the field's meaning."
-        ),
+        fix_template="Set `{format_key}` to {suggestion} to match the field's meaning.",
         doc=(
             "Fires when a chart's y-encoding field name looks like money or a "
             "percentage but the chart's baked y-axis format is unfit to render "
@@ -1789,7 +1817,12 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
             "dollar spec (`$,.2f`), except for a currency-classified field "
             "whose trailing `_<code>` names a currency dbt Charts recognizes "
             "(`_eur`, `_gbp`): it suggests `,.2f` with `prefix: '€'` (that "
-            "currency's own symbol)."
+            "currency's own symbol). Also fires on a visible table column with "
+            "no number format whose non-null values are all numbers between 0 "
+            "and 1, and not all exactly 0 or 1 (a flag): left unformatted it "
+            "renders in SI notation (0.4367 shows as `437m`). The fix is to set "
+            "`style.columns.<name>.format`, e.g. `.1%`. Pivot measure columns "
+            "are not checked."
         ),
         docs_topic="charts",
     )
@@ -3016,43 +3049,6 @@ ERR_CSS_COLOR_INVALID_AT_RENDER = REGISTRY.register(
             "itself must be proven to be nothing but a color before it "
             "reaches the attribute."
         ),
-        docs_topic="charts",
-    )
-)
-
-ERR_CUSTOM_RENDER = REGISTRY.register(
-    ErrorCode(
-        code="ERR-CUSTOM-RENDER",
-        domain="render",
-        title="Custom chart template failed to render",
-        message_template="Chart {chart_id!r} (custom): {reason}",
-        doc=(
-            "Fired when a `type: custom` chart's template fails while rendering: "
-            "a Jinja runtime error, a misspelled column, param, or style key "
-            "(templates use strict undefined), a column param naming a column "
-            "the query did not return, or the template calling `raise_error()`."
-        ),
-        summary="Fired when a custom chart's template raises, misses a column, or calls raise_error.",
-        docs_topic="charts",
-    )
-)
-
-ERR_CUSTOM_SVG = REGISTRY.register(
-    ErrorCode(
-        code="ERR-CUSTOM-SVG",
-        domain="render",
-        title="Custom chart template produced disallowed SVG",
-        message_template="Chart {chart_id!r} (custom): {reason}",
-        doc=(
-            "Fired when a `type: custom` chart's template output is not "
-            "well-formed SVG or uses a construct outside the allowlist: "
-            "`script`, `foreignObject`, `style`, `image`, `a`, or animation "
-            "elements; `on*` attributes; a `href` that is not a `#local` "
-            "reference; `url(...)` that is not `url(#local)`; `javascript:`; "
-            "or a DOCTYPE or ENTITY declaration. Nothing is stripped; the "
-            "chart fails."
-        ),
-        summary="Fired when a custom chart's output is malformed or uses disallowed SVG.",
         docs_topic="charts",
     )
 )

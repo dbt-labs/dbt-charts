@@ -28,7 +28,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_measure_labels_for,
     wide_series_names,
 )
-from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.font_measure import get_weighted_font_measurer
 from dbt_charts.core.text.case import field_title
 from dbt_charts.core.utils import (
     layered_endpoint_rail_fires,
@@ -78,7 +78,11 @@ def endpoint_rail_layout(chart: ResolvedChart) -> EndpointRailLayout | None:
 
 
 def measure_label_pane_width(
-    series_names: list[str], font_family: str, font_size: float, chart_width: float
+    series_names: list[str],
+    font_family: str,
+    font_size: float,
+    font_weight: str | float,
+    chart_width: float,
 ) -> tuple[float, list[str]]:
     """Return the label pane width and the names the cap will cut.
 
@@ -88,13 +92,18 @@ def measure_label_pane_width(
     has no width left to give and refuses the render — so the pane is capped
     and Vega ellipsizes at the pane's mark limit, which is the cap itself.
 
+    Measured at ``font_weight`` — the same weight ``_series_label_font_props``
+    paints the label with (``series_label.font_weight``) — because a bold
+    run advances wider than the unweighted default and undercounting it
+    would let the rail collide with the axis it displaces.
+
     The cut names come back rather than being recorded here: only the caller
     knows whether the rail it is building actually honors this width (the
     vconcat top rail does not), so the caller owns the warning.
     """
     if not series_names:
         return _LABEL_GAP_PX, []
-    measurer = get_font_measurer(font_family)
+    measurer = get_weighted_font_measurer(font_family, font_weight)
     widths = {name: measurer.measure(name, font_size) for name in series_names}
     cap = chart_width * get_chart_rendering().endpoint_labels.max_width_fraction
     # Vega cuts at the mark limit, which is the cap — not the cap less the gap.
@@ -176,6 +185,6 @@ def resolve_endpoint_rail_span(
     sl = chart.style.series_label
     names = _estimated_series_names(chart, data)
     pane_width, _truncated = measure_label_pane_width(
-        names, sl.font_family, sl.font_size, chart_width
+        names, sl.font_family, sl.font_size, sl.font_weight, chart_width
     )
     return pane_width + chart.style.endpoint_labels.label_offset

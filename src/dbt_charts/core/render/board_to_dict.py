@@ -349,15 +349,16 @@ def _render_chart_item(
                 exclude_none=True,
                 context={AUTHORED_FORMATS: True},
                 exclude={
-                    "style",  # resolved style — not authored schema
-                    "resolved_channels",  # internal channel bindings
-                    "palette",  # resolved palette
-                    "legend",  # resolved legend
-                    "variable_dependencies",  # internal frozenset
-                    "layout_padding",  # internal layout info
-                    "preferred_width",  # internal baked width
-                    "query",  # AnyQuery object — use query_name instead
-                    "base_dir",  # provenance for image refs; artifact-only
+                    "style": True,  # resolved style — not authored schema
+                    "resolved_channels": True,  # internal channel bindings
+                    "palette": True,  # resolved palette
+                    "legend": True,  # resolved legend
+                    "variable_dependencies": True,  # internal frozenset
+                    "layout_padding": True,  # internal layout info
+                    "preferred_width": True,  # internal baked width
+                    "query": True,  # AnyQuery object — use query_name instead
+                    "base_dir": True,  # provenance for image refs; artifact-only
+                    "support": {"rules"},  # baked from conditional_formatting
                 },
             ),
             "data": data,

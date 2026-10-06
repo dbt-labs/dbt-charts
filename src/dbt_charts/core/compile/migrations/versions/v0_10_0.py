@@ -10,13 +10,28 @@ Changes in this release:
 - **`legend.position` became a mapping** of `edge`, `align` and `overlay`: the
   key survives and its value's shape changed, so this is identity-path `Move`s
   carrying an `expansion` (a string rewrites to its mapping; a mapping is never
-  touched; `sub_board_prefixes` reaches nested boards). A cardinal pins `overlay: false`
+  touched). A cardinal pins `overlay: false`
   and leaves `align` to the engine (start; a pie table's own default); a corner pins its edge, alignment and `overlay: true`.
   A pie's key never overlays, so `overlay` is dropped there.
 - **The heading ramp moves to the font registry**: ``style.title.sizes``
   becomes ``style.fonts.heading.sizes``. One ``Move`` per board-owned
   ``style:`` block, resolved mechanically from ``AuthoredBoard`` down to
   ``BOARD_NESTING_DEPTH`` levels of nested boards.
+- **Separator lines are named `divider`**: `text.column.rule`, `text.rule`,
+  `footer.rule`, `table.header.rule`, `table.row.rule` and
+  `support_table.row.rule` become `divider` (`Move`s). A `rewrite` fills the
+  new `visible` switch: a key whose presence meant "on" gains `visible: true`,
+  a table or support-table `width` of 0 becomes `visible: false`, and a footer
+  `rule: null`, which merged as "inherit", is dropped. `footer.rule.stroke_width`
+  becomes `width`, and the column rule's `style` becomes a `dasharray`.
+- **Table dividers own their color and width**: `row.rule.color`, else
+  `table.rule.color`, is written to the header, row, summary and total dividers
+  (identity-path `Move`; `table.rule` and `header.rule.color` are dropped).
+  `roles.summary.rule_width` becomes a `divider` on both roles, and
+  `roles.total.rule_width` is dropped.
+- **`support_table.divider` keeps its key** and loses `continuous`; a `width`
+  above 0 gains `visible: true` (identity-path `Move`). Written alone,
+  `{width: 1}` is valid in both grammars and cannot be told apart.
 - **Chart-level heading ramps are removed**: ``style.charts.title.sizes``
   (and ``style.charts.<family>.title.sizes``) and a chart-local
   ``style.title.sizes`` have no successor, because the ramp is a board-wide
@@ -25,11 +40,16 @@ Changes in this release:
 
 from __future__ import annotations
 
+import copy
 import dataclasses
+from collections.abc import Callable
 
 from dbt_charts.core.compile.migrations.migrations import (
+    DROP,
     Deletion,
+    Dropped,
     MappedScalar,
+    MigrationError,
     Move,
     YamlKeyPath,
     _child_positions,
@@ -38,11 +58,11 @@ from dbt_charts.core.compile.migrations.migrations import (
     _relative_field_paths,
     _schema_path_exists,
     _without_composition,
-    board_nesting_prefixes,
     suffix_rename_moves,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
+    JsonValue,
     YamlSchemaCatalog,
 )
 
@@ -123,20 +143,215 @@ def moves(
     """Return Move objects for the 0.9.0 -> 0.10.0 boundary."""
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
-    nesting = board_nesting_prefixes(AuthoredBoard)
-    return _heading_ramp_moves(source_schema, target_schema, catalog) + tuple(
-        dataclasses.replace(
-            move,
-            expansion=LEGEND_POSITION_EXPANSION,
-            drop_notes=LEGEND_POSITION_DROP_NOTES,
-            sub_board_prefixes=nesting,
+    return (
+        _heading_ramp_moves(source_schema, target_schema, catalog)
+        + _divider_moves(source_schema, target_schema, catalog)
+        + tuple(
+            dataclasses.replace(
+                move,
+                expansion=LEGEND_POSITION_EXPANSION,
+                drop_notes=LEGEND_POSITION_DROP_NOTES,
+            )
+            for move in suffix_rename_moves(
+                AuthoredBoard,
+                source_schema,
+                target_schema,
+                [(LEGEND_POSITION_TAIL, LEGEND_POSITION_TAIL)],
+                catalog=catalog,
+            )
         )
-        for move in suffix_rename_moves(
-            AuthoredBoard,
-            source_schema,
-            target_schema,
-            [(LEGEND_POSITION_TAIL, LEGEND_POSITION_TAIL)],
-            catalog=catalog,
+    )
+
+
+def _line(value: JsonValue, key: str) -> dict[str, JsonValue]:
+    if not isinstance(value, dict):
+        raise MigrationError(
+            f"Cannot migrate {key!r}: expected a mapping, got {value!r}. "
+            "Migrate this field manually."
+        )
+    return dict(value)
+
+
+_LINE_STYLE_DASHARRAYS: dict[JsonValue, str | None] = {
+    "solid": None,
+    "dashed": "6 3",
+    "dotted": "2 2",
+}
+
+
+def _present_means_on(value: JsonValue) -> JsonValue | Dropped:
+    """A `rule` whose presence drew the line: it gains `visible: true`.
+
+    Null merged as "inherit", so it said nothing and is dropped.
+    """
+    if value is None:
+        return DROP
+    line = _line(value, "rule")
+    if "stroke_width" in line:
+        line["width"] = line.pop("stroke_width")
+    if "style" in line:
+        dashes = _LINE_STYLE_DASHARRAYS[line.pop("style")]
+        if dashes is not None:
+            line["dasharray"] = dashes
+    return {"visible": True, **line}
+
+
+def _width_means_visibility(value: JsonValue) -> JsonValue | Dropped:
+    """A `rule` that drew whenever its width was above 0: the width becomes
+    `visible`, and a 0 is no width at all. A `rule` without a width keeps
+    whatever visibility the theme gave it."""
+    if value is None:
+        return DROP
+    line = _line(value, "rule")
+    width = line.get("width")
+    if width is None or "visible" in line:
+        return line
+    if isinstance(width, bool) or not isinstance(width, (int, float)):
+        raise MigrationError(
+            f"Cannot migrate a rule width of {width!r}. Migrate this field manually."
+        )
+    if width > 0:
+        return {**line, "visible": True}
+    line.pop("width")
+    return {**line, "visible": False}
+
+
+def _support_width_means_visibility(value: JsonValue) -> JsonValue | Dropped:
+    """`_width_means_visibility` for a support table, whose `continuous` was
+    never read."""
+    if isinstance(value, dict):
+        value = {k: v for k, v in value.items() if k != "continuous"}
+    return _width_means_visibility(value)
+
+
+def _block(parent: dict[str, JsonValue], key: str) -> dict[str, JsonValue]:
+    """The mapping at *key*, created when absent."""
+    child = parent.setdefault(key, {})
+    if not isinstance(child, dict):
+        raise MigrationError(
+            f"Cannot migrate {key!r}: expected a mapping, got {child!r}. "
+            "Migrate this field manually."
+        )
+    return child
+
+
+def _table_dividers(value: JsonValue) -> JsonValue | Dropped:
+    """Write the color and width the old table lines shared to each divider.
+
+    Resolved per style block: values authored at two levels (board and chart)
+    are not merged first, so they can resolve differently.
+    """
+    if not isinstance(value, dict):
+        return value
+    out = copy.deepcopy(value)
+    row = out.get("row")
+    row_rule = row.get("rule") if isinstance(row, dict) else None
+    color = None
+    table_rule = out.pop("rule", None)
+    if isinstance(table_rule, dict):
+        color = table_rule.get("color")
+    if isinstance(row_rule, dict) and row_rule.get("color") is not None:
+        color = row_rule["color"]
+    roles = row.get("roles") if isinstance(row, dict) else None
+    if isinstance(roles, dict):
+        _role_widths(roles, row_rule)
+    header = out.get("header")
+    if color is None:
+        header_rule = header.get("rule") if isinstance(header, dict) else None
+        if isinstance(header_rule, dict):
+            header_rule.pop("color", None)
+        return out
+    row_block = _block(out, "row")
+    _block(row_block, "rule")["color"] = color
+    _block(_block(out, "header"), "rule")["color"] = color
+    roles_block = _block(row_block, "roles")
+    for role in ("summary", "total"):
+        _block(_block(roles_block, role), "divider").setdefault("color", color)
+    return out
+
+
+def _width(value: JsonValue) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MigrationError(
+            f"Cannot migrate rule width {value!r}. Migrate this field manually."
+        )
+    return value
+
+
+def _role_widths(roles: dict[str, JsonValue], row_rule: JsonValue) -> None:
+    summary, total = roles.get("summary"), roles.get("total")
+    if isinstance(total, dict):
+        total.pop("rule_width", None)
+    if not isinstance(summary, dict) or "rule_width" not in summary:
+        return
+    width = summary.pop("rule_width")
+    if width is None:
+        return
+    # The shipped themes give body rows no line, so an unauthored width is 0.
+    row_width = (
+        _width(row_rule["width"])
+        if isinstance(row_rule, dict) and "width" in row_rule
+        else 0
+    )
+    effective = _width(width) or row_width
+    divider: dict[str, JsonValue] = (
+        {"visible": True, "width": effective} if effective > 0 else {"visible": False}
+    )
+    summary["divider"] = divider
+    if total is None:
+        roles["total"] = {"divider": dict(divider)}
+    elif isinstance(total, dict):
+        total.setdefault("divider", dict(divider))
+
+
+def _divider_moves(
+    source_schema: str, target_schema: str, catalog: YamlSchemaCatalog
+) -> tuple[Move, ...]:
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    def moves_for(
+        renames: list[tuple[YamlKeyPath, YamlKeyPath]],
+        rewrite: Callable[[JsonValue], JsonValue | Dropped] | None,
+    ) -> tuple[Move, ...]:
+        return tuple(
+            dataclasses.replace(move, rewrite=rewrite)
+            for move in suffix_rename_moves(
+                AuthoredBoard, source_schema, target_schema, renames, catalog=catalog
+            )
+        )
+
+    return (
+        # First: it reads the old `rule` keys the renames below move.
+        moves_for(
+            [(("charts", "table"), ("charts", "table")), (("style",), ("style",))],
+            _table_dividers,
+        )
+        + moves_for(
+            [
+                (("text", "column", "divider"), ("text", "column", "rule")),
+                (("footer", "divider"), ("footer", "rule")),
+            ],
+            _present_means_on,
+        )
+        + moves_for([(("text", "divider"), ("text", "rule"))], None)
+        + moves_for(
+            [
+                (("table", "header", "divider"), ("table", "header", "rule")),
+                (("table", "row", "divider"), ("table", "row", "rule")),
+                (("style", "header", "divider"), ("style", "header", "rule")),
+                (("style", "row", "divider"), ("style", "row", "rule")),
+            ],
+            _width_means_visibility,
+        )
+        + moves_for(
+            [
+                (
+                    ("support_table", "row", "divider"),
+                    ("support_table", "row", "rule"),
+                ),
+                (("support_table", "divider"), ("support_table", "divider")),
+            ],
+            _support_width_means_visibility,
         )
     )
 

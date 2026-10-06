@@ -977,6 +977,102 @@ class SVGRenderer:
 
         return tuple(metrics)
 
+    def min_content_width(self, blocks: Document) -> float:
+        """Narrowest width at which no word is split mid-glyph.
+
+        The widest unbreakable token of any block, in the font it paints in.
+        A table draws equal columns, so its floor is every column at the widest
+        cell word plus padding. Blocks that wrap nothing (rules, images) have no
+        floor.
+        """
+        # Whole pixels, rounded up: a caller subtracts padding from a sum of
+        # widths, and a float a hair under the token's width splits it.
+        return float(
+            math.ceil(
+                max((self._block_min_width(block) for block in blocks), default=0.0)
+            )
+        )
+
+    def _widest_token(
+        self,
+        spans: Sequence[Span],
+        font_size: float,
+        *,
+        is_header: bool = False,
+        font_weight: str | int | None = None,
+        is_heading: bool = False,
+    ) -> float:
+        runs = (
+            self._build_text_runs(spans, font_size)
+            if not is_header
+            else self._table_cell_runs(TableCell(spans=tuple(spans)), True, 0.0)
+        )
+        return max(
+            (
+                self._measure_text(
+                    token,
+                    font_size,
+                    is_bold=run.is_bold,
+                    is_italic=run.is_italic,
+                    is_mono=run.is_code,
+                    font_weight=font_weight,
+                    is_heading=is_heading,
+                )
+                for run in runs
+                for token in run.text.split()
+            ),
+            default=0.0,
+        )
+
+    def _block_min_width(self, block: Block) -> float:
+        size = self.style.base_font_size
+        if isinstance(block, Paragraph):
+            return self._widest_token(block.spans, size)
+        if isinstance(block, Heading):
+            return self._widest_token(
+                block.spans,
+                self.style.get_heading_size(block.level),
+                font_weight=self.style.heading_font_weight,
+                is_heading=True,
+            )
+        if isinstance(block, (UnorderedList, OrderedList)):
+            return max(
+                (
+                    self.style.list_indent
+                    + max(
+                        [
+                            self._widest_token(item.spans, size),
+                            *(self._block_min_width(child) for child in item.children),
+                        ]
+                    )
+                    for item in block.items
+                ),
+                default=0.0,
+            )
+        if isinstance(block, Blockquote):
+            return self.style.blockquote_padding + max(
+                (self._block_min_width(child) for child in block.blocks), default=0.0
+            )
+        if isinstance(block, Table):
+            cells = [
+                (cell, is_header)
+                for row, is_header in (
+                    [(block.header, True)] + [(row, False) for row in block.rows]
+                )
+                for cell in row.cells
+            ]
+            widest = max(
+                (
+                    self._widest_token(cell.spans, size, is_header=is_header)
+                    for cell, is_header in cells
+                ),
+                default=0.0,
+            )
+            return len(block.header.cells) * (
+                widest + 2 * self.style.table_cell_padding
+            )
+        return 0.0
+
     def render_block_window(
         self,
         block: Block,
@@ -2059,13 +2155,25 @@ class SVGRenderer:
 
         y_pos = ctx.y + margin
 
-        element = (
-            f'  <rect x="{format_number(ctx.x)}" '
-            f'y="{format_number(y_pos)}" '
-            f'width="{format_number(ctx.width)}" '
-            f'height="{format_number(height)}" '
-            f'fill="{escape_xml(self.style.hr_color)}"/>'
-        )
+        if not self.style.hr_visible:
+            return [], margin + height + margin
+        if self.style.hr_dasharray:
+            mid = y_pos + height / 2
+            element = (
+                f'  <line x1="{format_number(ctx.x)}" y1="{format_number(mid)}" '
+                f'x2="{format_number(ctx.x + ctx.width)}" y2="{format_number(mid)}" '
+                f'stroke="{escape_xml(self.style.hr_color)}" '
+                f'stroke-width="{format_number(height)}" '
+                f'stroke-dasharray="{escape_xml(self.style.hr_dasharray)}"/>'
+            )
+        else:
+            element = (
+                f'  <rect x="{format_number(ctx.x)}" '
+                f'y="{format_number(y_pos)}" '
+                f'width="{format_number(ctx.width)}" '
+                f'height="{format_number(height)}" '
+                f'fill="{escape_xml(self.style.hr_color)}"/>'
+            )
 
         return [element], margin + height + margin
 
@@ -2140,12 +2248,15 @@ class SVGRenderer:
             )
             current_y += row_layout.row_height
 
-        # Table border
         total_height = current_y - ctx.y
+        if not self.style.table_border_visible:
+            return elements, total_height
+        stroke = self._table_border_stroke()
+
         elements.append(
             f'  <rect x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
             f'width="{format_number(ctx.width)}" height="{format_number(total_height)}" '
-            f'fill="none" stroke="{escape_xml(self.style.table_border_color)}"/>'
+            f'fill="none" {stroke}/>'
         )
 
         # Column separators
@@ -2155,7 +2266,7 @@ class SVGRenderer:
             elements.append(
                 f'  <line x1="{format_number(col_x)}" y1="{format_number(ctx.y)}" '
                 f'x2="{format_number(col_x)}" y2="{format_number(current_y)}" '
-                f'stroke="{escape_xml(self.style.table_border_color)}"/>'
+                f"{stroke}/>"
             )
 
         # Row separators
@@ -2170,10 +2281,21 @@ class SVGRenderer:
                 elements.append(
                     f'  <line x1="{format_number(ctx.x)}" y1="{format_number(row_y)}" '
                     f'x2="{format_number(ctx.x + ctx.width)}" y2="{format_number(row_y)}" '
-                    f'stroke="{escape_xml(self.style.table_border_color)}"/>'
+                    f"{stroke}/>"
                 )
 
         return elements, total_height
+
+    def _table_border_stroke(self) -> str:
+        """Stroke attributes shared by every table gridline."""
+        stroke = f'stroke="{escape_xml(self.style.table_border_color)}"'
+        if self.style.table_border_width != 1.0:
+            stroke += f' stroke-width="{format_number(self.style.table_border_width)}"'
+        if self.style.table_border_dasharray:
+            stroke += (
+                f' stroke-dasharray="{escape_xml(self.style.table_border_dasharray)}"'
+            )
+        return stroke
 
     def _table_cell_runs(
         self,

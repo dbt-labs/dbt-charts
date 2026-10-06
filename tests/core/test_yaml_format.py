@@ -119,6 +119,29 @@ class TestYamlFormat:
         assert chart_def["type"] == "kpi"
         assert chart_def["value"] == "revenue"
 
+    def test_kpi_support_rules_are_not_serialized(self, make_chart):
+        """Rules on the support column stay under `conditional_formatting`;
+        `support.rules` is resolved-only and would fail re-compile."""
+        data = [{"total": 100, "change": 12}]
+        chart = make_chart(
+            "kpi",
+            value="total",
+            x=None,
+            y=None,
+            id="kpi_rev",
+            support={"value": "change"},
+            conditional_formatting={
+                "change": {"when": [{"gt": 0, "glyph": "▲", "font": {"color": "#0a0"}}]}
+            },
+        )
+        board = _make_board([chart])
+
+        result = render(board, _make_executor(data), format="yaml").output
+
+        chart_def = yaml.safe_load(result)["charts"]["kpi_rev"]
+        assert chart_def["support"] == {"value": "change"}
+        assert "change" in chart_def["conditional_formatting"]
+
     def test_unauthored_collapse_is_not_serialized(self, make_chart):
         """`collapse` defaults to False on every point_map — an author who
         never wrote it must not see it echoed back in `dct render` output

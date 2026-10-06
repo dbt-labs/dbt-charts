@@ -1,3 +1,0 @@
-kind: Features
-body: '`dct describe` now reads custom chart templates: `dct describe templates/sankey.svg.j2` prints the template''s description, channels, and options, `dct describe templates/` lists every template, and `--json` adds a `template` object. Describing a board shows each custom chart''s template and its description. A `template:` name with no file lists the templates the project has, and an unsupported `type:` such as `sankey` names the matching project template.'
-time: 2026-10-03T14:00:00.000000-07:00

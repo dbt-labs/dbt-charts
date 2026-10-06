@@ -34,10 +34,7 @@ def test_default_theme_cascade_drops_divider():
     # theme cascade, not the bare Pydantic model. The theme YAML used to
     # override divider.width to 1, silently negating the model default.
     cs = _charts_style()
-    assert cs.support_table.divider.width == 0, (
-        f"default theme should not draw a divider; got width="
-        f"{cs.support_table.divider.width}"
-    )
+    assert not cs.support_table.divider.visible
 
 
 def test_axis_offset_reserves_two_label_lines_by_default():

@@ -196,7 +196,7 @@ def test_unmapped_theme_value_is_left_untouched_by_the_move() -> None:
     """An identity-path Move's source path (``("theme",)``) never disappears
     from any grammar -- unlike a structural rename, its mere presence in a
     document is not evidence the document is old (see
-    ``move_source_locations``' value gate). A garbage value absent from
+    ``move_locations``' value gate). A garbage value absent from
     THEME_VALUE_MAP was never legal `theme:` syntax at any schema version, so
     the gate leaves it alone rather than forcing it through the map: it
     surfaces later as the ordinary ERR-UNKNOWN-THEME (see

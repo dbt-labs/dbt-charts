@@ -60,6 +60,9 @@ _LONG_SUBTITLE = (
 )
 _TITLE = "Seven-Day MQL Conversion"
 _WIDTH = 836
+# Below the table's natural width (~836px): headers wrap only when the table is
+# short on room — a table with room for every column keeps headers on one line.
+_SHORT_WIDTH = 700
 
 
 def _chart(make_chart, *, subtitle: str | None = None):
@@ -74,13 +77,13 @@ def _chart(make_chart, *, subtitle: str | None = None):
     )
 
 
-def _render(make_chart, *, subtitle: str | None = None) -> str:
+def _render(make_chart, *, subtitle: str | None = None, width: float = _WIDTH) -> str:
     chart = _chart(make_chart, subtitle=subtitle)
     data = [_NARROW_ROW]
     return render_table_svg(
         resolve(chart, data, chart_style_context=_BOARD_CTX),
         data,
-        width=_WIDTH,
+        width=width,
         board_style=_BOARD_STYLE,
     )
 
@@ -127,7 +130,7 @@ class TestHeaderWrap:
         The theme ships ``charts.table.header.overflow: wrap-two``; the renderer
         must honor it rather than inheriting the board title's ``truncate``.
         """
-        svg = _render(make_chart)
+        svg = _render(make_chart, width=_SHORT_WIDTH)
         truncated = [el for el in _header_elements(svg) if "…" in el]
         assert not truncated, (
             f"Header labels truncated instead of wrapping: {truncated}"
@@ -135,7 +138,7 @@ class TestHeaderWrap:
 
     def test_wrapped_header_emits_one_tspan_per_line(self, make_chart):
         """A header too wide for its column splits across stacked tspans."""
-        svg = _render(make_chart)
+        svg = _render(make_chart, width=_SHORT_WIDTH)
         multiline = [
             el for el in _header_elements(svg) if len(re.findall(r"<tspan\b", el)) >= 2
         ]
@@ -153,7 +156,7 @@ class TestHeaderWrap:
         vocabulary = {
             word.lower() for label in _LABELS.values() for word in label.split()
         }
-        for element in _header_elements(svg := _render(make_chart)):
+        for element in _header_elements(svg := _render(make_chart, width=_SHORT_WIDTH)):
             for line in _header_lines(element):
                 for token in line.rstrip("…").split():
                     assert token.lower() in vocabulary, (
@@ -162,7 +165,7 @@ class TestHeaderWrap:
 
     def test_wrapped_headers_keep_every_word(self, make_chart):
         """Wrapping must not drop content the way truncation does."""
-        svg = _render(make_chart)
+        svg = _render(make_chart, width=_SHORT_WIDTH)
         # Headers are title-cased by the theme, so compare case-insensitively.
         rendered = " ".join(_header_elements(svg)).lower()
         for word in ("recent", "mature", "mqls", "prior", "converted"):
@@ -332,10 +335,11 @@ class TestSizerAgreesWithRenderer:
             board_style=_BOARD_STYLE,
             width=_WIDTH,
         )
+        # The sizer measures inside the card padding; paint at the same width.
         svg = render_table_svg(
             resolved,
             [_NARROW_ROW],
-            width=_WIDTH,
+            width=_WIDTH - 2 * float(_BOARD_STYLE.frame.card_padding),
             board_style=_BOARD_STYLE,
         )
         painted = float(re.search(r'<svg[^>]+height="([\d.]+)"', svg).group(1))

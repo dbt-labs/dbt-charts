@@ -41,6 +41,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
 )
+from dbt_charts.core.compile.resolve.chart.channel import kpi_support_rule_column
 from dbt_charts.core.compile.resolve.style.board import _build_resolved_callout_chart
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
@@ -71,22 +72,26 @@ def _resolve_kpi(
     _tf = _title_font(normalized, chart_local_style_context, width)
     formats = chart_style_context.formats
     format_native = kpi_format_native(kpi.value.format, formats)
+    base = _base_kwargs(
+        normalized,
+        chart_style_context,
+        channels,
+        None,
+        # KPI has no series axis and no categorical color channel — no
+        # per-chart color.categorical override is possible, so this is
+        # always the board-level value, unlike the cartesian/radial
+        # families which route through _effective_requested_alias_palette.
+        requested_alias_palette=chart_style_context.requested_alias_palette,
+        automatic_link_candidate=automatic_link_candidate,
+        layout_padding=kpi.padding,
+        legendless=True,
+        wrap_legend=False,
+    )
+    support_column = kpi_support_rule_column(normalized)
+    cf = base["conditional_formatting"]
+    support_rules = cf[support_column] if cf and support_column in cf else None
     return ResolvedKpiChart(
-        **_base_kwargs(
-            normalized,
-            chart_style_context,
-            channels,
-            None,
-            # KPI has no series axis and no categorical color channel — no
-            # per-chart color.categorical override is possible, so this is
-            # always the board-level value, unlike the cartesian/radial
-            # families which route through _effective_requested_alias_palette.
-            requested_alias_palette=chart_style_context.requested_alias_palette,
-            automatic_link_candidate=automatic_link_candidate,
-            layout_padding=kpi.padding,
-            legendless=True,
-            wrap_legend=False,
-        ),
+        **base,
         chart_type="kpi",
         value=normalized.value,
         label=_resolve_text(normalized.label, variables),
@@ -101,6 +106,7 @@ def _resolve_kpi(
                     if normalized.support.format is None
                     else resolve_format_parts(normalized.support.format, formats)
                 ),
+                rules=None if support_rules is None else tuple(support_rules.when),
             )
         ),
         variant=normalized.variant,

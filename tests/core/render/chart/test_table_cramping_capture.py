@@ -38,6 +38,8 @@ _LONG_NOTE = (
 )
 
 
+# Tables hug their measured columns unless pinned; these tests probe a slot
+# that is too small, so they pin the one the ladder was written against.
 def _board(rows: list[dict[str, Any]], height: str | None = None) -> str:
     body = "\n".join(
         "      - {" + ", ".join(f"{k}: '{v}'" for k, v in row.items()) + "}"
@@ -51,7 +53,8 @@ def _board(rows: list[dict[str, Any]], height: str | None = None) -> str:
     return (
         "title: T\n"
         "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
-        "charts:\n  t: {query: q, type: table}\n" + layout
+        "charts:\n  t: {query: q, type: table, style: {preferred_width: 800}}\n"
+        + layout
     )
 
 

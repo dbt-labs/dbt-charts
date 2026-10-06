@@ -30,14 +30,14 @@ def full_width_plan(
         font = markdown_font_faces(body_text_font_family(resolved_style), style).regular
         char_px = max_chars_to_px(font, float(style.base_font_size), 1)
         grid = choose_grid(board_width, gap, pad, char_px)
-    return ProsePlan(grid, board_width, gap)
+    return ProsePlan(grid, board_width, gap, snap=False)
 
 
 def card_plan(resolved_style: ResolvedStyle, width: float) -> ProsePlan:
     """Plan for a block that is a card narrower than two spans: one whole-container column."""
     container = width + 2 * float(resolved_style.frame.card_padding)
     gap = float(resolved_style.layout.cols.gap)
-    return ProsePlan(2, 2 * container + gap, gap)
+    return ProsePlan(2, 2 * container + gap, gap, snap=False)
 
 
 def text_nodes(svg: str) -> list[tuple[float, str]]:

@@ -2,10 +2,10 @@
 
 Post-pass on a chart-body Vega-Lite spec. Given a validated ChartSupportTable
 and the chart's x-encoding, emit:
-- An optional strip-top divider rule (when divider.width > 0).
+- An optional strip-top divider (when divider.visible).
 - One text layer per row — source rows use a format() calculate transform;
   aggregate rows add a Vega-Lite aggregate transform grouped by x.
-- N-1 inter-row rule layers when row.rule.width > 0.
+- N-1 inter-row divider layers when row.divider.visible.
 - One label text layer per row that carries label: — emitted at the
   y-axis tick label's x-anchor (right gutter for right-oriented axes,
   left gutter for left-oriented axes), derived from the resolved axis_y.orient.
@@ -73,6 +73,7 @@ from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.primitives import (
+    DividerStyle,
     ResolvedFormat,
     painted_sign_placement,
     signs_before_prefix,
@@ -182,10 +183,10 @@ def _strip_height(style: SupportTableStyle, n_rows: int) -> float:
     """Total pixel height for the attached strip (position-agnostic)."""
     row_h = row_height(style)
     divider_gap = get_chart_rendering().support_table.divider_gap
-    divider = (style.divider.width + divider_gap) if style.divider.width > 0 else 0.0
+    divider = (style.divider.width + divider_gap) if style.divider.visible else 0.0
     inter_row = (
-        style.row.rule.width * (n_rows - 1)
-        if style.row.rule.width > 0 and n_rows > 1
+        style.row.divider.width * (n_rows - 1)
+        if style.row.divider.visible and n_rows > 1
         else 0.0
     )
     return (
@@ -394,12 +395,14 @@ def _row_y_pixel(
     """
     divider_off = (
         style.divider.width + get_chart_rendering().support_table.divider_gap
-        if style.divider.width > 0
+        if style.divider.visible
         else 0.0
     )
     row_h = row_height(style)
     inter_row = (
-        style.row.rule.width * index if style.row.rule.width > 0 and index > 0 else 0.0
+        style.row.divider.width * index
+        if style.row.divider.visible and index > 0
+        else 0.0
     )
     if style.position == "bottom":
         assert axis_offset_value is not None, (
@@ -467,7 +470,7 @@ def _inter_row_rule_y_pixel(
     row 1 must be *more negative* than row 0's centroid → subtract.
     """
     row_y = _row_y_pixel(index, style, axis_offset_value, spec_height)
-    half_gap = row_height(style) / 2.0 + style.row.rule.width / 2.0
+    half_gap = row_height(style) / 2.0 + style.row.divider.width / 2.0
     if style.position == "bottom":
         return row_y + half_gap
     # top: "between rows" is more negative (further above plot)
@@ -1627,6 +1630,20 @@ def _per_series_row_layers(
     return layers
 
 
+def _divider_mark(
+    divider: DividerStyle,
+) -> dict[str, Any]:  # type-state: explicit_any — VL fragment
+    mark: dict[str, Any] = {  # type-state: explicit_any — VL fragment
+        "type": "rule",
+        "strokeWidth": divider.width,
+        "stroke": divider.color,
+        "aria": False,
+    }
+    if divider.dasharray is not None:
+        mark["strokeDash"] = [float(part) for part in divider.dasharray.split()]
+    return mark
+
+
 def _divider_rule_layer(
     style: SupportTableStyle,
     axis_offset_value: float | None,
@@ -1647,13 +1664,7 @@ def _divider_rule_layer(
     announcing a screen reader label built from fields this layer never
     binds (garbage text, not a missing one).
     """
-    mark: dict[str, Any] = {
-        "type": "rule",
-        "strokeWidth": style.divider.width,
-        "aria": False,
-    }
-    if style.divider.color is not None:
-        mark["stroke"] = style.divider.color
+    mark = _divider_mark(style.divider)
     return {
         "data": {"values": [{}]},
         "mark": mark,
@@ -1681,13 +1692,7 @@ def _row_rule_layer(
     rule with no data of its own otherwise announces a screen reader label
     built from fields it never binds.
     """
-    mark: dict[str, Any] = {
-        "type": "rule",
-        "strokeWidth": style.row.rule.width,
-        "aria": False,
-    }
-    if style.row.rule.color is not None:
-        mark["stroke"] = style.row.rule.color
+    mark = _divider_mark(style.row.divider)
     return {
         "data": {"values": [{}]},
         "mark": mark,
@@ -2013,7 +2018,7 @@ def attach_support_table(
     layers: list[dict[str, Any]] = list(out["layer"])
     base_layer_count = len(layers)
 
-    if style.divider.width > 0:
+    if style.divider.visible:
         layers.append(_divider_rule_layer(style, axis_offset_value, spec_height))
 
     _label_stub_limit: float = _LABEL_STUB_LIMIT_PX
@@ -2050,7 +2055,7 @@ def attach_support_table(
                     numerals=row_numerals,
                 )
                 layers.extend(bm_layers)
-                if style.row.rule.width > 0 and visual_row_idx < n_visual_rows - 1:
+                if style.row.divider.visible and visual_row_idx < n_visual_rows - 1:
                     layers.append(
                         _row_rule_layer(
                             visual_row_idx, style, axis_offset_value, spec_height
@@ -2106,7 +2111,7 @@ def attach_support_table(
                 # pair gets a rule. Without the within-block rules, the strip
                 # height accounting (which includes inter-row spacing for every
                 # visual row) reserves gaps where no rules are drawn.
-                if style.row.rule.width > 0:
+                if style.row.divider.visible:
                     last_in_block = visual_row_idx + n_series - 1
                     # Within-block rules: between each pair of adjacent series.
                     for inner_idx in range(visual_row_idx, last_in_block):
@@ -2176,7 +2181,7 @@ def attach_support_table(
                             limit=_label_stub_limit,
                         )
                     )
-            if style.row.rule.width > 0 and visual_row_idx < n_visual_rows - 1:
+            if style.row.divider.visible and visual_row_idx < n_visual_rows - 1:
                 layers.append(
                     _row_rule_layer(
                         visual_row_idx, style, axis_offset_value, spec_height
@@ -3337,13 +3342,7 @@ def _column_rule_layer(
     reader label built from fields it never binds.
     """
     x_pixel = boundary_x + style.row.padding.horizontal
-    mark: dict[str, Any] = {  # type-state: explicit_any — VL fragment
-        "type": "rule",
-        "strokeWidth": style.row.rule.width,
-        "aria": False,
-    }
-    if style.row.rule.color is not None:
-        mark["stroke"] = style.row.rule.color
+    mark = _divider_mark(style.row.divider)
     return {
         "data": {"values": [{}]},
         "mark": mark,
@@ -3819,7 +3818,7 @@ def attach_support_table_columns(
                     )
                 )
                 visual_idx += 1
-                if style.row.rule.width > 0 and visual_idx < len(column_widths):
+                if style.row.divider.visible and visual_idx < len(column_widths):
                     layers.append(_column_rule_layer(style, right))
             else:
                 for series_idx, series_value in enumerate(series_order):
@@ -3846,7 +3845,7 @@ def attach_support_table_columns(
                         )
                     )
                     visual_idx += 1
-                    if style.row.rule.width > 0 and visual_idx < len(column_widths):
+                    if style.row.divider.visible and visual_idx < len(column_widths):
                         layers.append(_column_rule_layer(style, right))
         else:
             _left, right = edges[visual_idx]
@@ -3872,7 +3871,7 @@ def attach_support_table_columns(
                 )
             )
             visual_idx += 1
-            if style.row.rule.width > 0 and visual_idx < len(column_widths):
+            if style.row.divider.visible and visual_idx < len(column_widths):
                 layers.append(_column_rule_layer(style, right))
 
     out["layer"] = _disable_inherited_tooltip_description(layers, base_layer_count)

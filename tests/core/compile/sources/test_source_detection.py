@@ -453,6 +453,29 @@ class TestParseDbtProfilesYaml:
         assert "keyfile_json" not in target
         assert "private_key" not in target
 
+    def test_databricks_target_topology_only_no_credentials(self) -> None:
+        from dbt_charts.core.compile.sources.detection import parse_dbt_profiles_yaml
+
+        content = (
+            "analytics:\n"
+            "  outputs:\n"
+            "    prod:\n"
+            "      type: databricks\n"
+            "      host: my-workspace.cloud.databricks.com\n"
+            "      http_path: /sql/1.0/warehouses/abc123\n"
+            "      catalog: main\n"
+            "      schema: analytics\n"
+            "      token: hunter2\n"
+        )
+        target = parse_dbt_profiles_yaml(content)[0]
+        assert target["type"] == "databricks"
+        assert target["host"] == "my-workspace.cloud.databricks.com"
+        assert target["http_path"] == "/sql/1.0/warehouses/abc123"
+        assert target["catalog"] == "main"
+        assert target["schema"] == "analytics"
+        # Credentials never surface.
+        assert "token" not in target
+
     def test_snowflake_target_drops_password(self) -> None:
         from dbt_charts.core.compile.sources.detection import parse_dbt_profiles_yaml
 

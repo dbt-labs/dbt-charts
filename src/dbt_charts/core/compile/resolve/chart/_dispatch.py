@@ -40,7 +40,6 @@ from dbt_charts.core.compile.resolve.chart.bar import (
     _resolve_bar,
     _resolve_histogram,
 )
-from dbt_charts.core.compile.resolve.chart.custom import _resolve_custom
 from dbt_charts.core.compile.resolve.chart.geo import (
     _resolve_geoshape,
     _resolve_point_map,
@@ -229,15 +228,6 @@ def resolve(
             )
         case "callout":
             return _resolve_callout(normalized, data, chart_style_context, variables)
-        case "custom":
-            return _resolve_custom(
-                normalized,
-                data,
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                variables,
-            )
         case "spark_bar":
             return _resolve_spark_bar(
                 normalized,

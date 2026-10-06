@@ -7,11 +7,13 @@ passing validation and blowing up as ERR-INTERNAL deep inside rasterization.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 import yaml
 
 from dbt_charts.core.compile.compiler import compile as compile_board
-from dbt_charts.core.text.format_d3 import format_d3
+from dbt_charts.core.text.format_d3 import PYTHON_STRFTIME_DIRECTIVES, format_d3
 
 from ..._svg_render import render_board_to_svg
 
@@ -2470,6 +2472,23 @@ def test_unsupported_strftime_directive_fails_compile_not_at_render() -> None:
     assert "%b" in error.message, "the accepted directives should be listed"
 
 
+def test_compile_accepted_time_directives_are_the_python_strftime_set() -> None:
+    """The directives ERR-FORMAT-INVALID lists as accepted are exactly
+    PYTHON_STRFTIME_DIRECTIVES (d3's letters are a subset), and %L/%Q/%q
+    still compile on a time_format.
+    """
+    result = compile_board(_board_with_time_format('"%K"'))
+    assert not result.success
+    error = result.errors[0]
+    assert error.code == "ERR-FORMAT-INVALID"
+    assert "K" not in PYTHON_STRFTIME_DIRECTIVES
+    listed = set(re.findall(r"%(\w)", error.message.split("Accepted directives:")[1]))
+    assert listed == PYTHON_STRFTIME_DIRECTIVES
+
+    for directive in "LQq":
+        assert compile_board(_board_with_time_format(f'"%{directive}"')).success
+
+
 def test_unsupported_directive_on_axis_format_also_fails_compile() -> None:
     """The same directive check applies wherever a raw strftime spec is legal."""
     board = """
@@ -2496,17 +2515,16 @@ rows:
     assert result.errors[0].code == "ERR-FORMAT-INVALID"
 
 
-def test_d3_only_millisecond_directive_compiles_clean_on_time_format() -> None:
-    """%L (milliseconds) is d3-time-format vocabulary Vega paints directly,
-    even though Python's portable_strftime has no computer for it -- the
-    compile-time check accepts either engine's directive set.
+def test_millisecond_directive_compiles_clean_on_time_format() -> None:
+    """%L/%q/%Q are in PYTHON_STRFTIME_DIRECTIVES: portable_strftime
+    substitutes them before libc sees the spec, so the compile check accepts them.
     """
     result = compile_board(_board_with_time_format('"%H:%M:%S.%L"'))
     assert result.success, f"Compile failed: {result.errors}"
 
 
-def test_d3_only_millisecond_directive_compiles_clean_in_style_formats_alias() -> None:
-    """The same d3-only directive is legal through a `style.formats` alias."""
+def test_millisecond_directive_compiles_clean_in_style_formats_alias() -> None:
+    """The same directive is legal through a `style.formats` alias."""
     result = compile_board(
         _board_with_time_format("ms", formats='  formats:\n    ms: "%H:%M:%S.%L"\n')
     )

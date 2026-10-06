@@ -90,7 +90,15 @@ def test_title_style_font_string_is_a_named_font_lookup() -> None:
 
 def test_compiled_table_row_role_style_accepts_nested_font() -> None:
     r = TableRowRoleStyle.model_validate(
-        {"rule_width": 0.0, "font": {"weight": "bold"}, "background": "#eee"}
+        {
+            "divider": {
+                "visible": False,
+                "color": "#000000",
+                "width": 1.0,
+            },
+            "font": {"weight": "bold"},
+            "background": "#eee",
+        }
     )
     assert r.font is not None and r.font.weight == "bold"
     assert r.background == "#eee"

@@ -74,12 +74,9 @@ Before designing, work through these in order:
 | Relationship? | `scatter` | Two numeric variables |
 | Precise values? | `table` | When exact numbers matter |
 
-**`type: custom` is a last resort.** Use it only when the user asks for a specific shape by name or description (a Sankey, a gauge, an isotype pictogram) that no built-in type or composed recipe draws. Never reach for it to make a board look more interesting, and never as a substitute for a built-in type that answers the question: a custom chart gets no axes, legend, sizing rules, or visual warnings for free.
-
 **Avoid:**
 - Pie for >3 categories (humans compare angles poorly — use bar)
 - Multiple chart types for visual variety (consistency aids scanning)
-- `type: custom` when a built-in type answers the question
 - Scrolling layouts (if it scrolls, it's usually a report — unless the user asked for more on one page or you're reproducing a scrolling source)
 
 ### 4. Layout — Inverted Pyramid

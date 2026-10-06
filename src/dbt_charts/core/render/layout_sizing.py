@@ -50,7 +50,15 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.style.resolved import effective_padding
-from dbt_charts.core.compile.sizing import board_container_width, get_board_gap
+from dbt_charts.core.compile.resolve import preferred_chart_width
+from dbt_charts.core.compile.sizing import (
+    ChartWidth,
+    IntrinsicWidth,
+    board_container_width,
+    config_chart_width,
+    get_board_gap,
+    table_width_is_pinned,
+)
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -262,6 +270,80 @@ def _nested_render_ctx(
     )
 
 
+def _resolve_with_runtime_inputs(
+    chart: Chart,
+    executor: Executor,
+    variables: dict[str, Any],  # type-state: explicit_any — runtime variable values
+    width: float,
+    chart_style_context: ChartStyleContext,
+    pie_title_font: ResolvedFontStyle | EllipsisType = ...,
+) -> ResolvedChart:
+    """Fetch the chart's data and resolve it at ``width``, touching no cache.
+
+    The data fetch, auto-link and FK-link prep, then
+    ``resolve_chart_with_runtime_inputs``. Raises ``DbtChartsError``;
+    ``_require_resolved`` records it, and a caller that only measures drops it.
+    """
+    from dbt_charts.core.compile.resolve import (  # noqa: PLC0415
+        auto_link_excludes_x,
+        should_fetch_table_fk_links,
+        should_synthesize_auto_link,
+    )
+    from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
+        get_auto_link_context,
+        synthesize_auto_link,
+    )
+
+    qn = chart.query_name
+    data = executor.execute_query(qn, variables) if qn else []
+
+    auto_link_enabled = get_auto_link_context()
+    automatic_link_candidate: AutomaticLinkCandidate = None
+    if should_synthesize_auto_link(chart, data, auto_link_enabled):
+        synthesized = synthesize_auto_link(
+            chart,
+            executor,
+            exclude_x=auto_link_excludes_x(chart, data),
+        )
+        if synthesized:
+            automatic_link_candidate = synthesized
+
+    table_column_links: dict[str, str] = {}
+    table_column_rows: list[dict[str, str]] = []
+    if should_fetch_table_fk_links(chart, auto_link_enabled):
+        assert isinstance(chart, TableChart)
+        from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
+            fetch_column_rows_for_link,
+            fk_column_links_from_executor,
+        )
+
+        chart_query = chart.query
+        assert chart_query is not None
+        table_column_links = fk_column_links_from_executor(
+            chart_query,
+            executor.adapter_registry,
+        )
+        if table_column_links:
+            table_column_rows = fetch_column_rows_for_link(
+                executor.adapter_registry,
+                chart_query,
+                board=executor.board,
+            )
+
+    return resolve_chart_with_runtime_inputs(
+        chart,
+        data,
+        chart_style_context,
+        width,
+        executor,
+        variables,
+        automatic_link_candidate=automatic_link_candidate,
+        table_column_links=table_column_links,
+        table_column_rows=table_column_rows,
+        pie_title_font=pie_title_font,
+    )
+
+
 def _require_resolved(
     render_ctx: SizingRenderCtx,
     chart: Chart,
@@ -326,66 +408,14 @@ def _require_resolved(
         render_ctx.resolved_variants[variant_key] = canonical
         return canonical
 
-    from dbt_charts.core.compile.resolve import (  # noqa: PLC0415
-        auto_link_excludes_x,
-        should_fetch_table_fk_links,
-        should_synthesize_auto_link,
-    )
-    from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
-        get_auto_link_context,
-        synthesize_auto_link,
-    )
-
     try:
-        qn = chart.query_name
-        data = executor.execute_query(qn, variables) if qn else []
-
-        auto_link_enabled = get_auto_link_context()
-        automatic_link_candidate: AutomaticLinkCandidate = None
-        if should_synthesize_auto_link(chart, data, auto_link_enabled):
-            synthesized = synthesize_auto_link(
-                chart,
-                executor,
-                exclude_x=auto_link_excludes_x(chart, data),
-            )
-            if synthesized:
-                automatic_link_candidate = synthesized
-
-        table_column_links: dict[str, str] = {}
-        table_column_rows: list[dict[str, str]] = []
-        if should_fetch_table_fk_links(chart, auto_link_enabled):
-            assert isinstance(chart, TableChart)
-            from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
-                fetch_column_rows_for_link,
-                fk_column_links_from_executor,
-            )
-
-            chart_query = chart.query
-            assert chart_query is not None
-            table_column_links = fk_column_links_from_executor(
-                chart_query,
-                executor.adapter_registry,
-            )
-            if table_column_links:
-                table_column_rows = fetch_column_rows_for_link(
-                    executor.adapter_registry,
-                    chart_query,
-                    board=executor.board,
-                )
-
-        resolved = resolve_chart_with_runtime_inputs(
+        resolved = _resolve_with_runtime_inputs(
             chart,
-            data,
-            chart_style_context,
-            width,
             executor,
             variables,
-            automatic_link_candidate=automatic_link_candidate,
-            table_column_links=table_column_links,
-            table_column_rows=table_column_rows,
-            pie_title_font=_canonical_pie_title_font(
-                canonical if canonical is not None else ...
-            ),
+            width,
+            chart_style_context,
+            _canonical_pie_title_font(canonical if canonical is not None else ...),
         )
     except DbtChartsError as exc:
         _log.warning("Chart %r failed to resolve: %s", chart_id, exc)
@@ -463,6 +493,55 @@ def _get_table_height_from_data(
         + padding_y
         + int(tc.bottom_padding)
     )
+
+
+def _make_chart_width_measurer(
+    render_ctx: SizingRenderCtx,
+    executor: Executor,
+    variables: dict[str, Any],  # type-state: explicit_any — runtime variable values
+) -> ChartWidth:
+    """A ``ChartWidth`` that answers an unpinned table's measured column width.
+
+    Any other chart, and any table that cannot be measured (pinned, nothing to
+    hug, failed fetch or resolve), answers its config width. A failed table is
+    not recorded here: the main pass's ``_require_resolved`` records it once
+    and draws the error card.
+
+    The resolve is uncached so its width-dependent title tier never becomes the
+    chart's canonical resolution, and uses the owning board's style context so
+    a nested theme measures with its own fonts.
+    """
+    from dbt_charts.core.render.chart.spec_builders import additive_padding
+    from dbt_charts.core.render.chart.table import measure_table_natural_width
+
+    def chart_width(
+        chart: Chart, resolved_style: ResolvedStyle, ctx: ChartStyleContext
+    ) -> IntrinsicWidth:
+        configured = config_chart_width(chart, resolved_style, ctx)
+        if not isinstance(chart, TableChart) or table_width_is_pinned(chart):
+            return configured
+        estimate = preferred_chart_width(chart, ctx)
+        try:
+            resolved = render_ctx.pre_resolved.get(chart.id)
+            if resolved is None:
+                resolved = _resolve_with_runtime_inputs(
+                    chart, executor, variables, estimate, ctx
+                )
+            assert isinstance(resolved, ResolvedTableChart)
+            natural = measure_table_natural_width(
+                resolved, executor.execute_chart(chart, variables)
+            )
+        except DbtChartsError as exc:
+            _log.warning("Table width measurement failed for %r: %s", chart.id, exc)
+            return configured
+        if natural is None:
+            return configured
+        padding = additive_padding(
+            float(resolved_style.frame.card_padding), resolved.layout_padding
+        )
+        return IntrinsicWidth(None, natural + padding["left"] + padding["right"])
+
+    return chart_width
 
 
 def build_chart_datasets(
@@ -867,30 +946,6 @@ def _make_data_aware_height_provider(
                 except DbtChartsError as exc:
                     return _sizing_render_failed(item.chart, exc, width, resolved_style)
                 return actual_height + _vertical_inset(resolved_spark_bar)
-
-            # custom: sized from its aspect-ratio box; it has no natural
-            # height to measure, so a template failure shows at the main pass.
-            if item.chart.type == "custom":
-                resolved_custom = _require_resolved(
-                    render_ctx,
-                    item.chart,
-                    executor,
-                    render_ctx.variables,
-                    width,
-                    resolved_style,
-                    style_contexts[id(resolved_style)],
-                )
-                if resolved_custom is None:
-                    return _unresolved_height(item.chart, width, resolved_style)
-                inner_width = (
-                    width
-                    - 2 * card_pad
-                    - resolved_custom.layout_padding.left
-                    - resolved_custom.layout_padding.right
-                )
-                return get_chart_content_height(
-                    item.chart, width=inner_width, resolved_style=resolved_style
-                ) + _vertical_inset(resolved_custom)
 
             # Render-first Vega sizing.
             # Vega charts now render at full item width with card_pad as internal
@@ -1972,6 +2027,16 @@ def calculate_data_aware_layout(
     # variables=None means "no variable overrides" — normalize to {} here so
     # downstream code (SizingRenderCtx, height provider) always works with a dict.
     effective_vars = variables if variables is not None else {}
+    # executor=None disables render-first Vega sizing.
+    render_ctx = SizingRenderCtx(
+        resolved_style=board.resolved_style,
+        chart_style_context=board.chart_style_context,
+        executor=executor if render_first else None,
+        variables=effective_vars,
+        pre_resolved=pre_resolved,
+        resolved_variants=(resolved_variants if resolved_variants is not ... else {}),
+        resolve_errors=(resolve_errors if resolve_errors is not ... else {}),
+    )
 
     # What the sizing pass measures against. The charts already render at the
     # committed values; a title interpolating one, and a variable control
@@ -1986,8 +2051,11 @@ def calculate_data_aware_layout(
     # overrides (e.g. `{}` for "no overrides") still gets the declared
     # defaults for everything else this pass measures.
     variable_values = {**board.variable_defaults, **effective_vars}
-
-    container_width = board_container_width(board, variable_values)
+    container_width = board_container_width(
+        board,
+        variable_values,
+        _make_chart_width_measurer(render_ctx, executor, effective_vars),
+    )
     content_width = max(container_width - 2 * float(frame.margin), 0.0)
     min_height = float(frame.min_height)
     card_padding = float(frame.card_padding)
@@ -1996,17 +2064,6 @@ def calculate_data_aware_layout(
     gap = get_board_gap(board)
 
     plan_board_prose(board, variable_values, content_width)
-    # executor=None disables render-first Vega sizing.
-    render_ctx = SizingRenderCtx(
-        resolved_style=board.resolved_style,
-        chart_style_context=board.chart_style_context,
-        executor=executor if render_first else None,
-        variables=effective_vars,
-        pre_resolved=pre_resolved,
-        resolved_variants=(resolved_variants if resolved_variants is not ... else {}),
-        resolve_errors=(resolve_errors if resolve_errors is not ... else {}),
-    )
-
     # Build a data-aware height provider
     height_provider = _make_data_aware_height_provider(
         render_ctx,

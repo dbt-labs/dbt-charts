@@ -102,15 +102,38 @@ obviously screaming*. Hold these when touching `compile/`:
 - **Board width is two keys: `frame.width` binds, `frame.max_width` bounds.**
   `width` authored anywhere in the cascade (board, extends template,
   meta.yml; root `width:` sugar) is the board's exact width. With no
-  `width`, the board hugs its items' preferred widths up to
-  `max_width` — a chart's `preferred_width`, a title's one-line width, prose's
-  one-line width capped at `style.text.preferred_width` — so a lone generated
-  chart stays a small card, never a full-width one. Never reintroduce a provenance split ("binds if the board's
-  own file wrote it") — that design was built and deleted; the key is the
-  intent. Corollaries: `rows:` slots pin an authored item/chart width (a
-  percentage means a fraction of the row and never feeds the hug), and
-  `chart_focus` sets the focused board's `width` to the pinned slot plus
-  margins — WYSIWYG even when the slot exceeds `max_width`.
+  `width`, the board hugs its items' preferred widths up to `max_width` — a
+  chart's `preferred_width`, a title's one-line width, prose's one-line width
+  capped at `style.text.preferred_width` — so a lone generated chart stays a
+  small card, never a full-width one.
+  The data-free path (`build_resolved_board_static`) hugs the config table width.
+  The data-aware sizing pass instead measures each unpinned table from its
+  columns. A table's chart-local `style.preferred_width` pins it, like an
+  authored chart `width:`; a board- or theme-level
+  `style.charts.table.preferred_width` is only the estimate used before data
+  is known. The rule is scope (chart scope speaks for this one table), never
+  which file wrote the key. Never reintroduce a provenance split ("binds if the
+  board's own file wrote it"); the key is the intent. Corollaries: `rows:` slots pin an authored item/chart width (a
+  percentage is a fraction of the row and never feeds the hug), and
+  `chart_focus` renders the chart at its own intrinsic width, as the only chart
+  on a board with no width: its authored `width:`, else its preferred width (an
+  unpinned table hugs its measured columns in the data-aware pass). It never
+  pins the slot the chart had on the source board, and the source board's
+  `frame.width` is dropped from the focused board.
+  Every contributor answers one `IntrinsicWidth(min, preferred)`. A
+  `WidthMeasurer(variable_values, chart)` measures them from compile-time
+  typography; `chart` is its one seam (preferred = config width, or a measured
+  table including its pager band; no min). A board's own content: title
+  (min = preferred = its one-line width), prose (min = widest unbreakable word,
+  preferred = one-line width capped at `style.text.preferred_width`), and at the
+  root the footer row (min only). One fold combines them: rows/tabs take the max
+  of each field, `cols` sum each (so prose in a cols half gets a per-column
+  min), `grid` applies its track arithmetic to each; a board is
+  `combine_max(own content, layout)` plus its padding and margin when nested.
+  `board_container_width` is `max(min, preferred or max_content)`, capped at
+  `max_width`. Own-content mins apply only on the hug path: an authored
+  `frame.width` ignores them. Static and data-aware sizing share all of it,
+  differing only in the injected `chart`.
   Pinned by `tests/core/compile/test_authored_board_width.py`.
 - **Format names are the defaults.** A kind of value (`number`, `currency`,
   `percent`, `year`, …) formats with the engine format named after it, the same

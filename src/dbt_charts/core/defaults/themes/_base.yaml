@@ -442,7 +442,8 @@ style:
         visible: true
         height: 28.0
         overflow: wrap-two
-        rule:
+        divider:
+          visible: true
           width: 1
           continuous: true
         font:
@@ -456,14 +457,19 @@ style:
       symbol_mode: anchors
       row:
         height: 24.0
-        rule:
-          width: 0.0
+        divider:
+          visible: false
+          width: 1
           continuous: false
         roles:
           summary:
-            rule_width: 1.0
+            divider:
+              visible: true
+              width: 1
           total:
-            rule_width: 0.0
+            divider:
+              visible: true
+              width: 1
 
     color:
       categorical:
@@ -769,18 +775,18 @@ style:
       font:
         extends: numeral
         size: 11
-      # No divider rule by default — strip flows directly from the x-axis.
-      # Themes that want a visible separator can set width > 0 and color.
+      # No divider by default: the strip flows directly from the x-axis.
+      # Themes that want a visible separator set visible: true.
       divider:
-        width: 0
-        continuous: true
+        visible: false
+        width: 1
       row:
         padding:
           vertical: 2.0
           horizontal: 6.0
-        rule:
-          width: 0.0
-          continuous: true
+        divider:
+          visible: false
+          width: 1
       label:
         font:
           weight: '500'
@@ -994,11 +1000,16 @@ style:
     # than the rest of the type system).
     bold:
       weight: *weight_bold
-    # Markdown `---` rules and markdown-table gridlines. Previously reached
-    # mdsvg via charts.table.border.color, a slot that never bordered the table
-    # chart; this value is that slot's resolved color, carried over unchanged.
-    rule:
+    # Markdown `---` lines and markdown-table gridlines.
+    divider:
+      visible: true
       color: '#e0e0e0'
+      width: 1
+    column:
+      divider:
+        visible: false
+        color: '#e0e0e0'
+        width: 1
 
   layout:
     rows:
@@ -1108,9 +1119,10 @@ style:
     link: "https://dbtcharts.com"
     font: caption
     y_offset: 14
-    rule:
+    divider:
+      visible: true
       color: "#e5e5e5"
-      stroke_width: 0.5
+      width: 0.5
 
   timestamp:
     visible: true

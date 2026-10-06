@@ -5,7 +5,7 @@ author never set.
 
 The walk test checks graph membership only: for every built-in theme, every
 empty ``BaseModel | None`` field whose type has a required field must have an
-inherit-graph container link, with the two switch slots below as the sole
+inherit-graph container link, with the one switch slot below as the sole
 declared exception.
 
 The remaining tests pin ``Style.charts.title`` specifically: that the
@@ -37,9 +37,8 @@ from dbt_charts.core.compile.resolve.style.inherit_graph import (
 _BUILT_IN_THEMES = user_facing_theme_names()
 
 # Exempt from the container-link rule: gradient presence switches the color
-# channel to gradient mode, so an author writing it supplies a palette; column
-# rule presence draws the rule.
-_SWITCH_SLOTS = ("Style.text.column.rule", "Style.charts.color.gradient")
+# channel to gradient mode, so an author writing it supplies a palette.
+_SWITCH_SLOTS = ("Style.charts.color.gradient",)
 
 
 def _empty_complete_slots(

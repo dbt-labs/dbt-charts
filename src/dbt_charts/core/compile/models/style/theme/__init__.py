@@ -88,7 +88,6 @@ from dbt_charts.core.compile.models.style.theme.board import (
     VALID_FONT_WEIGHTS,
     BlockMarginStyle,
     BoxStyle,
-    ColumnRuleStyle,
     FrameStyle,
     PaddingStyle,
     PlaceholderOverlay,
@@ -188,7 +187,6 @@ from dbt_charts.core.compile.models.style.theme.marks import (
     TotalValueSlotStyle,
 )
 from dbt_charts.core.compile.models.style.theme.page import (
-    FooterRule,
     FooterStyle,
     InputStyle,
     InputWidths,
@@ -233,6 +231,7 @@ from dbt_charts.core.compile.models.style.theme.table import (
     SupportTableStyle,
     TableChartStyle,
     TableColumnsStyle,
+    TableDividerStyle,
     TableEdgeStyle,
     TableHeaderStyle,
     TableRowNumbersStyle,
@@ -240,7 +239,6 @@ from dbt_charts.core.compile.models.style.theme.table import (
     TableRowRoleStyle,
     TableRowStripeStyle,
     TableRowStyle,
-    TableRuleStyle,
     TableTitleStyle,
 )
 from dbt_charts.core.compile.models.style.theme.variables import (
@@ -291,7 +289,6 @@ __all__ = [
     "CalloutElementStyle",
     "ChartsStyle",
     "CircleMarkStyle",
-    "ColumnRuleStyle",
     "SupportTableLabelStyle",
     "SupportTableRowPaddingStyle",
     "SupportTableRowStyle",
@@ -300,7 +297,6 @@ __all__ = [
     "DetailsArrowStyle",
     "DetailsStyle",
     "FontStyle",
-    "FooterRule",
     "FooterStyle",
     "GeoshapeChartMarksStyle",
     "GeoshapeChartStyle",
@@ -375,6 +371,7 @@ __all__ = [
     "SubtitleStyle",
     "TableChartStyle",
     "TableColumnsStyle",
+    "TableDividerStyle",
     "TableEdgeStyle",
     "TableHeaderStyle",
     "TableRowNumbersStyle",
@@ -382,7 +379,6 @@ __all__ = [
     "TableRowRolesStyle",
     "TableRowStripeStyle",
     "TableRowStyle",
-    "TableRuleStyle",
     "TableTitleStyle",
     "TabsStyle",
     "TextBlockquoteStyle",

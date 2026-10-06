@@ -238,10 +238,6 @@ class ChartStyleContext:
     # against a chart-local override without touching board-global state.
     pre_style: Style
 
-    # The post-`apply_inherit` Style tree: what a `type: custom` template
-    # reads as `style`.
-    cascaded: Style
-
     # --- Board-authored chart style overrides (board layers of the axis cascade) ---
     # The board's accumulated `style.charts.*` patch, kept separate from the
     # theme+board-commingled `axis`/`axis_x`/`axis_y`/`axis_quantitative`

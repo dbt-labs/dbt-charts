@@ -14,7 +14,10 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedAxisLabelOverlapConfig,
     ResolvedAxisStyle,
 )
-from dbt_charts.core.font_measure import FontMeasurer, get_font_measurer
+from dbt_charts.core.font_measure import (
+    FontMeasurer,
+    get_weighted_font_measurer,
+)
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
     SINGLE_ROW_CADENCE_GRAINS,
@@ -443,7 +446,7 @@ def _pinned_angle_block_height(
             else None
         )
         values = [category_label_text(v, label_format, font.case) for v in values]
-    measurer = get_font_measurer(font.family)
+    measurer = get_weighted_font_measurer(font.family, font.weight)
     max_width = max(measurer.measure(value, font.size) for value in values)
     return _label_block_height(max_width, font.size, angle)
 
@@ -521,7 +524,7 @@ def _temporal_layout(
         )
 
     font = axis.labels.font
-    measurer = get_font_measurer(font.family)
+    measurer = get_weighted_font_measurer(font.family, font.weight)
     usable_width = chart_width * label_usable_ratio
     format_time_unit = resolve_label_time_unit(
         encoding_time_unit, axis.labels.time_unit
@@ -901,7 +904,7 @@ def resolve_axis_x_overlap(
         )
 
     font = axis.labels.font
-    measurer = get_font_measurer(font.family)
+    measurer = get_weighted_font_measurer(font.family, font.weight)
     labels = _ordinal_label_texts(values, authored_time_format(axis))
     if axis.labels.expr is None:
         spec = axis.labels.format.spec if axis.labels.format is not None else None

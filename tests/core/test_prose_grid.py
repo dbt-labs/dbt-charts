@@ -454,3 +454,141 @@ def test_prose_above_tabs_follows_the_active_panel() -> None:
     tab_bar = min(y for _, y, t in lines if t == "First")
     starts = sorted({round(x, 1) for x, y, _ in lines if y < tab_bar - 1})
     assert_on(starts, card_edges(svg, 3))
+
+
+# --- A lone column stays wide unless some block on the board goes multi-column ---
+
+
+def block_lines(svg: str, marker: str) -> list[str]:
+    """Text lines of the block opening with ``marker``, down to the next card header."""
+    lines = text_lines(svg)
+    top = min(y for _, y, t in lines if t.startswith(marker))
+    end = min([y for _, y, t in lines if t == "Label" and y > top] + [float("inf")])
+    return [t for x, y, t in lines if top - 0.5 <= y < end - 0.5 and 50 <= x <= 1000]
+
+
+def widest(svg: str, marker: str) -> int:
+    return max(len(t) for t in block_lines(svg, marker))
+
+
+def test_short_blocks_alone_stay_wide_and_left_aligned() -> None:
+    """No block goes multi-column, so none is squeezed into a third."""
+    svg = render_board_to_svg(
+        board(
+            1200,
+            prose_row(passage("ONE", 200)),
+            prose_row(passage("TWO", 200)),
+            cards(3),
+        )
+    )
+    starts = column_starts(svg, ["ONE", "TWO"])
+    assert_on(starts["ONE"], card_edges(svg, 3)[:1])
+    assert starts["TWO"] == starts["ONE"]
+    assert widest(svg, "ONE") > 55 and widest(svg, "TWO") > 55
+
+
+def test_a_multi_column_block_snaps_the_short_blocks_to_a_span() -> None:
+    svg = render_board_to_svg(
+        board(
+            1200,
+            prose_row(passage("ONE", 200)),
+            prose_row(passage("BIG", 1400)),
+            cards(3),
+        )
+    )
+    starts = column_starts(svg, ["ONE", "BIG"])
+    assert len(starts["BIG"]) == 3
+    assert_on(starts["ONE"], card_edges(svg, 3)[:1])
+    assert widest(svg, "ONE") <= 55
+
+
+def test_a_multi_column_block_in_a_narrow_card_counts() -> None:
+    card_text = "\n".join(
+        "          " + line for line in passage("CARD", 1400).split("\n")
+    )
+    svg = render_board_to_svg(
+        f"width: 1200\n{QUERY}rows:\n"
+        + prose_row(passage("ONE", 200))
+        + "  - cols:\n      - width: 66.6667%\n"
+        f"        text: |\n{card_text}\n      - c\n"
+    )
+    assert len(column_starts(svg, ["ONE", "CARD"])["CARD"]) == 2
+    assert widest(svg, "ONE") <= 55
+
+
+def test_a_block_that_is_multi_column_only_at_full_width_does_not_count() -> None:
+    """In its real 25% slot the block is one column, so the short row stays wide."""
+    card_text = "\n".join(
+        "          " + line for line in passage("CARD", 500).split("\n")
+    )
+    svg = render_board_to_svg(
+        f"width: 1200\n{QUERY}rows:\n"
+        + prose_row(passage("ONE", 200))
+        + "  - cols:\n      - width: 25%\n"
+        f"        text: |\n{card_text}\n      - c\n"
+    )
+    assert len(column_starts(svg, ["CARD"])["CARD"]) == 1
+    assert widest(svg, "ONE") > 55
+
+
+def _tabs_board(default: str) -> str:
+    short = "\n".join("            " + t for t in passage("TABA", 200).split("\n"))
+    big = "\n".join("            " + t for t in passage("TABB", 1400).split("\n"))
+    return (
+        f"width: 1200\n{QUERY}rows:\n"
+        + prose_row(passage("ONE", 200))
+        + f"  - tabs:\n      default: {default}\n      items:\n"
+        f"        - title: First\n          text: |\n{short}\n"
+        f"        - title: Second\n          text: |\n{big}\n"
+    )
+
+
+def test_multi_column_text_in_an_inactive_tab_does_not_snap_the_board() -> None:
+    svg = render_board_to_svg(_tabs_board("First"))
+    assert widest(svg, "ONE") > 55
+
+
+def test_multi_column_text_in_the_active_tab_snaps_the_board() -> None:
+    svg = render_board_to_svg(_tabs_board("Second"))
+    assert widest(svg, "ONE") <= 55
+
+
+def _conditional_board(head: str, *, probe: bool = False) -> str:
+    """A short intro row, then a row with ``head`` holding a 1400-char passage."""
+    big = "\n".join("      " + t for t in passage("BIG", 1400).split("\n"))
+    queries = QUERY.replace(
+        "queries:\n", "queries:\n  flags:\n    rows:\n      - {show: true}\n", 1
+    )
+    return (
+        f"width: 1200\n{queries if probe else QUERY}rows:\n"
+        + prose_row(passage("ONE", 200))
+        + f"  - {head}\n    text: |\n{big}\n"
+    )
+
+
+def test_a_hidden_block_does_not_snap_the_board() -> None:
+    svg = render_board_to_svg(_conditional_board("visible: false"))
+    assert widest(svg, "ONE") > 55
+
+
+def test_a_visible_block_does_snap_the_board() -> None:
+    svg = render_board_to_svg(_conditional_board("visible: true"))
+    assert widest(svg, "ONE") <= 55
+
+
+def test_collapsed_details_content_does_not_snap_the_board() -> None:
+    svg = render_board_to_svg(_conditional_board('details: "Show more"'))
+    assert widest(svg, "ONE") > 55
+
+
+def test_expanded_details_content_snaps_the_board() -> None:
+    head = "details:\n      summary: Show more\n      expanded: true"
+    svg = render_board_to_svg(_conditional_board(head))
+    assert widest(svg, "ONE") <= 55
+
+
+def test_a_query_backed_visible_counts_as_drawn() -> None:
+    """The data is unknown when the plan is made, so the block may be drawn."""
+    head = "visible:\n      query: flags\n      column: show"
+    svg = render_board_to_svg(_conditional_board(head, probe=True))
+    assert widest(svg, "ONE") <= 55

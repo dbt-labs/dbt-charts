@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'Charts with `layers:` now use board category colors on their base `color:` field, including pinned `style.charts.category_colors`.'
+time: 2026-10-05T15:31:57.000000-07:00
+custom:
+  DbtChartsIssue: "57"

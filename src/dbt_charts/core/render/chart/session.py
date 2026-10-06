@@ -4,8 +4,8 @@ Holds the shared board style and drives the per-chart emit → features
 pipeline for a single board/board render.  Call ``emit_chart`` per chart,
 then ``finalize_vl`` to produce Vega-Lite JSON — that path is VL-only.
 
-Non-VL families (``kpi``, ``table``, ``spark_bar``, ``callout``, ``custom``)
-are custom SVG, not Vega-Lite: ``render_svg_family`` dispatches them straight to their
+Non-VL families (``kpi``, ``table``, ``spark_bar``, ``callout``) are custom
+SVG, not Vega-Lite: ``render_svg_family`` dispatches them straight to their
 typed ``render_*_svg`` renderer and returns the SVG string, bypassing
 ``emit_chart``/``finalize_vl`` entirely. It returns ``None`` for VL families
 so the caller falls through to the ``emit_chart``/``finalize_vl`` path.
@@ -23,7 +23,6 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCalloutChart,
     ResolvedChart,
-    ResolvedCustomChart,
     ResolvedKpiChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
@@ -38,7 +37,6 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_MULTIPLES_RESOLVED_WITHOUT_DATA
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.callout import render_callout_chart_svg
-from dbt_charts.core.render.chart.custom import render_custom_svg
 from dbt_charts.core.render.chart.emitters import get_emitter
 from dbt_charts.core.render.chart.feature import FeaturePipeline, chart_rows
 from dbt_charts.core.render.chart.features import DEFAULT_FEATURES
@@ -47,7 +45,6 @@ from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.table import render_table_svg
 from dbt_charts.core.render.chart.translate import assemble_final_vl
-from dbt_charts.core.render.sizing import custom_chart_height
 from dbt_charts.core.render.utils import normalize_data_types
 
 
@@ -120,27 +117,6 @@ class BoardRenderSession:
                     width,
                     height,
                     is_placeholder=is_placeholder,
-                    board_style=self.board_style,
-                    title_shift=title_shift,
-                )
-            case ResolvedCustomChart():
-                # render_resolved_chart resolves a caller-omitted width to a
-                # number before dispatching; a missing height means "no slot",
-                # so the chart's own aspect-ratio box answers.
-                assert width is not None
-                return render_custom_svg(
-                    chart,
-                    data,
-                    width,
-                    custom_chart_height(
-                        chart.aspect_ratio,
-                        chart.min_height,
-                        chart.max_height,
-                        width,
-                        self.board_style.chart_defaults,
-                    )
-                    if height is None
-                    else height,
                     board_style=self.board_style,
                     title_shift=title_shift,
                 )

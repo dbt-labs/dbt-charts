@@ -67,7 +67,6 @@ _OPENAI_VERIFIED_SCHEMA_KEYWORDS = {
     "items",
     "$ref",
     "$defs",
-    "definitions",
     "anyOf",
     "enum",
     "description",
@@ -131,9 +130,8 @@ def strict_mode_violations(schema: object, path: str = "$") -> list[str]:
             f"{path}: $ref with sibling keys {sorted(set(schema) - {'$ref'})}"
         )
 
-    for defs_key in ("$defs", "definitions"):
-        for name, sub in schema.get(defs_key, {}).items():
-            violations.extend(strict_mode_violations(sub, f"{path}.{defs_key}.{name}"))
+    for name, sub in schema.get("$defs", {}).items():
+        violations.extend(strict_mode_violations(sub, f"{path}.$defs.{name}"))
     for name, sub in schema.get("properties", {}).items():
         violations.extend(strict_mode_violations(sub, f"{path}.properties.{name}"))
     for key in ("anyOf", "allOf", "oneOf"):

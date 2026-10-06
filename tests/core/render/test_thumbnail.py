@@ -460,6 +460,19 @@ def test_prose_carrying_attributes_are_stripped_and_structure_kept() -> None:
     assert 'data-chart-type="bar"' in out
 
 
+def test_accessible_name_and_description_elements_are_stripped() -> None:
+    body = (
+        '<g class="dbt-chart" data-chart-id="rev" role="group" '
+        'aria-roledescription="chart" aria-label="Revenue">'
+        "<desc>Secret subtitle</desc><title>Cell value</title>"
+        '<path d="M0,0h5v5h-5Z" fill="#4f89c0"/></g>'
+    )
+    out = cartoonize(svg(body))
+    for prose in ("Revenue", "Secret subtitle", "Cell value", "<desc", "<title"):
+        assert prose not in out
+    assert 'data-chart-id="rev"' in out
+
+
 @pytest.mark.parametrize(
     ("attrs", "message"),
     [

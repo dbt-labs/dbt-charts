@@ -9,6 +9,7 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+from jsonschema.validators import validator_for
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -91,12 +92,12 @@ def test_yaml_schema_matches_the_authored_board_boundary() -> None:
         }
     }
 
-    jsonschema.Draft7Validator(schema).validate(valid)
+    validator_for(schema)(schema).validate(valid)
     AuthoredBoard.model_validate(valid)
 
     invalid = {**valid, "not_a_dbt_charts_key": True}
     with pytest.raises(jsonschema.ValidationError):
-        jsonschema.Draft7Validator(schema).validate(invalid)
+        validator_for(schema)(schema).validate(invalid)
     with pytest.raises(ValidationError):
         AuthoredBoard.model_validate(invalid)
 
@@ -115,7 +116,8 @@ def test_yaml_schema_accepts_layout_name_shorthand() -> None:
     }
 
     AuthoredBoard.model_validate(board)
-    jsonschema.Draft7Validator(render_yaml_schema(introspect())).validate(board)
+    schema = render_yaml_schema(introspect())
+    validator_for(schema)(schema).validate(board)
 
 
 @pytest.mark.parametrize(

@@ -373,7 +373,7 @@ def _shipped_schema() -> dict[str, Any]:
 
 
 def _definition(schema: dict[str, Any], name: str) -> dict[str, Any]:
-    return schema["definitions"][name]
+    return schema["$defs"][name]
 
 
 def test_shipped_schema_font_slot_accepts_a_name() -> None:

@@ -3808,40 +3808,6 @@
       "title": "ColorStylePatch",
       "type": "object"
     },
-    "ColumnRuleStyle": {
-      "additionalProperties": false,
-      "description": "Vertical rule drawn between prose columns, structured like BorderStyle.",
-      "properties": {
-        "width": {
-          "description": "Rule line width in pixels.",
-          "exclusiveMinimum": 0,
-          "title": "Width",
-          "type": "number"
-        },
-        "color": {
-          "description": "Rule color as a CSS color string.",
-          "title": "Color",
-          "type": "string"
-        },
-        "style": {
-          "default": "solid",
-          "description": "Rule line style.",
-          "enum": [
-            "dashed",
-            "dotted",
-            "solid"
-          ],
-          "title": "Style",
-          "type": "string"
-        }
-      },
-      "required": [
-        "color",
-        "width"
-      ],
-      "title": "ColumnRuleStyle",
-      "type": "object"
-    },
     "ColumnScaleConfig": {
       "additionalProperties": false,
       "description": "Scale-based continuous color mapping for a table column.",
@@ -4776,6 +4742,108 @@
       "title": "DimensionTicksStylePatch",
       "type": "object"
     },
+    "DividerStyle": {
+      "additionalProperties": false,
+      "description": "A separator line: whether it draws, and its color, width and line style.\n\nEvery divider slot is complete in every theme, so a partial write such as\n``{color: red}`` recolors a divider without switching it on or off.",
+      "properties": {
+        "visible": {
+          "description": "Draw the divider.",
+          "title": "Visible",
+          "type": "boolean"
+        },
+        "color": {
+          "description": "Divider color.",
+          "title": "Color",
+          "type": "string"
+        },
+        "width": {
+          "description": "Divider line width in pixels.",
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "number"
+        },
+        "dasharray": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Dash pattern in pixels, such as \"6 3\" (6 drawn, 3 gap); unset draws a solid line.",
+          "title": "Dasharray"
+        }
+      },
+      "required": [
+        "color",
+        "visible",
+        "width"
+      ],
+      "title": "DividerStyle",
+      "type": "object"
+    },
+    "DividerStylePatch": {
+      "additionalProperties": false,
+      "description": "Authored overlay for DividerStyle. A separator line: whether it draws, and its color, width and line style.\n\nEvery divider slot is complete in every theme, so a partial write such as\n``{color: red}`` recolors a divider without switching it on or off.",
+      "properties": {
+        "visible": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Draw the divider.",
+          "title": "Visible"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Divider color.",
+          "title": "Color"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Divider line width in pixels.",
+          "title": "Width"
+        },
+        "dasharray": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Dash pattern in pixels, such as \"6 3\" (6 drawn, 3 gap); unset draws a solid line.",
+          "title": "Dasharray"
+        }
+      },
+      "title": "DividerStylePatch",
+      "type": "object"
+    },
     "EndpointLabelsConfig": {
       "additionalProperties": false,
       "description": "Series names printed on the chart itself instead of in a legend.\n\nAlso called direct labels, series labels, or an in-chart legend. Each\nseries gets one label in its own color, beside the plot: to the right on\nline, area, and vertical stacked bar charts, above the top row on\nhorizontal stacked bars.\n\nOnly shapes that can name every series get them. Line and area charts and\nstacked bars do; grouped bars, layered charts, small multiples, and very\nnarrow cards keep a legend instead. Where the labels do appear they replace the color\nlegend, so `visible` here, and not `legend`, is what takes series names\noff the side of those charts. Their font comes from\n`style.charts.series_label.font`.",
@@ -5053,31 +5121,9 @@
       "title": "FontStyle",
       "type": "object"
     },
-    "FooterRule": {
-      "additionalProperties": false,
-      "description": "Hairline rule above the footer attribution text. None = no rule.",
-      "properties": {
-        "color": {
-          "description": "Rule stroke color.",
-          "title": "Color",
-          "type": "string"
-        },
-        "stroke_width": {
-          "description": "Rule stroke width in pixels.",
-          "title": "Stroke Width",
-          "type": "number"
-        }
-      },
-      "required": [
-        "color",
-        "stroke_width"
-      ],
-      "title": "FooterRule",
-      "type": "object"
-    },
     "FooterStyle": {
       "additionalProperties": false,
-      "description": "Page footer chrome: visibility, attribution text, font, and rule.",
+      "description": "Page footer chrome: visibility, attribution text, font, and divider.",
       "properties": {
         "visible": {
           "description": "Show the footer attribution line.",
@@ -5111,20 +5157,13 @@
           "title": "Y Offset",
           "type": "number"
         },
-        "rule": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FooterRule"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Hairline rule above footer text; null disables the rule."
+        "divider": {
+          "$ref": "#/$defs/DividerStyle",
+          "description": "Hairline above the footer text."
         }
       },
       "required": [
+        "divider",
         "text",
         "visible",
         "y_offset"
@@ -6189,7 +6228,7 @@
           "description": "Resolved cache policy: whether results may be cached (and referenced via {{ queries.X.cache }}) and when they expire."
         },
         "variable_dependencies": {
-          "description": "Variable names this query references in SQL (computed during normalization).",
+          "description": "Variable names this query or any query it embeds references in SQL (computed during normalization).",
           "items": {
             "type": "string"
           },
@@ -6400,7 +6439,6 @@
       "title": "InputWidths",
       "type": "object"
     },
-    "JsonValue": {},
     "KpiChartStyle": {
       "additionalProperties": false,
       "description": "Produced by cascade from theme YAML.\n\nFour per-slot font blocks (value, label, affix, glyph) plus a parent\n``font`` that cascades into every slot and doubles as the support-row\nfont. Concrete pixel values live in ``stark.yaml``.\n\n* ``font`` \u2014 parent font; also the support row (small text under value)\n* ``value.font`` \u2014 headline number typography; size/weight from theme (authoritative)\n* ``label.font`` \u2014 card label typography\n* ``affix.font`` \u2014 currency/percent affixes\n* ``glyph.font`` \u2014 indicator glyphs (\u25b2\u25bc\u25cf)\n* ``content_padding`` \u2014 per-side inner inset for the value/label/support text block\n\nKPI uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n``color`` is likewise absent by construction \u2014 KPI has no series axis and\nno gradient-eligible channel, so it has nothing for a paint config to\nconfigure; ``font.color`` / ``value.font.color`` / ``label.font.color``\nare how a KPI's text gets painted.",
@@ -8556,12 +8594,17 @@
         "gap": {
           "title": "Gap",
           "type": "number"
+        },
+        "snap": {
+          "title": "Snap",
+          "type": "boolean"
         }
       },
       "required": [
         "board_width",
         "gap",
-        "grid"
+        "grid",
+        "snap"
       ],
       "title": "ProsePlan",
       "type": "object"
@@ -11296,7 +11339,6 @@
                 "area": "#/$defs/ResolvedAreaChart",
                 "bar": "#/$defs/ResolvedBarChart",
                 "callout": "#/$defs/ResolvedCalloutChart",
-                "custom": "#/$defs/ResolvedCustomChart",
                 "geoshape": "#/$defs/ResolvedGeoshapeChart",
                 "heatmap": "#/$defs/ResolvedHeatmapChart",
                 "histogram": "#/$defs/ResolvedBarChart",
@@ -11319,9 +11361,6 @@
               },
               {
                 "$ref": "#/$defs/ResolvedCalloutChart"
-              },
-              {
-                "$ref": "#/$defs/ResolvedCustomChart"
               },
               {
                 "$ref": "#/$defs/ResolvedGeoshapeChart"
@@ -11992,377 +12031,6 @@
         "mode"
       ],
       "title": "ResolvedColumnSharedScale",
-      "type": "object"
-    },
-    "ResolvedCustomChart": {
-      "additionalProperties": false,
-      "description": "Render-ready custom chart.",
-      "properties": {
-        "id": {
-          "description": "Unique chart id within the board.",
-          "title": "Id",
-          "type": "string"
-        },
-        "source_path": {
-          "default": "",
-          "description": "Absolute dotted authoring path of this chart (rows.0.cols.1), carried through resolution so render and diagnostics name it the same way without re-deriving it from the layout walk. Empty for a chart with no authored coordinates in this file.",
-          "title": "Source Path",
-          "type": "string"
-        },
-        "defined_in_other_file": {
-          "default": false,
-          "description": "Internal: True when a ChartRef pulled this definition in from another file. source_path still names a real spot in the importing file, but render withholds the authoring handle for it.",
-          "title": "Defined In Other File",
-          "type": "boolean"
-        },
-        "query": {
-          "anyOf": [
-            {
-              "discriminator": {
-                "mapping": {
-                  "http": "#/$defs/HttpQuery",
-                  "schema": "#/$defs/SchemaQuery",
-                  "sql": "#/$defs/SqlQuery",
-                  "values": "#/$defs/ValuesQuery"
-                },
-                "propertyName": "query_type"
-              },
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/HttpQuery"
-                },
-                {
-                  "$ref": "#/$defs/SchemaQuery"
-                },
-                {
-                  "$ref": "#/$defs/SqlQuery"
-                },
-                {
-                  "$ref": "#/$defs/ValuesQuery"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Resolved query; None for blank/placeholder charts.",
-          "title": "Query"
-        },
-        "query_name": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "String name when query is a named reference.",
-          "title": "Query Name"
-        },
-        "variable_dependencies": {
-          "description": "Variable names this chart depends on.",
-          "items": {
-            "type": "string"
-          },
-          "title": "Variable Dependencies",
-          "type": "array"
-        },
-        "notes": {
-          "default": "",
-          "description": "Human-readable chart notes. Never rendered.",
-          "title": "Notes",
-          "type": "string"
-        },
-        "link": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "URL to navigate to on chart click.",
-          "title": "Link"
-        },
-        "conditional_formatting": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "$ref": "#/$defs/FieldConditionalFormatting"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Conditional-formatting rules keyed by column name.",
-          "title": "Conditional Formatting"
-        },
-        "palette": {
-          "description": "Baked color-stop sequence from the style cascade.",
-          "items": {
-            "type": "string"
-          },
-          "title": "Palette",
-          "type": "array"
-        },
-        "requested_alias_palette": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Set when this chart's palette was authored as a known WARN-PALETTE-UNSUPPORTED anti-pattern alias (e.g. RdYlGn); holds the originally-requested name for the render-stage detector.",
-          "title": "Requested Alias Palette"
-        },
-        "requested_alias_substitute": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Display name of the palette dbt charts substituted for requested_alias_palette \u2014 baked alongside it so the WARN-PALETTE-UNSUPPORTED detector never calls compile.resolve.style.palette itself.",
-          "title": "Requested Alias Substitute"
-        },
-        "category_colors": {
-          "default": [],
-          "description": "Board-wide value\u2192color scales for the categorical fields THIS chart encodes. Empty when no field it draws is bound.",
-          "items": {
-            "$ref": "#/$defs/CategoryColorScale"
-          },
-          "title": "Category Colors",
-          "type": "array"
-        },
-        "resolved_channels": {
-          "additionalProperties": {
-            "$ref": "#/$defs/ResolvedStyleChannel"
-          },
-          "description": "Channel bindings resolved from authored encoding.",
-          "title": "Resolved Channels",
-          "type": "object"
-        },
-        "label": {
-          "default": "",
-          "description": "Chart label text. KPI overrides to str = '' (headline label). All other families default to '' (unused). Present on the base so generic chart-walking code (rendering.py) can access chart.label without isinstance guards.",
-          "title": "Label",
-          "type": "string"
-        },
-        "legend": {
-          "$ref": "#/$defs/ResolvedLegendStyle",
-          "description": "Baked board-level legend style from the style cascade."
-        },
-        "layout_padding": {
-          "$ref": "#/$defs/PaddingStyle",
-          "description": "Effective per-chart layout padding, baked in at construction time by every family resolver. Combines board.charts.padding with any chart-local style.<family>.padding override."
-        },
-        "title": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Jinja-resolved chart title, raw (no title-case transform). Also backs non-VL consumers (e.g. the data-chart-title wire attribute) that have always emitted the authored text as-is.",
-          "title": "Title"
-        },
-        "subtitle": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Chart subtitle.",
-          "title": "Subtitle"
-        },
-        "background": {
-          "description": "Effective chart background: chart-local style.<family>.background when authored, otherwise the board/board background.",
-          "title": "Background",
-          "type": "string"
-        },
-        "canvas": {
-          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
-          "title": "Canvas",
-          "type": "string"
-        },
-        "title_style": {
-          "$ref": "#/$defs/TitleStyle",
-          "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
-        },
-        "chart_type": {
-          "const": "custom",
-          "description": "Discriminator key; always 'custom'.",
-          "title": "Chart Type",
-          "type": "string"
-        },
-        "template_name": {
-          "description": "Template name, or 'inline svg:'.",
-          "title": "Template Name",
-          "type": "string"
-        },
-        "template_source": {
-          "description": "Jinja SVG template source.",
-          "title": "Template Source",
-          "type": "string"
-        },
-        "channels": {
-          "additionalProperties": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "string"
-              }
-            ]
-          },
-          "description": "Declared channel name -> column(s); unset optional is None.",
-          "title": "Channels",
-          "type": "object"
-        },
-        "options": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "description": "Validated options; color tokens resolved to hex.",
-          "title": "Options",
-          "type": "object"
-        },
-        "aspect_ratio": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Authored width-to-height ratio.",
-          "title": "Aspect Ratio"
-        },
-        "min_height": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Authored height floor.",
-          "title": "Min Height"
-        },
-        "max_height": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Authored height ceiling.",
-          "title": "Max Height"
-        },
-        "column_options": {
-          "description": "Names of the options that name query columns.",
-          "items": {
-            "type": "string"
-          },
-          "title": "Column Options",
-          "type": "array"
-        },
-        "category_pins": {
-          "additionalProperties": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object"
-          },
-          "description": "Board category color pins: column \u2192 value \u2192 hex.",
-          "title": "Category Pins",
-          "type": "object"
-        },
-        "style": {
-          "$ref": "#/$defs/ResolvedCustomStyle",
-          "description": "Custom family style slice."
-        }
-      },
-      "required": [
-        "background",
-        "canvas",
-        "category_pins",
-        "channels",
-        "chart_type",
-        "column_options",
-        "id",
-        "layout_padding",
-        "legend",
-        "options",
-        "palette",
-        "resolved_channels",
-        "style",
-        "template_name",
-        "template_source",
-        "title_style",
-        "variable_dependencies"
-      ],
-      "title": "ResolvedCustomChart",
-      "type": "object"
-    },
-    "ResolvedCustomStyle": {
-      "additionalProperties": false,
-      "description": "What a custom chart's template and title read from the style cascade.",
-      "properties": {
-        "title_font": {
-          "$ref": "#/$defs/ResolvedFontStyle",
-          "description": "Baked title font (size/weight/family/\u2026) from the width tier."
-        },
-        "tree": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "description": "The board's merged style tree as plain data \u2014 the template's `style`. `palettes.<role>` holds hex lists (a dict of aliases for a tone role) instead of palette names.",
-          "title": "Tree",
-          "type": "object"
-        }
-      },
-      "required": [
-        "title_font",
-        "tree"
-      ],
-      "title": "ResolvedCustomStyle",
       "type": "object"
     },
     "ResolvedFontStyle": {
@@ -13938,6 +13606,22 @@
           "default": null,
           "description": "Semantic styling for the support value/glyph.",
           "title": "Tone"
+        },
+        "rules": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConditionalRule"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Color-resolved `conditional_formatting` rules keyed on the support column; None when the chart authors none.",
+          "title": "Rules"
         }
       },
       "title": "ResolvedKpiSupportConfig",
@@ -14177,7 +13861,6 @@
                   "area": "#/$defs/ResolvedAreaChart",
                   "bar": "#/$defs/ResolvedBarChart",
                   "callout": "#/$defs/ResolvedCalloutChart",
-                  "custom": "#/$defs/ResolvedCustomChart",
                   "geoshape": "#/$defs/ResolvedGeoshapeChart",
                   "heatmap": "#/$defs/ResolvedHeatmapChart",
                   "histogram": "#/$defs/ResolvedBarChart",
@@ -14200,9 +13883,6 @@
                 },
                 {
                   "$ref": "#/$defs/ResolvedCalloutChart"
-                },
-                {
-                  "$ref": "#/$defs/ResolvedCustomChart"
                 },
                 {
                   "$ref": "#/$defs/ResolvedGeoshapeChart"
@@ -19713,88 +19393,6 @@
       "title": "RuleMarkStyle",
       "type": "object"
     },
-    "RuleStyle": {
-      "additionalProperties": false,
-      "description": "Shared rule-line primitive: width, color, continuous mode.\n\nUsed for table header rules, table row rules, support-table dividers, and\nsupport-table inter-row rules. All three fields are required; theme YAML\nsupplies every instance. Support-table contexts set `continuous: true` in\nthe theme; render code in that context does not read it.",
-      "properties": {
-        "width": {
-          "description": "Rule line width in pixels.",
-          "title": "Width",
-          "type": "number"
-        },
-        "color": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Rule color; None inherits from theme.",
-          "title": "Color"
-        },
-        "continuous": {
-          "description": "Draw a continuous full-width rule (true) or only under columns (false).",
-          "title": "Continuous",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "continuous",
-        "width"
-      ],
-      "title": "RuleStyle",
-      "type": "object"
-    },
-    "RuleStylePatch": {
-      "additionalProperties": false,
-      "description": "Authored overlay for RuleStyle. Shared rule-line primitive: width, color, continuous mode.\n\nUsed for table header rules, table row rules, support-table dividers, and\nsupport-table inter-row rules. All three fields are required; theme YAML\nsupplies every instance. Support-table contexts set `continuous: true` in\nthe theme; render code in that context does not read it.",
-      "properties": {
-        "width": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Rule line width in pixels.",
-          "title": "Width"
-        },
-        "color": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Rule color; None inherits from theme.",
-          "title": "Color"
-        },
-        "continuous": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Draw a continuous full-width rule (true) or only under columns (false).",
-          "title": "Continuous"
-        }
-      },
-      "title": "RuleStylePatch",
-      "type": "object"
-    },
     "ScaleContinuousStylePatch": {
       "additionalProperties": false,
       "description": "Authored overlay for ScaleContinuousStyle. Continuous-scale-only config: type, domain, zero-baseline, log/pow/symlog params.",
@@ -20855,7 +20453,7 @@
           "description": "Resolved cache policy: whether results may be cached (and referenced via {{ queries.X.cache }}) and when they expire."
         },
         "variable_dependencies": {
-          "description": "Variable names this query references in SQL (computed during normalization).",
+          "description": "Variable names this query or any query it embeds references in SQL (computed during normalization).",
           "items": {
             "type": "string"
           },
@@ -22047,7 +21645,7 @@
           "description": "Resolved cache policy: whether results may be cached (and referenced via {{ queries.X.cache }}) and when they expire."
         },
         "variable_dependencies": {
-          "description": "Variable names this query references in SQL (computed during normalization).",
+          "description": "Variable names this query or any query it embeds references in SQL (computed during normalization).",
           "items": {
             "type": "string"
           },
@@ -22403,14 +22001,14 @@
           "$ref": "#/$defs/SupportTableRowPaddingStyle",
           "description": "Row padding style."
         },
-        "rule": {
-          "$ref": "#/$defs/RuleStyle",
-          "description": "Row bottom rule style."
+        "divider": {
+          "$ref": "#/$defs/DividerStyle",
+          "description": "Line under each strip row."
         }
       },
       "required": [
-        "padding",
-        "rule"
+        "divider",
+        "padding"
       ],
       "title": "SupportTableRowStyle",
       "type": "object"
@@ -22431,17 +22029,17 @@
           "default": null,
           "description": "Row padding style."
         },
-        "rule": {
+        "divider": {
           "anyOf": [
             {
-              "$ref": "#/$defs/RuleStylePatch"
+              "$ref": "#/$defs/DividerStylePatch"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Row bottom rule style."
+          "description": "Line under each strip row."
         }
       },
       "title": "SupportTableRowStylePatch",
@@ -22456,12 +22054,12 @@
           "description": "Support_table font style overrides."
         },
         "divider": {
-          "$ref": "#/$defs/RuleStyle",
-          "description": "Rule at the boundary between the chart plot and the data strip. For position='bottom': rule sits above the strip (below the axis). For position='top': rule sits below the strip rows (above the plot top)."
+          "$ref": "#/$defs/DividerStyle",
+          "description": "Line at the boundary between the chart plot and the data strip. For position='bottom': the line sits above the strip (below the axis). For position='top': the line sits below the strip rows (above the plot top)."
         },
         "row": {
           "$ref": "#/$defs/SupportTableRowStyle",
-          "description": "Support_table row padding and rule style."
+          "description": "Support_table row padding and divider style."
         },
         "label": {
           "$ref": "#/$defs/SupportTableLabelStyle",
@@ -22532,14 +22130,14 @@
         "divider": {
           "anyOf": [
             {
-              "$ref": "#/$defs/RuleStylePatch"
+              "$ref": "#/$defs/DividerStylePatch"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Rule at the boundary between the chart plot and the data strip. For position='bottom': rule sits above the strip (below the axis). For position='top': rule sits below the strip rows (above the plot top)."
+          "description": "Line at the boundary between the chart plot and the data strip. For position='bottom': the line sits above the strip (below the axis). For position='top': the line sits below the strip rows (above the plot top)."
         },
         "row": {
           "anyOf": [
@@ -22551,7 +22149,7 @@
             }
           ],
           "default": null,
-          "description": "Support_table row padding and rule style."
+          "description": "Support_table row padding and divider style."
         },
         "label": {
           "anyOf": [
@@ -22629,7 +22227,7 @@
     },
     "TableChartStyle": {
       "additionalProperties": false,
-      "description": "Table chart style overrides layered on top of shared chart defaults.\n\nTable uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n\n``_ChartCardStyleMixinAllOptional`` supplies ``border``: table draws its own\ncard, so unlike the Vega-Lite families it keeps the slot. It stopped\ndeclaring its own ``border`` when that field was found to be inert on the\ntable and secretly styling markdown (now ``style.text.rule``), and inherits\nthe shared card border instead \u2014 None when unauthored.",
+      "description": "Table chart style overrides layered on top of shared chart defaults.\n\nTable uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n\n``_ChartCardStyleMixinAllOptional`` supplies ``border``: table draws its own\ncard, so unlike the Vega-Lite families it keeps the slot. It stopped\ndeclaring its own ``border`` when that field was found to be inert on the\ntable and secretly styling markdown (now ``style.text.divider``), and inherits\nthe shared card border instead \u2014 None when unauthored.",
       "properties": {
         "title": {
           "anyOf": [
@@ -22644,17 +22242,9 @@
           "description": "Chart-level title style override; None inherits the theme title style."
         },
         "preferred_width": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Preferred chart width in pixels.",
-          "title": "Preferred Width"
+          "description": "Width the board asks for when sizing to a table before its data is known. With data, a board with no width measures the table's columns instead. Only a value set on the chart itself pins the width; a board- or theme-level value is just the estimate used before data is known.",
+          "title": "Preferred Width",
+          "type": "number"
         },
         "padding": {
           "anyOf": [
@@ -22708,18 +22298,6 @@
           ],
           "default": null,
           "description": "Table color: static text paint or gradient scale only (no categorical arm)."
-        },
-        "rule": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TableRuleStyle"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Table rule style overrides (color). None = no override; inherits from theme."
         },
         "outer_padding": {
           "description": "Outer table padding in pixels.",
@@ -22858,6 +22436,7 @@
         "outer_padding",
         "pagination",
         "paginator",
+        "preferred_width",
         "row",
         "spark",
         "symbol_mode",
@@ -23283,6 +22862,54 @@
       "title": "TableColumnsStyle",
       "type": "object"
     },
+    "TableDividerStyle": {
+      "additionalProperties": false,
+      "description": "A table divider that also chooses how far the line runs.",
+      "properties": {
+        "visible": {
+          "description": "Draw the divider.",
+          "title": "Visible",
+          "type": "boolean"
+        },
+        "color": {
+          "description": "Divider color.",
+          "title": "Color",
+          "type": "string"
+        },
+        "width": {
+          "description": "Divider line width in pixels.",
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "number"
+        },
+        "dasharray": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Dash pattern in pixels, such as \"6 3\" (6 drawn, 3 gap); unset draws a solid line.",
+          "title": "Dasharray"
+        },
+        "continuous": {
+          "description": "Draw one unbroken line across the full table width (true) or only under each column (false).",
+          "title": "Continuous",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "color",
+        "continuous",
+        "visible",
+        "width"
+      ],
+      "title": "TableDividerStyle",
+      "type": "object"
+    },
     "TableEdgeStyle": {
       "additionalProperties": false,
       "description": "more_rows or empty_state edge-case UI.",
@@ -23299,7 +22926,7 @@
       "additionalProperties": false,
       "properties": {
         "visible": {
-          "description": "Show the header row (column labels + rule). Set to False on series-keyed tables where column meanings are obvious from context (e.g. donut-attached tables: swatch / share / name / value). Theme YAML supplies the UX default (true) via _base.yaml.",
+          "description": "Show the header row (column labels + divider). Set to False on series-keyed tables where column meanings are obvious from context (e.g. donut-attached tables: swatch / share / name / value). Theme YAML supplies the UX default (true) via _base.yaml.",
           "title": "Visible",
           "type": "boolean"
         },
@@ -23334,7 +22961,7 @@
             }
           ],
           "default": null,
-          "description": "Header background color; None means no fill (rule alone separates header from body).",
+          "description": "Header background color; None means no fill (the divider alone separates header from body).",
           "title": "Background"
         },
         "overflow": {
@@ -23348,15 +22975,15 @@
           "title": "Overflow",
           "type": "string"
         },
-        "rule": {
-          "$ref": "#/$defs/RuleStyle",
-          "description": "Header bottom rule style."
+        "divider": {
+          "$ref": "#/$defs/TableDividerStyle",
+          "description": "Line between the header row and the body."
         }
       },
       "required": [
+        "divider",
         "height",
         "overflow",
-        "rule",
         "visible"
       ],
       "title": "TableHeaderStyle",
@@ -23395,10 +23022,9 @@
     "TableRowRoleStyle": {
       "additionalProperties": false,
       "properties": {
-        "rule_width": {
-          "description": "Rule width above rows with this role in pixels.",
-          "title": "Rule Width",
-          "type": "number"
+        "divider": {
+          "$ref": "#/$defs/DividerStyle",
+          "description": "Line above rows with this role."
         },
         "font": {
           "anyOf": [
@@ -23427,7 +23053,7 @@
         }
       },
       "required": [
-        "rule_width"
+        "divider"
       ],
       "title": "TableRowRoleStyle",
       "type": "object"
@@ -23492,9 +23118,9 @@
           "default": null,
           "description": "Alternating row stripe style; None means no stripe."
         },
-        "rule": {
-          "$ref": "#/$defs/RuleStyle",
-          "description": "Row bottom rule style."
+        "divider": {
+          "$ref": "#/$defs/TableDividerStyle",
+          "description": "Line under each body row."
         },
         "role": {
           "anyOf": [
@@ -23515,32 +23141,11 @@
         }
       },
       "required": [
+        "divider",
         "height",
-        "roles",
-        "rule"
+        "roles"
       ],
       "title": "TableRowStyle",
-      "type": "object"
-    },
-    "TableRuleStyle": {
-      "additionalProperties": false,
-      "description": "Table rule color override block.",
-      "properties": {
-        "color": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Table rule color; None uses the theme default.",
-          "title": "Color"
-        }
-      },
-      "title": "TableRuleStyle",
       "type": "object"
     },
     "TableSpanner": {
@@ -23632,7 +23237,7 @@
     },
     "TextBlockquoteStyle": {
       "additionalProperties": false,
-      "description": "Blockquote prose. Box group; border is the left rule.",
+      "description": "Blockquote prose. Box group; border is the left bar.",
       "properties": {
         "font": {
           "$ref": "#/$defs/FontStyle",
@@ -23733,17 +23338,9 @@
           "description": "Ceiling on the column count. The renderer may choose fewer when there is not enough text to fill them. None = no ceiling.",
           "title": "Max Number"
         },
-        "rule": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ColumnRuleStyle"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Vertical rule drawn between columns. None = no rule."
+        "divider": {
+          "$ref": "#/$defs/DividerStyle",
+          "description": "Vertical line drawn between columns."
         },
         "max_chars": {
           "anyOf": [
@@ -23760,6 +23357,9 @@
           "title": "Max Chars"
         }
       },
+      "required": [
+        "divider"
+      ],
       "title": "TextColumnStyle",
       "type": "object"
     },
@@ -23785,22 +23385,6 @@
         }
       },
       "title": "TextMarkStyle",
-      "type": "object"
-    },
-    "TextRuleStyle": {
-      "additionalProperties": false,
-      "description": "Horizontal rules in markdown prose: `---` and markdown-table gridlines.\n\nOne slot, because mdsvg paints both from it and always has. Splitting it\nwould invent a knob no theme has ever needed.",
-      "properties": {
-        "color": {
-          "description": "Color of markdown horizontal rules and markdown-table gridlines.",
-          "title": "Color",
-          "type": "string"
-        }
-      },
-      "required": [
-        "color"
-      ],
-      "title": "TextRuleStyle",
       "type": "object"
     },
     "TextStyle": {
@@ -23844,15 +23428,15 @@
         },
         "blockquote": {
           "$ref": "#/$defs/TextBlockquoteStyle",
-          "description": "Blockquote box styling (font, background, border/left-rule)."
+          "description": "Blockquote box styling (font, background, border/left bar)."
         },
         "bold": {
           "$ref": "#/$defs/TextBoldStyle",
           "description": "Inline bold-run styling (weight), distinct from heading weight."
         },
-        "rule": {
-          "$ref": "#/$defs/TextRuleStyle",
-          "description": "Markdown horizontal-rule and table-gridline color."
+        "divider": {
+          "$ref": "#/$defs/DividerStyle",
+          "description": "Markdown horizontal rules (`---`) and markdown-table gridlines."
         }
       },
       "required": [
@@ -23860,10 +23444,11 @@
         "blockquote",
         "bold",
         "code",
+        "column",
+        "divider",
         "heading",
         "paragraph",
-        "preferred_width",
-        "rule"
+        "preferred_width"
       ],
       "title": "TextStyle",
       "type": "object"
@@ -24728,7 +24313,7 @@
           "description": "Resolved cache policy: whether results may be cached (and referenced via {{ queries.X.cache }}) and when they expire."
         },
         "variable_dependencies": {
-          "description": "Variable names this query references in SQL (computed during normalization).",
+          "description": "Variable names this query or any query it embeds references in SQL (computed during normalization).",
           "items": {
             "type": "string"
           },

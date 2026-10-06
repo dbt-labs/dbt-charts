@@ -923,9 +923,7 @@ def render_chart(
         )
 
     render_data: ChartRenderData = data
-    # A custom template names its own columns; generic placeholder rows would
-    # fail its column params, so it draws a blank chart's empty rows instead.
-    if is_placeholder and not data and chart.type != "custom":
+    if is_placeholder and not data:
         from dbt_charts.core.render.placeholder import generate_placeholder_data
 
         render_data = generate_placeholder_data(chart.type, chart)

@@ -64,7 +64,10 @@ from dbt_charts.core.diagnostics.codes_render import (
     ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS,
     ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
 )
-from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.font_measure import (
+    get_font_measurer,
+    get_weighted_font_measurer,
+)
 from dbt_charts.core.numeric import aspect_ratio_height
 from dbt_charts.core.text.case import field_title
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
@@ -791,7 +794,9 @@ def legend_row_fits(
     if not entries:
         return True
     cfg = get_chart_rendering().legend
-    measurer = get_font_measurer(legend.label.font.family)
+    measurer = get_weighted_font_measurer(
+        legend.label.font.family, legend.label.font.weight
+    )
     font_size = legend.label.font.size
     chrome = cfg.row_swatch_width_px + legend.label.padding
     total = sum(chrome + measurer.measure(entry, font_size) for entry in entries)

@@ -363,7 +363,7 @@ class TestResolverStrategyWalk:
         data = [{"x": f"Aa{i:02d}"} for i in range(10)]  # 4-char labels
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -399,7 +399,7 @@ class TestResolverStrategyWalk:
         data = [{"x": f"LongLabel{i}"} for i in range(8)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -430,7 +430,7 @@ class TestResolverStrategyWalk:
         data = [{"x": f"Hello{i}"} for i in range(30)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -472,7 +472,7 @@ class TestResolverStrategyWalk:
         domain_values = [f"L{i}" for i in range(30)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -502,7 +502,7 @@ class TestResolverStrategyWalk:
         data = [{"x": f"Cat{i}"} for i in range(20)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -533,7 +533,7 @@ class TestResolverStrategyWalk:
         data = [{"x": f"LongCat{i}"} for i in range(50)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -570,7 +570,7 @@ class TestResolverStrategyWalk:
         ]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -603,7 +603,7 @@ class TestResolverStrategyWalk:
         data = [{"x": f"LongLabel{i:03d}"} for i in range(100)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -747,7 +747,7 @@ class TestCollisionLabelCountThreading:
         data = [{"x": f"2024-01-{d:02d}"} for d in range(1, 8)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -779,7 +779,7 @@ class TestCollisionLabelCountThreading:
         data = [{"x": f"2024-01-{d:02d}"} for d in range(1, 8)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -811,7 +811,7 @@ class TestCollisionLabelCountThreading:
         data = [{"x": f"2024-01-{d:02d}"} for d in range(1, 8)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -839,7 +839,7 @@ class TestCollisionLabelCountThreading:
         data = [{"x": f"LongCategory{i}"} for i in range(20)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=mock_measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -870,7 +870,7 @@ class TestCollisionLabelCountThreading:
         data = [{"x": f"2024-01-{d:02d}"} for d in [1, 8, 15, 22, 29]]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -902,7 +902,7 @@ class TestCollisionLabelCountThreading:
         data = [{"x": f"2024-01-{d:02d}"} for d in [1, 8, 15, 22, 29]]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -943,7 +943,7 @@ class TestCollisionLabelCountThreading:
         data = [{"x": d.isoformat()} for d in dates]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -983,7 +983,7 @@ class TestCollisionLabelCountThreading:
         data = [{"x": d.isoformat()} for d in dates]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -1032,7 +1032,7 @@ class TestTemporalNoTiltNeverOverwritesAKnownCollision:
         data = [{"x": f"2024-{m:02d}-01"} for m in range(1, 13)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -1072,7 +1072,7 @@ class TestTemporalNoTiltNeverOverwritesAKnownCollision:
         data = [{"x": d.isoformat()} for d in dates]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -1113,7 +1113,7 @@ class TestTemporalNoTiltNeverOverwritesAKnownCollision:
         data = [{"x": d.isoformat()} for d in dates]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -1187,7 +1187,7 @@ class TestLabelBlockHeight:
         data = [{"x": v} for v in labels]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -1215,7 +1215,7 @@ class TestLabelBlockHeight:
         data = [{"x": v} for v in labels]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -1245,7 +1245,7 @@ class TestLabelBlockHeight:
         data = [{"x": v} for v in labels]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(
@@ -1277,7 +1277,7 @@ class TestLabelBlockHeight:
         data = [{"x": f"2024-{month:02d}-01"} for month in range(1, 13)]
 
         with patch(
-            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_weighted_font_measurer",
             return_value=measurer,
         ):
             layout = resolve_axis_x_overlap(

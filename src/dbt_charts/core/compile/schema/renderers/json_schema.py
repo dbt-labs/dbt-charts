@@ -1,6 +1,6 @@
 """JSON Schema renderer — Layer 2 of the two-layer schema IR.
 
-Converts an AuthorableSchema IR to a draft-07 JSON Schema dict.
+Converts an AuthorableSchema IR to a JSON Schema 2020-12 dict.
 Callers: IDE schema generation, validation tooling.
 
 Entry point: render_yaml_schema(schema: AuthorableSchema) -> dict
@@ -397,7 +397,7 @@ def _model_to_def(model_name: str, ir: AuthorableSchema) -> dict[str, Any]:
 
 
 def render_yaml_schema(schema: AuthorableSchema) -> dict[str, Any]:
-    """Render the strict draft-07 dbt charts YAML schema.
+    """Render the strict JSON Schema 2020-12 dbt charts YAML schema.
 
     Produces a self-contained schema with the root model's properties
     inlined and all reachable authored models in $defs. Author-defined model
@@ -412,7 +412,7 @@ def render_yaml_schema(schema: AuthorableSchema) -> dict[str, Any]:
     }
 
     result: dict[str, Any] = {
-        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": schema.root,
     }
     if root.get("description"):

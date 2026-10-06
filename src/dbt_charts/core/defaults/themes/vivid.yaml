@@ -33,9 +33,11 @@ style:
   text:
     # Color inherits from `font.color` (InheritSlot) — no pin here so a
     # board-root style.font.color override reaches prose.
-    # Markdown rules + markdown-table gridlines (was charts.table.border.color).
-    rule:
+    divider:
       color: *faint
+    column:
+      divider:
+        color: *faint
   charts:
     color:
       categorical:
@@ -137,9 +139,20 @@ style:
         fill: dbt-grays.grid-emphasis   # unjoined regions = neutral, recede
     table:
       header:
+        divider:
+          color: *high
         font:
           color: *high
       row:
+        divider:
+          color: *high
+        roles:
+          summary:
+            divider:
+              color: *high
+          total:
+            divider:
+              color: *high
         stripe:
           color: dbt-grays.surface-subtle   # subtle cool zebra (one step off white)
       spark:
@@ -157,6 +170,9 @@ style:
           color: *mid
       divider:
         color: *faint
+      row:
+        divider:
+          color: *faint
     pie:
       total:
         value:

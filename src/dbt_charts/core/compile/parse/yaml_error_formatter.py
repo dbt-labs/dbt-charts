@@ -647,36 +647,6 @@ def _extra_field_diagnostic(
             fields=fields,
         )
 
-    # description: was renamed to notes: at every position that authors it
-    # (board, chart, query, grid item, tab item, variable) -- the two words
-    # share no substring difflib's cutoff would catch, so the generic
-    # suggest_similar_value fallback below never fires for this rename. It is
-    # the fallback wherever NOTES_RENAMES cannot reach -- a self-nested
-    # sub-board or a union arm that never declared the field -- so it must
-    # name the replacement explicitly rather than fall through to a plain
-    # allowed-keys dump. Gated on `"notes" in allowed_keys` rather than
-    # firing unconditionally: a chart family with no notes field (e.g.
-    # CalloutChart) correctly falls through to the generic diagnostic
-    # instead of naming a replacement that doesn't exist there.
-    if field_name == "description" and "notes" in allowed_keys:
-        fields["suggestion"] = "notes"
-        # `parent_path` can carry union-tag discriminators picked up from the
-        # Pydantic error loc (`@inline`, a chart-family literal like `bar`, a
-        # query-type literal like `sql`) that were never a YAML key the
-        # author wrote -- e.g. a query-level description lands at loc
-        # `queries.q.@inline.sql.description`. `_display_path` walks the same
-        # schema tree and drops exactly those segments, so the hint names the
-        # key's real parent (`queries.q`) instead of a schema-internal path.
-        display_parent = _format_parent_path(_display_path(parent_path))
-        return _ExtraFieldDiagnostic(
-            message=message,
-            hint=(
-                f"`description:` was renamed to `notes:`. Rename the key at "
-                f"{display_parent} to `notes:`. See: dct docs {docs_topic}"
-            ),
-            fields=fields,
-        )
-
     # Authored grid.gap is inert (resolve reads style.layout.grid.gap instead)
     # and declarable but unconverted: the ("grid", "gap") tail also matches the
     # live style key, so it is legal only root-anchored. Until it is declared,
@@ -997,7 +967,6 @@ def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
 def format_validation_errors_structured(
     error: Any,
     yaml_content: str | None = None,
-    template_names: tuple[str, ...] = (),
 ) -> "list[Diagnostic]":
     """Format a Pydantic ValidationError into collapsed Diagnostic objects.
 
@@ -1016,8 +985,6 @@ def format_validation_errors_structured(
             and (when it declares a newer ``_schema_version``) an upgrade hint
             appended to every returned diagnostic; not used for line
             resolution.
-        template_names: The project's ``templates/<name>.svg.j2`` names; an
-            unsupported chart shape with a matching template is pointed at it.
 
     Returns:
         list of Diagnostic (≤ MAX_GROUPS elements).
@@ -1050,9 +1017,7 @@ def format_validation_errors_structured(
 
         field_path_parts = [str(p) for p in loc if not str(p).startswith("function-")]
         field_path_str = ".".join(field_path_parts) if field_path_parts else ""
-        chart_type_msg = _format_chart_type_discriminator_error(
-            err, field_path_parts, template_names
-        )
+        chart_type_msg = _format_chart_type_discriminator_error(err, field_path_parts)
         if chart_type_msg is not None:
             err_msg = chart_type_msg
 
@@ -1273,20 +1238,17 @@ _CHART_SHAPE_RECIPES = {
     "dumbbell": (
         "type: bar with y_start for the far end, thinned to a stem with "
         "style.marks.bar.band_width, plus a layers: scatter at each end "
-        "(color: from style.color.categorical.palette — a chart with layers: "
-        "does not bind board category_colors)"
+        "(color: from style.color.categorical.palette)"
     ),
     "barbell": (
         "type: bar with y_start for the far end, thinned to a stem with "
         "style.marks.bar.band_width, plus a layers: scatter at each end "
-        "(color: from style.color.categorical.palette — a chart with layers: "
-        "does not bind board category_colors)"
+        "(color: from style.color.categorical.palette)"
     ),
     "connected_dot_plot": (
         "type: bar with y_start for the far end, thinned to a stem with "
         "style.marks.bar.band_width, plus a layers: scatter at each end "
-        "(color: from style.color.categorical.palette — a chart with layers: "
-        "does not bind board category_colors)"
+        "(color: from style.color.categorical.palette)"
     ),
     "ranged_dot": (
         "type: bar with y_start for the low end, drawn as a pale interval "
@@ -1344,7 +1306,7 @@ _CHART_SHAPE_RECIPES = {
     ),
 }
 
-# Shapes dbt charts cannot draw at all. Naming them is the half a recipe cannot
+# Shapes dbt Charts cannot draw at all. Naming them is the half a recipe cannot
 # cover: without it an author settles for the nearest tag, which validates clean
 # and renders the wrong chart.
 _UNSUPPORTED_CHART_SHAPES = frozenset(
@@ -1378,7 +1340,6 @@ _NORMALIZED_UNSUPPORTED_SHAPES = frozenset(
 def _format_chart_type_discriminator_error(
     err: dict[str, Any],
     field_path: list[str],
-    template_names: tuple[str, ...],
 ) -> str | None:
     """Return clean chart-type diagnostics for chart discriminator failures."""
     if err.get("type") != "union_tag_not_found":
@@ -1408,22 +1369,9 @@ def _format_chart_type_discriminator_error(
             f"Supported chart types: {supported}."
         )
     if any(k in _NORMALIZED_UNSUPPORTED_SHAPES for k in noun_keys):
-        template = next(
-            (t for t in template_names if _normalize_shape_noun(t) in noun_keys), None
-        )
-        if template:
-            return (
-                f"Unknown chart type {invalid_type!r}. This project has a template "
-                f"for that shape: use `type: custom` with `template: {template}`. "
-                "Run `dct describe templates/` for its channels and options. "
-                f"Supported chart types: {supported}."
-            )
         return (
-            f"Unknown chart type {invalid_type!r}. dbt charts has no built-in "
-            "type for that shape; draw it with `type: custom`, a sandboxed Jinja "
-            "SVG template (`template:` names templates/<name>.svg.j2, or `svg:` "
-            "carries the source inline). Run `dct docs custom` for the contract. "
-            f"Supported chart types: {supported}."
+            f"Unknown chart type {invalid_type!r}. dbt Charts cannot draw that shape "
+            f"today. Supported chart types: {supported}."
         )
 
     suggestion = suggest_similar_value(invalid_type, valid_chart_types)

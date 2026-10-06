@@ -103,7 +103,6 @@ from dbt_charts.core.compile.models.board.normalized import (
 )
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
-    CustomChart,
     PieChart,
     SparkBarChart,
     TableChart,
@@ -111,7 +110,6 @@ from dbt_charts.core.compile.models.chart.normalized import (
     _GeoChartFields,
 )
 from dbt_charts.core.compile.models.style.resolved import (
-    ResolvedChartDefaults,
     ResolvedStyle,
     effective_padding as _effective_padding,
 )
@@ -130,6 +128,7 @@ from dbt_charts.core.compile.sizing import (
     DEFAULT_GRID_COLUMNS,
     grid_span_width,
     item_grid_span,
+    nested_content_geometry,
     parse_dimension,
     resolve_cols_widths,
     rows_item_width,
@@ -186,24 +185,6 @@ def _resolve_height(
         variable_values,
         height_provider=None,
         resolved_style=resolved_style,
-    )
-
-
-def custom_chart_height(
-    aspect_ratio: float | None,
-    min_height: float | None,
-    max_height: float | None,
-    width: float | None,
-    defaults: ResolvedChartDefaults,
-) -> float:
-    """Height of a custom chart's whole box; authored sizing wins over the theme's."""
-    if width is None or width <= 0:
-        return defaults.default_chart_height
-    return aspect_ratio_height(
-        width,
-        defaults.aspect_ratio if aspect_ratio is None else aspect_ratio,
-        float(defaults.min_height if min_height is None else min_height),
-        float(defaults.max_height if max_height is None else max_height),
     )
 
 
@@ -267,15 +248,6 @@ def get_chart_content_height(
         has_title = isinstance(chart, SparkBarChart) and chart.title
         return (
             body + get_chart_rendering().spark_bar.title_height if has_title else body
-        )
-
-    if isinstance(chart, CustomChart):
-        return custom_chart_height(
-            chart.aspect_ratio,
-            chart.min_height,
-            chart.max_height,
-            width,
-            resolved_style.chart_defaults,
         )
 
     # After kpi/table/callout/spark_bar early returns, remaining types are
@@ -1533,10 +1505,7 @@ def nested_board_sizing_context(
     plus the gap before the layout block if layout items follow.
     """
     nrs = nested_board.resolved_style
-    ep = _effective_padding(nrs)
-    board_margin_horizontal = nrs.margin.horizontal if nrs.margin else 0.0
-    content_width = width - ep.horizontal - board_margin_horizontal
-    child_gap = nrs.gap if nrs.gap is not None else 0.0
+    content_width, child_gap = nested_content_geometry(nested_board, width)
     effective_child_gap = child_gap + card_gap
 
     card_pad = float(nested_board.resolved_style.frame.card_padding)

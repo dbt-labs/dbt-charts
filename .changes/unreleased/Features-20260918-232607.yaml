@@ -1,0 +1,3 @@
+kind: Features
+body: 'Added a `databricks` source type: `type: databricks` with `host`, `http_path`, `token`, `catalog`, and an optional `schema`. `http_path` must name a SQL warehouse (`/sql/1.0/warehouses/<id>`), not an all-purpose cluster path.'
+time: 2026-09-18T23:26:07Z

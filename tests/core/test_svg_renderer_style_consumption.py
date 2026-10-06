@@ -115,21 +115,20 @@ class TestTableRendererStyleConsumption:
         )
         assert "#aa0000" in svg
 
-    def test_table_uses_style_border_color(self):
-        from dbt_charts.core.compile.models.primitives import RuleStyle
-        from dbt_charts.core.compile.models.style.theme import TableRuleStyle
-
+    def test_table_uses_style_divider_color(self):
+        row = _ctx().table.row
         table_style = _ctx().table.model_copy(
             update={
-                "rule": TableRuleStyle(color="#00bb00"),
-                "row": _ctx().table.row.model_copy(
+                "row": row.model_copy(
                     update={
-                        "rule": RuleStyle(width=1.0, continuous=False, color="#00bb00")
+                        "divider": row.divider.model_copy(
+                            update={"visible": True, "width": 1.0, "color": "#00bb00"}
+                        )
                     }
                 ),
             }
         )
-        data = [{"col_a": "hello", "col_b": 42}]
+        data = [{"col_a": "hello", "col_b": 42}, {"col_a": "world", "col_b": 7}]
         svg = render_table_svg(
             _table_chart(table_style), data, width=400, board_style=_rs()
         )

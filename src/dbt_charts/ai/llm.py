@@ -131,7 +131,7 @@ def _to_strict_json_schema(
     - A `$ref` carrying sibling keys is inlined; OpenAI rejects that shape
       outright, and pydantic emits it for a nested model given a Field
       description.
-    Recurses into $defs, definitions, properties, items, anyOf, allOf, oneOf.
+    Recurses into $defs, properties, items, anyOf, allOf, oneOf.
     ``root`` is the document the ``#/`` pointers resolve against — the top-level
     schema, threaded through the recursion unchanged.
     """
@@ -155,9 +155,8 @@ def _to_strict_json_schema(
     if isinstance(fmt, str) and fmt not in _OPENAI_ALLOWED_STRING_FORMATS:
         del schema["format"]
 
-    for defs_key in ("$defs", "definitions"):
-        for sub in schema.get(defs_key, {}).values():
-            _to_strict_json_schema(sub, root)
+    for sub in schema.get("$defs", {}).values():
+        _to_strict_json_schema(sub, root)
 
     for sub in schema.get("properties", {}).values():
         _to_strict_json_schema(sub, root)

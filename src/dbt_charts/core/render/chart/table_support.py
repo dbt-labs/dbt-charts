@@ -41,7 +41,6 @@ from dbt_charts.core.render.utils import resolve_tone_color, slug_to_text
 from dbt_charts.core.text.case import CaseValue, apply_case
 from dbt_charts.core.text.format_d3 import (
     NULL_DISPLAY,
-    PYTHON_STRFTIME_DIRECTIVES,
     find_unsupported_directive,
     is_time_format,
     portable_strftime,
@@ -124,16 +123,14 @@ def is_temporal_value(value: Any) -> bool:
 def _validate_strftime_spec(format_spec: str) -> None:
     """Raise ValueError for format specs containing unknown % directives.
 
-    Checks against ``PYTHON_STRFTIME_DIRECTIVES``, not the wider set compile
-    accepts: this function paints through ``portable_strftime``, so a
-    directive Vega paints but Python cannot (``%L``, ``%q``, ``%Q``) must
-    still fail here. Compile-time validation
-    (``core/compile/validate/formats.py``) already rejects a directive
-    neither engine implements for every authored board -- this is the
+    Checks against ``PYTHON_STRFTIME_DIRECTIVES``, the set this function
+    paints through ``portable_strftime``. Compile-time validation
+    (``core/compile/validate/formats.py``) applies the same set to every
+    authored board -- this is the
     render-time backstop for a spec reaching this function some other way
     (e.g. directly through the render API, bypassing compile).
     """
-    bad = find_unsupported_directive(format_spec, PYTHON_STRFTIME_DIRECTIVES)
+    bad = find_unsupported_directive(format_spec)
     if bad is not None:
         raise ValueError(
             f"Invalid temporal format spec {format_spec!r}: unknown directive %{bad!r}"
@@ -574,7 +571,7 @@ def _widest_token_width(text: str, measurer: FontMeasurer, font_size: float) -> 
 
 
 def _measure_min_word_width(
-    values: list[Any],
+    values: list[str],
     header_label: str,
     measurer: FontMeasurer,
     header_measurer: FontMeasurer,
@@ -583,7 +580,7 @@ def _measure_min_word_width(
 ) -> float:
     """Return the pixel width of the widest eligible token across the column.
 
-    Searches ``values`` (sampled cell strings) and the ``header_label``.
+    Searches ``values`` (sampled rendered cell texts) and the ``header_label``.
 
     Cell tokens are measured at ``font_size`` and the header label's at
     ``header_font_size``: a theme with larger headers would otherwise get a
@@ -594,7 +591,7 @@ def _measure_min_word_width(
     return max(
         _widest_token_width(header_label, header_measurer, header_font_size),
         max(
-            (_widest_token_width(str(val), measurer, font_size) for val in values),
+            (_widest_token_width(text, measurer, font_size) for text in values),
             default=0.0,
         ),
     )
@@ -755,6 +752,85 @@ def _is_padded_numeric(
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _rendered_cell_text(
+    val: Any,  # type-state: explicit_any — arbitrary warehouse cell value
+    col_config: TableColumnConfig | None,
+    formats: FormatAliases | None,
+) -> str:
+    """Return the text a cell paints for ``val``, without any glyph run.
+
+    The single source for width measurement: demands and word floors both size
+    columns from this string, never from the raw value's ``str()``. The decimal
+    reservation pad stays in it: the pad is glued to the number (no whitespace
+    between), so it is part of the first-line unit a floor must keep whole.
+    """
+    pad_table = (
+        col_config.decimal_pad_table
+        if isinstance(col_config, ResolvedTableColumnConfig)
+        else ()
+    )
+    shared_scale = (
+        col_config.shared_scale
+        if isinstance(col_config, ResolvedTableColumnConfig)
+        else None
+    )
+    fmt = col_config.format if col_config else None
+    # Coerce string values the same way _compute_lane_positions and
+    # the row-paint loop do (CSV/warehouse adapters can deliver
+    # numbers as strings) -- a narrower isinstance(val, (int, float))
+    # check here would silently skip the shared-scale measurement for
+    # those cells while decimal_pad_table (built from the scaled digit_spec in
+    # compile/resolve/chart/_table.py) still expects it, mismatching pad depth.
+    try:
+        num_val = float(val) if isinstance(val, str) else val
+    except (ValueError, TypeError):
+        num_val = val
+    # Same predicate as both paint sites -- see _is_padded_numeric. Carries the
+    # narrowed value so the TypeGuard reaches format_kpi_parts; None means
+    # "this cell is not on the column's decimal lane".
+    pad_num = (
+        num_val
+        if pad_table and _is_padded_numeric(num_val) and not is_date_like(val)
+        else None
+    )
+    if shared_scale is not None and _is_padded_numeric(num_val):
+        # A shared-scale column's real cell text is the scaled digit
+        # string, not the whole-precision SI string
+        # format_table_cell_value would render -- measure what will
+        # actually paint. is_anchor=True: measures the widest case (a
+        # real suffix string), since an actual non-anchor row's blank
+        # suffix can only be narrower.
+        prefix, number, suffix = format_kpi_parts(
+            num_val,
+            fmt,
+            formats,
+            default_number=True,
+            shared_scale=shared_scale,
+            is_anchor=True,
+        )
+        rendered = prefix + number + suffix
+        pad_basis = number
+    else:
+        rendered = format_table_cell_value(val, fmt, formats)
+        # The pad is selected from the NUMBER lane, never the whole
+        # cell: decimal_pad_for counts every digit after the first '.',
+        # so an authored suffix carrying one (' CO2', 'm2', 'ft3')
+        # would inflate the observed depth past the table's precision
+        # and raise. Both paint sites pad the number lane alone --
+        # format_kpi_parts splits the suffix out before padding.
+        pad_basis = ""
+        if pad_num is not None:
+            _, pad_basis, _ = format_kpi_parts(
+                pad_num, fmt, formats, default_number=True, is_anchor=True
+            )
+    # Text format_table_cell_value produced by falling through to
+    # str(value) is not on the column's decimal lane -- its fractional
+    # depth owes nothing to the column's format -- so it gets no pad.
+    if pad_num is not None:
+        rendered += decimal_pad_for(pad_table, pad_basis)
+    return rendered
+
+
 def measure_column_demands(
     columns: list[str],
     column_configs: Mapping[str, TableColumnConfig],
@@ -812,87 +888,15 @@ def measure_column_demands(
             header_w = header_measurer.measure(display_name, header_font_size)
 
         glyph_possible = _glyph_possible(column_configs, column_when_rules, col)
-        pad_table = (
-            col_config.decimal_pad_table
-            if isinstance(col_config, ResolvedTableColumnConfig)
-            else ()
-        )
-        shared_scale = (
-            col_config.shared_scale
-            if isinstance(col_config, ResolvedTableColumnConfig)
-            else None
-        )
         cell_widths: list[float] = []
         for row in sample:
             val = row.get(col, "")
-            fmt = col_config.format if col_config else None
-            # Coerce string values the same way _compute_lane_positions and
-            # the row-paint loop do (CSV/warehouse adapters can deliver
-            # numbers as strings) -- a narrower isinstance(val, (int, float))
-            # check here would silently skip the shared-scale measurement for
-            # those cells while decimal_pad_table (built below from the
-            # scaled digit_spec) still expects it, mismatching pad depth.
-            try:
-                num_val = float(val) if isinstance(val, str) else val
-            except (ValueError, TypeError):
-                num_val = val
-            # One predicate, decided once and used for both computing the pad
-            # basis and applying it. Mirrors both paint sites exactly
-            # (table.py's row-paint and lane-position loops): numeric, not
-            # bool, not date-like. Deliberately narrower than the bake, which
-            # reaches Decimal via coerce_numeric_cell -- paint excludes it, so
-            # measure does. A wider predicate here mis-measures the column; a
-            # wider one at the compute also crashes, since format_kpi_parts
-            # sends the spec through d3 number parsing and a time-capable
-            # column may legally carry a strftime spec.
-            # Carries the narrowed value rather than a flag so the TypeGuard
-            # reaches format_kpi_parts below; None means "this cell is not on
-            # the column's decimal lane".
-            pad_num = (
-                num_val
-                if pad_table and _is_padded_numeric(num_val) and not is_date_like(val)
-                else None
-            )
-            if shared_scale is not None and _is_padded_numeric(num_val):
-                # A shared-scale column's real cell text is the scaled digit
-                # string, not the whole-precision SI string
-                # format_table_cell_value would render -- measure what will
-                # actually paint. is_anchor=True: measures the widest case (a
-                # real suffix string), since an actual non-anchor row's blank
-                # suffix can only be narrower.
-                prefix, number, suffix = format_kpi_parts(
-                    num_val,
-                    fmt,
-                    formats,
-                    default_number=True,
-                    shared_scale=shared_scale,
-                    is_anchor=True,
-                )
-                rendered = prefix + number + suffix
-                pad_basis = number
-            else:
-                rendered = format_table_cell_value(val, fmt, formats)
-                # The pad is selected from the NUMBER lane, never the whole
-                # cell: decimal_pad_for counts every digit after the first '.',
-                # so an authored suffix carrying one (' CO2', 'm2', 'ft3')
-                # would inflate the observed depth past the table's precision
-                # and raise. Both paint sites pad the number lane alone --
-                # format_kpi_parts splits the suffix out before padding.
-                pad_basis = ""
-                if pad_num is not None:
-                    _, pad_basis, _ = format_kpi_parts(
-                        pad_num, fmt, formats, default_number=True, is_anchor=True
-                    )
+            rendered = _rendered_cell_text(val, col_config, formats)
             if glyph_possible:
                 rendered = (
                     cell_glyph_run(column_configs, column_when_rules, col, val)
                     + rendered
                 )
-            # Text format_table_cell_value produced by falling through to
-            # str(value) is not on the column's decimal lane -- its fractional
-            # depth owes nothing to the column's format -- so `pads` excludes it.
-            if pad_num is not None:
-                rendered += decimal_pad_for(pad_table, pad_basis)
             cell_widths.append(measurer.measure(rendered, font_size))
 
         if cell_widths:
@@ -920,14 +924,16 @@ def measure_column_word_floors(
     header_case: CaseValue = "none",
     cell_pad: int = 0,
     max_sample_rows: int = 50,
+    formats: FormatAliases | None = None,
     header_visible: bool = True,
     column_when_rules: Mapping[str, Sequence[ConditionalRule]],
 ) -> dict[str, float]:
     """Return the min-word floor (px) for each column including cell padding.
 
     The floor is the pixel width of the widest whitespace-delimited token in
-    any sampled cell value or the column header label, plus ``cell_pad * 2``
-    (both sides of cell padding).  URL tokens and tokens longer than
+    any sampled cell's formatted text (what the cell paints, not the raw
+    value's repr) or the column header label, plus ``cell_pad * 2`` (both
+    sides of cell padding).  URL tokens and tokens longer than
     ``_MAX_FLOOR_TOKEN_LEN`` are excluded (see ``_measure_min_word_width``).
 
     A cell that paints a glyph competes with its own ``glyph run + widest
@@ -972,8 +978,11 @@ def measure_column_word_floors(
             display_name = apply_case(display_name, header_case)
 
         cell_values = [row.get(col, "") for row in sample]
+        cell_texts = [
+            _rendered_cell_text(val, col_config, formats) for val in cell_values
+        ]
         token_w = _measure_min_word_width(
-            cell_values,
+            cell_texts,
             display_name,
             measurer,
             header_measurer,
@@ -989,8 +998,8 @@ def measure_column_word_floors(
                             cell_glyph_run(column_configs, column_when_rules, col, val),
                             font_size,
                         )
-                        + _widest_token_width(str(val), measurer, font_size)
-                        for val in cell_values
+                        + _widest_token_width(text, measurer, font_size)
+                        for val, text in zip(cell_values, cell_texts, strict=True)
                     ),
                     default=0.0,
                 ),
@@ -1114,6 +1123,116 @@ def _grow_toward_header_width(
         widths[col] += residual * (widths[col] / total)
 
 
+def _auto_column_demands(
+    auto_columns: list[str],
+    demands: Mapping[str, float],
+    floors: Mapping[str, float],
+    caps: Mapping[str, float | None],
+) -> dict[str, float]:
+    """Each auto column's pin: cell demand raised to its word floor.
+
+    The min-word floor is folded into the demand, not applied afterwards. A
+    column narrower than its widest token splits that word mid-glyph
+    ("Conver" / "ted in..."), which no overflow mode can undo. A declared
+    ``max_width`` is the hard bound; a floor never overrides it.
+    """
+    pins: dict[str, float] = {}
+    for col in auto_columns:
+        cap = caps[col]
+        floor = floors[col] if cap is None else min(floors[col], cap)
+        pins[col] = max(demands[col], floor, 1.0)
+    return pins
+
+
+def _natural_auto_widths(
+    base: Mapping[str, float],
+    text_keys: set[str],
+    header_demands: Mapping[str, float],
+    caps: Mapping[str, float | None],
+    content_headroom: float,
+    cell_pad: float,
+) -> dict[str, float]:
+    """Each auto column's natural width: the least that shows it in full.
+
+    Cell demand raised to the word floor (``base``), compact columns inflated
+    by ``content_headroom`` when text columns exist, every column at least its
+    one-line header. Only text columns are capped: the allocator pins compact
+    columns at their demand regardless of ``max_width``.
+    """
+    factor = 1.0 + content_headroom if text_keys else 1.0
+    widths: dict[str, float] = {}
+    for col, demand in base.items():
+        width = demand if col in text_keys else demand * factor
+        width = max(width, header_demands[col] + 2 * cell_pad)
+        cap = caps[col] if col in text_keys else None
+        widths[col] = width if cap is None else min(width, cap)
+    return widths
+
+
+def natural_content_width(
+    columns: list[str],
+    column_configs: Mapping[str, TableColumnConfig],
+    *,
+    demands: dict[str, float],
+    header_demands: dict[str, float],
+    word_floors: dict[str, float],
+    content_headroom: float,
+    cell_pad: float,
+) -> float | None:
+    """The data-column budget at which ``calculate_column_layout`` never overflows.
+
+    Mirrors the allocator's honored widths: px pins as written, each auto
+    column at the widest of its cell demand, word floor and header (bounded by
+    a px ``max_width``), compact columns inflated by ``content_headroom`` when
+    text columns exist. ``%`` pins resolve against the total, so they add
+    ``S / (1 - p)`` over the rest ``S``. Free text is measured on a single
+    line; ``max_width`` and the board bound are its caps. Every column is
+    reserved its header's one-line width, and ``calculate_column_layout``
+    honors each column's natural width at this budget, so no header wraps.
+
+    Returns None when there is nothing to hug: ``%`` pins total 100% or more,
+    or no column carries a width of its own.
+    """
+    pinned_px = 0.0
+    percent = 0.0
+    auto_columns: list[str] = []
+    caps: dict[str, float | None] = {}
+    for col in columns:
+        cfg = column_configs.get(col)
+        hint = cfg.width if cfg is not None else None
+        pinned = parse_column_width(hint, 1.0)
+        if pinned is not None:
+            if isinstance(hint, str) and hint.strip().endswith("%"):
+                percent += pinned
+            else:
+                pinned_px += pinned
+            continue
+        auto_columns.append(col)
+        # A percentage max_width is relative to the final width, unknown while
+        # hugging, so only a px cap bounds the natural width.
+        caps[col] = (
+            parse_column_width(cfg.max_width, 0.0)
+            if cfg is not None
+            and cfg.max_width is not None
+            and not (
+                isinstance(cfg.max_width, str) and cfg.max_width.strip().endswith("%")
+            )
+            else None
+        )
+    if percent >= 1.0:
+        return None
+
+    base = _auto_column_demands(auto_columns, demands, word_floors, caps)
+    _, text_keys = _classify_columns(base, column_configs)
+    auto_total = sum(
+        _natural_auto_widths(
+            base, text_keys, header_demands, caps, content_headroom, cell_pad
+        ).values()
+    )
+    rest = pinned_px + auto_total
+    return None if rest <= 0 else rest / (1.0 - percent)
+
+
 def calculate_column_layout(
     columns: list[str],
     column_configs: Mapping[str, TableColumnConfig],
@@ -1124,6 +1243,7 @@ def calculate_column_layout(
     width_similarity_threshold: float = 0.8,
     word_floors: dict[str, float] | None = None,
     content_headroom: float = 0.0,
+    cell_pad: float = 0.0,
 ) -> tuple[dict[str, float], list[float], float]:
     """Compute per-column widths, x offsets, and actual content width.
 
@@ -1155,6 +1275,13 @@ def calculate_column_layout(
     provided, leftover budget grows compact columns toward their header width
     rather than proportionally.  Columns whose current width already meets or
     exceeds their header demand are skipped.
+
+    When the budget covers every auto column's natural width
+    (``natural_content_width``), each column is allocated that width first:
+    compact columns at their headroom-inflated demand or their one-line header
+    (header label plus ``2 * cell_pad``), text columns at their demand, capped
+    by ``max_width``. The surplus then spreads as in steps 2-3. A table short
+    on room keeps the allocation above, which favors cell content over headers.
 
     Without ``demands`` or for a single auto-column: equal distribution.
     """
@@ -1196,8 +1323,10 @@ def calculate_column_layout(
     if demands and len(auto_columns) > 1:
         # Normalized once, explicitly: an omitted mapping means "no floors /
         # no header demands", never a per-lookup default.
-        floors = {} if word_floors is None else word_floors
-        headers = {} if header_demands is None else header_demands
+        given_floors = {} if word_floors is None else word_floors
+        given_headers = {} if header_demands is None else header_demands
+        floors = dict.fromkeys(auto_columns, 0.0) | given_floors
+        headers = dict.fromkeys(auto_columns, 0.0) | given_headers
         caps: dict[str, float | None] = {}
         for col in auto_columns:
             cfg = column_configs.get(col)
@@ -1207,23 +1336,14 @@ def calculate_column_layout(
                 else None
             )
 
-        # The min-word floor is folded into the demand, not applied afterwards.
-        # A column narrower than its widest token splits that word mid-glyph
-        # ("Conver" / "ted in…"), which no overflow mode can undo — so it is a
-        # demand like any other. Enforcing it as a later corrective pass would
-        # fight whatever the allocator had just decided, dragging columns back
-        # below the header width they were grown to.
-        auto_demands: dict[str, float] = {}
-        for col in auto_columns:
-            floor = floors.get(col, 0.0)
-            cap = caps[col]
-            # A declared max_width is the hard bound; a floor never overrides it.
-            auto_demands[col] = max(
-                demands.get(col, 1.0),
-                floor if cap is None else min(floor, cap),
-                1.0,
-            )
+        auto_demands = _auto_column_demands(auto_columns, demands, floors, caps)
         compact_keys, text_keys = _classify_columns(auto_demands, column_configs)
+        natural = _natural_auto_widths(
+            auto_demands, text_keys, headers, caps, content_headroom, cell_pad
+        )
+        has_room = available_for_auto >= sum(natural.values())
+        if has_room:
+            auto_demands = natural
 
         # Apply content_headroom to compact column pins when there are text columns
         # to absorb the extra cost.  In a mixed table (compact + text) each compact
@@ -1236,7 +1356,9 @@ def calculate_column_layout(
         # push compact_total past available_for_auto (which would zero the text
         # budget yet still overflow and later widen the table).
         raw_compact_total = sum(auto_demands[c] for c in compact_keys)
-        if text_keys and raw_compact_total > 0:
+        if has_room:
+            headroom_factor = 1.0
+        elif text_keys and raw_compact_total > 0:
             requested_factor = 1.0 + content_headroom
             max_factor = available_for_auto / raw_compact_total
             headroom_factor = min(requested_factor, max(1.0, max_factor))

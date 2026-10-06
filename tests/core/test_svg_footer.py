@@ -41,7 +41,7 @@ class TestSVGFooter:
         svg_output = render_board_to_svg()
         footer_idx = svg_output.find("made with")
         assert footer_idx > -1
-        rule = resolve_style(get_theme_style(get_default_theme_name())).footer.rule
+        rule = resolve_style(get_theme_style(get_default_theme_name())).footer.divider
         assert rule is not None
         rule_pattern = rf'<line[^>]*stroke="{re.escape(rule.color)}"[^>]*/>'
         prefix = svg_output[:footer_idx]
@@ -94,11 +94,11 @@ style:
 
     def test_footer_hairline_rule_color_matches_theme(self):
         footer = resolve_style(get_theme_style(get_default_theme_name())).footer
-        assert footer.rule is not None
+        assert footer.divider.visible
         svg_output = render_board_to_svg()
         footer_idx = svg_output.find("made with")
         prefix = svg_output[:footer_idx]
-        rule_pattern = rf'<line[^>]*stroke="{re.escape(footer.rule.color)}"[^>]*/>'
+        rule_pattern = rf'<line[^>]*stroke="{re.escape(footer.divider.color)}"[^>]*/>'
         assert re.search(rule_pattern, prefix) is not None
 
     # --- brand-word link -----------------------------------------------------

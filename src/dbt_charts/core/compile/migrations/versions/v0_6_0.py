@@ -92,7 +92,7 @@ Changes in this release:
   ``value_map`` does the renaming's job instead of the path. Because the key
   never disappears, the *key being present* is never evidence a document is
   old the way it is for every other declared ``Move`` — only the *value*
-  found there is (``migrations.py``'s ``move_source_locations``, gated by
+  found there is (``migrations.py``'s ``move_locations``, gated by
   ``_identity_value_would_change``). ``THEME_VALUE_MAP`` below covers the
   four retired names above plus every current ``ThemeName`` value — see its
   comment for why the current names need entries too: a value the map sends
@@ -149,8 +149,7 @@ Changes in this release:
   ``extends: cream`` there still gets the loud unknown-theme failure and
   needs hand-editing. A nested sub-board's own ``theme:``/``extends:``
   (``rows.*.theme``, ``cols.*.theme``, ``grid.items.*.item.theme``,
-  ``tabs.items.*.theme``, at any depth) is unreached by either mechanism for
-  the same reason as every other position-scoped ``Move`` in this file:
+  ``tabs.items.*.theme``, at any depth) is unreached by either mechanism:
   neither ``_apply_identity_moves`` nor ``_retired_theme_redirect`` walks
   the document tree looking for one — ``theme:``'s Move is hand-declared at
   the document root only, and ``_resolve_entry`` only ever sees the entries
@@ -259,40 +258,11 @@ Changes in this release:
     ``style.tones`` (a sibling of ``style.palettes``) — table conditional glyphs
     read the same tones and had to reach across chart families for them.
     Declared via ``suffix_rename_moves`` below, which yields 2 ``Move``
-    entries: the board root and ``tabs.items.*``.
+    entries, the board root and ``tabs.items.*``, each repeated inside every
+    board nested in a board (``Move.sub_board_prefixes``).
 
-    **That coverage is partial.** ``_relative_field_paths`` checks its
-    ``seen`` ancestor set at entry to each model, so a self-referential model
-    (``AuthoredBoard`` reachable from itself through ``rows``/``cols``/
-    ``grid.items.*.item``) yields fields only the first time it is entered on
-    a path — a nested sub-board (``rows.*.tones``, ``cols.*.tones``,
-    ``grid.items.*.item.tones``, any depth) is never walked, so ``tones``
-    inside one is uncovered. ``charts.*.style.tones`` is uncovered too, for
-    an unrelated reason: a chart-scoped override cannot become a board-level
-    key without widening what it paints, so it is not losslessly movable in
-    any case.
-
-    Partial is safe: no input half-migrates, though the two uncovered shapes
-    reach that outcome by different paths.
-
-    * **Mixed** (covered scope *and* an uncovered nested-sub-board scope):
-      the moves run, the residual re-check at ``migrate_mapping`` raises
-      ``IncompleteMigrationError``, and ``prepare_board_mapping`` warns
-      ("could not finish migrating") and returns the original mapping.
-    * **Uncovered-only**: ``_recognize`` matches no declared transition and
-      raises ``UnsupportedSchemaError`` before any move runs;
-      ``prepare_board_mapping`` returns the original **silently**. The author
-      sees ``extra_forbidden`` on retired syntax with no hint that a migration
-      was skipped — a real rough edge, not a loud abort.
-
-    Widening the coverage means changing how ``_relative_field_paths`` tracks
-    self-nesting depth — not hand-listing paths: no version module writes a
-    literal ``Move``, and hand-enumeration is a technique this repo has never
-    used. Widening it is unattempted here, not known-safe: nothing in the
-    tree pins the nested-position behavior a depth-tracking walker would
-    have to preserve, so a retry needs its own coverage before it can be
-    trusted. Left alone pre-1.0: no external board corpus authors ``tones`` inside a nested
-    sub-board, and the silent path above is the only cost.
+    ``charts.*.style.tones`` is deliberately not moved: a chart-scoped override
+    cannot become a board-level key without widening what it paints.
 
     ``dct migrate``'s text-preserving rewriter (``migrate_yaml_text``) is
     narrower by design (its own module docstring: only scalar block-mapping
@@ -389,7 +359,7 @@ Changes in this release:
   ``variables`` are open maps, so an author may legitimately *name* a query
   ``description``, and renaming that key would leave its ``query:
   description`` reference dangling — is real, and is answered by the schema
-  gate in ``move_source_locations`` rather than by the resolved path's shape.
+  gate in ``move_locations`` rather than by the resolved path's shape.
   A ``*`` is not self-protecting. It consumes the author's identifier only
   where it is a *map key* (``queries.*.description``); where it is a list
   index it does not, and the identifier sits one level below it. Both
@@ -405,17 +375,8 @@ Changes in this release:
   A position no move reaches is not a partial failure but a whole-board one:
   the post-migration document check fails, ``prepare_board_mapping`` returns
   the original mapping, and every *other* field in that board is reported
-  unmigrated too.
-
-  The reachable case is a **sub-board that declares its own** ``charts:`` /
-  ``queries:`` **map**. ``_relative_field_paths``' ``seen`` guard makes a
-  self-nested ``AuthoredBoard`` opaque to the walk, so
-  ``rows.*.charts.*.description`` is not among the 29 resolved positions —
-  and a board carrying one strands its *top-level* ``description:`` too. That
-  board was valid 0.5.0, so this is the one shape where the rename does not
-  repair what it should; the ``extra="forbid"`` hint is what the author gets
-  instead. Same limitation as ``SUPPORT_TABLE_RENAMES`` below, restated here
-  because this is where it costs something.
+  unmigrated too. A sub-board that declares its own ``charts:`` / ``queries:``
+  map is reached through ``Move.sub_board_prefixes`` like the root board.
 
   ``CalloutChart`` strands a board the same way but is not a real case: it
   declares no ``notes``, and declared no ``description`` in 0.5.0 either, so
@@ -425,11 +386,8 @@ Changes in this release:
   ``"notes"`` — that guard polices the retired ``chart:`` reference form and
   must still recognize the historical spelling to emit its targeted message.
 
-  The ``extra="forbid"`` hint naming ``notes:``
-  (``_extra_field_diagnostic`` in ``compile/parse/yaml_error_formatter.py``)
-  stays: it still fires past the transparent-migration cutoff, and at the
-  self-nesting positions the resolved move set does not reach (same caveat as
-  ``SUPPORT_TABLE_RENAMES`` below).
+  Past the transparent-migration cutoff the author gets the generic
+  retired-key hint (``retired_keys``) naming ``notes:``.
 
 - ``data_table:`` renamed to ``support_table:`` on every position that carried it.
   The old name described the attachment after the one thing it
@@ -452,15 +410,10 @@ Changes in this release:
   ``test_support_table_migration.py`` pins the full resolved position set —
   all 36 of them, by path — rather than this prose re-deriving it by hand.
 
-  Same self-nesting caveat as ``TONES_RENAMES`` above, and it starts at the
-  *first* level: ``_relative_field_paths`` returns ``()`` on re-entry into
-  ``AuthoredBoard``, so a sub-board nested under ``rows``/``cols``/
-  ``grid.items.*.item`` that declares its own ``charts:`` map
-  (``rows.*.charts.*.data_table``) is not among the resolved moves and reports
-  ``Unknown field 'data_table'`` unmigrated. Inline charts at those positions
-  (``rows.*.data_table``, ``rows.*.*.data_table``) are covered. A tab's own
-  scope (``tabs.items.*.*``) is a distinct model from ``AuthoredBoard`` and
-  stays covered at every position, same as tones.
+  A tab's own scope (``tabs.items.*.*``) is a distinct model from
+  ``AuthoredBoard`` and stays covered at every position, same as tones; a
+  sub-board nested under ``rows``/``cols``/``grid.items.*.item`` is reached
+  through ``Move.sub_board_prefixes``.
 
 - A layer's own ``axis_y.label:`` (tick-label format patch, ``LayerAxisYLabel``
   in 0.5.0) renamed to ``axis_y.labels:`` (``LayerAxisYLabels`` now), so the
@@ -487,11 +440,6 @@ Changes in this release:
   therefore resolve to the identical 11-position move set for this rename;
   the two-segment anchor is kept for the same self-documenting hygiene the
   ``DELETED_TAILS`` anchors above use, not because it is load-bearing here.
-
-  Same self-nesting caveat as ``TONES_RENAMES``/``SUPPORT_TABLE_RENAMES``
-  above: a sub-board nested under ``rows``/``cols``/``grid.items.*.item``
-  that declares its own ``charts:`` map (``rows.*.charts.*.layers.*.axis_y.
-  label``) is not among the resolved moves and reports the field unmigrated.
 
 - A query's inline ``source: <path>`` ref is now resolved against the project
   root as well as the board's own directory, where it was board-relative
@@ -548,7 +496,7 @@ THEME_RENAMES: dict[MappedScalar, MappedScalar] = {
 # Move can ever be asked to map -- not just the retired names. `theme:` is
 # permanent authoring sugar (see the module docstring), so a Move on it is
 # necessarily an identity-path Move (old_path == new_path == ("theme",)); the
-# positional gate that fires it (`move_source_locations`) only checks that the
+# positional gate that fires it (`move_locations`) only checks that the
 # `theme` key is present, never what value it holds. A board already authoring
 # a *current* name (`theme: vivid`) is normally never routed through this Move
 # at all -- `_recognize` short-circuits to the DEV version before checking
@@ -650,10 +598,7 @@ DELETED_CHART_FAMILY_TAILS: tuple[tuple[YamlKeyPath, str], ...] = (
 # KpiTonesStyle moved from charts.kpi.tones to board-level tones, shared with
 # table conditional-formatting glyphs. `suffix_rename_moves` resolves this to
 # the two positions a hand-written list would also name (board root and
-# `tabs.items.*`) — see the module docstring for why nested sub-boards are
-# uncovered. It is used anyway so that a newly reachable `style:` position is
-# picked up here without anyone remembering to edit this file. Same mechanism
-# as v0_5_0's style.board relocation.
+# `tabs.items.*`).
 TONES_RENAMES: tuple[tuple[YamlKeyPath, YamlKeyPath], ...] = (
     (("tones",), ("charts", "kpi", "tones")),
 )

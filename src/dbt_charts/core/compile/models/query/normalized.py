@@ -126,7 +126,7 @@ class Query(BaseModel, ABC):
     # Variable dependencies - computed during normalization
     variable_dependencies: VariableDependencies = Field(
         default_factory=frozenset,
-        description="Variable names this query references in SQL (computed during normalization).",
+        description="Variable names this query or any query it embeds references in SQL (computed during normalization).",
     )
 
     # Incremental refresh watermark column — stamped by normalize_query from

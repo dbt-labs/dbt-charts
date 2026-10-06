@@ -51,13 +51,12 @@ class TestTableStyleNewFields:
         overridden = table.model_copy(update={"color": "#123456"})
         assert overridden.color == "#123456"
 
-    def test_rule_override_propagates(self):
-        from dbt_charts.core.compile.models.style.theme import TableRuleStyle
-
-        table = get_theme_style().charts.table
-        overridden = table.model_copy(update={"rule": TableRuleStyle(color="#aabbcc")})
-        assert overridden.rule is not None
-        assert overridden.rule.color == "#aabbcc"
+    def test_divider_override_propagates(self):
+        row = get_theme_style().charts.table.row
+        overridden = row.model_copy(
+            update={"divider": row.divider.model_copy(update={"color": "#aabbcc"})}
+        )
+        assert overridden.divider.color == "#aabbcc"
 
     def test_bottom_padding_is_non_negative(self):
 

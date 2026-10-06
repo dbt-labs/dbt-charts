@@ -32,7 +32,7 @@ from dbt_charts.core.compile.migrations.migrations import (
     _board_migration_context,
     _recognize,
     _schema_path_exists,
-    move_source_locations,
+    move_locations,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
@@ -185,7 +185,7 @@ def test_unfinished_migration_is_announced() -> None:
     # The location is pinned, not just the fact of a warning: "migration was
     # skipped" without "and here is where" is most of the way back to the
     # original bug, where the author was told nothing about which construct
-    # stopped it. Draft7's own text for a composite failure dumps the offending
+    # stopped it. The validator's own text for a composite failure dumps the offending
     # node and names no path at all.
     with pytest.warns(
         SchemaMigrationWarning,
@@ -441,6 +441,39 @@ def test_a_current_document_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> 
     assert _recognize(board, catalog, registry) == catalog.dev.version
 
 
+def test_a_nested_board_that_cannot_hold_a_moves_key_is_never_seeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seeding a nested board walks the schema down to it, per move; recognizing
+    a not-current board runs every move, so a board no move can fire in must
+    cost nothing."""
+    from dbt_charts.core.compile.migrations import migrations as _impl
+
+    seeded: list[tuple[str, ...]] = []
+    seed = _impl._positions_along
+
+    def _spy(
+        document: JsonObject, path: tuple[str, ...], grammar: JsonObject
+    ) -> list[JsonObject]:
+        seeded.append(path)
+        return seed(document, path, grammar)
+
+    monkeypatch.setattr(_impl, "_positions_along", _spy)
+    catalog, registry = _board_migration_context()
+    board = cast(
+        JsonObject,
+        {
+            "titel": "typo",
+            "rows": [{"zzz_unrelated": 1} for _ in range(20)],
+        },
+    )
+
+    with pytest.raises(UnsupportedSchemaError):
+        _recognize(board, catalog, registry)
+
+    assert [path for path in seeded if path] == []
+
+
 def test_a_retired_token_at_an_undeclared_position_is_current_not_an_error() -> None:
     """The token/role-key presence predicate is deliberately over-eager (a
     whole-document string scan), so it can fire on a board no declared
@@ -597,7 +630,7 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
     therefore never evidence such a document is old; only the *value* found
     there is (`_identity_value_would_change`). The second half below pins
     that: for every value an identity-path Move's `value_map` sends to
-    itself (a currently-valid value), `move_source_locations` must find
+    itself (a currently-valid value), `move_locations` must find
     nothing to migrate. This is what the structural check above stands in
     for on a shape that check cannot reach -- collapsing it to "any
     old_path != new_path" would make identity-path Moves untested rather
@@ -634,9 +667,15 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
         if move.expansion is not None:
             # An expansion's current value is the mapping it expands into.
             document = cast(JsonObject, _nest(move.old_path, {"edge": "top"}))
-            assert not any(move_source_locations(document, move, catalog)), (
+            assert not any(move_locations(document, move, catalog)), (
                 f"identity-path expansion for {move.old_path!r} fired on a "
                 "current mapping -- it must gate on a retired scalar"
+            )
+            continue
+        if move.rewrite is not None:
+            assert move.rewrite({}) == {}, (
+                f"identity-path rewrite for {move.old_path!r} changed an empty "
+                "mapping -- it must fire only on retired shapes"
             )
             continue
         assert move.value_map is not None, (
@@ -652,7 +691,7 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
         )
         for value in current_values:
             document = cast(JsonObject, _nest(move.old_path, value))
-            assert not any(move_source_locations(document, move, catalog)), (
+            assert not any(move_locations(document, move, catalog)), (
                 f"identity-path Move for {move.old_path!r} fired on the "
                 f"currently-valid value {value!r} -- it must gate on the "
                 "value a document holds, not on the key merely being present"

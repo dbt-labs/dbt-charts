@@ -300,6 +300,8 @@ _TOPOLOGY_FIELDS: dict[str, tuple[str, ...]] = {
     "project": ("project",),  # BigQuery
     "dataset": ("dataset",),  # BigQuery
     "path": ("path",),  # DuckDB
+    "http_path": ("http_path",),  # Databricks
+    "catalog": ("catalog",),  # Databricks
 }
 
 

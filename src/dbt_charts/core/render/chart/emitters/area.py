@@ -664,6 +664,7 @@ class AreaEmitter:
                 chart.layers,
                 data,
                 chart_id=chart.id,
+                category_colors=chart.category_colors,
                 axis_x=style.axis_x,
                 axis_y=style.axis_y,
                 base_measure_title_suppressed=(

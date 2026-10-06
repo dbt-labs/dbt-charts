@@ -1,0 +1,3 @@
+kind: Fixes
+body: Retired keys such as `description:` now migrate to their new names inside a board nested in another board, as they already did at the top level.
+time: 2026-10-05T10:15:00.000000+00:00

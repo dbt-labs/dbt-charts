@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -57,7 +58,10 @@ from dbt_charts.core.compile.sql_guard import (
     validate_select_only,
     validate_setup_sql,
 )
-from dbt_charts.core.compile.template.jinja import extract_variable_dependencies
+from dbt_charts.core.compile.template.jinja import (
+    detect_query_dependencies,
+    extract_sql_variable_dependencies,
+)
 from dbt_charts.core.diagnostics.ansi import strip_ansi
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SOURCE_INLINE_FORBIDDEN,
@@ -440,10 +444,7 @@ def normalize_query(
                 error.code = e.code
                 raise error from e
 
-        if query.sql:
-            deps |= extract_variable_dependencies(query.sql)
-        if query.setup_sql:
-            deps |= extract_variable_dependencies(query.setup_sql)
+        deps = extract_sql_variable_dependencies(query.sql, query.setup_sql)
     query.variable_dependencies = frozenset(deps)
 
     # An explicit `incremental: <column>` on a non-SQL query is a compile
@@ -491,6 +492,30 @@ def normalize_query(
         )
 
     return query
+
+
+def expand_composed_variable_dependencies(
+    queries: dict[str, AnyQuery], names: Iterable[str] | None = None
+) -> None:
+    """Widen each query's variable dependencies to those of every query it embeds.
+
+    `names` limits the widening to those queries; their embedded queries are
+    still looked up in `queries`.
+    """
+    for name in queries if names is None else names:
+        seen: set[str] = set()
+        pending = [name]
+        deps: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in seen or current not in queries:
+                continue
+            seen.add(current)
+            deps |= queries[current].variable_dependencies
+            pending.extend(
+                detect_query_dependencies({current: queries[current]})[current]
+            )
+        queries[name].variable_dependencies = frozenset(deps)
 
 
 def resolve_external_query(

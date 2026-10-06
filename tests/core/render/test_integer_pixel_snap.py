@@ -282,11 +282,17 @@ class TestSummaryRuleYIsInteger:
                 "row": base_row.model_copy(
                     update={
                         "role": "kind",
-                        "rule": base_row.rule.model_copy(update={"width": 1.0}),
+                        "divider": base_row.divider.model_copy(
+                            update={"visible": True, "width": 1.0}
+                        ),
                         "roles": base_row.roles.model_copy(
                             update={
                                 "summary": base_row.roles.summary.model_copy(
-                                    update={"rule_width": 1.0}
+                                    update={
+                                        "divider": base_row.roles.summary.divider.model_copy(
+                                            update={"visible": True, "width": 1.0}
+                                        )
+                                    }
                                 ),
                             }
                         ),

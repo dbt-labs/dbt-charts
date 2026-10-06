@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json as _json
 import math
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Literal
 
 from dbt_charts.core.compile.models.chart.resolved._layer import (
@@ -26,6 +26,10 @@ from dbt_charts.core.compile.models.chart.resolved._layer import (
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedLegendStyle
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+    color_at,
+)
 from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
@@ -729,6 +733,22 @@ def _mixed_mark_legend_symbols(
                 }
 
 
+def _free_palette_color(
+    palette: Sequence[str], taken: Collection[str], ordinal: int
+) -> str:
+    """First palette color not in ``taken``; once all are, ``palette[ordinal]`` wrapped.
+
+    A board-bound scale seats each value on a slot board-wide, so the slots a
+    chart's own values occupy are not necessarily ``0..n-1``. ``ordinal`` must
+    grow with every pick so an exhausted palette rotates instead of repeating.
+    """
+    used = {c.casefold() for c in taken}
+    return next(
+        (c for c in palette if c.casefold() not in used),
+        palette[ordinal % len(palette)],
+    )
+
+
 def _layer_series_color(layer: ResolvedLayer) -> str | None:
     """Authored constant series color for a layer, or None to use a palette slot.
 
@@ -967,6 +987,7 @@ def render_cartesian_overlay(
     data: list[dict[str, Any]],
     *,
     chart_id: str,
+    category_colors: Sequence[CategoryColorScale],
     axis_x: ResolvedAxisStyle,
     axis_y: ResolvedAxisStyle,
     base_measure_title_suppressed: bool,
@@ -1231,6 +1252,18 @@ def render_cartesian_overlay(
     # from the shared scale entirely, because it read the pair as the literal
     # `("x", "y")` and a horizontal base's `y` is its category.)
     palette: list[str] = list((outer_config.get("range") or {}).get("category") or [])
+    # Every color the board assigns the base's `color:` categories, drawn by this
+    # chart or not: an unauthored layer must not take one that means something on
+    # a sibling.
+    board_colors = (
+        {
+            color_at(scale, value, palette)
+            for scale in category_colors
+            for value in scale.slots
+        }
+        if palette
+        else set()
+    )
     # Membership test rather than `.get(k, default)`: an absent measure encoding
     # is a real either/or (the base has none to share), not a config fallback —
     # same shape `_apply_layer_step_band` uses above, and for the same reason.
@@ -1657,7 +1690,11 @@ def render_cartesian_overlay(
                     if value in scale_domain:
                         continue
                     scale_domain.append(value)
-                    scale_range.append(palette[len(scale_range) % len(palette)])
+                    scale_range.append(
+                        _free_palette_color(
+                            palette, board_colors | set(scale_range), len(scale_range)
+                        )
+                    )
                 color_enc["scale"] = shared_scale
             layer_series_fill = single_series_fill
         elif use_shared_scale:
@@ -1681,13 +1718,12 @@ def render_cartesian_overlay(
             if isinstance(layer, ResolvedLineLayer) and authored_fill is not None:
                 has_authored_line_color = True
             if authored_fill is None:
-                layer_ord = len(
-                    scale_domain
-                )  # slots already taken by base + prior layers
-                # Recycles past the last slot via modulo, same as the base's own
-                # field-color scale (spatial_color_scale in _cartesian.py).
                 authored_fill = (
-                    palette[layer_ord % len(palette)] if palette else single_series_fill
+                    _free_palette_color(
+                        palette, board_colors | set(scale_range), len(scale_range)
+                    )
+                    if palette
+                    else single_series_fill
                 )
             layer_series_fill = authored_fill
             scale_domain.append(label)

@@ -142,6 +142,7 @@ def test_poll_device_token_succeeds_after_pending() -> None:
                 200,
                 json={
                     "access_token": "tok-secret-abc",
+                    "refresh_token": "ref-secret-abc",
                     "token_type": "Bearer",
                     "expires_in": 3600,
                     "scope": "dashboards:read",
@@ -166,6 +167,7 @@ def test_poll_device_token_succeeds_after_pending() -> None:
         now=clock.now,
     )
     assert token.access_token == "tok-secret-abc"
+    assert token.refresh_token == "ref-secret-abc"
     assert len(calls) == 3
     assert all(call["device_code"] == "devc-secret-123" for call in calls)
     assert all(call["grant_type"] == DEVICE_GRANT_TYPE for call in calls)
@@ -177,7 +179,14 @@ def test_slow_down_widens_the_interval_by_five_seconds() -> None:
     responses = iter(
         [
             httpx.Response(400, json={"error": "slow_down"}),
-            httpx.Response(200, json={"access_token": "t0k", "token_type": "Bearer"}),
+            httpx.Response(
+                200,
+                json={
+                    "access_token": "t0k",
+                    "refresh_token": "r0k",
+                    "token_type": "Bearer",
+                },
+            ),
         ]
     )
 
@@ -283,7 +292,7 @@ def test_failure_messages_never_contain_the_device_code_or_token() -> None:
     assert token not in str(caught2.value)
 
     def malformed_success(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"access_token": token})
+        return httpx.Response(200, json={"access_token": token, "refresh_token": "r"})
 
     with pytest.raises(UnexpectedResponse) as caught3:
         poll_device_token(

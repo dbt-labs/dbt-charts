@@ -37,14 +37,23 @@ Detection rule (v1, name-match only):
   Skip: charts with no y-axis encoding (kpi, table, callout, text, markdown,
   pivot, pie/donut, map families) that do not carry a layer list.
 
-Out of scope for v1: value-range secondary signal (median >100 for currency;
-all values in [0,1] for percent). Add as a tightener if precision validation
-surfaces false positives.
+Table columns (value-range signal, not name-based): a visible column with no
+resolved format whose non-null values are all real numbers in [0, 1], and not all
+exactly 0 or 1 (a flag), is a likely fraction; unformatted it renders as SI
+("0.4367" -> "437m"). Pivot measure columns are not materialized at resolve and
+are not checked.
+
+Out of scope for v1: value-range secondary signal for the y-axis (median >100 for
+currency; all values in [0,1] for percent). Add as a tightener if precision
+validation surfaces false positives.
 """
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedChart,
+    ResolvedTableChart,
+)
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _CartesianResolvedChartFields,
 )
@@ -56,7 +65,7 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.render.warnings.base import WarningContext
-from dbt_charts.core.utils import _UNIT_SUFFIXES
+from dbt_charts.core.utils import _UNIT_SUFFIXES, Rows, coerce_numeric_cell
 
 # Cartesian chart types whose y-axis renders and may need a format. Overlay
 # layers ride on one of these base types, so they need no entry of their own.
@@ -182,10 +191,20 @@ def _warn(
         path=f"charts.{chart_id}.{axis}.labels.format",
         field=field,
         message=WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.message_template.format(
-            chart_id=chart_id, field=field, kind=kind, format=axis_format
+            chart_id=chart_id,
+            field=field,
+            kind=kind,
+            surface="y-axis",
+            format_state=(
+                "has no format" if axis_format is None else f"format is {axis_format!r}"
+            ),
         ),
         fix=WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.fix_template.format(
-            format_key=format_key, currency_format=currency_format
+            format_key=format_key,
+            suggestion=(
+                f"{currency_format} or a percent format (`.1%` for a 0-1 share, "
+                "or `suffix: '%'` for values already in percent points)"
+            ),
         ),
     )
 
@@ -237,6 +256,53 @@ def _y_axis_checks(
     return checks
 
 
+def _is_unformatted_fraction(rows: Rows, name: str) -> bool:
+    """Whether column ``name``'s non-null values are all numbers in [0, 1] and
+    not all exactly 0/1 (a flag)."""
+    present = [v for row in rows if (v := row.get(name)) is not None]
+    numbers = [n for v in present if (n := coerce_numeric_cell(v)) is not None]
+    if not present or len(numbers) != len(present):
+        return False
+    return all(0 <= n <= 1 for n in numbers) and any(n not in (0, 1) for n in numbers)
+
+
+def _fraction_column_warnings(
+    chart_id: str, chart: ResolvedTableChart, rows: Rows
+) -> list[Diagnostic]:
+    warnings: list[Diagnostic] = []
+    if chart.columns is None:
+        return warnings
+    for name, column in chart.columns.items():
+        if column.format is not None or column.visible is False:
+            continue
+        if not _is_unformatted_fraction(rows, name):
+            continue
+        format_key = f"style.columns.{name}.format"
+        warnings.append(
+            Diagnostic.from_code(
+                WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
+                chart=chart_id,
+                path=f"charts.{chart_id}.{format_key}",
+                field=name,
+                message=WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.message_template.format(
+                    chart_id=chart_id,
+                    field=name,
+                    kind="a fraction between 0 and 1",
+                    surface="table column",
+                    format_state="has no format",
+                ),
+                fix=WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.fix_template.format(
+                    format_key=format_key,
+                    suggestion=(
+                        "a percent format such as `.1%`, or a plain format "
+                        "like `.2f` if the values are not fractions"
+                    ),
+                ),
+            )
+        )
+    return warnings
+
+
 def detect(ctx: WarningContext) -> list[Diagnostic]:
     """Return one Diagnostic per y field whose axis format is unfit for its kind.
 
@@ -246,6 +312,10 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.board_spec.charts.items():
+        if isinstance(chart, ResolvedTableChart) and chart_id in ctx.chart_results:
+            warnings += _fraction_column_warnings(
+                chart_id, chart, ctx.chart_results[chart_id]
+            )
         for field, axis_format, layer in _y_axis_checks(chart):
             kind = _classify(field)
             if kind is not None and not _format_suits_kind(axis_format, kind):

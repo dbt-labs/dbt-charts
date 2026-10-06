@@ -307,7 +307,7 @@ def moves(
         # only knows field *names*, not types, so existence in both schemas
         # is checked explicitly here, the same guard
         # `suffix_rename_moves` applies before trusting a candidate.
-        # `move_source_locations`'s `_identity_value_would_change` gate
+        # `move_locations`'s `_identity_value_would_change` gate
         # skips this Move when the field is authored as a scalar (a list
         # index never matches) and skips the bare Move above when it is
         # authored as a list (a non-scalar value never matches

@@ -130,14 +130,34 @@ def get_font_measurer(
     return _load_measurer(get_font_path(font_family, numeric=numeric))
 
 
-def get_weighted_font_measurer(font_family: str | None, weight: int) -> FontMeasurer:
-    """Return the measurer for ``font_family`` instanced at ``weight``.
+def get_weighted_font_measurer(
+    font_family: str | None, css_weight: str | float
+) -> FontMeasurer:
+    """Return the measurer for ``font_family`` instanced at ``css_weight``.
 
     A variable file measured at two weights gives different advances, so a run
     painted at 600 must be measured at 600 or whatever is positioned against it
     will overlap. Keyed on path *and* weight for the same reason
     :func:`measurer_for_face` is — :func:`_load_measurer` keys on path alone.
+
+    ``FontStyle.weight`` is an unvalidated authored string (no ``Literal``,
+    no schema enum — tightening that is a separate, migration-gated change).
+    A value that is neither a CSS weight keyword nor numeric (``"semibold"``,
+    not a legal CSS font-weight at all) cannot resolve to a ``wght`` axis
+    value, but Vega itself does not reject it at paint time either — an
+    unparseable ``labelFontWeight``/``titleFontWeight``/``fontWeight``
+    simply paints at the browser's default weight. Falling back to the
+    unweighted default measurer here matches that paint behavior instead of
+    raising on a board that already renders today (repo precedent:
+    render/chart/kpi.py and table.py both ignore a weight outside
+    ``VALID_FONT_WEIGHTS`` the same way; this module cannot import that
+    frozenset — compile/ layer — without a tach cycle, so the check here is
+    structural: keyword-or-numeric, not the same fixed keyword set).
     """
+    try:
+        weight = int(css_weight_to_axis(css_weight))
+    except ValueError:
+        return get_font_measurer(font_family)
     path = get_font_path(font_family)
     key = f"{path}|{weight}"
     cached = _face_measurers.get(key)

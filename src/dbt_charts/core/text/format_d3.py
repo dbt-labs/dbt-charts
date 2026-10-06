@@ -127,34 +127,22 @@ PYTHON_STRFTIME_DIRECTIVES: frozenset[str] = frozenset(
     "aAbBcCdDefFgGhHIjklLmMnpPqQrRsSTuUVwWxXyYzZ"
 )
 
-# Directive letters d3-time-format implements. Vega paints a time_format,
-# axis-label, or tooltip spec by sending it straight to d3-time-format, never
-# through portable_strftime, so these are the letters a Vega-painted slot can
-# legitimately author.
-D3_TIME_FORMAT_DIRECTIVES: frozenset[str] = frozenset("aAbBcdefgGHIjLmMpqQsSuUVwWxXyYZ")
-
 # Matches a % directive sequence: optional padding modifier + letter.
 _DIRECTIVE_LETTER_RE = re.compile(r"%[-_0]?(.)")
 
 
-def find_unsupported_directive(
-    fmt: str, valid_directives: frozenset[str]
-) -> str | None:
-    """Return the first %-directive letter in fmt not in valid_directives,
-    or None when every directive is covered.
+def find_unsupported_directive(fmt: str) -> str | None:
+    """Return the first %-directive letter in fmt not in
+    ``PYTHON_STRFTIME_DIRECTIVES``, or None when every directive is covered.
 
     Python's strftime silently passes an unknown directive through
     (``%Q`` -> the literal text ``Q``) rather than raising, so a spec with an
     unimplemented directive must be rejected explicitly. ``%%`` is a
-    literal-percent escape and never counts as a directive. Callers pass the
-    directive set for the engine that will actually paint the spec: compile
-    time checks against the union of what Vega (d3-time-format) and Python
-    (portable_strftime) can paint; the render-time backstop in
-    table_support.py checks only Python's set, since that is what it paints.
+    literal-percent escape and never counts as a directive.
     """
     for match in _DIRECTIVE_LETTER_RE.finditer(fmt.replace("%%", "")):
         letter = match.group(1)
-        if letter not in valid_directives:
+        if letter not in PYTHON_STRFTIME_DIRECTIVES:
             return letter
     return None
 

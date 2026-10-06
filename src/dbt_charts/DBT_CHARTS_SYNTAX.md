@@ -354,7 +354,8 @@ style:
     align: left
     column:
       max_number: 2
-      rule:
+      divider:
+        visible: true
         width: 1
         color: dbt-grays.separator
 ```
@@ -676,7 +677,7 @@ charts:
       # bar/area families also accept style.orientation and style.stack
 ```
 
-### Chart types (17 authorable)
+### Chart types (16 authorable)
 
 Set `type:` to one of:
 
@@ -691,8 +692,6 @@ Set `type:` to one of:
 **Sparklines** -- `spark_bar` (compact horizontal bars used in profiler cards).
 
 **Auxiliary** -- `callout` (message card with a `style.tone:` field; `message:` required).
-
-**Custom** -- `custom` draws a shape the types above lack from a sandboxed Jinja SVG template (`template:` names `templates/<name>.svg.j2`, or `svg:` carries the source inline; channels such as `x:`/`y:` sit at the chart root and `options:` carries the template's other settings, both declared in its header). **A last resort:** use it only when the user asks for a specific shape by name or description that no built-in type or composed recipe draws; otherwise use the built-in types. See [Custom charts](#custom-charts-type-custom).
 
 Note: `donut` is an internal alias for `pie` -- `donut` is accepted but normalizes to `pie` internally. `auto` is an internal sentinel (not authored). `boxplot`, `errorbar`, and `errorband` are Vega-Lite mark types that are not in the authorable surface.
 
@@ -724,14 +723,14 @@ resolve to the same recipe, and the same error names the recipe if you guess a `
 | slope | type: line with a two-category x and color: on the series column (year-shaped x values resolve to a continuous temporal scale, which fills in the span between the pair) |
 | bump | type: line on a rank column with color: on the series column (the data is entity x period x rank, so without it the rows collide on the period key) and a descending style.axis_y.scale.continuous.domain (e.g. [6, 1]) so rank 1 is on top |
 | dot plot, cleveland dot plot | type: scatter with a categorical x and a measure y; for several dots per category use long-format rows with color: on the series column rather than layers:, which keeps the shape rotatable |
-| dumbbell, barbell, connected dot plot | type: bar with y_start for the far end, thinned to a stem with style.marks.bar.band_width, plus a layers: scatter at each end (color: from style.color.categorical.palette — a chart with layers: does not bind board category_colors) |
+| dumbbell, barbell, connected dot plot | type: bar with y_start for the far end, thinned to a stem with style.marks.bar.band_width, plus a layers: scatter at each end (color: from style.color.categorical.palette) |
 | ranged dot | type: bar with y_start for the low end, drawn as a pale interval (color: from style.color.categorical.palette), plus a layers: scatter on the point estimate |
 | floating bar, range bar | type: bar with y_start, so the bar runs from y_start to y instead of from zero |
 | waterfall, bridge chart | type: bar with y_start from a running total the query computes, color: on the query's own direction column pinned with board category_colors, and style.overlap: full so each step's bar fills its band instead of splitting into a grouped slot |
 | candlestick, ohlc, stock chart | type: bar with y_start: low and y: high as a thin wick, plus a layers: bar with y_start: open and y: close as the body. Same-color convention: color: on the query's session column on both the base bar and the body layer, with style.marks.bar.border.width: 0 to drop the knockout outline and border.radius: 0 for square candles. Ink-outline convention: no color: on the base bar (an ink palette slot), color: on the body layer alone, and style.marks.bar.border in ink |
 | gantt | type: bar with a date y and a date y_start, style.orientation: horizontal so time runs left to right, keeping the query's row order rather than the usual value-descending default |
 
-Shapes with no built-in type — naming them is the half a recipe cannot cover. When the user asks for one of these by name, draw it with `type: custom`; never substitute one for a built-in chart the user did not ask to replace:
+Shapes dbt charts cannot draw at all — naming them is the half a recipe cannot cover:
 `alluvial`, `chord`, `funnel`, `gauge`, `marimekko`, `network`, `radar`, `sankey`, `spider`, `sunburst`, `treemap`, `violin`, `word cloud`.
 
 ### Shared chart fields
@@ -770,7 +769,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `conditional_formatting` | object | Discrete style rules by column — `table`/`kpi` only (see [Conditional formatting](#conditional-formatting)) |
 | `support_table` | list | Attached mini-table on bar/line/area charts, above the plot by default (including those with `layers:`) — see [Composition](#composition) |
 | `spanners` | list | Flat `table` only: `[{label, columns: [...]}]` — a label centered over a run of adjacent columns in an extra header row. Columns must be adjacent in query order and in at most one spanner; not combinable with `rows`/`columns`/`values` pivot channels |
-| `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`, `custom`. |
+| `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `aspect_ratio` | float | Chart shape: `height = width / aspect_ratio`. Theme default is `1.5`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `min_height` | float | Height floor for this chart only; overrides `style.charts.min_height`. Ignored when `height` is set. |
 | `max_height` | float | Height ceiling for this chart only; overrides `style.charts.max_height`. Ignored when `height` is set. |
@@ -1051,28 +1050,6 @@ type: spark_bar
 x: count
 y: category
 
-# custom — rows in, SVG out, drawn by a sandboxed Jinja template
-type: custom
-query: flows
-template: sankey          # templates/sankey.svg.j2; or `svg: |` with inline source
-x: [from_stage, to_stage] # channels at the root, as declared in the template header
-value: visitors
-options:
-  node_width: 12          # template-specific knobs, validated against the header
-style:
-  aspect_ratio: 2         # sizing only: aspect_ratio, min_height, max_height
-
-# custom, inline — the template under `svg:`; no channels or options, read columns off rows
-type: custom
-query: quota
-svg: |
-  {% set band = height / (rows | length) %}
-  {% for r in rows %}
-    <rect y="{{ loop.index0 * band }}" height="{{ band * 0.6 }}"
-          width="{{ (r.attainment | float) * width / 1.25 }}"
-          fill="{{ style.charts.color.categorical.single_series_palette[0] }}"/>
-  {% endfor %}
-
 # Pure marks (advanced use — not accepted as base chart types):
 # circle, square, tick, rule, trail, rect, arc, image
 
@@ -1085,67 +1062,6 @@ style:
   # you set wins; `by_tone` (the default) is the tone's color.
 
 ```
-
-### Custom charts (`type: custom`)
-
-Use `type: custom` only when the user asks for a shape by name or description that no built-in type or composed recipe draws; a custom chart gets no axes, legend, sizing rules, or visual warnings for free. A custom chart is drawn by a Jinja template that emits SVG content. SQL does the
-math (positions, stacking, binning); the template draws. Exactly one of
-`template:` (a project file, `templates/<name>.svg.j2`) or `svg:` (inline
-source) is required. Write one-off charts inline; an inline template has no
-header and takes no channels or options, so it reads columns by name (`r.revenue`).
-`dct examples charts/custom-inline` is a complete inline board. The platform wraps the output in a root `<svg>` sized
-`width x height` and draws `title`/`subtitle` above it.
-
-A template file may open with a Jinja comment holding YAML that declares its
-`channels` and `options`:
-
-```jinja
-{#---
-description: Flow diagram from an edge list.
-channels:
-  x:
-    description: Two columns, source node then target node.
-    multiple: true
-  value:
-    description: Size of each flow.
-options:
-  node_width:
-    type: number
-    default: 12
----#}
-```
-
-Channels use the built-in channel names (`x`, `y`, `color`, `size`, `shape`,
-`theta`, `value`) and are set at the chart root, like any chart; pick the one
-that matches the role (a funnel's stage is `x`, its count `y`; a waffle's parts
-are `color` and `theta`, as on a pie). `multiple: true` allows a list of columns
-and always passes a list. Option types: `column`, `columns`, `string`, `number`,
-`integer`, `boolean`, `color`. A channel or option with no `default` is
-required; `default: null` makes it optional (value `none`). Undeclared,
-missing, or wrongly typed channels and options are compile errors
-(`ERR-CUSTOM-FIELDS`); channel and column-option columns are checked against
-the result columns at render. A headerless template takes neither.
-
-`dct describe templates/` (or one `templates/<name>.svg.j2`) prints each
-template's description, channels (required/optional, `multiple`), and options
-(type, default, description); `--json` adds a `template` object to the result.
-Run it before writing a custom chart to see which templates the project
-already has and what they take. A missing `template:` name lists the available
-ones.
-
-Template context: `rows` (list of row dicts, raw values), `columns`, `channels`
-(declared channel → column, or list), `options`,
-`width`/`height` (px, below the title), `uid` (id prefix for `id=`/`url(#...)`),
-`style` (the merged style tree; `style.palettes.<role>` is a list of hex colors,
-or an alias dict for tone roles such as `info`), `math` (`sin`, `cos`, `tan`,
-`asin`, `acos`, `atan2`, `sqrt`, `log`, `exp`, `floor`, `ceil`, `pi`, `tau`),
-filter `format` (d3-format), and the helpers `text_width(text, size, weight)`,
-`color_for(value, column=None)` (board pin for that column's value, else the
-categorical palette in first-call order), `raise_error(message)`. Names are
-strict: a misspelling fails the chart. Output is autoescaped and validated
-against an SVG allowlist (no `script`, `foreignObject`, `style`, `image`, `a`,
-animation, `on*` attributes, non-`#local` `href`/`url()`); a violation fails the
-chart (`ERR-CUSTOM-SVG`) rather than being stripped.
 
 ### Small multiples (`multiples`)
 
@@ -1360,10 +1276,10 @@ Non-goals (not part of the authored chart surface): Vega-Lite `encoding`, `mark`
 A data value takes one palette **slot** board-wide, not a hex, so a category
 keeps the same color on every chart that draws it (and the same direct-label
 ink, table swatch, and nested-board coloring). A field binds automatically
-once two or more charts use it as their `color:` channel — a chart with
-`layers:` has no categorical channel of its own, so it neither binds nor
-counts toward the two. Author a pin to bind a field on a single chart too, or
-to choose the slot:
+once two or more charts use it as their `color:` channel, including a chart
+with `layers:` (its base `color:` binds; layers keep their own series
+colors). Author a pin to bind a field on a single chart too, or to choose the
+slot:
 
 ```yaml
 style:

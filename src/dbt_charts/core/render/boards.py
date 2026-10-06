@@ -38,6 +38,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.style.resolved import (
     effective_padding as _effective_padding,
 )
+from dbt_charts.core.compile.sizing import FOOTER_BRAND_WORD_RE, footer_text_width
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.font_measure import (
     get_font_measurer,
@@ -55,6 +56,7 @@ from dbt_charts.core.render.svg_utils import (
     border_dash_attrs,
     checked_href,
     css_color,
+    divider_dash_attr,
     escape_attr,
     extract_svg_inner_content,
     format_svg_numeric,
@@ -78,10 +80,6 @@ __all__ = [
 # -----------------------------------------------------------------------------
 # Shared rendering helpers (DRY - single source of truth)
 # -----------------------------------------------------------------------------
-
-
-# The brand phrase linked in the footer watermark (case-insensitive, whole-word).
-_FOOTER_BRAND_WORD_RE = re.compile(r"\bdbt charts\b", re.IGNORECASE)
 
 
 def _footer_attribution_svg(
@@ -124,9 +122,9 @@ def _footer_attribution_svg(
             f"{html.escape(content)}</text>"
         )
 
-    match = _FOOTER_BRAND_WORD_RE.search(footer.text)
+    match = FOOTER_BRAND_WORD_RE.search(footer.text)
     if match is None:
-        return run(x, footer.text), measure(footer.text, size)
+        return run(x, footer.text), footer_text_width(footer, font_family)
 
     prefix = footer.text[: match.start()].rstrip()
     brand_word = match.group(0)
@@ -151,7 +149,7 @@ def _footer_attribution_svg(
     if prefix:
         parts.insert(0, run(right - gap, prefix))
         right -= gap + measure(prefix, size)
-    return "".join(parts), x - right
+    return "".join(parts), footer_text_width(footer, font_family)
 
 
 def _resolve_jinja(template: str, variables: VariableValues) -> str:
@@ -1288,7 +1286,7 @@ def render_board_svg(
         assert footer_style.font.size is not None
         footer_font_size = float(footer_style.font.size)
         footer_rule_gap_px = get_chart_rendering().frame.footer_rule_gap_px
-        rule_gap = footer_rule_gap_px if footer_style.rule is not None else 0
+        rule_gap = footer_rule_gap_px if footer_style.divider.visible else 0
         total_height += footer_style.y_offset + footer_font_size + rule_gap
 
     # Grid pattern if enabled
@@ -1397,7 +1395,7 @@ def render_board_svg(
         assert footer_style.font.size is not None
         assert footer_style.font.color is not None
         footer_parts = []
-        if footer_style.rule is not None:
+        if footer_style.divider.visible:
             rule_y = (
                 footer_y
                 - float(footer_style.font.size)
@@ -1406,7 +1404,8 @@ def render_board_svg(
             footer_parts.append(
                 f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
                 f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '
-                f'stroke="{escape_attr(footer_style.rule.color)}" stroke-width="{format_svg_numeric(footer_style.rule.stroke_width)}"/>'
+                f'stroke="{escape_attr(footer_style.divider.color)}" stroke-width="{format_svg_numeric(footer_style.divider.width)}"'
+                f"{divider_dash_attr(footer_style.divider.dasharray)}/>"
             )
         footer_parts.append(attribution_svg)
         footer_element = "\n".join(footer_parts)

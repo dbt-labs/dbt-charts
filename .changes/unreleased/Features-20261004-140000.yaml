@@ -1,0 +1,3 @@
+kind: Features
+body: A board with no width now sizes to its tables' measured columns, and a focused chart renders at its own preferred width.
+time: 2026-10-04T14:00:00.000000-07:00

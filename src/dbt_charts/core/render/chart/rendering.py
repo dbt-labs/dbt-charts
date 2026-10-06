@@ -595,6 +595,7 @@ def _render_chart_item_inner(
         chart_svg,
         outer_width=outer_width,
         resolved_title=chart_title,
+        resolved_subtitle=chart.subtitle,
         ink_inset=(
             padding
             if padding is not None and _ink_carries_padding(chart)
@@ -631,6 +632,7 @@ def _wrap_rendered_chart_svg(
     inset: dict[str, float] | None,
     ink_inset: dict[str, float],
     resolved_title: str | None = None,
+    resolved_subtitle: str | None = None,
     extra_classes: tuple[str, ...] = (),
     is_error_fallback: bool = False,
 ) -> tuple[str, float]:
@@ -708,8 +710,18 @@ def _wrap_rendered_chart_svg(
         f'data-chart-title="{escape_attr(chart_title)}"',
         f'data-chart-width="{escape_attr(outer_width)}"',
         f'data-chart-height="{escape_attr(actual_height)}"',
+        # `group`, not `img`: img makes descendants presentational and would
+        # hide every per-mark aria-label; a role-less <g>'s name is ignored.
+        'role="group"',
+        'aria-roledescription="chart"',
         f'aria-label="{escape_attr(chart_title)}"',
     ]
+    # No <title>: browsers paint it as a native hover tooltip over the whole
+    # chart, colliding with the custom tooltips; <desc> paints nothing. No
+    # aria-describedby either: a chart id repeats across boards sharing a page.
+    description = (
+        f"<desc>{escape_attr(resolved_subtitle)}</desc>" if resolved_subtitle else ""
+    )
     # `defined_in_other_file` means the path names a ChartRef string, not a
     # definition — compile keeps the coordinates (a diagnostic anchors there),
     # but emitting a handle would give the host something to click that
@@ -733,4 +745,4 @@ def _wrap_rendered_chart_svg(
         attrs_parts.append(f'data-dbt-chart-canvas="{escape_attr(identity.canvas)}"')
 
     attrs_str = " " + " ".join(attrs_parts)
-    return f"<g{attrs_str}>{boundary}</g>", actual_height
+    return f"<g{attrs_str}>{description}{boundary}</g>", actual_height

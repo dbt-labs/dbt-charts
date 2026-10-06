@@ -16,7 +16,10 @@ from pathlib import Path
 
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.compiler import compile_file
-from dbt_charts.core.compile.sizing import board_container_width, chart_slot_width
+from dbt_charts.core.compile.sizing import board_container_width
+from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.render.board_resolve import build_resolved_board
 
 _QUERY = """
 queries:
@@ -161,14 +164,31 @@ def test_negative_frame_width_is_rejected() -> None:
     assert any("width" in str(e.message) for e in result.errors), result.errors
 
 
-def test_chart_width_pins_slot_in_bound_board() -> None:
+def _chart_slot(board, chart_id: str, local_project: Callable) -> float:
+    executor = Executor(
+        board,
+        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        query_registry=None,
+    )
+    resolved, _cache = build_resolved_board(board, executor, {}, render_first=False)
+    stack = [resolved.layout]
+    while stack:
+        for item in stack.pop().items:
+            if item.chart is not None and item.chart.id == chart_id:
+                return item.width
+            if item.board is not None:
+                stack.append(item.board.layout)
+    raise AssertionError(f"chart {chart_id!r} not placed")
+
+
+def test_chart_width_pins_slot_in_bound_board(local_project: Callable) -> None:
     """Board width 700, chart width 320: the slot is 320, not the full row."""
     result = compile_board(
         f"title: T\nstyle:\n  frame:\n    width: 700\n{_QUERY}{_FIXED_CHART}"
     )
     assert result.success, result.diagnostics
     assert board_container_width(result.board, result.board.variable_defaults) == 700.0
-    assert chart_slot_width(result.board, "c1", result.board.variable_defaults) == 320.0
+    assert _chart_slot(result.board, "c1", local_project) == 320.0
 
 
 def _percent_rows_board(style: str) -> str:
@@ -179,7 +199,7 @@ def _percent_rows_board(style: str) -> str:
     )
 
 
-def test_percent_rows_item_width_is_half_the_row() -> None:
+def test_percent_rows_item_width_is_half_the_row(local_project: Callable) -> None:
     """A '50%' rows-item width means half the row — bound or not.
 
     One meaning everywhere: it never feeds the content hug (which would
@@ -193,7 +213,7 @@ def test_percent_rows_item_width_is_half_the_row() -> None:
         content = board_container_width(board, board.variable_defaults) - 2 * float(
             board.resolved_style.frame.margin
         )
-        assert chart_slot_width(board, "c1", board.variable_defaults) == content / 2, (
+        assert _chart_slot(board, "c1", local_project) == content / 2, (
             style or "unbound"
         )
 

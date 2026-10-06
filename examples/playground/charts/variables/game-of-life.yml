@@ -492,8 +492,8 @@ charts:
         weight: 600
       header:
         height: 0
-        rule:
-          width: 0
+        divider:
+          visible: false
       row:
         height: 34
   grid:
@@ -535,8 +535,8 @@ charts:
         weight: 700
       header:
         height: 0
-        rule:
-          width: 0
+        divider:
+          visible: false
       row:
         height: 56
   board:

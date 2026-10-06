@@ -22,7 +22,6 @@ Package layout (one family per file, mirroring the initiative's anti-mega-module
   geoshape.py   — GeoshapeChart
   callout.py    — CalloutChart
   spark_bar.py  — SparkBarChart
-  custom.py     — CustomChart
 
 Families: BarChart, LineChart, AreaChart, ScatterChart, HeatmapChart, PieChart, KpiChart,
     TableChart, PointMapChart, GeoshapeChart, CalloutChart, SparkBarChart.
@@ -94,7 +93,6 @@ from ._type import (
 from .area import AreaChart
 from .bar import BarChart
 from .callout import CalloutChart
-from .custom import CustomChart, CustomChartStylePatch
 from .geoshape import GeoshapeChart
 from .heatmap import HeatmapChart
 from .kpi import KpiChart, KpiSupportConfig
@@ -139,8 +137,7 @@ AuthoredChart = Annotated[
     | Annotated[GeoshapeChart, Tag("map")]
     | Annotated[GeoshapeChart, Tag("geoshape")]
     | Annotated[CalloutChart, Tag("callout")]
-    | Annotated[SparkBarChart, Tag("spark_bar")]
-    | Annotated[CustomChart, Tag("custom")],
+    | Annotated[SparkBarChart, Tag("spark_bar")],
     Discriminator(_discriminate_authored_chart),
 ]
 """Discriminated union of per-family authored chart patches.
@@ -254,8 +251,6 @@ __all__ = [
     "PointMapChart",
     "ScatterChart",
     "SparkBarChart",
-    "CustomChart",
-    "CustomChartStylePatch",
     "TableChart",
     "TableSpanner",
     "ToneLiteral",

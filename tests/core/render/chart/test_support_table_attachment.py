@@ -21,7 +21,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSupportTablePerSeries,
     ResolvedSupportTableSource,
 )
-from dbt_charts.core.compile.models.primitives import RuleStyle
+from dbt_charts.core.compile.models.primitives import DividerStyle
 from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
 from dbt_charts.core.render.chart.support_table_attachment import (
     attach_support_table,
@@ -434,7 +434,7 @@ def test_attach_aggregate_translates_count_distinct_to_distinct():
 def test_attach_emits_divider_rule_when_width_positive():
     spec = _base_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    style = _dt_style(divider=RuleStyle(width=1.5, continuous=True))
+    style = _dt_style(divider=DividerStyle(visible=True, width=1.5, color="#888888"))
     out = _attach(spec, table, style=style)
     rule_layers = [
         layer
@@ -458,7 +458,7 @@ def test_attach_divider_rule_explicitly_nulls_x_to_avoid_stray_domain_entry():
     """
     spec = _base_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    style = _dt_style(divider=RuleStyle(width=1.5, continuous=True))
+    style = _dt_style(divider=DividerStyle(visible=True, width=1.5, color="#888888"))
     out = _attach(spec, table, style=style)
     rule_layers = [
         layer
@@ -479,7 +479,7 @@ def test_attach_divider_rule_is_not_announced_to_screen_readers():
     """
     spec = _base_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    style = _dt_style(divider=RuleStyle(width=1.5, continuous=True))
+    style = _dt_style(divider=DividerStyle(visible=True, width=1.5, color="#888888"))
     out = _attach(spec, table, style=style)
     rule_layers = [
         layer
@@ -494,7 +494,7 @@ def test_attach_divider_rule_is_not_announced_to_screen_readers():
 def test_attach_omits_divider_rule_when_width_zero():
     spec = _base_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    style = _dt_style(divider=RuleStyle(width=0.0, continuous=True))
+    style = _dt_style(divider=DividerStyle(visible=False, width=1, color="#888888"))
     out = _attach(spec, table, style=style)
     rule_layers = [
         layer
@@ -846,7 +846,7 @@ def test_attach_multiple_rows_each_use_distinct_pixel_y():
 
 
 def test_attach_emits_row_rule_layer_between_rows_when_width_positive():
-    # Spec §4.3: row.rule.width/color styles a rule between adjacent rows.
+    # Spec §4.3: row.divider.width/color styles a line between adjacent rows.
     # Default width is 0 (no rule) so it's normally absent. When width > 0
     # the emitter must produce N-1 rule layers for N rows.
     spec = _base_spec()
@@ -861,9 +861,9 @@ def test_attach_emits_row_rule_layer_between_rows_when_width_positive():
     # without filtering on stroke width — the test is then robust to
     # width tweaks rather than coupled to a specific value.
     style = _dt_style(
-        divider=RuleStyle(width=0, continuous=True),
+        divider=DividerStyle(visible=False, width=1, color="#888888"),
         row=_dt_style().row.model_copy(
-            update={"rule": RuleStyle(width=0.5, color="#ddd", continuous=True)}
+            update={"divider": DividerStyle(visible=True, width=0.5, color="#ddd")}
         ),
     )
     out = _attach(spec, table, style=style)
@@ -894,7 +894,7 @@ def test_attach_row_rule_explicitly_nulls_x_to_avoid_stray_domain_entry():
     )
     style = _dt_style(
         row=_dt_style().row.model_copy(
-            update={"rule": RuleStyle(width=0.5, continuous=True)}
+            update={"divider": DividerStyle(visible=True, width=0.5, color="#888888")}
         )
     )
     out = _attach(spec, table, style=style)
@@ -918,7 +918,7 @@ def test_attach_row_rule_is_not_announced_to_screen_readers():
     )
     style = _dt_style(
         row=_dt_style().row.model_copy(
-            update={"rule": RuleStyle(width=0.5, continuous=True)}
+            update={"divider": DividerStyle(visible=True, width=0.5, color="#888888")}
         )
     )
     out = _attach(spec, table, style=style)
@@ -937,14 +937,16 @@ def test_attach_omits_row_rule_layers_when_width_zero():
     table = _table(
         [ResolvedSupportTableSource(source="a"), ResolvedSupportTableSource(source="b")]
     )
-    out = _attach(spec, table)  # default style: divider.width=0 + row.rule.width=0
+    out = _attach(
+        spec, table
+    )  # default style: divider.visible=False + row.divider.visible=False
     rule_layers = [
         layer
         for layer in out["layer"]
         if isinstance(layer.get("mark"), dict) and layer["mark"].get("type") == "rule"
     ]
     # No rules at all — divider off by default (matches RJ's chart-lab),
-    # row.rule off by default.
+    # row.divider off by default.
     assert len(rule_layers) == 0
 
 
@@ -1604,7 +1606,7 @@ def test_per_series_right_orient_label_emits_right_cap():
 
 def test_per_series_emits_inter_row_rules_within_block():
     """The strip's height accounting reserves inter-row spacing for every
-    adjacent visual pair (`row.rule.width * (n_rows - 1)`). The per_series
+    adjacent visual pair (`row.divider.width * (n_rows - 1)`). The per_series
     branch must emit a rule between each pair of expanded series rows,
     not just at the trailing seam — otherwise rule-on themes show gaps
     where rules should be drawn within the per_series block."""
@@ -1614,7 +1616,9 @@ def test_per_series_emits_inter_row_rules_within_block():
     style_with_rules = base_style.model_copy(
         update={
             "row": base_style.row.model_copy(
-                update={"rule": RuleStyle(width=1.0, color="#888888", continuous=True)}
+                update={
+                    "divider": DividerStyle(visible=True, width=1.0, color="#888888")
+                }
             )
         }
     )
@@ -2404,7 +2408,7 @@ def test_top_position_inter_row_rule_y_is_between_adjacent_rows():
     style = _dt_style(
         position="top",
         row=_dt_style().row.model_copy(
-            update={"rule": RuleStyle(width=1.0, continuous=True)}
+            update={"divider": DividerStyle(visible=True, width=1.0, color="#888888")}
         ),
     )
     cs = _charts_style()
@@ -3182,3 +3186,42 @@ def test_suppress_series_legend_finds_color_through_nest_zero_rule_wrapper() -> 
 
     color_enc = spec["layer"][0]["layer"][0]["encoding"]["color"]
     assert color_enc["legend"] is None
+
+
+@pytest.mark.parametrize(("dasharray", "dash"), [("6 3", [6, 3]), ("2 2", [2, 2])])
+def test_attach_divider_dasharray_becomes_stroke_dash(
+    dasharray: str, dash: list[int]
+) -> None:
+    spec = _base_spec()
+    table = _table([ResolvedSupportTableSource(source="revenue")])
+    out = _attach(
+        spec,
+        table,
+        style=_dt_style(
+            divider=DividerStyle(
+                visible=True, width=1, color="#888888", dasharray=dasharray
+            )
+        ),
+    )
+    (rule,) = [
+        layer["mark"]
+        for layer in out["layer"]
+        if isinstance(layer.get("mark"), dict) and layer["mark"].get("type") == "rule"
+    ]
+    assert rule["strokeDash"] == dash
+
+
+def test_attach_solid_divider_has_no_stroke_dash() -> None:
+    spec = _base_spec()
+    table = _table([ResolvedSupportTableSource(source="revenue")])
+    out = _attach(
+        spec,
+        table,
+        style=_dt_style(divider=DividerStyle(visible=True, width=1, color="#888888")),
+    )
+    (rule,) = [
+        layer["mark"]
+        for layer in out["layer"]
+        if isinstance(layer.get("mark"), dict) and layer["mark"].get("type") == "rule"
+    ]
+    assert "strokeDash" not in rule

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jsonschema
 import pytest
+from jsonschema.validators import validator_for
 from pydantic import TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -17,6 +18,10 @@ from dbt_charts.core.compile.schema.renderers.json_schema import render_yaml_sch
 from dbt_charts.core.compile.schema.renderers.vscode_schema import render_vscode_schema
 
 _ADAPTER: TypeAdapter[AuthoredQuery] = TypeAdapter(AuthoredQuery)
+
+
+def _validate_board(schema: dict, board: dict) -> None:
+    validator_for(schema)(schema).validate(board)
 
 
 def _validate(query: dict[str, object]) -> AuthoredQuery:
@@ -125,7 +130,7 @@ def test_strict_schema_and_runtime_accept_the_same_query_variants(
     board = {"title": "Query schema parity", "queries": {"sample": query}}
 
     AuthoredBoard.model_validate(board)
-    jsonschema.Draft7Validator(render_yaml_schema(introspect())).validate(board)
+    _validate_board(render_yaml_schema(introspect()), board)
 
 
 @pytest.mark.parametrize("query", _REPRESENTATIVE_VALID_QUERIES)
@@ -138,7 +143,7 @@ def test_vscode_schema_does_not_apply_variant_requirements_globally(
         "charts": {},
     }
 
-    jsonschema.Draft7Validator(render_vscode_schema(introspect())).validate(board)
+    _validate_board(render_vscode_schema(introspect()), board)
 
 
 @pytest.mark.parametrize(
@@ -163,4 +168,4 @@ def test_strict_schema_and_runtime_reject_the_same_invalid_query_shapes(
     with pytest.raises(ValidationError):
         AuthoredBoard.model_validate(board)
     with pytest.raises(jsonschema.ValidationError):
-        jsonschema.Draft7Validator(render_yaml_schema(introspect())).validate(board)
+        _validate_board(render_yaml_schema(introspect()), board)

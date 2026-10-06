@@ -8,12 +8,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import (
     VALID_SOURCE_TYPES,
     BigQuerySourceConfig,
     CsvSourceConfig,
+    DatabricksSourceConfig,
     DuckDBSourceConfig,
     HttpSourceConfig,
     PostgresSourceConfig,
@@ -283,6 +285,114 @@ class TestSourceTypes:
         """Test parsing without type fails."""
         with pytest.raises(ValueError, match="must have a 'type' field"):
             parse_source_config({"host": "localhost"})
+
+
+class TestDatabricksSourceConfig:
+    """token is the only auth this config supports; extra="forbid" rejects
+    OAuth and passthrough fields."""
+
+    def test_token_is_required_and_non_empty(self):
+        with pytest.raises(ValidationError, match="token"):
+            DatabricksSourceConfig(
+                type="databricks",
+                host="h.cloud.databricks.com",
+                http_path="/sql/1.0/warehouses/abc",
+                token="",
+            )
+
+    @pytest.mark.parametrize(
+        "field", ["client_id", "client_secret", "auth_type", "session_properties"]
+    )
+    def test_rejects_oauth_and_passthrough_fields(self, field):
+        """OAuth and passthrough fields are unvalidated and unsupported;
+        extra="forbid" must reject them."""
+        with pytest.raises(ValidationError, match="extra"):
+            DatabricksSourceConfig(
+                type="databricks",
+                host="h.cloud.databricks.com",
+                http_path="/sql/1.0/warehouses/abc",
+                token="tok",
+                **{field: "x"},
+            )
+
+    def test_rejects_connection_parameters_passthrough(self):
+        """connection_parameters would let an authored value silently collide
+        with build_adapter's own _socket_timeout /
+        _retry_stop_after_attempts_duration fold."""
+        with pytest.raises(ValidationError, match="extra"):
+            DatabricksSourceConfig(
+                type="databricks",
+                host="h.cloud.databricks.com",
+                http_path="/sql/1.0/warehouses/abc",
+                token="tok",
+                connection_parameters={"_socket_timeout": 600},
+            )
+
+    def test_catalog_is_required(self):
+        """dbt's own __post_init__ silently defaults an unset catalog to
+        hive_metastore."""
+        with pytest.raises(ValidationError, match="catalog"):
+            DatabricksSourceConfig(
+                type="databricks",
+                host="h.cloud.databricks.com",
+                http_path="/sql/1.0/warehouses/abc",
+                token="tok",
+            )
+
+    @pytest.mark.parametrize(
+        "http_path",
+        [
+            "/sql/1.0/warehouses/abc123",
+            "sql/1.0/warehouses/abc123",
+            "/sql/1.0/endpoints/abc123",
+            "sql/1.0/endpoints/abc123",
+        ],
+    )
+    def test_accepts_warehouse_and_legacy_endpoint_paths(self, http_path):
+        """`endpoints` is the pre-rename SQL-Endpoints spelling a workspace
+        provisioned before Databricks' SQL-Endpoints -> SQL-Warehouses rename
+        still carries in profiles.yml — both name SQL-warehouse compute
+        (databricks-sql-connector's client.py and sea/backend.py accept
+        either), so rejecting `endpoints` would break a working dbt project."""
+        cfg = DatabricksSourceConfig(
+            type="databricks",
+            host="h.cloud.databricks.com",
+            http_path=http_path,
+            token="tok",
+            catalog="main",
+        )
+        assert cfg.http_path == http_path
+
+    @pytest.mark.parametrize(
+        "http_path",
+        [
+            "/sql/protocolv1/o/123456789/0101-abcdef-cluster1",
+            "sql/protocolv1/o/123456789/0101-abcdef-cluster1",
+        ],
+    )
+    def test_rejects_cluster_http_paths(self, http_path):
+        """A cluster path gets the cluster-specific message, pinning that
+        branch distinctly from the generic one below."""
+        with pytest.raises(ValidationError, match="names an all-purpose cluster"):
+            DatabricksSourceConfig(
+                type="databricks",
+                host="h.cloud.databricks.com",
+                http_path=http_path,
+                token="tok",
+                catalog="main",
+            )
+
+    def test_rejects_other_non_warehouse_http_paths(self):
+        """A path matching neither the cluster nor the warehouse shape falls
+        through to the generic message."""
+        with pytest.raises(ValidationError, match="must be a SQL warehouse path"):
+            DatabricksSourceConfig(
+                type="databricks",
+                host="h.cloud.databricks.com",
+                http_path="/api/2.0/anything",
+                token="tok",
+                catalog="main",
+            )
 
 
 class TestSourceTypeGuards:

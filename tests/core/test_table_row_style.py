@@ -54,7 +54,9 @@ class TestTableRowStyleRendering:
 
         row_updates: dict = dict(row_kwargs)
         if rule_data is not None:
-            row_updates["rule"] = base_row.rule.model_copy(update=rule_data)
+            row_updates["divider"] = base_row.divider.model_copy(
+                update={"visible": True, **rule_data}
+            )
         if roles_data is not None:
             summary_data = roles_data.get("summary", {})
             total_data = roles_data.get("total", {})
@@ -75,10 +77,20 @@ class TestTableRowStyleRendering:
         # Zero out variant defaults to isolate test
         new_row = base_row.model_copy(update=row_updates)
         new_header = tc.header.model_copy(
-            update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+            update={
+                "divider": tc.header.divider.model_copy(
+                    update={"visible": False, "width": 1}
+                )
+            }
         )
-        # summary.rule_width override: build fresh row with that field set
-        summary_with_rule = new_row.roles.summary.model_copy(update={"rule_width": 0.5})
+        # summary divider override: build fresh row with that field set
+        summary_with_rule = new_row.roles.summary.model_copy(
+            update={
+                "divider": new_row.roles.summary.divider.model_copy(
+                    update={"visible": True, "width": 0.5}
+                )
+            }
+        )
         new_row = new_row.model_copy(
             update={
                 "roles": new_row.roles.model_copy(update={"summary": summary_with_rule})
@@ -204,7 +216,7 @@ class TestTableRowStyleRendering:
         assert "<svg" in svg
 
     def test_row_rule_from_nested_style(self, make_chart):
-        """row.rule.width and row.rule.color are used for body row rules."""
+        """row.divider.width and row.divider.color are used for body row dividers."""
         from dbt_charts.core.render.chart.table import (
             render_table_svg as render_table_svg,
         )
@@ -297,14 +309,22 @@ class TestMergePrecedence:
                 "roles": tc.row.roles.model_copy(
                     update={
                         "summary": tc.row.roles.summary.model_copy(
-                            update={"rule_width": 0.5}
+                            update={
+                                "divider": tc.row.roles.summary.divider.model_copy(
+                                    update={"visible": True, "width": 0.5}
+                                )
+                            }
                         )
                     }
                 ),
             }
         )
         new_header = tc.header.model_copy(
-            update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+            update={
+                "divider": tc.header.divider.model_copy(
+                    update={"visible": False, "width": 1}
+                )
+            }
         )
         es = dataclasses.replace(
             es, table=tc.model_copy(update={"row": new_row, "header": new_header})
@@ -324,49 +344,6 @@ class TestMergePrecedence:
         # Total row should get font-weight="500"
         total_weighted = re.findall(r'<text[^>]*font-weight="500"[^>]*>[^<]*Total', svg)
         assert len(total_weighted) >= 1, "row.role should drive role resolution"
-
-    def test_nested_rule_color_wins_over_flat(self, make_chart):
-        """row.rule.color takes precedence over table.rule.color."""
-
-        from dbt_charts.core.compile.models.style.theme import TableRuleStyle
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
-
-        chart = make_chart("table", x=None, y=None)
-        es = resolve_chart_style_context(get_theme_style())
-        tc = es.table
-        new_table = tc.model_copy(
-            update={
-                "rule": TableRuleStyle(color="#0000FF"),
-                "row": tc.row.model_copy(
-                    update={
-                        "rule": tc.row.rule.model_copy(
-                            update={"width": 1.0, "color": "#FF0000"}
-                        )
-                    }
-                ),
-                "header": tc.header.model_copy(
-                    update={"rule": tc.header.rule.model_copy(update={"width": 0})}
-                ),
-            }
-        )
-        es = dataclasses.replace(es, table=new_table)
-
-        data = [
-            {"company": "Apex", "revenue": 1000},
-            {"company": "Bright", "revenue": 2000},
-        ]
-        chart = resolve(chart, [], chart_style_context=es)
-        svg = render_table_svg(
-            chart,
-            data,
-            width=600,
-            board_style=_BOARD_STYLE,
-        )
-        # row.rule.color (red) should win
-        assert "#FF0000" in svg
-        assert "#0000FF" not in svg
 
     def test_nested_height_wins_over_flat_row_height(self, make_chart):
         """row.height is the sole height source in TableChartStyle."""

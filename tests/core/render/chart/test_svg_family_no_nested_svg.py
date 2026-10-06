@@ -254,6 +254,21 @@ def test_kpi_render_chart_item_uses_aria_label_not_title() -> None:
     assert 'aria-label="Total Revenue"><title>' not in svg
 
 
+def test_render_chart_item_describes_the_chart_with_its_subtitle() -> None:
+    chart = _chart("table", title="Revenue", subtitle="Last 30 days")
+    svg, _ = render_chart_item(
+        _rc(chart),
+        _executor([{"revenue": 42000}]),
+        {},
+        300,
+        200,
+        resolved_style=_RESOLVED_STYLE,
+        render_cache={},
+    )
+    assert 'role="group" aria-roledescription="chart"' in svg
+    assert "<desc>Last 30 days</desc>" in svg
+
+
 def test_chart_notes_not_in_aria_label() -> None:
     """Note must not appear in aria-label on the chart wrapper <g>.
 

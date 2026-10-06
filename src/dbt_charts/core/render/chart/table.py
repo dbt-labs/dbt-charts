@@ -30,6 +30,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     TableColumnConfig,
 )
 from dbt_charts.core.compile.models.primitives import (
+    DividerStyle,
     FontStyle,
     FormatAliases,
     ResolvedFormat,
@@ -72,6 +73,7 @@ from dbt_charts.core.compile.models.style.theme import (
     VALID_FONT_WEIGHTS,
     PaginatorStyle,
     TableChartStyle,
+    TableDividerStyle,
     TableRowNumbersStyle,
     TableRowRoleStyle,
     TitleStyle,
@@ -114,6 +116,7 @@ from dbt_charts.core.render.chart.table_support import (
     is_total_role,
     measure_column_demands,
     measure_column_word_floors,
+    natural_content_width,
     parse_column_width,
     resolve_cell_conditional_styles,
     resolve_cell_glyph,
@@ -140,6 +143,7 @@ from dbt_charts.core.render.svg_utils import (
     card_box,
     checked_href,
     css_color,
+    divider_dash_attr,
     escape_attr,
     px,
 )
@@ -147,7 +151,7 @@ from dbt_charts.core.render.utils import (
     normalize_data_types,
     slug_to_text,
 )
-from dbt_charts.core.text.case import apply_case
+from dbt_charts.core.text.case import CaseValue, apply_case
 from dbt_charts.core.text.numeral_scale import decimal_pad_for
 from mdsvg.fonts import truncate_text_precise, wrap_text_precise
 
@@ -1049,6 +1053,36 @@ def _render_header_group_rows(
         row_y += group_row_height
 
 
+def _divider_segment(
+    x1: float,
+    x2: float,
+    y: float,
+    thickness: float,
+    divider: DividerStyle,
+    extra_attrs: str = "",
+) -> str:
+    """One horizontal divider segment.
+
+    Solid lines are a ``<rect>`` (integer y + integer height = exact pixel
+    coverage at any browser scale); dashed and dotted lines need a stroked
+    ``<line>`` centered on the same band.
+    """
+    color = css_color(divider.color)
+    if divider.dasharray is None:
+        return (
+            f'<rect x="{escape_attr(x1)}" y="{escape_attr(y)}" width="{escape_attr(x2 - x1)}" '
+            f'height="{escape_attr(thickness)}" fill="{escape_attr(color)}"'
+            f'{extra_attrs} shape-rendering="crispEdges"/>'
+        )
+    mid = y + thickness / 2
+    return (
+        f'<line x1="{escape_attr(x1)}" y1="{escape_attr(mid)}" x2="{escape_attr(x2)}" '
+        f'y2="{escape_attr(mid)}" stroke="{escape_attr(color)}" '
+        f'stroke-width="{escape_attr(thickness)}"{divider_dash_attr(divider.dasharray)}'
+        f"{extra_attrs}/>"
+    )
+
+
 def _render_header_section(
     svg_parts: list[str],
     columns: list[str],
@@ -1063,12 +1097,10 @@ def _render_header_section(
     col_widths: dict[str, float],
     col_lane_positions: dict[str, tuple[float, float, float, float, float]],
     header_font: FontStyle,
+    header_divider: TableDividerStyle,
     truncated_headers: dict[str, bool],
     wrapped_headers: dict[str, list[str]] | None = None,
     cell_pad: int | None = None,
-    header_rule_width: float = 1.0,
-    rule_color: str | None = None,
-    header_rule_continuous: bool = False,
     row_numbers: TableRowNumbersStyle | None = None,
     chart_id: str = "",
 ) -> None:
@@ -1103,17 +1135,15 @@ def _render_header_section(
             f'height="{escape_attr(header_height)}" '
             f'fill="{escape_attr(_hdr_bg)}"/>',
         )
-    effective_rule_color = rule_color or colors["color"]
-    if header_rule_width > 0:
-        # Rules rendered as <rect> for consistent thickness at any browser
-        # scale. Integer y + integer height = exact pixel coverage.
+    header_rule_width = header_divider.width
+    if header_divider.visible:
         rule_y = int(current_y + header_height - header_rule_width)
         effective_pad = (
             cell_pad
             if cell_pad is not None
             else table_config.column_layout.cell_padding
         )
-        if header_rule_continuous and columns and col_x_offsets:
+        if header_divider.continuous and columns and col_x_offsets:
             # Single unbroken rule spanning the cell-content edge — same
             # extent as stripes and row rules so all right edges align.
             x1, x2 = _compute_content_span(
@@ -1125,9 +1155,7 @@ def _render_header_section(
                 table_width=table_width,
             )
             svg_parts.append(
-                f'<rect x="{escape_attr(x1)}" y="{escape_attr(rule_y)}" width="{escape_attr(x2 - x1)}" '
-                f'height="{escape_attr(header_rule_width)}" fill="{escape_attr(effective_rule_color)}" '
-                f'shape-rendering="crispEdges"/>',
+                _divider_segment(x1, x2, rule_y, header_rule_width, header_divider)
             )
         else:
             # Per-column rules: EVERY rule centers on the cell midpoint,
@@ -1178,9 +1206,9 @@ def _render_header_section(
                 x2 = min(x2, cell_right_bound)
                 if x2 > x1:
                     svg_parts.append(
-                        f'<rect x="{escape_attr(x1)}" y="{escape_attr(rule_y)}" width="{escape_attr(x2 - x1)}" '
-                        f'height="{escape_attr(header_rule_width)}" fill="{escape_attr(effective_rule_color)}" '
-                        f'shape-rendering="crispEdges"/>',
+                        _divider_segment(
+                            x1, x2, rule_y, header_rule_width, header_divider
+                        )
                     )
 
     header_line_height = header_font_size + table_config.text_baseline_offset
@@ -1856,11 +1884,9 @@ def _render_data_rows(
     row_height: int,
     cell_font: FontStyle,
     table_width: float,
+    row_divider: TableDividerStyle,
     cell_pad: int | None = None,
     symbol_mode: Literal["all", "anchors"] = "all",
-    row_rule_width: float = 0.0,
-    summary_rule_width: float = 0.0,
-    rule_color: str | None = None,
     row_role_spec: str | None = None,
     summary_font_weight: str | None = None,
     role_summary: TableRowRoleStyle | None = None,
@@ -2029,8 +2055,9 @@ def _render_data_rows(
         if not is_last_row:
             next_role = resolve_row_role(row_role_spec, rows[row_idx + 1])
             next_is_summary = is_summary_role(next_role)
+        row_rule_width = row_divider.width
         will_draw_row_rule = (
-            row_rule_width > 0
+            row_divider.visible
             and not is_last_row
             and not next_is_summary
             and not row_is_summary
@@ -2085,13 +2112,15 @@ def _render_data_rows(
                 f'fill="{escape_attr(role_bg)}"/>',
             )
 
-        # Summary rule ABOVE the summary row. Decoupled from row_rule_width:
-        # summary_rule_width defaults to row_rule_width (backward compat) but
-        # can be set independently so BI/Classic variants get summary rules
-        # without body row rules.
-        # Single rule for "summary"; double rule (two rects + 1px gap) for "total".
-        if row_is_summary and summary_rule_width > 0:
-            effective_rule_color = rule_color or colors["color"]
+        # Single line above a summary row; double line (1px gap) above a total row.
+        summary_divider = (
+            role_total.divider
+            if row_is_total and role_total
+            else role_summary.divider
+            if role_summary
+            else None
+        )
+        if row_is_summary and summary_divider and summary_divider.visible:
             rule_x1, rule_x2 = _compute_content_span(
                 columns=columns,
                 col_widths=col_widths,
@@ -2100,30 +2129,22 @@ def _render_data_rows(
                 cell_pad=cell_pad,
                 table_width=table_width,
             )
-            line_h = max(1, int(summary_rule_width))
+            line_h = max(1, int(summary_divider.width))
             if row_is_total:
                 gap = 1
                 y_upper = row_y - line_h - gap - line_h
                 y_lower = row_y - line_h
-                svg_parts.append(
-                    f'<rect x="{escape_attr(rule_x1)}" y="{escape_attr(y_upper)}" '
-                    f'width="{escape_attr(rule_x2 - rule_x1)}" height="{escape_attr(line_h)}" '
-                    f'fill="{escape_attr(effective_rule_color)}" '
-                    f'shape-rendering="crispEdges"/>',
-                )
-                svg_parts.append(
-                    f'<rect x="{escape_attr(rule_x1)}" y="{escape_attr(y_lower)}" '
-                    f'width="{escape_attr(rule_x2 - rule_x1)}" height="{escape_attr(line_h)}" '
-                    f'fill="{escape_attr(effective_rule_color)}" '
-                    f'shape-rendering="crispEdges"/>',
-                )
+                for y_line in (y_upper, y_lower):
+                    svg_parts.append(
+                        _divider_segment(
+                            rule_x1, rule_x2, y_line, line_h, summary_divider
+                        )
+                    )
             else:
-                y_single = row_y - line_h
                 svg_parts.append(
-                    f'<rect x="{escape_attr(rule_x1)}" y="{escape_attr(y_single)}" '
-                    f'width="{escape_attr(rule_x2 - rule_x1)}" height="{escape_attr(line_h)}" '
-                    f'fill="{escape_attr(effective_rule_color)}" '
-                    f'shape-rendering="crispEdges"/>',
+                    _divider_segment(
+                        rule_x1, rule_x2, row_y - line_h, line_h, summary_divider
+                    )
                 )
 
         # Row rule BELOW each row — deferred into row_rule_parts so it paints
@@ -2131,7 +2152,6 @@ def _render_data_rows(
         # the top of this iteration; will_draw_row_rule / rule_reserve_px drive
         # both the fill geometry and the rule geometry from the same values.
         if will_draw_row_rule:
-            effective_rule_color = rule_color or colors["color"]
             # rule_y sits at the bottom of the fill band. row_y is integer
             # (pixel-snapped); per_row_height may be float (anti-dangle
             # squeeze), so rule_y may be fractional — SVG renders it fine.
@@ -2153,9 +2173,14 @@ def _render_data_rows(
             # interaction does not ship inside a board.
             rule_pe_attr = ' class="dbt-pointer-inert"' if chart_root_link else ""
             row_rule_parts.append(
-                f'<rect x="{escape_attr(rule_x1)}" y="{escape_attr(rule_y)}" width="{escape_attr(rule_x2 - rule_x1)}" '
-                f'height="{escape_attr(rule_reserve_px)}" fill="{escape_attr(effective_rule_color)}"'
-                f'{rule_pe_attr} shape-rendering="crispEdges"/>',
+                _divider_segment(
+                    rule_x1,
+                    rule_x2,
+                    rule_y,
+                    rule_reserve_px,
+                    row_divider,
+                    extra_attrs=rule_pe_attr,
+                )
             )
 
         cumulative_row_height += per_row_height
@@ -2845,6 +2870,63 @@ def _paginator_window(
     return items
 
 
+def _paginator_items(
+    page: int, total_pages: int, item_width: float
+) -> list[tuple[str, str, int, float]]:
+    """The pager left to right as ``(role, glyph, target_page, slot_width)``.
+
+    Leading chevron, the page window, trailing chevron. Chevrons and ellipses
+    get narrower slots than digits, sitting closer to their boundary neighbors.
+    """
+    aux_slot_w = item_width * _PAGINATOR_AUX_SLOT_RATIO
+    prev_target = page - 1 if page > 1 else 0
+    next_target = page + 1 if page < total_pages else 0
+    items = [("prev", _PAGINATOR_PREV_CHEVRON, prev_target, aux_slot_w)]
+    for entry in _paginator_window(page=page, total=total_pages):
+        if isinstance(entry, str):
+            items.append(("ellipsis", entry, 0, aux_slot_w))
+        else:
+            items.append(("page", str(entry), int(entry), item_width))
+    items.append(("next", _PAGINATOR_NEXT_CHEVRON, next_target, aux_slot_w))
+    return items
+
+
+def _paginator_label(row_start: int, row_end: int, total_rows: int) -> str:
+    return f"Rows {row_start}–{row_end} of {total_rows}"
+
+
+def _paginator_band_width(
+    *,
+    total_rows: int,
+    page_rows: int,
+    font_family: str,
+    paginator: PaginatorStyle,
+    padding: float,
+) -> float:
+    """Table width at which the row label and the pager both fit, on every page.
+
+    The renderer drops the label when it would touch the right-anchored pager,
+    so this is the widest label (the widest page window) plus the padding the
+    label sits in.
+    """
+    total_pages = -(-total_rows // page_rows)
+    font_size = _paginator_font_size(paginator)
+    label_w = get_font_measurer(font_family).measure(
+        _paginator_label(total_rows, total_rows, total_rows), float(font_size)
+    )
+    # Windows differ only in how many ellipses they carry, and page 4 of >= 7
+    # carries the most; scanning four pages finds it without walking every page.
+    pager_w = max(
+        sum(w for *_, w in _paginator_items(page, total_pages, paginator.item_width))
+        for page in range(1, min(total_pages, 4) + 1)
+    )
+    return padding + label_w + pager_w
+
+
+def _paginator_font_size(paginator: PaginatorStyle) -> int:
+    return int(paginator.font.size) if paginator.font.size is not None else 11
+
+
 def _render_pagination_controls(
     page: int,
     total_pages: int,
@@ -2877,22 +2959,7 @@ def _render_pagination_controls(
     (never shrunk, and never shrinks the pager) if it would collide with the
     right-anchored sequence.
     """
-    window = _paginator_window(page=page, total=total_pages)
-
-    # Build the full visual sequence: leading chevron, page items, trailing
-    # chevron. Each entry is (role, glyph, target_page).
-    sequence: list[tuple[str, str, int]] = []
-    prev_target = page - 1 if page > 1 else 0
-    next_target = page + 1 if page < total_pages else 0
-    sequence.append(("prev", _PAGINATOR_PREV_CHEVRON, prev_target))
-    for item in window:
-        if isinstance(item, str):
-            sequence.append(("ellipsis", item, 0))
-        else:
-            sequence.append(("page", str(item), int(item)))
-    sequence.append(("next", _PAGINATOR_NEXT_CHEVRON, next_target))
-
-    font_size = int(paginator.font.size) if paginator.font.size is not None else 11
+    font_size = _paginator_font_size(paginator)
     item_width = paginator.item_width
     text_y = y + 18  # baseline within the reserved control band
     # Hit rect hugs the glyph tightly so cursor:pointer matches the visible
@@ -2902,16 +2969,9 @@ def _render_pagination_controls(
     rect_h = max(font_size * 1.8, 18.0)
     rect_y = y + 4
 
-    # Right-anchored layout: walk slot widths so chevrons and ellipses
-    # get narrower slots than digits, sitting closer to their boundary
-    # neighbors. Total width is the sum of slot widths; the rightmost
-    # slot's right edge sits at ``table_width``.
-    aux_slot_w = item_width * _PAGINATOR_AUX_SLOT_RATIO
-    slot_widths = [
-        aux_slot_w if role in ("prev", "next", "ellipsis") else item_width
-        for role, _, _ in sequence
-    ]
-    total_width = sum(slot_widths)
+    # Right-anchored: the last slot's right edge is ``table_width``.
+    items = _paginator_items(page, total_pages, item_width)
+    total_width = sum(slot_w for *_, slot_w in items)
     cursor_left = table_width - total_width
 
     # Built outside the <g class="dbt-paginator"> group (returned separately
@@ -2920,7 +2980,7 @@ def _render_pagination_controls(
     # is content -- the one line that answers "how much am I not seeing?" on
     # a surface where the reader can't click a page number to find out.
     label_svg = ""
-    label_text = f"Rows {row_start}–{row_end} of {total_rows}"
+    label_text = _paginator_label(row_start, row_end, total_rows)
     label_w = get_font_measurer(font_family).measure(label_text, float(font_size))
     if padding + label_w <= cursor_left:
         safe_label = html_module.escape(label_text, quote=True)
@@ -2937,8 +2997,7 @@ def _render_pagination_controls(
         f'<g class="dbt-paginator" data-paginator="{escape_attr(page_var_name)}">'
     ]
 
-    for i, (role, glyph, target) in enumerate(sequence):
-        slot_w = slot_widths[i]
+    for role, glyph, target, slot_w in items:
         slot_left = cursor_left
         center_x = slot_left + slot_w / 2
         cursor_left += slot_w
@@ -3328,31 +3387,35 @@ class TableLayout:
     table_font_family: str
 
 
-def _layout_table(
+_QueryRows = list[dict[str, Any]]  # type-state: explicit_any — query rows
+
+
+@dataclass(frozen=True)
+class _PreparedColumns:
+    """The table's post-reshape rows and the visible columns they render as."""
+
+    data: _QueryRows
+    columns: list[str]
+    column_configs: dict[str, ResolvedTableColumnConfig]
+    column_when_rules: WhenRules
+    header_groups: list[list[tuple[str, int, int]]] | None
+    row_role_spec: str | None
+
+
+def _prepare_columns(
     chart: ResolvedTableChart,
-    data: list[dict[str, Any]],
-    width: float | None,
-    height: float | None,
-    *,
-    board_style: ResolvedStyle,
-    variables: VariableValues | None,
-    title_shift: TitleShift = NO_TITLE_SHIFT,
-) -> TableLayout:
-    """Resolve every table dimension without painting.
+    data: _QueryRows,
+) -> _PreparedColumns:
+    """Normalize, transpose and pivot ``data``; settle the visible columns.
 
-    ``title_shift`` adds its title band to the table: ``height`` is the slot
-    before the band, so the caller passes the slot it already grew by
-    ``body_dy``.
-
-    Sizing calls this alone; ``_paint_table`` draws from the result. Side
-    effects into the warning sinks (overflow, cramping, page squeeze, static
-    page cap) are recorded here, so measuring and rendering report the same.
+    Shared by ``_layout_table`` and ``measure_table_natural_width`` so a board
+    hugging a table measures exactly the columns the table renders.
     """
     chart_id = chart.id
     table_style = chart.style
-    effective_variables = (
-        variables if variables is not None else current_board_variables()
-    )
+    tc = table_style.table
+    numeric_cell_font = _table_numeric_cell_font(tc.font.family)
+
     data = normalize_data_types(data)
     columns_promoted = chart.columns
 
@@ -3362,10 +3425,8 @@ def _layout_table(
             columns_promoted,
             chart.column_defaults,
             data,
-            _table_numeric_cell_font(table_style.table.font.family),
+            numeric_cell_font,
         )
-
-    tc = table_style.table
 
     # Chart-level pivot (rows/columns/values channels): reshape long → wide.
     # Called unconditionally — a flat table (no pivot_columns) and empty data
@@ -3385,85 +3446,6 @@ def _layout_table(
         values=chart.values,
         row_role_spec=row_role_spec,
     )
-
-    # tc IS both the style and the layout constants (TableChartStyle has all fields)
-    table_config = tc
-
-    row_height = int(tc.row.height)
-    padding = int(tc.outer_padding)
-    assert tc.font.size is not None, (
-        "TableChartStyle.font.size must be set after cascade"
-    )
-    font_size = int(tc.font.size)
-    # Header font size: when not explicitly set, MATCH the body font and
-    # track it through the fit cascade.  BI's apparatus tier (11px) is
-    # an explicit override that does NOT track body — header stays at 11
-    # even when body shrinks to 8.  Minimal and Classic leave it unset
-    # so headers travel with body 14 → 11 → 8.
-    _header_inherits_body = tc.header.font.size is None
-    header_font_size = (
-        int(tc.header.font.size) if tc.header.font.size is not None else font_size
-    )
-    # Header weight: compact tier (body ≤11px) may use font_compact.weight to
-    # apply a lighter weight when body text shrinks — e.g. BI theme uses 500 at
-    # 11px vs. 600 at the default 14px body size.
-    # tc.header.font.weight is guaranteed non-None by the cascade floor (_base.yaml sets '600').
-    assert tc.header.font.weight is not None, (
-        "tc.header.font.weight must be non-None (cascade floor: _base.yaml table.header.font.weight)"
-    )
-    _default_header_weight = str(tc.header.font.weight)
-    if (
-        font_size <= 11
-        and tc.header.font_compact is not None
-        and tc.header.font_compact.weight is not None
-    ):
-        header_font_weight = str(tc.header.font_compact.weight)
-    else:
-        header_font_weight = _default_header_weight
-    wrap_cells = tc.wrap
-    # Header height: theme-required field (never unset after cascade).
-    # Collapse to 0 when the header is hidden so the layout assigns all
-    # vertical room to data rows.
-    header_height = 0 if not tc.header.visible else int(tc.header.height)
-    # Table font family can be overridden at the table level (e.g. Classic
-    # variant uses Source Serif), falling back to the global body font.
-    # Strip CSS-style quotes from font names for SVG compatibility — SVG
-    # font-family attributes treat single quotes as literal characters, not
-    # CSS string delimiters.  'Source Serif 4' → Source Serif 4.
-    # Also prepend "Source Serif 4 Web" alias so the browser prefers our
-    # bundled woff2 over a locally installed system font.
-    # tc.font.family is always filled by apply_inherit in production paths
-    assert tc.font.family is not None, "style.font.family must be configured"
-    table_font_family = _svg_font_family(tc.font.family)
-    assert tc.header.font.family is not None
-    header_font_family = _svg_font_family(tc.header.font.family)
-    header_measurer = get_font_measurer(header_font_family)
-    numeric_cell_font = _table_numeric_cell_font(tc.font.family)
-    bottom_padding = int(tc.bottom_padding)
-    table_width: float = tc.preferred_width if width is None else width
-    # The card is the slot, not the table: on column overflow table_width
-    # widens past the slot (below) but the card must not follow it into the
-    # neighbor, so the wrapper's box and this rect agree on the outer edge.
-    slot_width = table_width
-    title_font = table_style.title_font
-    title_style = table_style.title
-    chart_title = chart.title or ""  # type-state: silent_fallback — untitled ok
-    chart_subtitle = chart.subtitle or ""  # type-state: silent_fallback — optional
-    title_block = compute_table_title_block_layout(
-        chart_title=chart_title,
-        chart_subtitle=chart_subtitle,
-        table_width=table_width,
-        tc=tc,
-        padding=padding,
-        title_style=title_style,
-        card_padding=float(board_style.frame.card_padding),
-        title_font=title_font,
-    )
-    title_height = title_block.height + title_shift.body_dy
-    rendered_title = title_block.rendered_title
-    title_lines = list(title_block.title_lines)
-    subtitle_lines = list(title_block.subtitle_lines)
-    subtitle_font_size = title_block.subtitle_font_size
 
     # columns_promoted is already the complete, final per-column config
     # mapping (defaults + explicit overrides + FK links baked in at resolve).
@@ -3580,8 +3562,6 @@ def _layout_table(
                 numeric_cell_font,
             )
 
-    header_overflow = resolve_header_overflow(table_config, chart.header_overflow)
-
     # A `visible: false` entry must address something the render can act on: a
     # post-pivot column, or a measure key the leaf expansion above fanned
     # out. Anything else is unreachable authoring — a typo, the wrong key
@@ -3687,6 +3667,181 @@ def _layout_table(
         )
         _header_groups = [_spanner_level] if _spanner_level else None
 
+    return _PreparedColumns(
+        data=data,
+        columns=columns,
+        column_configs=column_configs,
+        column_when_rules=column_when_rules,
+        header_groups=_header_groups,
+        row_role_spec=row_role_spec,
+    )
+
+
+def _column_demands(
+    prepared: _PreparedColumns,
+    formats: FormatAliases | None,
+    *,
+    font_family: str,
+    header_font_family: str,
+    font_size: int,
+    header_font_size: int,
+    header_case: CaseValue,
+    cell_pad: int,
+    header_visible: bool,
+) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+    """Per-column ``(cell demands, header demands, word floors)`` in px."""
+    measurer = get_font_measurer(font_family)
+    header_measurer = get_font_measurer(header_font_family)
+    demands, header_demands = measure_column_demands(
+        prepared.columns,
+        prepared.column_configs,
+        prepared.data,
+        measurer,
+        header_measurer=header_measurer,
+        font_size=float(font_size),
+        header_font_size=float(header_font_size),
+        header_case=header_case,
+        cell_pad=cell_pad,
+        formats=formats,
+        header_visible=header_visible,
+        column_when_rules=prepared.column_when_rules,
+    )
+    floors = measure_column_word_floors(
+        prepared.columns,
+        prepared.column_configs,
+        prepared.data,
+        measurer,
+        header_measurer=header_measurer,
+        font_size=float(font_size),
+        header_font_size=float(header_font_size),
+        header_case=header_case,
+        cell_pad=cell_pad,
+        header_visible=header_visible,
+        column_when_rules=prepared.column_when_rules,
+    )
+    return demands, header_demands, floors
+
+
+def _base_table_fonts(tc: TableChartStyle) -> tuple[int, int, str, str]:
+    """``(body size, header size, body family, header family)`` pre-step-down.
+
+    An unset header size tracks the body; families are SVG-safe (quote-stripped).
+    """
+    assert tc.font.size is not None, (
+        "TableChartStyle.font.size must be set after cascade"
+    )
+    assert tc.font.family is not None, "style.font.family must be configured"
+    font_size = int(tc.font.size)
+    header_size = (
+        int(tc.header.font.size) if tc.header.font.size is not None else font_size
+    )
+    assert tc.header.font.family is not None
+    return (
+        font_size,
+        header_size,
+        _svg_font_family(tc.font.family),
+        _svg_font_family(tc.header.font.family),
+    )
+
+
+def _layout_table(
+    chart: ResolvedTableChart,
+    data: _QueryRows,
+    width: float | None,
+    height: float | None,
+    *,
+    board_style: ResolvedStyle,
+    variables: VariableValues | None,
+    title_shift: TitleShift = NO_TITLE_SHIFT,
+) -> TableLayout:
+    """Resolve every table dimension without painting.
+
+    ``title_shift`` adds its title band to the table: ``height`` is the slot
+    before the band, so the caller passes the slot it already grew by
+    ``body_dy``.
+
+    Sizing calls this alone; ``_paint_table`` draws from the result. Side
+    effects into the warning sinks (overflow, cramping, page squeeze, static
+    page cap) are recorded here, so measuring and rendering report the same.
+    """
+    chart_id = chart.id
+    table_style = chart.style
+    effective_variables = (
+        variables if variables is not None else current_board_variables()
+    )
+    prepared = _prepare_columns(chart, data)
+    data = prepared.data
+    columns = prepared.columns
+    column_configs = prepared.column_configs
+    column_when_rules = prepared.column_when_rules
+    _header_groups = prepared.header_groups
+    row_role_spec = prepared.row_role_spec
+    tc = table_style.table
+
+    # tc IS both the style and the layout constants (TableChartStyle has all fields)
+    table_config = tc
+
+    row_height = int(tc.row.height)
+    padding = int(tc.outer_padding)
+    font_size, header_font_size, table_font_family, header_font_family = (
+        _base_table_fonts(tc)
+    )
+    header_measurer = get_font_measurer(header_font_family)
+    _initial_font_size = float(font_size)
+    # Header font size: when not explicitly set, MATCH the body font and
+    # track it through the fit cascade.  BI's apparatus tier (11px) is
+    # an explicit override that does NOT track body — header stays at 11
+    # even when body shrinks to 8.  Minimal and Classic leave it unset
+    # so headers travel with body 14 → 11 → 8.
+    _header_inherits_body = tc.header.font.size is None
+    # Header weight: compact tier (body ≤11px) may use font_compact.weight to
+    # apply a lighter weight when body text shrinks — e.g. BI theme uses 500 at
+    # 11px vs. 600 at the default 14px body size.
+    # tc.header.font.weight is guaranteed non-None by the cascade floor (_base.yaml sets '600').
+    assert tc.header.font.weight is not None, (
+        "tc.header.font.weight must be non-None (cascade floor: _base.yaml table.header.font.weight)"
+    )
+    _default_header_weight = str(tc.header.font.weight)
+    if (
+        font_size <= 11
+        and tc.header.font_compact is not None
+        and tc.header.font_compact.weight is not None
+    ):
+        header_font_weight = str(tc.header.font_compact.weight)
+    else:
+        header_font_weight = _default_header_weight
+    wrap_cells = tc.wrap
+    # Header height: theme-required field (never unset after cascade).
+    # Collapse to 0 when the header is hidden so the layout assigns all
+    # vertical room to data rows.
+    header_height = 0 if not tc.header.visible else int(tc.header.height)
+    bottom_padding = int(tc.bottom_padding)
+    table_width: float = tc.preferred_width if width is None else width
+    # The card stays at the slot width even when column overflow widens
+    # table_width below, so it never runs into the neighboring card.
+    slot_width = table_width
+    title_font = table_style.title_font
+    title_style = table_style.title
+    chart_title = chart.title or ""  # type-state: silent_fallback — untitled ok
+    chart_subtitle = chart.subtitle or ""  # type-state: silent_fallback — optional
+    title_block = compute_table_title_block_layout(
+        chart_title=chart_title,
+        chart_subtitle=chart_subtitle,
+        table_width=table_width,
+        tc=tc,
+        padding=padding,
+        title_style=title_style,
+        card_padding=float(board_style.frame.card_padding),
+        title_font=title_font,
+    )
+    title_height = title_block.height + title_shift.body_dy
+    rendered_title = title_block.rendered_title
+    title_lines = list(title_block.title_lines)
+    subtitle_lines = list(title_block.subtitle_lines)
+    subtitle_font_size = title_block.subtitle_font_size
+
+    header_overflow = resolve_header_overflow(table_config, chart.header_overflow)
+
     # Computed once over the full (post-pivot) dataset — not per page — so a
     # column's bar/column spark layout can't flip anchor or auto-max between
     # pages of the same paginated table. See _spark_column_layout.
@@ -3730,32 +3885,16 @@ def _layout_table(
         )
     data_column_budget = available_width - row_number_width
 
-    col_demands, col_header_demands = measure_column_demands(
-        columns,
-        column_configs,
-        data,
-        get_font_measurer(table_font_family),
-        header_measurer=header_measurer,
-        font_size=float(font_size),
-        header_font_size=float(header_font_size),
-        header_case=_header_font.case or "none",
-        cell_pad=cell_pad,
-        formats=table_style.formats,
-        header_visible=tc.header.visible,
-        column_when_rules=column_when_rules,
-    )
-    col_word_floors = measure_column_word_floors(
-        columns,
-        column_configs,
-        data,
-        get_font_measurer(table_font_family),
-        header_measurer=header_measurer,
-        font_size=float(font_size),
-        header_font_size=float(header_font_size),
+    col_demands, col_header_demands, col_word_floors = _column_demands(
+        prepared,
+        table_style.formats,
+        font_family=table_font_family,
+        header_font_family=header_font_family,
+        font_size=font_size,
+        header_font_size=header_font_size,
         header_case=_header_font.case or "none",
         cell_pad=cell_pad,
         header_visible=tc.header.visible,
-        column_when_rules=column_when_rules,
     )
     col_widths, col_x_offsets, actual_content_width = calculate_column_layout(
         columns,
@@ -3766,6 +3905,7 @@ def _layout_table(
         width_similarity_threshold=table_config.column_layout.width_similarity_threshold,
         word_floors=col_word_floors,
         content_headroom=table_config.column_layout.content_headroom,
+        cell_pad=cell_pad,
     )
 
     _formats = table_style.formats
@@ -3817,7 +3957,6 @@ def _layout_table(
     # After the cascade, body font size may have shrunk. When row numbers are
     # shown, row_number_width is font-dependent and must be recomputed so the
     # data-column budget reflects the final synthetic column width.
-    _initial_font_size = float(int(tc.font.size))  # asserted non-None above
     if font_size < _initial_font_size and row_numbers.visible:
         row_number_width = _row_number_column_width(
             row_numbers=row_numbers,
@@ -3828,32 +3967,16 @@ def _layout_table(
             header_measurer=header_measurer,
         )
         data_column_budget = available_width - row_number_width
-        col_demands, col_header_demands = measure_column_demands(
-            columns,
-            column_configs,
-            data,
-            get_font_measurer(table_font_family),
-            header_measurer=header_measurer,
-            font_size=float(font_size),
-            header_font_size=float(header_font_size),
-            header_case=_header_font.case or "none",
-            cell_pad=cell_pad,
-            formats=table_style.formats,
-            header_visible=tc.header.visible,
-            column_when_rules=column_when_rules,
-        )
-        col_word_floors = measure_column_word_floors(
-            columns,
-            column_configs,
-            data,
-            get_font_measurer(table_font_family),
-            header_measurer=header_measurer,
-            font_size=float(font_size),
-            header_font_size=float(header_font_size),
+        col_demands, col_header_demands, col_word_floors = _column_demands(
+            prepared,
+            table_style.formats,
+            font_family=table_font_family,
+            header_font_family=header_font_family,
+            font_size=font_size,
+            header_font_size=header_font_size,
             header_case=_header_font.case or "none",
             cell_pad=cell_pad,
             header_visible=tc.header.visible,
-            column_when_rules=column_when_rules,
         )
         col_widths, col_x_offsets, actual_content_width = calculate_column_layout(
             columns,
@@ -3864,6 +3987,7 @@ def _layout_table(
             width_similarity_threshold=table_config.column_layout.width_similarity_threshold,
             word_floors=col_word_floors,
             content_headroom=table_config.column_layout.content_headroom,
+            cell_pad=cell_pad,
         )
 
     # Now stitch the synthetic column into the layout: prepend at x=0 and
@@ -4276,12 +4400,6 @@ def _paint_table(
     if _tc_color_static is not None:
         colors["color"] = sanitize_color(_tc_color_static, colors["color"])
     symbol_mode = tc.symbol_mode
-    header_rule_width = float(tc.header.rule.width)
-    row_rule_width = float(tc.row.rule.width)
-    # Summary rule: falls back to row_rule_width when not explicitly set.
-    summary_rule_width = float(
-        tc.row.roles.summary.rule_width or row_rule_width,
-    )
     _summary_role_font = tc.row.roles.summary.font
     summary_font_weight = (
         font_weight_as_css(_summary_role_font.weight)
@@ -4291,12 +4409,6 @@ def _paint_table(
     # Per-role presentation from row.roles (summary / total).
     _role_summary = tc.row.roles.summary
     _role_total = tc.row.roles.total
-    header_rule_continuous = tc.header.rule.continuous
-    # Rules default to the body text color for strong visibility.
-    # Row-level rule color takes precedence over table-level rule color.
-    # Sanitize all user-provided colors; fall back to theme text color.
-    _raw_rule_color = tc.row.rule.color or (tc.rule.color if tc.rule else None)
-    rule_color = sanitize_color(_raw_rule_color, colors["color"])
     title_font = table_style.title_font
     title_font_weight: int | str = int(title_font.weight)
     title_font_size = int(title_font.size)
@@ -4429,9 +4541,7 @@ def _paint_table(
             wrapped_headers=layout.wrapped_headers,
             truncated_headers=layout.truncated_headers,
             cell_pad=layout.cell_pad,
-            header_rule_width=header_rule_width,
-            rule_color=rule_color,
-            header_rule_continuous=header_rule_continuous,
+            header_divider=tc.header.divider,
             row_numbers=layout.row_numbers if layout.row_numbers.visible else None,
             chart_id=chart_id,
         )
@@ -4468,9 +4578,7 @@ def _paint_table(
             table_width=layout.table_width,
             cell_pad=layout.cell_pad,
             symbol_mode=symbol_mode,
-            row_rule_width=row_rule_width,
-            summary_rule_width=summary_rule_width,
-            rule_color=rule_color,
+            row_divider=tc.row.divider,
             row_role_spec=row_role_spec,
             summary_font_weight=summary_font_weight,
             role_summary=_role_summary,
@@ -4746,6 +4854,73 @@ def render_table_svg(
         height=slot_height,
         is_placeholder=is_placeholder,
         inset=inset,
+    )
+
+
+def measure_table_natural_width(
+    chart: ResolvedTableChart,
+    data: _QueryRows,
+) -> float | None:
+    """Width the table needs to show every column, or None with nothing to hug.
+
+    Columns, row numbers and outer padding: the table's own box, before any
+    card padding. Sizing asks this to hug a board to a table whose slot is not
+    authored; no paint, no warnings. A paginated table is at least as wide as
+    its pager band, so the "Rows a–b of N" label is never dropped.
+    """
+    tc = chart.style.table
+    font_size, header_font_size, font_family, header_font_family = _base_table_fonts(tc)
+    prepared = _prepare_columns(chart, data)
+    demands, header_demands, word_floors = _column_demands(
+        prepared,
+        chart.style.formats,
+        font_family=font_family,
+        header_font_family=header_font_family,
+        font_size=font_size,
+        header_font_size=header_font_size,
+        header_case=tc.header.font.case
+        or "none",  # type-state: silent_fallback — an unset header case means no transform, the theme default
+        cell_pad=int(tc.column_layout.cell_padding),
+        header_visible=tc.header.visible,
+    )
+    content_width = natural_content_width(
+        prepared.columns,
+        prepared.column_configs,
+        demands=demands,
+        header_demands=header_demands,
+        word_floors=word_floors,
+        content_headroom=tc.column_layout.content_headroom,
+        cell_pad=int(tc.column_layout.cell_padding),
+    )
+    if content_width is None:
+        return None
+    row_number_width = (
+        _row_number_column_width(
+            row_numbers=tc.row_numbers,
+            total_row_count=len(prepared.data),
+            table_config=tc,
+            font=FontStyle(size=float(font_size), family=font_family),
+            measurer=get_font_measurer(font_family),
+            header_measurer=get_font_measurer(header_font_family),
+        )
+        if tc.row_numbers.visible
+        else 0.0
+    )
+    columns_width = content_width + row_number_width + 2 * int(tc.outer_padding)
+    # Only the page size can paginate an unbounded table; a slot short enough
+    # to paginate is not known here.
+    page_rows = tc.pagination.page_rows if tc.pagination.enabled else None
+    if page_rows is None or len(prepared.data) <= page_rows + _PAGINATION_GROW_CAP:
+        return columns_width
+    return max(
+        columns_width,
+        _paginator_band_width(
+            total_rows=len(prepared.data),
+            page_rows=page_rows,
+            font_family=font_family,
+            paginator=tc.paginator,
+            padding=float(tc.outer_padding),
+        ),
     )
 
 

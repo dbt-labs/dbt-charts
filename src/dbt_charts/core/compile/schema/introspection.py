@@ -42,6 +42,7 @@ from dbt_charts.core.compile.models.query.authored import (
 from dbt_charts.core.compile.models.source import (
     BigQuerySourceConfig,
     CsvSourceConfig,
+    DatabricksSourceConfig,
     DbtProfileSourceConfig,
     DuckDBSourceConfig,
     HttpSourceConfig,
@@ -1018,6 +1019,7 @@ def introspect() -> AuthorableSchema:
         SnowflakeSourceConfig,
         BigQuerySourceConfig,
         RedshiftSourceConfig,
+        DatabricksSourceConfig,
         MySQLSourceConfig,
         DuckDBSourceConfig,
         SQLiteSourceConfig,

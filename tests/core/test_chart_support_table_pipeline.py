@@ -4976,7 +4976,7 @@ def _reserved_axis_gap(spec: dict[str, Any], dt_style: Any) -> float:
     from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
 
     assert dt_style.position == "bottom"
-    assert dt_style.divider.width == 0
+    assert not dt_style.divider.visible
     return _first_strip_row_y(spec) - _row_y_pixel(0, dt_style, 0.0, _TILT_HEIGHT)
 
 

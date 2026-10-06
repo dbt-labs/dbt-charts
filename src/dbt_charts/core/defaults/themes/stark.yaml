@@ -93,6 +93,8 @@ style:
         color_inactive: dbt-grays.inactive
         color_disabled: dbt-grays.disabled
       header:
+        divider:
+          color: *color_ink
         font:
           color: *color_ink
       spark:
@@ -101,6 +103,16 @@ style:
             color: dbt-grays.spark-empty
         bar:
           background: dbt-grays.fill-muted
+      row:
+        divider:
+          color: *color_ink
+        roles:
+          summary:
+            divider:
+              color: *color_ink
+          total:
+            divider:
+              color: *color_ink
 
     spark_bar:
       bar:
@@ -179,6 +191,9 @@ style:
         color: *color_ink
       divider:
         color: *color_ink
+      row:
+        divider:
+          color: *color_ink
       label:
         font:
           color: *color_ink
@@ -246,9 +261,11 @@ style:
         color: dbt-grays.border
         width: 2
         radius: 0
-    # Markdown rules + markdown-table gridlines (was charts.table.border.color).
-    rule:
+    divider:
       color: dbt-grays.separator
+    column:
+      divider:
+        color: dbt-grays.separator
 
   variables:
     font:

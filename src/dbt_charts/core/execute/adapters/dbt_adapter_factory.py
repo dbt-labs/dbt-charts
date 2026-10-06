@@ -292,6 +292,29 @@ def build_adapter(
         creds_kwargs["method"] = infer_bq_method(
             creds_kwargs.get("keyfile"), creds_kwargs.get("keyfile_json")
         )
+    if adapter_type_lower == "databricks":
+        # dbt charts' source schema names this field `socket_timeout`; dbt-databricks
+        # has no top-level field for it — it lives under
+        # connection_parameters._socket_timeout instead. Fold it in here, the
+        # same rename shape as duckdb_config -> config_options above.
+        #
+        # Also sets _retry_stop_after_attempts_duration to the same value:
+        # _socket_timeout alone only bounds each individual socket read, and
+        # this replaces the connector's own retry-loop budget rather than
+        # capping it — an author-supplied value larger than the driver's
+        # 900s default lengthens a hang against an unreachable host, not
+        # shortens one.
+        socket_timeout = creds_kwargs.pop("socket_timeout", None)
+        if socket_timeout is not None:
+            params = dict(
+                creds_kwargs.get("connection_parameters")
+                # type-state: silent_fallback — a dbt_profile target may omit
+                # connection_parameters; {} is the merge identity below, not a guessed value
+                or {}
+            )
+            params["_socket_timeout"] = socket_timeout
+            params["_retry_stop_after_attempts_duration"] = socket_timeout
+            creds_kwargs["connection_parameters"] = params
     creds_kwargs = creds_cls.translate_aliases(creds_kwargs)
     if "schema" not in creds_kwargs:
         default_schema = _SCHEMA_DEFAULTS.get(adapter_type_lower)

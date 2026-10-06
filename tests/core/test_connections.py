@@ -3,7 +3,7 @@ bulk schema, and test_connection."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -584,7 +584,7 @@ class _CleanupCrashingAdapter:
         )
 
     @contextmanager
-    def connection_named(self, name: str) -> Iterator[None]:
+    def connection_named(self, name: str) -> Generator[None, None, None]:
         try:
             yield
         finally:
@@ -668,7 +668,7 @@ class _FailingAdapter:
         )
 
     @contextmanager
-    def connection_named(self, name: str) -> Iterator[None]:
+    def connection_named(self, name: str) -> Generator[None, None, None]:
         yield
 
 

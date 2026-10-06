@@ -284,12 +284,15 @@ class PieEmitter:
             total_style = chart.style.total_style
             theta_field = chart.theta
 
+            # Both center layers reduce the shared pie dataset to row 1, so an
+            # inherited per-datum description would announce the first slice.
             # Value text layer: joinaggregate sum → __dbt_arc_total, show one row.
             value_mark = {
                 "type": "text",
                 "align": "center",
                 "baseline": "bottom",
                 "tooltip": False,
+                "aria": False,
                 **font_style_to_mark(total_style.value.font),
             }
             value_enc: dict[str, Any] = {
@@ -348,6 +351,7 @@ class PieEmitter:
                     "align": "center",
                     "baseline": "top",
                     "tooltip": False,
+                    "aria": False,
                     **font_style_to_mark(total_style.label.font),
                 }
                 label_enc = {

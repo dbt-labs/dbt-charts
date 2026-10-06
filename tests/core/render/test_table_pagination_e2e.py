@@ -26,6 +26,7 @@ charts:
     query: q
     type: table
     style:
+      preferred_width: 400
       pagination:
         enabled: true
         page_rows: 5

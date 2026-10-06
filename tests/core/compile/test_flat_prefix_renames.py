@@ -23,7 +23,6 @@ from dbt_charts.core.compile.models.style.theme import (
     TableChartStyle,
     TableRowStripeStyle,
     TableRowStyle,
-    TableRuleStyle,
 )
 
 # ── BaseAxisGridStyle: zero_color / zero_width (historical flat) → threshold: {color, width} (current nested) ──
@@ -56,13 +55,7 @@ def test_axis_grid_zero_width_flat_rejected() -> None:
         BaseAxisGridStyle.model_validate({"zero_width": 2.0})
 
 
-# ── TableChartStyle: rule_color → rule: TableRuleStyle {color} ────────────────────
-
-
-def test_table_rule_style_parses() -> None:
-    """New TableRuleStyle sub-model parses correctly."""
-    rule = TableRuleStyle.model_validate({"color": "#00bb00"})
-    assert rule.color == "#00bb00"
+# ── TableChartStyle: flat rule_color is rejected ──────────────────────────────
 
 
 def test_table_rule_color_flat_rejected() -> None:

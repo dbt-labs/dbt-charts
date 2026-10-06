@@ -1,8 +1,5 @@
-from pathlib import Path
-
 import pytest
 
-from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile
 
 
@@ -118,8 +115,7 @@ def test_unsupported_shape_error_says_so_rather_than_guessing_a_near_miss() -> N
     message = _compile_chart_type("sankey")
 
     assert "Unknown chart type 'sankey'" in message
-    assert "no built-in type" in message
-    assert "type: custom" in message
+    assert "cannot draw" in message
     # The guessing that produced RJ's broken lollipop starts with a bad suggestion.
     assert "Did you mean" not in message
 
@@ -130,7 +126,7 @@ def test_spider_error_says_so_rather_than_suggesting_pie() -> None:
     message = _compile_chart_type("spider")
 
     assert "Unknown chart type 'spider'" in message
-    assert "type: custom" in message
+    assert "cannot draw" in message
     assert "Did you mean" not in message
 
 
@@ -138,7 +134,7 @@ def test_spider_error_says_so_rather_than_suggesting_pie() -> None:
 def test_more_unsupported_shapes_say_so_rather_than_guessing(noun: str) -> None:
     message = _compile_chart_type(noun)
 
-    assert "type: custom" in message
+    assert "cannot draw" in message
     assert "Did you mean" not in message
 
 
@@ -168,7 +164,7 @@ def test_now_supported_shapes_name_the_recipe_instead_of_cannot_draw(
 def test_unsupported_shape_error_still_lists_the_supported_types() -> None:
     message = _compile_chart_type("treemap")
 
-    assert "type: custom" in message
+    assert "cannot draw" in message
     assert "Supported chart types:" in message
     assert "bar" in message
 
@@ -179,33 +175,3 @@ def test_typo_still_gets_a_did_you_mean_suggestion() -> None:
 
     assert "Did you mean 'bar'?" in message
     assert "cannot draw" not in message
-
-
-def _compile_in_project(tmp_path: Path, chart_type: str, templates: list[str]) -> str:
-    (tmp_path / "templates").mkdir()
-    for name in templates:
-        (tmp_path / "templates" / f"{name}.svg.j2").write_text("<g/>")
-    result = compile(
-        f"charts:\n  c:\n    type: {chart_type}\n    x: a\n    y: b\nrows:\n  - c\n",
-        base_dir=FilesystemProject(tmp_path).directory(),
-    )
-    assert not result.success
-    return result.errors[0].message
-
-
-@pytest.mark.parametrize("authored", ["sankey", "Sankey", "sank-ey"])
-def test_unsupported_shape_with_a_project_template_names_the_template(
-    tmp_path: Path, authored: str
-) -> None:
-    message = _compile_in_project(tmp_path, authored, ["gauge", "sankey"])
-
-    assert "`type: custom` with `template: sankey`" in message
-
-
-def test_unsupported_shape_without_a_matching_template_keeps_the_generic_hint(
-    tmp_path: Path,
-) -> None:
-    message = _compile_in_project(tmp_path, "sankey", ["gauge"])
-
-    assert "template: sankey" not in message
-    assert "type: custom" in message

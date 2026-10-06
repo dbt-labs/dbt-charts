@@ -420,23 +420,20 @@ def render_dashboard(
         )
     else:
         assert board is not None  # guaranteed by the check above
-        # An authored chart_focus measures the board's title and text, images
-        # included, when it pins the chart's slot width at compile.
-        with image_scope(project):
-            if board.path is not None:
-                result = compile_file(board)
-            else:
-                # Pathless in-memory content: no meta.yml cascade to run, so
-                # compile the string directly — the historical yaml_content arm.
-                result = compile(
-                    board.content,
-                    base_dir=project.directory(CHARTS_SUBDIR),
-                    project_sources=project.sources,
-                    project_cache=project.cache,
-                    host_default_source=_charts_meta_default_source(
-                        project.directory(CHARTS_SUBDIR)
-                    ),
-                )
+        if board.path is not None:
+            result = compile_file(board)
+        else:
+            # Pathless in-memory content: no meta.yml cascade to run, so
+            # compile the string directly.
+            result = compile(
+                board.content,
+                base_dir=project.directory(CHARTS_SUBDIR),
+                project_sources=project.sources,
+                project_cache=project.cache,
+                host_default_source=_charts_meta_default_source(
+                    project.directory(CHARTS_SUBDIR)
+                ),
+            )
     _t_compile = time.perf_counter()
 
     if not result.success:
@@ -455,8 +452,7 @@ def render_dashboard(
         # variables) instead of the whole board. Unknown ids fail loudly with
         # the available chart ids — never fall back to the full dashboard.
         try:
-            with image_scope(project):
-                compiled_board = focus_on_chart(compiled_board, chart)
+            compiled_board = focus_on_chart(compiled_board, chart)
         except ValueError as exc:
             return _input_error(str(exc))
     if compiled_board is None:

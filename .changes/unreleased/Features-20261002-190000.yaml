@@ -1,5 +1,0 @@
-kind: Features
-body: 'New `type: custom` chart draws a shape the built-in types lack from a sandboxed Jinja template that emits SVG. `template:` names `templates/<name>.svg.j2` in the project, or `svg:` carries the source inline. A template file declares in a `{#--- ... ---#}` header the channels it takes (`x`, `y`, `color`, `size`, `shape`, `theta`, `value`, set at the chart root like any chart) and typed `options:`, both validated at compile. Templates read `rows`, `channels`, `options`, `width`, `height`, `uid`, the board''s resolved `style`, `math`, and the helpers `format`, `text_width`, `color_for`, and `raise_error`. Output is checked against an SVG allowlist and re-serialized from the checked tree; disallowed constructs fail the chart (`ERR-CUSTOM-SVG`) instead of being stripped. Asking for a shape with no built-in type (sankey, funnel, gauge, ...) now points at `type: custom`.'
-time: 2026-10-02T19:00:00.000000-07:00
-custom:
-  DbtChartsIssue: "2"

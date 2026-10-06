@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`dct cloud login` sessions now renew themselves instead of expiring after 10 hours.'
+time: 2026-10-05T18:00:00.000000-07:00

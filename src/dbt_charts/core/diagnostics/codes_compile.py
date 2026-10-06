@@ -535,18 +535,23 @@ ERR_LAYERS_AMBIGUOUS_Y_DOMAIN = REGISTRY.register(
         domain="compile",
         title="Chart-level y domain is ambiguous with independent layer scales",
         message_template=(
-            "Chart {chart_id!r} sets axis_y.scale.domain={domain!r} but the "
-            "layers use independent y scales (left and right sides differ). "
-            "A chart-level domain is ambiguous when each side has its own scale; "
-            "set axis_y.scale.domain on the individual layer instead."
+            "Chart {chart_id!r} sets axis_y.scale.domain={domain!r} but a layer "
+            "pins its y axis to one side, so the chart has two independent y "
+            "scales and one chart-level domain cannot apply to both. Remove the "
+            "chart-level axis_y.scale.continuous.domain and set "
+            "axis_y.scale.domain on each layer's own axis_y; the base series' "
+            "domain cannot be pinned once a layer sets axis_y.position."
         ),
         doc=(
-            "Fired when a chart sets `axis_y.scale.domain` at the chart level but "
-            "the layers use independent (split) y scales. A chart-level domain is "
-            "ambiguous when left and right sides have different scales. Set "
-            "`axis_y.scale.domain` on the individual layer instead."
+            "Fired when a chart sets `axis_y.scale.domain` at the chart level and "
+            "any layer pins its y axis to a side with `axis_y.position`. The base "
+            "chart takes the opposite side, so the chart has two independent y "
+            "scales and a single chart-level domain is ambiguous. Remove the "
+            "chart-level `axis_y.scale.continuous.domain` and set "
+            "`axis_y.scale.domain` on each layer's own `axis_y`; the base series' "
+            "domain cannot be pinned once a layer sets `axis_y.position`."
         ),
-        summary="Fired when a chart sets a shared y-axis domain but its layers use independent y scales.",
+        summary="Fired when a chart sets a chart-level y-axis domain but a side-pinned layer gives it two independent y scales.",
         docs_topic="charts",
     )
 )
@@ -1876,42 +1881,5 @@ ERR_VARIABLE_NAME_INVALID = REGISTRY.register(
         ),
         summary="Fired when a variable name is not a valid identifier.",
         docs_topic="variables",
-    )
-)
-
-ERR_CUSTOM_TEMPLATE = REGISTRY.register(
-    ErrorCode(
-        code="ERR-CUSTOM-TEMPLATE",
-        domain="compile",
-        title="Custom chart template is missing or invalid",
-        message_template="Chart {chart_id!r} (custom): {reason}",
-        doc=(
-            "Fired when a `type: custom` chart's template cannot be loaded: "
-            "`template:` names no `templates/<name>.svg.j2` file in the project, "
-            "the board has no project to read it from, the `{#--- ... ---#}` "
-            "header is not valid YAML or declares an unknown param type, or the "
-            "Jinja source has a syntax error."
-        ),
-        summary="Fired when a custom chart's template is missing, unparseable, or has a bad header.",
-        docs_topic="charts",
-    )
-)
-
-ERR_CUSTOM_FIELDS = REGISTRY.register(
-    ErrorCode(
-        code="ERR-CUSTOM-FIELDS",
-        domain="compile",
-        title="Custom chart channels or options do not match the template",
-        message_template="Chart {chart_id!r} (custom): {reason}",
-        doc=(
-            "Fired when a `type: custom` chart's channels (`x`, `y`, `color`, ...) "
-            "or `options:` disagree with what its template declares in its "
-            "header: an undeclared channel or option, a required one left out, "
-            "a list on a channel without `multiple: true`, a value of the wrong "
-            "type, or a color option that is not a color. A template with no "
-            "header accepts no channels and no options."
-        ),
-        summary="Fired when a custom chart's channels or options are undeclared, missing, or the wrong type.",
-        docs_topic="charts",
     )
 )

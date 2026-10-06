@@ -393,18 +393,15 @@ def _check_layers_y_domain(
     """Raise CompilationError when a chart-level y domain is set on a split dual-axis chart.
 
     A chart-level axis_y.scale.domain is ambiguous when layers use independent
-    left/right y scales — each side would need its own domain.  Catch this at
-    compile time so the error carries a compile-domain code, not a render-time one.
+    left/right y scales — each side would need its own domain.  One pinned
+    layer is enough to split the axis: the base takes the opposite side.  Catch
+    this at compile time so the error carries a compile-domain code, not a
+    render-time one.
     """
-    if not layers:
-        return
-    positions = {
-        layer.axis_y.position for layer in layers if layer.axis_y.position is not None
-    }
-    # The base chart implicitly occupies the left side; a right-pinned overlay
-    # triggers an independent scale — same logic as _resolved_layer_y_orients.
-    independent_y = bool(positions & {"right"})
-    if independent_y:
+    # Pinning any layer to either side moves the base to the opposite side, so
+    # base and overlay land on different scales — same logic as
+    # _resolved_layer_y_orients.
+    if any(layer.axis_y.position is not None for layer in layers):
         raise CompilationError.from_code(
             ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
             chart_id=chart_id,

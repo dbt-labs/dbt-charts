@@ -531,26 +531,38 @@ class ResolvedFontStyle(BaseModel):
     tabular_figures: bool
 
 
-class RuleStyle(BaseModel):
-    """Shared rule-line primitive: width, color, continuous mode.
+class DividerStyle(BaseModel):
+    """A separator line: whether it draws, and its color, width and line style.
 
-    Used for table header rules, table row rules, support-table dividers, and
-    support-table inter-row rules. All three fields are required; theme YAML
-    supplies every instance. Support-table contexts set `continuous: true` in
-    the theme; render code in that context does not read it.
+    Every divider slot is complete in every theme, so a partial write such as
+    ``{color: red}`` recolors a divider without switching it on or off.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    width: float = Field(description="Rule line width in pixels.")
-    color: Annotated[str | None, Color()] = Field(
-        default=None, description="Rule color; None inherits from theme."
-    )
-    continuous: bool = Field(
+    visible: bool = Field(description="Draw the divider.")
+    color: Annotated[str, Color()] = Field(description="Divider color.")
+    width: float = Field(gt=0, description="Divider line width in pixels.")
+    # Optional on purpose: unset is a solid line, so no theme has to say so.
+    dasharray: str | None = Field(
+        default=None,
         description=(
-            "Draw a continuous full-width rule (true) or only under columns (false)."
+            'Dash pattern in pixels, such as "6 3" (6 drawn, 3 gap); '
+            "unset draws a solid line."
         ),
     )
+
+    @field_validator("dasharray")
+    @classmethod
+    def _dasharray_is_numbers(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parts = re.split(r"[ ,]+", value.strip())
+        if not all(re.fullmatch(r"\d+(\.\d+)?", part) for part in parts):
+            raise ValueError(
+                f"dasharray must be positive numbers such as '6 3', got {value!r}"
+            )
+        return " ".join(parts)
 
 
 class BorderStyle(BaseModel):

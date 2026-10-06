@@ -1322,3 +1322,89 @@ class TestSQLServerAdapter:
 
         assert sum("slow_table" in s for s in sent) == 1
         assert table.rows[0][0] == 1
+
+
+class TestDatabricksAdapter:
+    """Databricks wires through the generic dbt-databricks seam.
+
+    Offline: adapter construction opens no socket (dbt-databricks connects lazily
+    on first use), so build_adapter with register_macros=False constructs the real
+    DbtChartsDatabricksAdapter and lets us assert on the credentials the factory
+    selected, with no live warehouse.
+    """
+
+    _SOURCE = {
+        "type": "databricks",
+        "host": "tenant.cloud.databricks.com",
+        "http_path": "/sql/1.0/warehouses/abc",
+        "catalog": "main",
+        "schema": "analytics",
+        "token": "tok",
+    }
+
+    def test_catalog_translates_to_the_database_field(self) -> None:
+        """dbt-databricks' _ALIASES maps catalog -> database; DatabricksCredentials
+        has no 'catalog' attribute of its own."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(self._SOURCE, register_macros=False)
+        creds = adapter.config.credentials
+        assert type(creds).__name__ == "DatabricksCredentials"
+        assert creds.database == "main"
+        assert creds.host == "tenant.cloud.databricks.com"
+        assert creds.http_path == "/sql/1.0/warehouses/abc"
+        assert creds.token == "tok"
+
+    def test_socket_timeout_folds_into_connection_parameters(self) -> None:
+        """dbt charts' own socket_timeout field has no top-level dbt-databricks
+        counterpart — it must land under connection_parameters._socket_timeout,
+        the field dbt-databricks' driver actually reads."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(
+            {**self._SOURCE, "socket_timeout": 5, "connect_timeout": 5},
+            register_macros=False,
+        )
+        creds = adapter.config.credentials
+        assert creds.connection_parameters["_socket_timeout"] == 5
+        assert creds.connect_timeout == 5
+
+    def test_socket_timeout_also_bounds_the_total_retry_duration(self) -> None:
+        """socket_timeout alone only bounds each individual socket read.
+        dbt-databricks' __pre_deserialize__ defaults
+        _retry_stop_after_attempts_count=30 and _retry_delay_max=60 with no
+        duration cap, so build_adapter must also set
+        _retry_stop_after_attempts_duration or an unreachable host retries
+        for its connector default (~15 minutes) regardless of socket_timeout.
+        """
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(
+            {**self._SOURCE, "socket_timeout": 5}, register_macros=False
+        )
+        params = adapter.config.credentials.connection_parameters
+        assert params["_retry_stop_after_attempts_duration"] == 5
+
+    def test_socket_timeout_above_driver_default_lengthens_the_retry_duration(
+        self,
+    ) -> None:
+        """A socket_timeout above the driver's own ~900s retry budget replaces
+        it rather than clamping it, so an unreachable host retries longer, not
+        shorter."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(
+            {**self._SOURCE, "socket_timeout": 3600}, register_macros=False
+        )
+        params = adapter.config.credentials.connection_parameters
+        assert params["_retry_stop_after_attempts_duration"] == 3600
+
+    def test_no_socket_timeout_leaves_driver_default(self) -> None:
+        """With no socket_timeout supplied, dbt charts injects nothing; the
+        600 seen here is dbt-databricks' own __post_init__ default."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(self._SOURCE, register_macros=False)
+        assert (
+            adapter.config.credentials.connection_parameters["_socket_timeout"] == 600
+        )

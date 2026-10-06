@@ -16,20 +16,6 @@ from dbt_charts.core.compile.schema.introspection import AuthorableSchema
 from dbt_charts.core.compile.schema.renderers.json_schema import render_yaml_schema
 
 
-def _rename_defs(obj: Any) -> Any:
-    """Deep-walk obj, renaming $defs → definitions and updating $ref strings."""
-    if isinstance(obj, dict):
-        return {
-            ("definitions" if k == "$defs" else k): _rename_defs(v)
-            for k, v in obj.items()
-        }
-    if isinstance(obj, list):
-        return [_rename_defs(item) for item in obj]
-    if isinstance(obj, str) and obj.startswith("#/$defs/"):
-        return "#/definitions/" + obj[len("#/$defs/") :]
-    return obj
-
-
 def _extract_description(prop: dict[str, Any]) -> str:
     if "description" in prop:
         return prop["description"]
@@ -43,27 +29,27 @@ def _build_layout_item_def() -> dict[str, Any]:
     return {
         "oneOf": [
             {"type": "string", "description": "Chart name reference."},
-            {"$ref": "#/definitions/AuthoredChart"},
+            {"$ref": "#/$defs/AuthoredChart"},
             {
                 "type": "object",
                 "description": "Nested layout.",
                 "properties": {
                     "rows": {
                         "type": "array",
-                        "items": {"$ref": "#/definitions/LayoutItem"},
+                        "items": {"$ref": "#/$defs/LayoutItem"},
                         "description": "Nested vertical layout items.",
                     },
                     "cols": {
                         "type": "array",
-                        "items": {"$ref": "#/definitions/LayoutItem"},
+                        "items": {"$ref": "#/$defs/LayoutItem"},
                         "description": "Nested horizontal layout items.",
                     },
                     "grid": {
-                        "allOf": [{"$ref": "#/definitions/GridLayout"}],
+                        "allOf": [{"$ref": "#/$defs/GridLayout"}],
                         "description": "Nested grid layout.",
                     },
                     "tabs": {
-                        "allOf": [{"$ref": "#/definitions/TabLayout"}],
+                        "allOf": [{"$ref": "#/$defs/TabLayout"}],
                         "description": "Nested tab layout.",
                     },
                     "title": {
@@ -117,9 +103,9 @@ def _decorate_for_vscode(base: dict[str, Any]) -> dict[str, Any]:
     # tach-ignore(pre-existing compile->project coupling — accepted debt)
     from dbt_charts.core.project import PROJECT_CONFIG_NAME
 
-    schema = _rename_defs(base)
+    schema = dict(base)
     props = schema.setdefault("properties", {})
-    defns = schema.setdefault("definitions", {})
+    defns = schema.setdefault("$defs", {})
 
     # IDE metadata
     schema["title"] = "dbt charts Board"
@@ -152,7 +138,7 @@ def _decorate_for_vscode(base: dict[str, Any]) -> dict[str, Any]:
             props[key] = {
                 "type": "array",
                 "description": _extract_description(props[key]),
-                "items": {"$ref": "#/definitions/LayoutItem"},
+                "items": {"$ref": "#/$defs/LayoutItem"},
             }
 
     # Widen CachePatch to its scalar authoring forms (`cache: 1h`, `cache: false`).
@@ -201,7 +187,7 @@ def _decorate_for_vscode(base: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_vscode_schema(schema: AuthorableSchema) -> dict[str, Any]:
-    """Render an AuthorableSchema as a VS Code draft-07 JSON Schema.
+    """Render an AuthorableSchema as a VS Code JSON Schema 2020-12.
 
     Calls render_yaml_schema for the IR-driven core and decorates with
     IDE-specific extras (fileMatch, layout constraints, etc.).

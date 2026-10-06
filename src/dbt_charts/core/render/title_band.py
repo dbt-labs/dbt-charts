@@ -26,7 +26,6 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.normalized import PAINTS_MARKS
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
-    ResolvedCustomChart,
     ResolvedPieChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
@@ -35,7 +34,6 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
     _SharedResolvedChartFields,
 )
 from dbt_charts.core.compile.models.style.resolved import effective_padding
-from dbt_charts.core.render.chart.custom import title_block_metrics
 from dbt_charts.core.render.chart.spec_builders import (
     VEGA_SUBTITLE_PADDING,
     VEGA_TITLE_OFFSET,
@@ -139,9 +137,6 @@ def chart_title_metrics(
             ascent=inset_top + spark.title_baseline_y,
             tail=block_height - spark.title_baseline_y,
         )
-    if isinstance(chart, ResolvedCustomChart):
-        ascent, tail = title_block_metrics(chart)
-        return TitleMetrics(ascent=inset_top + ascent, tail=tail)
     if chart.chart_type not in PAINTS_MARKS:
         return None
     ascent = title_ascent(size)

@@ -675,3 +675,36 @@ class TestQuantitativeMeasureAxisReservesNothing:
         assert facet_extra_axis_width_px(resolved, resolved.multiples, rows) == 0.0, (
             "a quantitative measure axis must reserve no per-panel width"
         )
+
+
+class TestExtraAxisWidthHonorsLabelFontWeight:
+    """`facet_extra_axis_width_px` measures `labels.font` (`_cartesian.py`)
+    -- but painted labels use `labels.font.weight` (`labelFontWeight` in
+    vl_field_maps.py). A bold-weight category axis must reserve more width
+    than the same labels at the default weight; a regression that measures
+    unweighted (or hardcodes a weight, or reads the wrong axis) leaves this
+    site's return value identical for both and this test catches it, unlike
+    the length-ordering test above, which is weight-agnostic."""
+
+    def _width_at_weight(self, weight: str) -> float:
+        products = ["Widgets", "Gadgets", "Doodads", "Doohickeys", "Sprockets"]
+        data = _sparse_region_data(products)
+        chart = HeatmapChart.model_validate(
+            {
+                "id": "t",
+                "type": "heatmap",
+                "query_name": "q",
+                "x": "week",
+                "y": "product",
+                "color": "value",
+                "multiples": {"columns": "region"},
+                "style": {"axis_y": {"labels": {"font": {"weight": weight}}}},
+            }
+        )
+        _, ctx = _board()
+        resolved = resolve(chart, data, chart_style_context=ctx, width=1200.0)
+        assert resolved.multiples is not None
+        return facet_extra_axis_width_px(resolved, resolved.multiples, data)
+
+    def test_bold_labels_reserve_more_width_than_the_default_weight(self) -> None:
+        assert self._width_at_weight("800") > self._width_at_weight("400")

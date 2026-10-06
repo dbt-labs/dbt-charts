@@ -732,6 +732,7 @@ class BarEmitter:
                 chart.layers,
                 data,
                 chart_id=chart.id,
+                category_colors=chart.category_colors,
                 axis_x=chart.style.axis_x,
                 axis_y=chart.style.axis_y,
                 base_measure_title_suppressed=(
@@ -1313,10 +1314,13 @@ def _emit_vertical(
                     and x_vl_type in ("nominal", "ordinal")
                     and _is_color_1to1_with_x(cat_field, color_field, dataset)
                 )
+                # Pre-fill rows: gap-fill rebuilds `data` as buckets x
+                # sorted(series), which would turn `stack_order: data`
+                # into alphabetical.
                 order, degenerate = _stacked_series_order(
                     chart,
                     series,
-                    data,
+                    dataset.all_rows(),
                     color_field,
                     cat_field,
                     measure_field,
@@ -1808,7 +1812,7 @@ def _emit_horizontal(
                 order, _degenerate_h = _stacked_series_order(
                     chart,
                     series,
-                    data,
+                    dataset.all_rows(),
                     color_field_h,
                     cat_field,
                     measure_field,

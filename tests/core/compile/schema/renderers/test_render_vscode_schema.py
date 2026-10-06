@@ -1,4 +1,4 @@
-"""TDD tests for render_vscode_schema: IR → VS Code draft-07 JSON Schema."""
+"""TDD tests for render_vscode_schema: IR → VS Code JSON Schema 2020-12."""
 
 import json
 
@@ -17,14 +17,14 @@ def vscode_schema():
 
 
 class TestDefsKey:
-    def test_uses_definitions_not_defs(self, vscode_schema) -> None:
-        assert "definitions" in vscode_schema
-        assert "$defs" not in vscode_schema
+    def test_uses_defs_not_definitions(self, vscode_schema) -> None:
+        assert "$defs" in vscode_schema
+        assert "definitions" not in vscode_schema
 
-    def test_all_refs_use_definitions_prefix(self, vscode_schema) -> None:
+    def test_all_refs_use_defs_prefix(self, vscode_schema) -> None:
         schema_str = json.dumps(vscode_schema)
-        assert "#/$defs/" not in schema_str
-        assert "#/definitions/" in schema_str
+        assert "#/definitions/" not in schema_str
+        assert "#/$defs/" in schema_str
 
 
 class TestIdeExtras:
@@ -61,7 +61,7 @@ class TestIdeExtras:
             AUTHORED_CHART_TYPE_TAGS,
         )
 
-        chart_def = vscode_schema["definitions"]["AuthoredChart"]
+        chart_def = vscode_schema["$defs"]["AuthoredChart"]
         type_enum = chart_def["properties"]["type"]["enum"]
         for tag in AUTHORED_CHART_TYPE_TAGS:
             assert tag in type_enum, (
@@ -73,14 +73,14 @@ class TestFieldSetParity:
     def _check_model(self, vscode_schema, model_name: str) -> None:
         ir = introspect()
         ir_fields = {f.name for f in ir.models[model_name].fields}
-        defn = vscode_schema["definitions"].get(model_name, {})
+        defn = vscode_schema["$defs"].get(model_name, {})
         schema_props = set(defn.get("properties", {}).keys())
         missing = ir_fields - schema_props
         assert not missing, f"{model_name} missing fields in VS Code schema: {missing}"
 
     def test_authored_chart_is_discriminated_union_def(self, vscode_schema) -> None:
         # AuthoredChart is a discriminated union; it has allOf (if/then) structure, not fields.
-        chart_def = vscode_schema["definitions"]["AuthoredChart"]
+        chart_def = vscode_schema["$defs"]["AuthoredChart"]
         assert "allOf" in chart_def, (
             "AuthoredChart must have allOf discriminated-union structure"
         )
@@ -99,7 +99,7 @@ class TestFieldSetParity:
         self, vscode_schema
     ) -> None:
         failures = []
-        for model_name, defn in vscode_schema["definitions"].items():
+        for model_name, defn in vscode_schema["$defs"].items():
             for prop_name, prop in defn.get("properties", {}).items():
                 if not prop.get("description"):
                     failures.append(f"{model_name}.{prop_name}")
@@ -110,14 +110,14 @@ class TestFieldSetParity:
 
 class TestStyleSubtree:
     def test_bar_chart_style_is_bar_style_patch_ref(self, vscode_schema) -> None:
-        defns = vscode_schema["definitions"]
-        assert "BarChart" in defns, "BarChart missing from definitions"
+        defns = vscode_schema["$defs"]
+        assert "BarChart" in defns, "BarChart missing from $defs"
         style_prop = defns["BarChart"]["properties"].get("style", {})
         schema_str = json.dumps(style_prop)
-        assert "#/definitions/BarChartStylePatch" in schema_str
+        assert "#/$defs/BarChartStylePatch" in schema_str
 
     def test_bar_style_patch_has_properties(self, vscode_schema) -> None:
-        defns = vscode_schema["definitions"]
+        defns = vscode_schema["$defs"]
         assert "BarChartStylePatch" in defns
         bar_props = defns["BarChartStylePatch"].get("properties", {})
         assert bar_props, "BarChartStylePatch must have properties"
@@ -167,7 +167,7 @@ class TestStringShorthands:
         cannot see — without explicit boolean and unconstrained-string arms the
         IDE red-squiggles the spelling we tell authors to use.
         """
-        arms = vscode_schema["definitions"]["CachePatch"]["oneOf"]
+        arms = vscode_schema["$defs"]["CachePatch"]["oneOf"]
         types = {arm.get("type") for arm in arms}
         assert "boolean" in types, f"cache: false has no boolean arm: {arms}"
         assert any(
@@ -179,7 +179,7 @@ class TestStringShorthands:
         """The block form must accept `ttl: 1h`, not just the `forever` literal."""
         block = next(
             arm
-            for arm in vscode_schema["definitions"]["CachePatch"]["oneOf"]
+            for arm in vscode_schema["$defs"]["CachePatch"]["oneOf"]
             if arm.get("type") == "object"
         )
         ttl = block["properties"]["ttl"]
@@ -188,16 +188,16 @@ class TestStringShorthands:
         )
 
     def test_layout_item_grid_uses_allof_not_bare_ref(self, vscode_schema) -> None:
-        grid_prop = vscode_schema["definitions"]["LayoutItem"]["oneOf"][2][
-            "properties"
-        ]["grid"]
+        grid_prop = vscode_schema["$defs"]["LayoutItem"]["oneOf"][2]["properties"][
+            "grid"
+        ]
         assert "allOf" in grid_prop, "grid must use allOf to allow sibling description"
         assert "$ref" not in grid_prop, "bare $ref must not sit alongside description"
 
     def test_layout_item_tabs_uses_allof_not_bare_ref(self, vscode_schema) -> None:
-        tabs_prop = vscode_schema["definitions"]["LayoutItem"]["oneOf"][2][
-            "properties"
-        ]["tabs"]
+        tabs_prop = vscode_schema["$defs"]["LayoutItem"]["oneOf"][2]["properties"][
+            "tabs"
+        ]
         assert "allOf" in tabs_prop, "tabs must use allOf to allow sibling description"
         assert "$ref" not in tabs_prop, "bare $ref must not sit alongside description"
 
@@ -207,4 +207,4 @@ class TestSourceConnectors:
         """Boards cannot define sources inline, so the board schema exposes neither
         a board-level `sources:` property nor a `Source` connector definition."""
         assert "sources" not in vscode_schema["properties"]
-        assert "Source" not in vscode_schema["definitions"]
+        assert "Source" not in vscode_schema["$defs"]

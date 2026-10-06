@@ -109,10 +109,16 @@ class Style:
         blockquote_padding: Left padding for blockquotes in pixels.
         blockquote_border_width: Width of blockquote left border in pixels.
         table_border_color: Color for table borders.
+        table_border_width: Stroke width of table borders in pixels.
+        table_border_dasharray: SVG ``stroke-dasharray`` for table borders
+            ("" = solid).
+        table_border_visible: Draw table borders.
         table_header_background: Background color for table headers.
         table_cell_padding: Padding inside table cells in pixels.
         hr_color: Color for horizontal rules.
         hr_height: Height of horizontal rules in pixels.
+        hr_dasharray: SVG ``stroke-dasharray`` for horizontal rules ("" = solid).
+        hr_visible: Draw horizontal rules (the space they occupy is kept).
         image_width: Fixed image width in pixels (None = full container width).
         image_height: Fixed image height in pixels (None = auto from aspect ratio).
         image_fallback_aspect_ratio: Aspect ratio when dimensions unknown (default 16:9).
@@ -237,12 +243,17 @@ class Style:
 
     # Table
     table_border_color: str = "#e5e7eb"
+    table_border_width: float = 1.0
+    table_border_dasharray: str = ""
+    table_border_visible: bool = True
     table_header_background: str = "#f9fafb"
     table_cell_padding: float = 8.0
 
     # Horizontal rule
     hr_color: str = "#e5e7eb"
     hr_height: float = 1.0
+    hr_dasharray: str = ""
+    hr_visible: bool = True
 
     # Images
     image_width: Optional[float] = None  # None = full width (100% of container)

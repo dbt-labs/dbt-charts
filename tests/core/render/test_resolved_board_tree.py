@@ -147,7 +147,8 @@ def test_build_resolved_board_is_single_entry_and_calls_v2_resolve_per_chart() -
 
     Asserts:
     - Returns (ResolvedBoard, RenderCache) tuple (not bare ResolvedBoard).
-    - Calls compile.resolve.resolve (V2) exactly once per chart within itself.
+    - Calls compile.resolve.resolve (V2) once per chart within itself, plus one
+      uncached resolve per unpinned table to measure its width for the board hug.
 
     Charts are resolved lazily inside _require_resolved (in layout_sizing)
     at the point where each item's layout pixel width is known.  The resolve
@@ -181,9 +182,10 @@ def test_build_resolved_board_is_single_entry_and_calls_v2_resolve_per_chart() -
     assert isinstance(result, tuple) and len(result) == 2, (
         f"build_resolved_board must return (ResolvedBoard, RenderCache) tuple, got {type(result)}"
     )
-    # V2 resolve called once per chart (4 charts: bar, kpi, table, callout)
-    assert len(counter) == 4, (
-        f"Expected V2 resolve called once per chart (4 charts), got {len(counter)}"
+    # Once per chart (bar, kpi, table, callout), plus one uncached resolve the
+    # board-width hug makes to measure the unpinned table's columns.
+    assert len(counter) == 5, (
+        f"Expected 4 charts + 1 table width measurement, got {len(counter)}"
     )
 
 

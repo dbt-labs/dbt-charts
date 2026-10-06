@@ -102,7 +102,10 @@ def test_an_exact_frame_width_beats_title_and_prose() -> None:
 def test_an_authored_item_width_beats_the_prose_preference() -> None:
     margin, _, _ = _chrome()
     body = f"rows:\n  - text: {_LONG}\n    width: 250\n"
-    assert _width(body) == 250 + 2 * margin
+    no_footer = (
+        "style:\n  footer:\n    visible: false\n  timestamp:\n    visible: false\n"
+    )
+    assert _width(body, style=no_footer) == 250 + 2 * margin
 
 
 def test_a_hugged_prose_block_never_wraps_inside_its_own_width(tmp_path: Path) -> None:

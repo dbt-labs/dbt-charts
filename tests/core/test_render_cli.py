@@ -1,7 +1,7 @@
 """Tests for dct render CLI command."""
 
 import textwrap
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -174,7 +174,7 @@ class TestRenderChartFlag:
         @contextmanager
         def fake_from_project(
             project: object, *, cache: object, **_kwargs: object
-        ) -> Iterator[MagicMock]:
+        ) -> Generator[MagicMock, None, None]:
             yield fake_project
 
         return fake_project, fake_from_project

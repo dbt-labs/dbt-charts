@@ -15,6 +15,7 @@ from dbt_charts.core.compile.models.cache import (
 )
 from dbt_charts.core.compile.template.jinja import (
     RESERVED_VARIABLE_NAMES,
+    extract_sql_variable_dependencies,
     extract_variable_dependencies,
 )
 from dbt_charts.core.diagnostics.codes_compile import ERR_VARIABLE_NAME_INVALID
@@ -197,7 +198,12 @@ def _synthetic_sql_query(
         source_cache_layer(sources, source, query_name),
         board_cache,
     )
-    return SqlQuery(sql=sql, source=source, cache=cache)
+    return SqlQuery(
+        sql=sql,
+        source=source,
+        cache=cache,
+        variable_dependencies=frozenset(extract_sql_variable_dependencies(sql, None)),
+    )
 
 
 def promote_inline_option_queries(
@@ -470,6 +476,13 @@ def validate_variable_references(board: Board) -> list[UnknownVariableError]:
     return errors
 
 
+def _own_query_deps(query: AnyQuery) -> set[str]:
+    """Variables the query's own SQL names, excluding those of queries it embeds."""
+    if not isinstance(query, SqlQuery):
+        return set()
+    return extract_sql_variable_dependencies(query.sql, query.setup_sql)
+
+
 def _chart_direct_deps(chart: Chart) -> set[str]:
     """Extract variable names the chart itself references (title, subtitle, inline query).
 
@@ -478,7 +491,8 @@ def _chart_direct_deps(chart: Chart) -> set[str]:
     the correct "Query 'q'" owner attribution.
 
     For INLINE queries (query_is_inline=True), the query is NOT in board.queries,
-    so its variable_dependencies are included here and attributed to the chart.
+    so the variables its own SQL names are included here and attributed to the
+    chart.
     """
     deps: set[str] = set()
     # title/subtitle are on _SharedChartFields (not KpiChart); label is on KpiChart.
@@ -490,7 +504,7 @@ def _chart_direct_deps(chart: Chart) -> set[str]:
         and chart.query_is_inline
         and chart.query is not None
     ):
-        deps |= chart.query.variable_dependencies
+        deps |= _own_query_deps(chart.query)
     return deps
 
 
@@ -511,8 +525,15 @@ def _collect_referenced_vars_recursive(
                     )
                 )
 
+    synthetic_option_queries = {
+        name
+        for var in (board.variable_registry.values() if board.variable_registry else ())
+        if (name := var.get_option_query()) and name.startswith("_")
+    }
     for query_name, query in board.queries.items():
-        for ref in sorted(query.variable_dependencies):
+        if query_name in synthetic_option_queries:
+            continue
+        for ref in sorted(_own_query_deps(query)):
             if ref not in defined_vars:
                 errors.append(
                     UnknownVariableError(
@@ -522,15 +543,11 @@ def _collect_referenced_vars_recursive(
                     )
                 )
 
-    # Variable-level filter templates (cascading-dropdown case).
-    # Synthetic option queries (names starting with "_") have their
-    # `variable_dependencies` filtered to only valid/defined deps during
-    # compilation (for the UI re-evaluation graph), so invalid refs are stripped
-    # and the query loop misses them. Re-extract from SQL to catch those.
-    #
-    # Named option queries (user-declared in queries:, no leading "_") are already
-    # processed by the query loop above with their full variable_dependencies.
-    # Do NOT re-extract for them — that produces duplicate errors.
+    # Variable-level filter templates (cascading-dropdown case). Synthetic option
+    # queries (names starting with "_") are skipped by the query loop above and
+    # checked here, so each undefined ref is reported once, under the Variable.
+    # Named option queries are already covered by the query loop; re-extracting
+    # them here would duplicate their errors.
     if board.variable_registry:
         for var_name, var in board.variable_registry.items():
             option_query_name = var.get_option_query()
@@ -541,7 +558,7 @@ def _collect_referenced_vars_recursive(
             ):
                 opt_query = board.queries[option_query_name]
                 if isinstance(opt_query, SqlQuery) and opt_query.sql:
-                    for ref in sorted(extract_variable_dependencies(opt_query.sql)):
+                    for ref in sorted(_own_query_deps(opt_query)):
                         if ref not in defined_vars:
                             errors.append(
                                 UnknownVariableError(
@@ -795,14 +812,7 @@ def compute_variable_dependencies(
         if options_query_name and options_query_name in query_registry:
             query = query_registry[options_query_name]
 
-            # Extract variable dependencies from query SQL and setup_sql
-            if isinstance(query, SqlQuery) and query.sql:
-                sql_deps = extract_variable_dependencies(query.sql)
-                # Filter to only include variables that actually exist
-                deps = sql_deps & set(variables.keys())
-            if isinstance(query, SqlQuery) and query.setup_sql:
-                setup_deps = extract_variable_dependencies(query.setup_sql)
-                deps |= setup_deps & set(variables.keys())
+            deps = set(query.variable_dependencies) & set(variables.keys())
 
         # Also extract deps from enabled Jinja expressions so the UI
         # re-evaluates enabled state when any referenced variable changes.

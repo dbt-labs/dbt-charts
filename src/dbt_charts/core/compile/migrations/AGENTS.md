@@ -59,14 +59,15 @@ deliberate refusal to fuzzy-match, because the nearest spelling to
 drops compaction. Silence is the failure mode here, not a crash.
 
 **Renames go through `suffix_rename_moves`**, never a hand-enumerated path
-list. Not exhaustive: `_relative_field_paths`' `seen` guard makes a
-self-nested `AuthoredBoard` opaque, so a sub-board declaring its own `charts:`
-map is outside the resolved set.
+list. `_relative_field_paths`' `seen` guard makes a self-nested `AuthoredBoard`
+opaque, so every `Move` it yields carries `sub_board_prefixes`
+(`board_nesting_prefixes`) and `move_locations` re-runs the path inside each
+board nested in a board. A hand-built `Move` reaches only the boards its author listed.
 
 **A resolved path is not permission to rewrite; the gate is.** Its `*` came
 from one declared union arm while application is arm-blind, so wherever an
 open map sits beside a declared field the final segment can land on a key the
-author *named*. `move_source_locations` gates every yield:
+author *named*. `move_locations` gates every yield:
 `_plausible_positions` (identity — required props and an agreeing `type`,
 honoring the union's `if`/`then`), `_declares_tail` (declared properties
 only, never `additionalProperties` — the distinction `Deletion` draws), and

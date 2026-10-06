@@ -227,7 +227,7 @@ class TestSubdayClockRenderedTicks:
         start = dt.datetime(2026, 8, 11, 0, 0)
         data = [
             {"ts": (start + dt.timedelta(hours=h)).isoformat(), "value": h}
-            for h in range(0, 25, 3)
+            for h in range(0, 28, 3)
         ]
         chart = LineChart.model_validate(
             {

@@ -19,6 +19,7 @@ from dbt_charts.core.compile.models.markers import (
 )
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
+    DividerStyle,
     FontStyle,
 )
 
@@ -63,20 +64,6 @@ class PaddingStyle(BaseModel):
     bottom: float = Field(description="Bottom padding in pixels.")
 
 
-class ColumnRuleStyle(BaseModel):
-    """Vertical rule drawn between prose columns, structured like BorderStyle."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    width: float = Field(gt=0, description="Rule line width in pixels.")
-    color: Annotated[str, Color()] = Field(
-        description="Rule color as a CSS color string."
-    )
-    style: Literal["solid", "dashed", "dotted"] = Field(
-        default="solid", description="Rule line style."
-    )
-
-
 class TextColumnStyle(BaseModel):
     """Author overrides for the column layout of board body text.
 
@@ -102,9 +89,8 @@ class TextColumnStyle(BaseModel):
             "is not enough text to fill them. None = no ceiling."
         ),
     )
-    rule: ColumnRuleStyle | None = Field(
-        default=None,
-        description="Vertical rule drawn between columns. None = no rule.",
+    divider: DividerStyle = Field(
+        description="Vertical line drawn between columns.",
     )
     max_chars: int | None = Field(
         default=None,
@@ -424,7 +410,7 @@ class TextCodeStyle(BoxStyle):
 
 
 class TextBlockquoteStyle(BoxStyle):
-    """Blockquote prose. Box group; border is the left rule."""
+    """Blockquote prose. Box group; border is the left bar."""
 
 
 class TextBoldStyle(BaseModel):
@@ -465,20 +451,6 @@ class BlockMarginStyle(BaseModel):
     )
 
 
-class TextRuleStyle(BaseModel):
-    """Horizontal rules in markdown prose: `---` and markdown-table gridlines.
-
-    One slot, because mdsvg paints both from it and always has. Splitting it
-    would invent a knob no theme has ever needed.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    color: Annotated[str, Color()] = Field(
-        description="Color of markdown horizontal rules and markdown-table gridlines."
-    )
-
-
 class TextStyle(BaseModel):
     """Markdown / plain text content."""
 
@@ -503,20 +475,19 @@ class TextStyle(BaseModel):
         description="Spacing above/below heading blocks (H1–H6) in line-height units."
     )
     column: TextColumnStyle = Field(
-        default_factory=TextColumnStyle,
         description="Multi-column layout for the board body-text block.",
     )
     code: TextCodeStyle = Field(
         description="Inline + fenced code box styling (font, background, border)."
     )
     blockquote: TextBlockquoteStyle = Field(
-        description="Blockquote box styling (font, background, border/left-rule)."
+        description="Blockquote box styling (font, background, border/left bar)."
     )
     bold: TextBoldStyle = Field(
         description="Inline bold-run styling (weight), distinct from heading weight.",
     )
-    rule: TextRuleStyle = Field(
-        description="Markdown horizontal-rule and table-gridline color."
+    divider: DividerStyle = Field(
+        description="Markdown horizontal rules (`---`) and markdown-table gridlines."
     )
 
 

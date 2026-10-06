@@ -716,8 +716,10 @@ class TestV2MirrorAxis:
                 },
             }
         )
-        with pytest.raises(ChartDataError, match="labels.align"):
+        with pytest.raises(ChartDataError, match="labels.align") as exc_info:
             _v2_vl(chart, _wide_data())
+        assert exc_info.value.code.code == "ERR-MIRROR-UNMEASURABLE-ALIGN"
+        assert "mirror.format" in str(exc_info.value)
 
     def test_mirror_is_boolean_only(self):
         """style.axis_y.mirror is a boolean flag — non-bool values are rejected."""

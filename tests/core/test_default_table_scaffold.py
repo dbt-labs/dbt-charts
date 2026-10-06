@@ -217,8 +217,8 @@ class TestPydanticDefaults:
         )
 
         header = get_theme_style().charts.table.header
-        assert header.rule.width > 0
-        assert header.rule.continuous is True
+        assert header.divider.visible
+        assert header.divider.continuous is True
 
     def test_summary_rule_is_on(self):
         """Summary row rule is on — verify via theme pipeline."""
@@ -227,8 +227,8 @@ class TestPydanticDefaults:
         )
 
         roles = get_theme_style().charts.table.row.roles
-        assert isinstance(roles.summary.rule_width, float)
-        assert roles.summary.rule_width > 0
+        assert isinstance(roles.summary.divider.width, float)
+        assert roles.summary.divider.visible
 
 
 class TestApparatusRefactor:

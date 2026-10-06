@@ -1020,16 +1020,17 @@ class TestBuildCartesianXEncodingSubdayClock:
         Vega actually renders across — cartesian_x_scale_domain applies it to
         the compiled spec AFTER this function decides. 11 points at 1-minute
         spacing (09:00 -> 09:10) clear the tick-cadence gate on the DATA's
-        own extent, but the AUTHORED domain here spans a full calendar day
+        own extent, but the AUTHORED domain here runs into a second day
         (two midnights), which the gate must see to add the date-context
-        row — otherwise two ticks read bare "Midnight" for different days
-        with no date row to disambiguate them (rule 5's exact hazard).
+        row — otherwise two ticks read the same bare clock text for
+        different days with no date row to disambiguate them (rule 5's
+        exact hazard).
         """
         data = _rows(
             [f"2026-08-11T09:{m:02d}:00" for m in range(11)],
         )
         ax = _axis_with_scale(
-            scale_domain=("2026-08-11T00:00:00", "2026-08-12T00:00:00")
+            scale_domain=("2026-08-11T00:00:00", "2026-08-12T06:00:00")
         )
         _, ax_vl, _tu = build_cartesian_x_encoding(
             data, "date", ax, {}, "line", outer_chart_width=600.0

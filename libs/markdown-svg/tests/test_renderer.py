@@ -2257,3 +2257,41 @@ class TestOpeningBlockMarginCollapse:
         body = renderer.measure(parse("> Body text."), width=400, padding=0.0).height
 
         assert after - body - quoted == pytest.approx(20.0, abs=0.01)
+
+
+class TestDividerStyle:
+    """Horizontal rules and table gridlines honor visibility, width and dashes."""
+
+    HR = "above\n\n---\n\nbelow"
+    TABLE = "| a | b |\n|---|---|\n| 1 | 2 |"
+
+    def _svg(self, markdown: str, **style: object) -> str:
+        return render(markdown, style=Style(**style), width=300)  # type: ignore[arg-type]
+
+    def test_solid_defaults_are_unchanged(self) -> None:
+        svg = self._svg(self.HR)
+        assert re.search(r'<rect[^>]*height="1"[^>]*fill="#e5e7eb"/>', svg)
+        assert "stroke-dasharray" not in svg
+
+    def test_hidden_rule_keeps_its_space(self) -> None:
+        shown = measure(self.HR, style=Style(), width=300)
+        hidden = measure(self.HR, style=Style(hr_visible=False), width=300)
+        assert hidden.height == shown.height
+        assert 'fill="#e5e7eb"' not in self._svg(self.HR, hr_visible=False)
+
+    def test_dashed_rule_is_a_stroked_line(self) -> None:
+        svg = self._svg(self.HR, hr_dasharray="6 3", hr_height=2.0, hr_color="#123456")
+        assert re.search(
+            r'<line[^>]*stroke="#123456"[^>]*stroke-width="2"[^>]*stroke-dasharray="6 3"',
+            svg,
+        )
+
+    def test_table_gridlines_take_width_and_dashes(self) -> None:
+        svg = self._svg(
+            self.TABLE, table_border_width=2.0, table_border_dasharray="2 2"
+        )
+        assert 'stroke-width="2"' in svg and 'stroke-dasharray="2 2"' in svg
+
+    def test_hidden_table_gridlines(self) -> None:
+        svg = self._svg(self.TABLE, table_border_visible=False)
+        assert "stroke=" not in svg

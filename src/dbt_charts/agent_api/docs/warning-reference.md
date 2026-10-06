@@ -474,7 +474,7 @@ Chart {chart_id!r} authored `legend.values` entries {values} that did not resolv
 
 Fires when `style.legend.values` names an entry that matches none of the chart's legend entries, or matches more than one. The entry is dropped rather than shown or causing a render failure. If every authored entry misses, the legend falls back to its default order. Covers every nominal/ordinal `color:` field on bar, area, line, scatter, heatmap, and pie, a wide `y: [...]` chart, an overlay's `layers:` labels, and a geoshape choropleth. Not checked: `point_map`/`bubble_map` (no legend resolution there), a quantitative, temporal, or boolean `color:` column (`legend.values` is used exactly as authored, with no diagnostic on a miss), and an overlay whose base `y` is non-quantitative (its shared color scale is never built, so `legend.values` passes through verbatim).
 
-### WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER: Y-axis field looks like money or a percentage but uses a generic format
+### WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER: Field looks like money, a percentage or a fraction but has no fitting format
 
 - **Level:** warning
 - **Domain:** render
@@ -483,12 +483,12 @@ Fires when `style.legend.values` names an entry that matches none of the chart's
 **Message template:**
 
 ```
-Chart {chart_id!r}: field {field!r} looks like {kind} but the y-axis format is {format!r}.
+Chart {chart_id!r}: field {field!r} looks like {kind} but the {surface} {format_state}.
 ```
 
-**Fix:** Set `{format_key}` to {currency_format} or a percent format (`.1%` for a 0-1 share, or `suffix: '%'` for values already in percent points) to match the field's meaning.
+**Fix:** Set `{format_key}` to {suggestion} to match the field's meaning.
 
-Fires when a chart's y-encoding field name looks like money or a percentage but the chart's baked y-axis format is unfit to render that kind. Detection is name-based: fields ending in _usd, _revenue, _amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) trigger when the resolved y-axis format is unfit for that kind. A percent-classified field needs a `%` in the resolved format or in an authored FormatConfig prefix/suffix (a column already in percent points, `suffix: '%'`, is labeled); any other affix does not satisfy it. A currency-classified field is satisfied either by a `$` in the resolved format OR by an authored FormatConfig prefix/suffix (e.g. `€`, `EUR `) with no `$` anywhere: d3's grammar admits only `$`/`#` as a spec's own symbol character, so a non-dollar currency can only ever reach the axis through that authored affix. The fix suggests the dollar spec (`$,.2f`), except for a currency-classified field whose trailing `_<code>` names a currency dbt Charts recognizes (`_eur`, `_gbp`): it suggests `,.2f` with `prefix: '€'` (that currency's own symbol).
+Fires when a chart's y-encoding field name looks like money or a percentage but the chart's baked y-axis format is unfit to render that kind. Detection is name-based: fields ending in _usd, _revenue, _amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) trigger when the resolved y-axis format is unfit for that kind. A percent-classified field needs a `%` in the resolved format or in an authored FormatConfig prefix/suffix (a column already in percent points, `suffix: '%'`, is labeled); any other affix does not satisfy it. A currency-classified field is satisfied either by a `$` in the resolved format OR by an authored FormatConfig prefix/suffix (e.g. `€`, `EUR `) with no `$` anywhere: d3's grammar admits only `$`/`#` as a spec's own symbol character, so a non-dollar currency can only ever reach the axis through that authored affix. The fix suggests the dollar spec (`$,.2f`), except for a currency-classified field whose trailing `_<code>` names a currency dbt Charts recognizes (`_eur`, `_gbp`): it suggests `,.2f` with `prefix: '€'` (that currency's own symbol). Also fires on a visible table column with no number format whose non-null values are all numbers between 0 and 1, and not all exactly 0 or 1 (a flag): left unformatted it renders in SI notation (0.4367 shows as `437m`). The fix is to set `style.columns.<name>.format`, e.g. `.1%`. Pivot measure columns are not checked.
 
 ### WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS: Authored axis label expression uses local time on a bucketed axis
 

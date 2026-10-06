@@ -9,7 +9,7 @@ and alignment live alongside each other under ``text``.
 - Both interactive and non-interactive export use the same SVG path
 - align maps to correct SVG text-anchor values
 - Columns produce multiple translate groups with ascending x offsets
-- column.rule produces a vertical SVG <line> element
+- column.divider produces a vertical SVG <line> element
 - Security: script/event-handler injection absent from SVG output
 - Sizing: multi-column height estimation via per-column-width measurement
 """
@@ -20,7 +20,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from dbt_charts.core.compile.models.style.theme import ColumnRuleStyle, TextColumnStyle
+from dbt_charts.core.compile.models.primitives import DividerStyle
+from dbt_charts.core.compile.models.style.theme import TextColumnStyle
 
 from ._prose_plan import full_width_plan
 from ._svg_render import render_board_file
@@ -30,31 +31,35 @@ from ._svg_render import render_board_file
 # ---------------------------------------------------------------------------
 
 
+_DIVIDER = DividerStyle(visible=False, color="#e5e7eb", width=1)
+
+
 class TestTextColumnStyle:
     def test_defaults(self):
-        col = TextColumnStyle()
+        col = TextColumnStyle(divider=_DIVIDER)
         assert col.max_number is None
-        assert col.rule is None
         assert col.max_chars is None
 
+    def test_divider_is_required(self):
+        with pytest.raises(ValidationError):
+            TextColumnStyle(max_number=3)  # type: ignore[call-arg]
+
     def test_explicit_values(self):
-        col = TextColumnStyle(
-            max_number=3, rule=ColumnRuleStyle(width=1, color="#e5e7eb")
-        )
+        col = TextColumnStyle(max_number=3, divider=_DIVIDER)
         assert col.max_number == 3
-        assert col.rule == ColumnRuleStyle(width=1, color="#e5e7eb")
+        assert col.divider == _DIVIDER
 
     def test_extra_fields_forbidden(self):
         with pytest.raises(ValidationError):
-            TextColumnStyle(max_number=2, bogus="nope")
+            TextColumnStyle(max_number=2, divider=_DIVIDER, bogus="nope")
 
     def test_width_field_rejected(self):
         """column.width was removed in Stage 3; max_chars is the replacement."""
         with pytest.raises(ValidationError):
-            TextColumnStyle(width=300.0)  # type: ignore[call-arg]
+            TextColumnStyle(width=300.0, divider=_DIVIDER)  # type: ignore[call-arg]
 
     def test_max_chars_sets_column_measure(self):
-        col = TextColumnStyle(max_chars=80)
+        col = TextColumnStyle(max_chars=80, divider=_DIVIDER)
         assert col.max_chars == 80
         assert col.max_number is None
 
@@ -68,41 +73,33 @@ class TestTextColumnStyle:
 
     def test_max_chars_zero_rejected(self):
         with pytest.raises(ValidationError, match="greater than 0"):
-            TextColumnStyle(max_chars=0)
+            TextColumnStyle(max_chars=0, divider=_DIVIDER)
 
     def test_max_chars_negative_rejected(self):
         with pytest.raises(ValidationError):
-            TextColumnStyle(max_chars=-80)
+            TextColumnStyle(max_chars=-80, divider=_DIVIDER)
 
-    def test_rule_stands_alone(self):
+    def test_divider_stands_alone(self):
         """Columns are automatic, so decorating them needs no count.
 
-        Requiring a count to draw a rule would mean pinning a ceiling the author
+        Requiring a count to draw a divider would mean pinning a ceiling the author
         does not want just to decorate a layout the renderer chose.
         """
-        rule = ColumnRuleStyle(width=1, color="#ccc")
-        assert TextColumnStyle(rule=rule).rule == rule
+        divider = DividerStyle(visible=True, width=1, color="#ccc", dasharray="6 3")
+        assert TextColumnStyle(divider=divider).divider == divider
 
-    def test_column_rule_extra_field_rejected(self):
+    def test_divider_style_rejected_when_unknown(self):
         with pytest.raises(ValidationError):
-            ColumnRuleStyle(width=1, color="#ccc", bogus="nope")
+            DividerStyle(
+                visible=True,
+                width=1,
+                color="#ccc",
+                style="groove",  # type: ignore[arg-type]
+            )
 
-    def test_column_rule_width_zero_rejected(self):
-        with pytest.raises(ValidationError, match="greater than 0"):
-            ColumnRuleStyle(width=0, color="#ccc")
-
-    def test_column_rule_invalid_style_rejected(self):
-        with pytest.raises(ValidationError):
-            ColumnRuleStyle(width=1, color="#ccc", style="groove")  # type: ignore[arg-type]
-
-    def test_column_rule_style_defaults_to_solid(self):
-        rule = ColumnRuleStyle(width=1, color="#ccc")
-        assert rule.style == "solid"
-
-    def test_column_rule_accepts_named_colors(self):
-        """Unlike the old CSS-shorthand string, a structured rule takes any color."""
-        rule = ColumnRuleStyle(width=1, color="red")
-        assert rule.color == "red"
+    def test_divider_accepts_named_colors(self):
+        divider = DividerStyle(visible=True, width=1, color="red")
+        assert divider.color == "red"
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +129,7 @@ class TestStylePatchTextParsing:
         assert patch.text is not None
         assert patch.text.column.max_number == 3
 
-    def test_text_column_rule(self):
+    def test_text_column_divider(self):
         from dbt_charts.core.compile.models.style.authored import StylePatch
 
         patch = StylePatch.model_validate(
@@ -140,14 +137,14 @@ class TestStylePatchTextParsing:
                 "text": {
                     "column": {
                         "max_number": 2,
-                        "rule": {"width": 1, "color": "#ccc"},
+                        "divider": {"width": 1, "color": "#ccc"},
                     }
                 }
             }
         )
         assert patch.text is not None
-        assert patch.text.column.rule.width == 1.0
-        assert patch.text.column.rule.color == "#ccc"
+        assert patch.text.column.divider.width == 1.0
+        assert patch.text.column.divider.color == "#ccc"
 
     def test_text_align(self):
         from dbt_charts.core.compile.models.style.authored import StylePatch
@@ -290,9 +287,9 @@ style:
         assert "<svg" in svg
         assert "<foreignObject" not in svg
 
-    def test_column_rule_renders_as_svg_line(self, tmp_path: Path):
-        """column.rule must produce a vertical <line> in the SVG, not a CSS property."""
-        board = tmp_path / "charts" / "rule.yml"
+    def test_column_divider_renders_as_svg_line(self, tmp_path: Path):
+        """column.divider must produce a vertical <line> in the SVG, not a CSS property."""
+        board = tmp_path / "charts" / "divider.yml"
         board.parent.mkdir(parents=True)
         board.write_text(
             _LONG_BODY_TEXT
@@ -303,7 +300,8 @@ style:
   text:
     column:
       max_number: 2
-      rule:
+      divider:
+        visible: true
         width: 1
         color: "#e5e7eb"
 """

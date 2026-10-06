@@ -1,0 +1,3 @@
+kind: Features
+body: 'Separator lines are all called `divider` and take the same keys: `visible`, `color`, `width` and `dasharray` (such as `"6 3"`; unset is solid). This renames `rule` in `style.text`, `style.text.column`, `style.footer` and the table, header and support-table styles, and boards update automatically. Table dividers now take their color from the theme, so an authored table text color no longer recolors them, and a `support_table.divider` that sets `width` without `continuous` stays hidden until it also sets `visible: true`.'
+time: 2026-10-05T11:00:00.000000-07:00

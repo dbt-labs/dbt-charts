@@ -14,7 +14,10 @@ from dbt_charts.core.compile.models.style.theme import PointMarkStyle
 from dbt_charts.core.compile.models.style.theme.marks import BarMarkStyle
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.spec import ChartSpec
-from dbt_charts.core.render.chart.step_band import BAND_STEP_INTERPOLATE
+from dbt_charts.core.render.chart.step_band import (
+    BAND_STEP_INTERPOLATE,
+    fit_dash_to_plateau,
+)
 from dbt_charts.core.render.chart.vl_field_maps import (
     _dasharray_to_vl,
     _emit_point_mark,
@@ -391,6 +394,8 @@ def emit_line_layer(
         fg_props["interpolate"] = BAND_STEP_INTERPOLATE
         if line_mark.connect is False and line_mark.disconnected_cap is not None:
             fg_props["strokeCap"] = line_mark.disconnected_cap
+        if line_mark.connect is False and "strokeDash" in fg_props:
+            fg_props["strokeDash"] = fit_dash_to_plateau(fg_props["strokeDash"])
     stroke_width = line_mark.stroke.width
     halo_multiplier = 0.0 if suppress_halo else line_mark.halo_multiplier
     point_size: float | None = (
@@ -749,11 +754,14 @@ def _area_fg_layers(
     pin_child_colors: bool,
     inherit_parent_color: bool,
     series_encoding: VLDict,
+    announce_hover_target: bool,
 ) -> list[ChartSpec]:
     """Build foreground area, optional fg line, and hover sub-layers.
 
     The fg area always renders.  The fg line is omitted when stroke_width is
     zero.  Single-series color is applied when no color encoding is present.
+    ``announce_hover_target`` is False when drawn point sub-layers already
+    announce each datum.
     """
     layers: list[ChartSpec] = []
     fg_area_props: VLDict = {
@@ -820,7 +828,7 @@ def _area_fg_layers(
             single_series_color,
             has_color_encoding,
             pin_child_colors,
-            announce=True,
+            announce=announce_hover_target,
         )
     )
     return layers
@@ -1026,6 +1034,14 @@ def emit_area_layer(
             pin_child_colors,
             series_encoding,
         )
+        point_layers = _area_point_sublayers(
+            point_mark,
+            has_color_encoding,
+            single_series_color,
+            tooltip,
+            pin_child_colors,
+            inherit_parent_color,
+        )
         layers += _area_fg_layers(
             area_opacity,
             stroke_width,
@@ -1036,15 +1052,9 @@ def emit_area_layer(
             pin_child_colors,
             inherit_parent_color,
             series_encoding,
+            announce_hover_target=not point_layers,
         )
-        layers += _area_point_sublayers(
-            point_mark,
-            has_color_encoding,
-            single_series_color,
-            tooltip,
-            pin_child_colors,
-            inherit_parent_color,
-        )
+        layers += point_layers
     if area_interp is not None:
         for sub in layers:
             if sub.mark in ("area", "line"):

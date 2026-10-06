@@ -332,11 +332,13 @@ def normalize_chart_channels(
         _validate_parsed_channel_input(channel_input, available_columns)
 
     is_pivot_table = chart_type == "table" and bool(chart.columns)
+    support_column = kpi_support_rule_column(chart) if chart_type == "kpi" else None
     projected = (
         _project_conditional_formatting_inputs(
             chart,
             available_columns,
             is_pivot_table=is_pivot_table,
+            support_column=support_column,
         )
         if isinstance(chart, ConditionalFormattingChart)
         and chart.conditional_formatting is not None
@@ -418,13 +420,47 @@ def validate_conditional_formatting_columns(
             )
 
 
+def kpi_support_rule_column(
+    chart: Any,  # type-state: explicit_any — normalized or authored KpiChart
+) -> str | None:
+    """The column whose rules style the KPI support row, else ``None``.
+
+    A column that also feeds the headline ``value`` stays a headline rule column.
+    """
+    support = chart.support
+    if support is None or support.value is None or support.value == chart.value:
+        return None
+    return support.value
+
+
+def _validate_support_rules(column: str, entry: FieldConditionalFormatting) -> None:
+    """Raise on rule outputs the support row has no slot for."""
+    for rule in entry.when:
+        unsupported = (["background"] if rule.background is not None else []) + sorted(
+            f"font.{key}"
+            for key in (rule.font.model_dump(exclude_none=True) if rule.font else {})
+            if key != "color"
+        )
+        if unsupported:
+            raise ValueError(
+                f"conditional_formatting rules on '{column}', the column feeding "
+                f"`support.value`, style the support row, which supports only "
+                f"font.color, glyph, glyph_color and tone. Remove: {unsupported}."
+            )
+
+
 def _project_conditional_formatting_inputs(
     chart: ConditionalFormattingChart,
     available_columns: set[str],
     *,
     is_pivot_table: bool = False,
+    support_column: str | None = None,
 ) -> dict[str, tuple[str, tuple[ConditionalRule, ...]]]:
-    """Return non-Resolved conditional outputs for final channel selection."""
+    """Return non-Resolved conditional outputs for final channel selection.
+
+    Rules on ``support_column`` are excluded: render applies them to the KPI
+    support row.
+    """
     cf = chart.conditional_formatting
     if not cf:
         return {}
@@ -433,6 +469,9 @@ def _project_conditional_formatting_inputs(
     validate_conditional_formatting_columns(
         chart, available_columns, is_pivot_table=is_pivot_table
     )
+    if support_column is not None and support_column in cf:
+        _validate_support_rules(support_column, cf[support_column])
+        cf = {c: e for c, e in cf.items() if c != support_column}
 
     outputs: dict[str, Callable[[ConditionalRule], str | None]]
     if chart_type == "kpi":

@@ -36,6 +36,7 @@ rows:
       mark type, a bar's width, whether a line shows its points. Read across each
       row to see how much one small setting changes the way a trend looks.
 
+  - text: |
       **Dots and stems.** Points plot a bare dot per month; a lollipop pairs
       that dot with a thin stem back to zero; a skinny bar fills in the stem.
 

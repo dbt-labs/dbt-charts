@@ -7,7 +7,7 @@ repos:
   # both hooks rewrite files, and fixes can leave code the formatter then
   # reflows — the other order leaves a second pass' worth of churn behind.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.2
+    rev: v0.16.10
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]

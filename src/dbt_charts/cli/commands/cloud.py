@@ -67,6 +67,7 @@ from dbt_charts.cloud_client.config import (
     PendingLogin,
     clear_pending_connect,
     clear_pending_login,
+    config_lock,
     credential_source,
     load_config,
     read_config,
@@ -96,11 +97,11 @@ from dbt_charts.cloud_client.contract import (
     DeleteResult,
     DeviceAuthorization,
     DeviceLoginStarted,
-    DeviceToken,
     GrantList,
     InvitationList,
     LoginResult,
     MemberList,
+    OAuthToken,
     OrgList,
     OrgStatus,
     ProjectConnectStarted,
@@ -132,7 +133,7 @@ KEYFILE_FIELDS = {"bigquery": "credentials_json", "snowflake": "private_key"}
 # Field names that carry credentials. `--set` refuses all of them: a secret in
 # argv is in the shell history and the process listing.
 SECRET_FIELDS = frozenset(
-    {"password", "credentials_json", "private_key", "private_key_passphrase"}
+    {"password", "credentials_json", "private_key", "private_key_passphrase", "token"}
 )
 
 OrgOption = Annotated[
@@ -257,7 +258,7 @@ def _cloud(
     """An open client plus the stored config, with every failure formatted once."""
     with _reporting(as_json):
         config = load_config()
-        with client_from_config(config, host) as client:
+        with client_from_config(config, host, transport=_oauth_transport()) as client:
             yield client, config
 
 
@@ -384,7 +385,7 @@ def use(
             f"expected an org or org/project, got: {target!r}",
             param_hint="ORG(/PROJECT)",
         )
-    with _reporting(as_json=False):
+    with _reporting(as_json=False), config_lock():
         stored = read_config()
         # Merge-and-revalidate, as load_config does: carries any field added
         # to CloudConfig later without naming it, and still runs validators.
@@ -429,15 +430,21 @@ def _device_login_prompt(device: DeviceAuthorization) -> str:
     )
 
 
-def _finish_login(target_host: str, token: DeviceToken, as_json: bool) -> None:
+def _finish_login(target_host: str, token: OAuthToken, as_json: bool) -> None:
     """Save the token and report success -- the half bare `login` and
     `--wait` share once a token exists."""
-    stored = read_config()
-    replaced = bool(stored.token)
-    new_config = CloudConfig.model_validate(
-        {**stored.model_dump(), "token": token.access_token, "host": target_host}
-    )
-    save_config(new_config)
+    with config_lock():
+        stored = read_config()
+        replaced = bool(stored.token)
+        new_config = CloudConfig.model_validate(
+            {
+                **stored.model_dump(),
+                "token": token.access_token,
+                "refresh_token": token.refresh_token,
+                "host": target_host,
+            }
+        )
+        save_config(new_config)
     with client_from_config(new_config, target_host) as client:
         organizations = client.list_orgs().organizations
     if as_json:
@@ -562,7 +569,7 @@ def login(
 @cloud_app.command("logout")
 def logout(host: HostOption = None, as_json: JsonOption = False) -> None:
     """Revoke and clear the stored credential."""
-    with _reporting(as_json):
+    with _reporting(as_json), config_lock():
         if credential_source() == "env":
             raise EnvCredentialActive(TOKEN_ENV_VAR)
         stored = read_config()
@@ -573,14 +580,18 @@ def logout(host: HostOption = None, as_json: JsonOption = False) -> None:
         try:
             if stored.token:
                 metadata = discover_endpoints(target_host, transport=_oauth_transport())
-                revoke_token(
-                    metadata.revocation_endpoint,
-                    stored.token,
-                    transport=_oauth_transport(),
-                )
+                for credential in (stored.refresh_token, stored.token):
+                    if credential:
+                        revoke_token(
+                            metadata.revocation_endpoint,
+                            credential,
+                            transport=_oauth_transport(),
+                        )
         finally:
             save_config(
-                CloudConfig.model_validate({**stored.model_dump(), "token": ""})
+                CloudConfig.model_validate(
+                    {**stored.model_dump(), "token": "", "refresh_token": ""}
+                )
             )
     message = f"Logged out of {target_host}."
     if as_json:

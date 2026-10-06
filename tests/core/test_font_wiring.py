@@ -238,7 +238,7 @@ class TestCompactStyleColorsTrackTheme:
         rs = resolve_style(get_theme_style())
         assert get_compact_style(rs).link_color == rs.accent
 
-    def test_table_and_hr_rules_track_text_rule_tier(self):
+    def test_table_and_hr_rules_track_text_divider_tier(self):
         """Table grid + hr track the soft table-border tier (code/blockquote box
         tokens are covered in test_text_box_style_cascade)."""
         from dbt_charts.core.compile.resolve.style.markdown_style import (
@@ -247,8 +247,8 @@ class TestCompactStyleColorsTrackTheme:
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
-        assert style.table_border_color == rs.text.rule.color
-        assert style.hr_color == rs.text.rule.color
+        assert style.table_border_color == rs.text.divider.color
+        assert style.hr_color == rs.text.divider.color
 
     def test_table_header_background_tracks_theme(self):
         from dbt_charts.core.compile.resolve.style.markdown_style import (

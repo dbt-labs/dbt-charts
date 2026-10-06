@@ -527,7 +527,7 @@ class TestTableProportionalSizing:
             header_height = int(tc.header.height)
         else:
             _hfs = int(tc.header.font.size or tc.font.size)
-            _hrw = int(tc.header.rule.width or 0)
+            _hrw = int(tc.header.divider.width or 0)
             header_height = _hfs * 2 + _hrw + 4
         header_body_gap = int(row_height * 0.25)
         padding_y = int(tc.outer_padding)
@@ -1235,15 +1235,25 @@ class TestTableRules:
         new_table = tc.model_copy(
             update={
                 "header": tc.header.model_copy(
-                    update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+                    update={
+                        "divider": tc.header.divider.model_copy(
+                            update={"visible": False, "width": 1}
+                        )
+                    }
                 ),
                 "row": tc.row.model_copy(
                     update={
-                        "rule": tc.row.rule.model_copy(update={"width": 0}),
+                        "divider": tc.row.divider.model_copy(
+                            update={"visible": False, "width": 1}
+                        ),
                         "roles": tc.row.roles.model_copy(
                             update={
                                 "summary": tc.row.roles.summary.model_copy(
-                                    update={"rule_width": 0}
+                                    update={
+                                        "divider": tc.row.roles.summary.divider.model_copy(
+                                            update={"visible": False, "width": 1}
+                                        )
+                                    }
                                 )
                             }
                         ),
@@ -1283,15 +1293,25 @@ class TestTableRules:
         new_table = tc.model_copy(
             update={
                 "header": tc.header.model_copy(
-                    update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+                    update={
+                        "divider": tc.header.divider.model_copy(
+                            update={"visible": False, "width": 1}
+                        )
+                    }
                 ),
                 "row": tc.row.model_copy(
                     update={
-                        "rule": tc.row.rule.model_copy(update={"width": 0.5}),
+                        "divider": tc.row.divider.model_copy(
+                            update={"visible": True, "width": 0.5}
+                        ),
                         "roles": tc.row.roles.model_copy(
                             update={
                                 "summary": tc.row.roles.summary.model_copy(
-                                    update={"rule_width": 0.5}
+                                    update={
+                                        "divider": tc.row.roles.summary.divider.model_copy(
+                                            update={"visible": True, "width": 0.5}
+                                        )
+                                    }
                                 )
                             }
                         ),

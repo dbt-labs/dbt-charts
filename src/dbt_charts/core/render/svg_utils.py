@@ -286,6 +286,13 @@ def card_box(
     return -left, -top, width + left + inset["right"], height + top + inset["bottom"]
 
 
+def divider_dash_attr(dasharray: str | None) -> str:
+    """`` stroke-dasharray`` attribute for a divider; "" when solid."""
+    if dasharray is None:
+        return ""
+    return f' stroke-dasharray="{escape_attr(dasharray)}"'
+
+
 def border_dash_attrs(border: "BorderStyle") -> str:
     """SVG stroke-dasharray/-linecap/-dashoffset attributes for a dashed border.
 

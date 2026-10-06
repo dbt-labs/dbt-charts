@@ -502,11 +502,13 @@ charts:
           format: percent
       row:
         role: row_role
-        rule:
+        divider:
           width: 0.5
+          visible: true
       header:
-        rule:
+        divider:
           width: 1
+          visible: true
   m6_threshold_with_total:
     type: table
     query: company_revenue_total
@@ -538,11 +540,13 @@ charts:
           format: percent
       row:
         role: row_role
-        rule:
+        divider:
           width: 0.5
+          visible: true
       header:
-        rule:
+        divider:
           width: 1
+          visible: true
 rows:
 - title: 'M1: Sequential Scale'
   cols:

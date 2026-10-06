@@ -1010,6 +1010,97 @@ class RedshiftSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = None
 
 
+# dbt-databricks' own EXTRACT_CLUSTER_ID_FROM_HTTP_PATH_REGEX
+# (dbt/adapters/databricks/credentials.py) — the shape of an all-purpose Spark
+# cluster path, which dbt charts does not support (only SQL warehouses).
+_DATABRICKS_CLUSTER_HTTP_PATH_RE = re.compile(r"^/?sql/protocolv1/o/\d+/")
+# `warehouses` and the pre-rename `endpoints` are both valid SQL-warehouse
+# paths (databricks-sql-connector's client.py and sea/backend.py both accept
+# either); a workspace provisioned before the SQL-Endpoints-to-SQL-Warehouses
+# rename still carries `endpoints` in profiles.yml. `/?` mirrors the cluster
+# regex's own tolerance for a missing leading slash.
+_DATABRICKS_WAREHOUSE_HTTP_PATH_RE = re.compile(
+    r"^/?sql/1\.0/(warehouses|endpoints)/[\w-]+\Z"
+)
+
+
+def validate_databricks_http_path(v: str) -> str:
+    """Reject an all-purpose-cluster http_path; require the SQL warehouse shape.
+
+    dbt charts only supports SQL warehouse compute
+    (``databricks_connection_manager.py``'s docstring asserts it, and its
+    capabilities override is only correct while it holds). Shared by
+    ``DatabricksSourceConfig`` below and Cloud's own ``DatabricksConnectionConfig``,
+    so the two surfaces cannot drift apart.
+    """
+    if _DATABRICKS_CLUSTER_HTTP_PATH_RE.match(v):
+        raise ValueError(
+            f"http_path {v!r} names an all-purpose cluster, not a SQL warehouse. "
+            "dbt charts only supports SQL warehouse compute; use the warehouse's "
+            "Connection Details path (/sql/1.0/warehouses/<warehouse-id>)."
+        )
+    if not _DATABRICKS_WAREHOUSE_HTTP_PATH_RE.match(v):
+        raise ValueError(
+            f"http_path must be a SQL warehouse path, e.g. "
+            f"/sql/1.0/warehouses/<warehouse-id>: got {v!r}"
+        )
+    return v
+
+
+class DatabricksSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
+    """Databricks source configuration.
+
+    Field names match dbt profiles.yml exactly, with one exception:
+    ``socket_timeout`` is a dbt charts-only field — ``build_adapter`` folds it
+    into ``connection_parameters._socket_timeout`` on the way to the
+    credentials class, since dbt-databricks has no top-level field for it.
+    ``catalog`` is required: dbt's own ``__post_init__`` silently defaults an
+    unset catalog to ``hive_metastore``.
+
+    Read-only posture: no native driver flag. Unity Catalog: bind the service
+    principal or token to a SELECT-only grant set.
+    """
+
+    source_category: ClassVar[str] = "database"
+    type: Literal["databricks"] = Field(description="Source type identifier.")
+    host: str = Field(description="Databricks workspace host name.")
+    http_path: str = Field(description="HTTP path of the SQL warehouse.")
+    token: str = Field(min_length=1, description="Personal access token.")
+    catalog: str = Field(description="Unity Catalog catalog name.")
+    schema_: str | None = Field(
+        alias="schema", default=None, description="Default schema for queries."
+    )
+    connect_retries: Annotated[
+        int,
+        Field(
+            description="Number of times to retry a failed connection. Has no effect unless retry_all is also set to true."
+        ),
+    ] = 1
+    connect_timeout: Annotated[
+        int | None,
+        Field(
+            description="Seconds to wait between connection retry attempts, not a limit on how long a single attempt may take. Has no effect unless retry_all is also set to true."
+        ),
+    ] = None
+    socket_timeout: Annotated[
+        int | None,
+        Field(
+            description="Socket read timeout in seconds for the SQL warehouse connection. It also replaces the driver's own retry budget for a failed connection, which defaults to about 15 minutes, so a value below that shortens a hang against an unreachable warehouse while a larger value lengthens it."
+        ),
+    ] = None
+    retry_all: Annotated[
+        bool,
+        Field(
+            description="Whether dbt Charts itself retries a failed connection attempt, using connect_retries and connect_timeout. False (the default) means dbt Charts does not retry; the Databricks driver still retries certain connection failures on its own regardless of this setting."
+        ),
+    ] = False
+
+    @field_validator("http_path")
+    @classmethod
+    def _validate_http_path(cls, v: str) -> str:
+        return validate_databricks_http_path(v)
+
+
 class MySQLSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     """MySQL source configuration.
 
@@ -1588,6 +1679,7 @@ SourceConfig = (
     | SnowflakeSourceConfig
     | BigQuerySourceConfig
     | RedshiftSourceConfig
+    | DatabricksSourceConfig
     | MySQLSourceConfig
     | TrinoSourceConfig
     | DuckDBSourceConfig

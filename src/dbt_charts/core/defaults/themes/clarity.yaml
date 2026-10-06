@@ -202,11 +202,25 @@ style:
           color: dbt-grays.muted
       divider:
         color: dbt-grays.muted
+      row:
+        divider:
+          color: dbt-grays.muted
     table:
       header:
+        divider:
+          color: dbt-grays.ink
         font:
           color: dbt-grays.heading
       row:
+        divider:
+          color: dbt-grays.ink
+        roles:
+          summary:
+            divider:
+              color: dbt-grays.ink
+          total:
+            divider:
+              color: dbt-grays.ink
         stripe:
           color: dbt-grays.surface-subtle   # subtle zebra (one scaffold stop off canvas)
   variables:

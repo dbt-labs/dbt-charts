@@ -1057,3 +1057,119 @@ def test_per_layer_overlay_preserves_authored_layer_order() -> None:
         f"base bar must paint before the overlay line layer; got "
         f"bar_idx={bar_idx}, line_idx={line_idx}"
     )
+
+
+# ── stroke-dasharray: disconnected plateaus fit whole dashes to the band ──────
+#
+# Each disconnected plateau is its own path, so SVG restarts the dash phase on
+# every one. The authored period is pixels but the plateau length is
+# ``bandwidth('x') * disconnected_width``, so a literal dasharray leaves a stub
+# at the right edge. The emitter rewrites it as a Vega expression fitted to N
+# dashes + N-1 gaps: ink at both plateau edges.
+
+
+def _dash(**mark_overrides: Any) -> Any:
+    marks = _line_marks(_cap_spec(**mark_overrides))
+    assert len(marks) == 1
+    return marks[0].get("strokeDash")
+
+
+def _eval_dash(expr: str, bandwidth: float) -> list[float]:
+    """Evaluate an emitted strokeDash expression with a numeric bandwidth."""
+    import math
+
+    def rnd(v: float) -> int:  # Vega's round is Math.round, not banker's
+        return math.floor(v + 0.5)
+
+    src = expr.replace("bandwidth('x')", repr(bandwidth)).replace("round(", "rnd(")
+    return eval(src, {"rnd": rnd, "max": max})  # noqa: S307
+
+
+def _fit_expr(dashes: list[float]) -> str:
+    """Re-derive the expected expression independently of the helper."""
+    width = get_chart_rendering().step_band.disconnected_width
+    span = f"(bandwidth('x')*{width})"
+    period, last = sum(dashes), dashes[-1]
+    n = f"max(1,round(({span}+{last})/{period}))"
+    scale = f"{span}/({n}*{period}-{last})"
+    return "[" + ",".join(f"{d}*{scale}" for d in dashes) + "]"
+
+
+def test_disconnected_step_dasharray_becomes_fitted_expr():
+    got = _dash(curve="step", connect=False, stroke=StrokeStyle(dasharray="5 4"))
+    assert got == {"expr": _fit_expr([5.0, 4.0])}
+
+
+@pytest.mark.parametrize("bandwidth", [63.692, 37.5, 36.0, 160.0, 12.0, 5.0])
+@pytest.mark.parametrize("dasharray", ["5 4", "6 2 1 2", "6 2 1", "10 2"])
+def test_fitted_dasharray_spans_the_plateau_exactly(dasharray: str, bandwidth: float):
+    got = _dash(curve="step", connect=False, stroke=StrokeStyle(dasharray=dasharray))
+    dashes = _eval_dash(got["expr"], bandwidth)
+    authored = [float(v) for v in dasharray.split()]
+    if len(authored) % 2:
+        authored *= 2  # SVG repeats an odd list, so its last entry is a gap
+    assert len(dashes) == len(authored)
+    assert all(d > 0 for d in dashes)
+    # Authored dash/gap ratios survive the scaling.
+    ratios = [d / a for d, a in zip(dashes, authored, strict=True)]
+    assert max(ratios) - min(ratios) < 1e-9
+    # N dashes + (N-1) gaps cover the plateau: ink at both ends.
+    span = bandwidth * get_chart_rendering().step_band.disconnected_width
+    period, last = sum(dashes), dashes[-1]
+    n = (span + last) / period
+    assert abs(n - round(n)) * period < 1e-6
+    assert n >= 1 - 1e-9
+
+
+@pytest.mark.parametrize("dasharray", ["0 8", "0 0"])
+def test_zero_ink_dasharray_stays_literal(dasharray: str):
+    got = _dash(curve="step", connect=False, stroke=StrokeStyle(dasharray=dasharray))
+    assert got == [float(v) for v in dasharray.split()]
+
+
+def test_connected_step_dasharray_stays_literal():
+    got = _dash(curve="step", connect=True, stroke=StrokeStyle(dasharray="5 4"))
+    assert got == [5.0, 4.0]
+
+
+def test_disconnected_step_without_dasharray_has_no_stroke_dash():
+    assert _dash(curve="step", connect=False) is None
+
+
+def test_disconnected_step_on_continuous_x_keeps_literal_dasharray():
+    board_rs, board_ctx = _board_with_mark(
+        "line", curve="step", connect=False, stroke=StrokeStyle(dasharray="5 4")
+    )
+    chart = LineChart(
+        id="cont-dash",
+        type="line",
+        x="day",
+        y="target",
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+    )
+    spec = generate_vega_lite_spec(
+        chart, CONTINUOUS, board_style=board_rs, chart_style_context=board_ctx
+    )
+    assert [m.get("strokeDash") for m in _line_marks(spec)] == [[5.0, 4.0]]
+
+
+def test_fitted_dasharray_round_trips_through_vl_convert():
+    """Pace-overlay shape: every rendered plateau carries ink at both edges."""
+    import json
+    import re
+
+    import vl_convert as vlc
+
+    spec = _cap_spec(curve="step", connect=False, stroke=StrokeStyle(dasharray="5 4"))
+    spec["width"] = 460
+    svg = vlc.vegalite_to_svg(json.dumps(spec))
+    paths = re.findall(
+        r'<path d="M([\d.]+),([\d.]+)L([\d.]+),[\d.]+[^>]*stroke-dasharray="([^"]+)"',
+        svg,
+    )
+    assert len(paths) == len(BARS), svg
+    for x0, _y, x1, dash in paths:
+        dash_len, gap_len = (float(v) for v in dash.split(","))
+        n = (float(x1) - float(x0) + gap_len) / (dash_len + gap_len)
+        assert abs(n - round(n)) * (dash_len + gap_len) < 0.01, (x0, x1, dash)

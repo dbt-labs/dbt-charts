@@ -1809,13 +1809,15 @@ rows:
       default categorical palettes and their companions name each slot by hue:
       `category.blue`, `category.green`, `category.gold`, `category.purple`,
       `category.orange`, `category.gray`, `category.charcoal`, plus
-      `category.sky` and `category.sage` for the two lighter cool slots. A hue
+      `category.sky` and `category.sage` for the two lighter cool slots, also
+      reachable as `category.cyan` and `category.moss`. A hue
       can sit at a different slot in each palette, so a named token stays
       swap-invariant: `category.green`
       resolves to the green of whichever palette the active theme binds to the
       `category` role, and switching themes keeps green green without touching
       the board. The `dark`/`light`/`pale`/`deep` variants carry the same
-      names against their own slots. The names are a slot bijection. `orange`
+      names against their own slots. Every slot has at least one name; slots 2
+      and 7 have two (`sky`/`cyan`, `sage`/`moss`). `orange`
       maps to editorial rust, `sage` maps to editorial teal, and `charcoal`
       maps to editorial graphite. Roles preserve semantic intent across a
       reorder, not an exact color value.

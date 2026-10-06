@@ -31,6 +31,7 @@ from dbt_charts.core.diagnostics.codes_render import (
     ERR_MIRROR_ENDPOINT_LABELS,
     ERR_MIRROR_LAYERS,
     ERR_MIRROR_MULTI_SERIES,
+    ERR_MIRROR_UNMEASURABLE_ALIGN,
     ERR_MULTIPLES_ENDPOINT_LABELS,
 )
 from dbt_charts.core.render.chart.emitters._measured_label_padding import (
@@ -323,15 +324,11 @@ class MirrorAxisFeature:
                     padding, label_limit
                 )
             else:
-                raise ChartDataError(
-                    f"axis_y.labels.align: {ghost_align!r} cannot be "
-                    "combined with axis_y.mirror — the alignment that keeps "
-                    f"labels outside the plot on the {primary} edge draws the "
-                    f"mirrored {opposite}-edge labels back across the axis "
-                    "into the plot, and dbt charts has no baked tick content to "
-                    "measure a safe labelPadding from. Omit labels.align; each "
-                    "edge then uses Vega-Lite's safe per-orient default.",
+                raise ChartDataError.from_code(
+                    ERR_MIRROR_UNMEASURABLE_ALIGN,
                     chart_id=chart.id,
+                    align=ghost_align,
+                    opposite=opposite,
                 )
         spec.layers.append(
             ChartSpec(

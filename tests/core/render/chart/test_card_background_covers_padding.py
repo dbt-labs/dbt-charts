@@ -51,6 +51,7 @@ charts:
     type: table
     title: Detail
     style:
+      preferred_width: 800
       background: "{_FILL}"
 rows:
   - height: 240

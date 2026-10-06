@@ -49,7 +49,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED,
 )
 from dbt_charts.core.text.format_d3 import (
-    D3_TIME_FORMAT_DIRECTIVES,
     PYTHON_STRFTIME_DIRECTIVES,
     VEGA_SAFE_TIME_DIRECTIVES,
     find_unsupported_directive,
@@ -118,12 +117,6 @@ _KIND_RULES: dict[str, tuple[frozenset[str], str]] = {
         "works here too.",
     ),
 }
-
-# The full set of directive letters this compile-time check accepts: Vega
-# paints a time-format-capable slot via d3-time-format, and the Python
-# painters (table cells, KPI values) go through portable_strftime — a
-# directive is legal here if either engine implements it.
-_ACCEPTED_TIME_DIRECTIVES = PYTHON_STRFTIME_DIRECTIVES | D3_TIME_FORMAT_DIRECTIVES
 
 # Field names whose child format slots are rendered by Vega (not Python).
 # PREDEFINED_NATIVE members bypass d3 and have no Vega equivalent; they are
@@ -366,11 +359,10 @@ def _validate_spec(
             _raise_if_unsupported_time_directives(aliased_spec, field_path)
         return
     if time_format and is_time_format(spec):
-        # A directive neither d3-time-format nor portable_strftime implements
-        # must fail here, at compile -- not reach render, where it's either
+        # A directive portable_strftime doesn't paint must fail here, at compile -- not reach render, where it's either
         # an uncoded ValueError (ERR-INTERNAL, Python-painted slots) or a
         # literal, unrendered letter (Vega-painted slots).
-        bad_directive = find_unsupported_directive(spec, _ACCEPTED_TIME_DIRECTIVES)
+        bad_directive = find_unsupported_directive(spec)
         if bad_directive is not None:
             raise CompilationError.from_code(
                 ERR_FORMAT_INVALID,
@@ -380,7 +372,7 @@ def _validate_spec(
                 explanation=(
                     f"%{bad_directive} is not a strftime directive the engine "
                     "implements. Accepted directives: "
-                    f"{', '.join('%' + d for d in sorted(_ACCEPTED_TIME_DIRECTIVES))}."
+                    f"{', '.join('%' + d for d in sorted(PYTHON_STRFTIME_DIRECTIVES))}."
                 ),
             )
         if reject_time_affix:

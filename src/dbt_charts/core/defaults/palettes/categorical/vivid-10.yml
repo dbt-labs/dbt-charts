@@ -85,3 +85,5 @@ aliases:
   brown: 8
   gray: 9
   charcoal: 10
+  cyan: 2       # same slot as sky
+  moss: 7       # same slot as sage

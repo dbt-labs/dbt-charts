@@ -1,13 +1,9 @@
-"""Regression tests: a focused chart renders at its dashboard slot width.
+"""A focused chart renders at its own intrinsic width.
 
-`chart_focus` (and `focus_on_chart()`) builds a single-chart board. Before the
-fix, that board sized the chart from the theme family `preferred_width`, so the
-focused render's geometry (band widths, axis-label fit) diverged from what the
-chart looked like on its dashboard. The focused board must instead pin the slot
-width the dashboard layout assigns to the chart, so focusing is WYSIWYG.
-
-A chart that is defined but not placed in any layout has no dashboard slot, so
-its focused render keeps the preferred-width behavior.
+`chart_focus` (and `focus_on_chart()`) builds a single-chart board that sizes the
+chart exactly as if it were the only chart on a board with no width: its
+preferred width, or its authored `width:`. The slot it had on the source board,
+and that board's authored `frame.width`, do not carry over.
 """
 
 from __future__ import annotations
@@ -18,6 +14,8 @@ from pathlib import Path
 from dbt_charts.core.compile import compile, focus_on_chart
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
+from dbt_charts.core.compile.resolve import preferred_chart_width
+from dbt_charts.core.compile.sizing import board_container_width
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.project import Project
@@ -76,58 +74,76 @@ def _chart_item_width(resolved_board: ResolvedBoard, chart_id: str) -> float:
     raise AssertionError(f"chart {chart_id!r} not found in resolved layout")
 
 
-def test_focused_chart_renders_at_its_dashboard_slot_width(
-    tmp_path, local_project: Callable[..., Project]
+def _preferred(board: Board, chart_id: str) -> float:
+    return preferred_chart_width(board.charts[chart_id], board.chart_style_context)
+
+
+def test_chart_in_cols_half_focuses_at_its_own_preferred_width(
+    local_project: Callable[..., Project],
 ):
-    """chart_focus: the focused board sizes the chart at the slot width the
-    dashboard's cols layout assigned it, not the theme preferred_width."""
     dashboard = compile(_THREE_COL_YAML)
     assert dashboard.success and dashboard.board is not None, dashboard.errors
     dashboard_sized = _sized_layout(dashboard.board, local_project)
-    slot_width = _chart_item_width(dashboard_sized, "small_bar")
+    assert _chart_item_width(dashboard_sized, "small_bar") != _preferred(
+        dashboard.board, "small_bar"
+    )
 
     focused = compile(_THREE_COL_YAML + "chart_focus: small_bar\n")
     assert focused.success and focused.board is not None, focused.errors
     focused_sized = _sized_layout(focused.board, local_project)
-    focused_width = _chart_item_width(focused_sized, "small_bar")
-
-    assert focused_width == slot_width, (
-        f"focused chart width {focused_width:.2f}px != dashboard slot width "
-        f"{slot_width:.2f}px — chart focus must reproduce the chart at the "
-        f"width it had on the dashboard"
+    assert _chart_item_width(focused_sized, "small_bar") == _preferred(
+        focused.board, "small_bar"
     )
 
 
-def test_focus_on_chart_api_matches_dashboard_slot_width(
-    tmp_path, local_project: Callable[..., Project]
+def test_yaml_and_api_focus_give_identical_widths(
+    local_project: Callable[..., Project],
 ):
-    """The programmatic arm (render_dashboard's chart= goes through
-    focus_on_chart) pins the same slot width as the YAML arm."""
     dashboard = compile(_THREE_COL_YAML)
     assert dashboard.success and dashboard.board is not None, dashboard.errors
-    dashboard_sized = _sized_layout(dashboard.board, local_project)
-    slot_width = _chart_item_width(dashboard_sized, "small_bar")
+    api_board = focus_on_chart(dashboard.board, "small_bar")
+    yaml_result = compile(_THREE_COL_YAML + "chart_focus: small_bar\n")
+    assert yaml_result.success and yaml_result.board is not None
+    assert _chart_item_width(
+        _sized_layout(api_board, local_project), "small_bar"
+    ) == _chart_item_width(_sized_layout(yaml_result.board, local_project), "small_bar")
+    assert board_container_width(
+        api_board, api_board.variable_defaults
+    ) == board_container_width(yaml_result.board, yaml_result.board.variable_defaults)
 
-    focused_board = focus_on_chart(dashboard.board, "small_bar")
-    focused_sized = _sized_layout(focused_board, local_project)
-    focused_width = _chart_item_width(focused_sized, "small_bar")
 
-    assert focused_width == slot_width
-
-
-def test_focused_rows_chart_keeps_slot_stretched_by_wide_sibling(
-    tmp_path, local_project: Callable[..., Project]
+def test_authored_frame_width_does_not_carry_into_focused_board(
+    local_project: Callable[..., Project],
 ):
-    """In a rows layout every item gets the full content width, so a wide
-    sibling stretches the focused chart's dashboard slot beyond its own
-    preferred width; the focused render keeps that stretched width."""
+    yaml = "style:\n  frame:\n    width: 1200\n" + _THREE_COL_YAML
+    dashboard = compile(yaml)
+    assert dashboard.success and dashboard.board is not None, dashboard.errors
+    assert (
+        board_container_width(dashboard.board, dashboard.board.variable_defaults)
+        == 1200.0
+    )
+
+    focused = focus_on_chart(dashboard.board, "small_bar")
+    preferred = _preferred(dashboard.board, "small_bar")
+    margin = float(dashboard.board.resolved_style.frame.margin)
+    assert (
+        board_container_width(focused, focused.variable_defaults)
+        == preferred + 2 * margin
+    )
+    assert _chart_item_width(_sized_layout(focused, local_project), "small_bar") == (
+        preferred
+    )
+
+
+def test_focused_chart_ignores_wide_rows_sibling(
+    local_project: Callable[..., Project],
+):
     yaml = """\
 queries:
   q:
     type: values
     rows:
       - {cat: a, val: 10}
-      - {cat: b, val: 20}
 charts:
   narrow_bar:
     query: q
@@ -143,32 +159,51 @@ charts:
 rows:
   - narrow_bar
   - wide_sibling
+chart_focus: narrow_bar
 """
-    dashboard = compile(yaml)
-    assert dashboard.success and dashboard.board is not None, dashboard.errors
-    dashboard_sized = _sized_layout(dashboard.board, local_project)
-    slot_width = _chart_item_width(dashboard_sized, "narrow_bar")
-
-    from dbt_charts.core.compile.resolve import preferred_chart_width
-
-    preferred = preferred_chart_width(
-        dashboard.board.charts["narrow_bar"], dashboard.board.chart_style_context
-    )
-    assert slot_width > preferred  # the wide sibling stretched the slot
-
-    focused = compile(yaml + "chart_focus: narrow_bar\n")
+    focused = compile(yaml)
     assert focused.success and focused.board is not None, focused.errors
-    focused_sized = _sized_layout(focused.board, local_project)
-    focused_width = _chart_item_width(focused_sized, "narrow_bar")
+    assert _chart_item_width(
+        _sized_layout(focused.board, local_project), "narrow_bar"
+    ) == _preferred(focused.board, "narrow_bar")
 
-    assert focused_width == slot_width
+
+def test_focused_chart_keeps_authored_width(
+    local_project: Callable[..., Project],
+):
+    yaml = """\
+queries:
+  q:
+    type: values
+    rows:
+      - {cat: a, val: 10}
+charts:
+  fixed:
+    query: q
+    type: bar
+    x: cat
+    y: val
+    width: 320
+  other:
+    query: q
+    type: bar
+    x: cat
+    y: val
+cols:
+  - fixed
+  - other
+chart_focus: fixed
+"""
+    focused = compile(yaml)
+    assert focused.success and focused.board is not None, focused.errors
+    assert (
+        _chart_item_width(_sized_layout(focused.board, local_project), "fixed") == 320.0
+    )
 
 
 def test_focused_unplaced_chart_keeps_preferred_width(
-    tmp_path, local_project: Callable[..., Project]
+    local_project: Callable[..., Project],
 ):
-    """A chart defined but not placed in the layout has no dashboard slot;
-    focusing it keeps the content-sized preferred-width behavior."""
     yaml = """\
 queries:
   q:
@@ -188,128 +223,10 @@ charts:
     y: val
 rows:
   - placed
+chart_focus: unplaced
 """
-    from dbt_charts.core.compile.resolve import preferred_chart_width
-
-    focused = compile(yaml + "chart_focus: unplaced\n")
+    focused = compile(yaml)
     assert focused.success and focused.board is not None, focused.errors
-    focused_sized = _sized_layout(focused.board, local_project)
-    focused_width = _chart_item_width(focused_sized, "unplaced")
-
-    expected = preferred_chart_width(
-        focused.board.charts["unplaced"], focused.board.chart_style_context
-    )
-    assert focused_width == expected
-
-
-def test_focused_chart_inside_nested_board_uses_inner_slot_width(
-    tmp_path, local_project: Callable[..., Project]
-):
-    """A chart nested one board deep focuses at the inner slot width its
-    nested cols layout assigned it on the dashboard."""
-    yaml = """\
-queries:
-  q:
-    type: values
-    rows:
-      - {cat: a, val: 10}
-      - {cat: b, val: 20}
-charts:
-  inner_bar:
-    query: q
-    type: bar
-    x: cat
-    y: val
-  inner_other:
-    query: q
-    type: bar
-    x: cat
-    y: val
-rows:
-  - cols:
-      - inner_bar
-      - inner_other
-"""
-    dashboard = compile(yaml)
-    assert dashboard.success and dashboard.board is not None, dashboard.errors
-    dashboard_sized = _sized_layout(dashboard.board, local_project)
-
-    def find_nested_width(resolved_board: ResolvedBoard, chart_id: str) -> float:
-        stack = [resolved_board.layout]
-        while stack:
-            layout = stack.pop()
-            for item in layout.items:
-                if item.chart is not None and item.chart.id == chart_id:
-                    return item.width
-                if item.board is not None:
-                    stack.append(item.board.layout)
-        raise AssertionError(f"chart {chart_id!r} not found")
-
-    slot_width = find_nested_width(dashboard_sized, "inner_bar")
-
-    focused = compile(yaml + "chart_focus: inner_bar\n")
-    assert focused.success and focused.board is not None, focused.errors
-    focused_sized = _sized_layout(focused.board, local_project)
-    focused_width = _chart_item_width(focused_sized, "inner_bar")
-
-    assert focused_width == slot_width
-
-
-def test_focused_chart_on_authored_width_board_hugs_the_pinned_slot(
-    tmp_path, local_project: Callable[..., Project]
-):
-    """An authored board width must not carry into the focused export: the
-    focused board pins the dashboard slot and hugs it, rather than rendering
-    one chart on a full-board canvas."""
-    from dbt_charts.core.compile.sizing import board_container_width
-
-    yaml = "style:\n  frame:\n    width: 1800\n" + _THREE_COL_YAML
-    dashboard = compile(yaml)
-    assert dashboard.success and dashboard.board is not None, dashboard.errors
-    assert (
-        board_container_width(dashboard.board, dashboard.board.variable_defaults)
-        == 1800.0
-    )
-    dashboard_sized = _sized_layout(dashboard.board, local_project)
-    slot_width = _chart_item_width(dashboard_sized, "small_bar")
-
-    focused_board = focus_on_chart(dashboard.board, "small_bar")
-    focused_sized = _sized_layout(focused_board, local_project)
-    focused_width = _chart_item_width(focused_sized, "small_bar")
-
-    assert focused_width == slot_width
-    assert (
-        board_container_width(focused_board, focused_board.variable_defaults) < 1800.0
-    )
-
-
-def test_focused_chart_from_wide_board_keeps_its_wide_slot(
-    tmp_path, local_project: Callable[..., Project]
-):
-    """WYSIWYG must survive a slot wider than the theme's max_width: the
-    focused container is the pinned slot plus margins, never the hug bound."""
-    from dbt_charts.core.compile.sizing import board_container_width, chart_slot_width
-
-    yaml = (
-        "style:\n  frame:\n    width: 1800\n"
-        "queries:\n  q:\n    type: values\n    rows:\n"
-        "      - {cat: a, val: 10}\n      - {cat: b, val: 20}\n"
-        "charts:\n  wide_bar:\n    query: q\n    type: bar\n    x: cat\n    y: val\n"
-        "rows:\n  - wide_bar\n"
-    )
-    dashboard = compile(yaml)
-    assert dashboard.success and dashboard.board is not None, dashboard.errors
-    slot_width = chart_slot_width(
-        dashboard.board, "wide_bar", dashboard.board.variable_defaults
-    )
-    assert slot_width is not None
-    margin = float(dashboard.board.resolved_style.frame.margin)
-    assert slot_width > float(dashboard.board.resolved_style.frame.max_width)
-
-    focused_board = focus_on_chart(dashboard.board, "wide_bar")
-    focused_sized = _sized_layout(focused_board, local_project)
-    assert _chart_item_width(focused_sized, "wide_bar") == slot_width
-    assert (
-        board_container_width(focused_board, focused_board.variable_defaults)
-        == slot_width + 2 * margin
-    )
+    assert _chart_item_width(
+        _sized_layout(focused.board, local_project), "unplaced"
+    ) == _preferred(focused.board, "unplaced")

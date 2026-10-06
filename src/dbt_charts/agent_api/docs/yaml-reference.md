@@ -20,9 +20,9 @@ AuthoredBoard definition from YAML.
 | `incremental` | str \| const: false | Default watermark column for incremental refresh: queries in this board fetch only new rows since the last run and merge them with the cached result, keyed on this column. Queries inherit this value and may override it with their own incremental: setting. Set to false on a nested board to opt out of a parent's incremental setting. |
 | `variables` | dict[str, [Variable](#variable) \| str \| [VariableRef](#variableref)] | Named inputs that parameterize queries; each renders as a control unless it sets visible: false. |
 | `queries` | dict[str, str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref)] | Named result sets the charts draw from (SQL, CSV, HTTP, and more). |
-| `charts` | dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| str \| [ChartRef](#chartref)] | Named chart definitions. When no explicit layout is present, charts render as an implicit row layout in authored order. |
-| `rows` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)]] | Vertical stack layout: list of chart names or inline chart/board definitions. |
-| `cols` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)]] | Horizontal layout: list of chart names or inline chart/board definitions. |
+| `charts` | dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| str \| [ChartRef](#chartref)] | Named chart definitions. When no explicit layout is present, charts render as an implicit row layout in authored order. |
+| `rows` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)]] | Vertical stack layout: list of chart names or inline chart/board definitions. |
+| `cols` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)]] | Horizontal layout: list of chart names or inline chart/board definitions. |
 | `grid` | [GridLayout](#gridlayout) | CSS-grid style layout with explicit row/column placement. |
 | `tabs` | [TabLayout](#tablayout) | Tabbed navigation layout where each tab contains its own layout. |
 | `card_gap` | bool | When True, adds gap between cards. Default: cards are edge-to-edge (0 gap). |
@@ -413,7 +413,7 @@ Authored patch for KPI (key performance indicator) charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. Available on type: table and type: kpi only. |
+| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. Available on type: table and type: kpi only. On a KPI, rules on the `support.value` column style the support row (font.color, glyph, glyph_color, tone); rules on other columns style the headline. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -439,7 +439,7 @@ Authored patch for table charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. Available on type: table and type: kpi only. |
+| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. Available on type: table and type: kpi only. On a KPI, rules on the `support.value` column style the support row (font.color, glyph, glyph_color, tone); rules on other columns style the headline. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -565,39 +565,6 @@ Authored patch for spark_bar charts (compact horizontal bars).
 | `x` | str | Bar-magnitude (numeric) column name. |
 | `y` | str \| list[str] | Bar-label (category) column name(s). |
 | `style` | [SparkBarChartStyle](#sparkbarchartstyle) | Appearance overrides for this chart alone. |
-
-<a id="customchart"></a>
-## CustomChart
-Authored patch for custom charts: rows in, SVG out, drawn by a template.
-
-**Required**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | const: "custom" |  |
-
-**Optional**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
-| `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
-| `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
-| `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
-| `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
-| `subtitle` | str | Supporting text beneath the chart title. |
-| `template` | str | Name of a project template: `templates/&lt;name&gt;.svg.j2`. Exactly one of `template` or `svg` is required. |
-| `svg` | str | Inline Jinja SVG template source, used instead of `template`. |
-| `x` | str \| list[str] | Column(s) for the template's `x` channel; the template header declares it. |
-| `y` | str \| list[str] | Column(s) for the template's `y` channel; the template header declares it. |
-| `color` | str \| list[str] | Column(s) for the template's `color` channel; the template header declares it. |
-| `size` | str \| list[str] | Column(s) for the template's `size` channel; the template header declares it. |
-| `shape` | str \| list[str] | Column(s) for the template's `shape` channel; the template header declares it. |
-| `theta` | str \| list[str] | Column(s) for the template's `theta` channel; the template header declares it. |
-| `value` | str \| list[str] | Column(s) for the template's `value` channel; the template header declares it. |
-| `options` | dict[str, JsonValue] | Values for the options the template declares in its header. |
-| `style` | [CustomChartStyle](#customchartstyle) | Sizing overrides for this chart alone. |
 
 <a id="chartref"></a>
 ## ChartRef
@@ -1050,13 +1017,12 @@ Authored overlay for TableChartStyle. Table chart style overrides layered on top
 | Field | Type | Description |
 |-------|------|-------------|
 | `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
-| `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
+| `preferred_width` | float | Width the board asks for when sizing to a table before its data is known. With data, a board with no width measures the table's columns instead. Only a value set on the chart itself pins the width; a board- or theme-level value is just the estimate used before data is known. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Table background color; None inherits from theme. |
 | `font` | [FontStyle](#fontstyle) | Table chart-level font overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
 | `border` | [BorderStyle](#borderstyle) | Chart card border style. |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Table color: static text paint or gradient scale only (no categorical arm). |
-| `rule` | [TableRuleStyle](#tablerulestyle) | Table rule style overrides (color). None = no override; inherits from theme. |
 | `outer_padding` | float | Outer table padding in pixels. |
 | `bottom_padding` | float | Extra bottom padding below the last row in pixels. |
 | `column_layout` | [TableColumnsStyle](#tablecolumnsstyle) | Default column width and cell padding settings. |
@@ -1173,16 +1139,6 @@ Authored overlay for SparkBarChartStyle. Produced by cascade from theme YAML.
 | `border` | [CornerStyle](#cornerstyle) | Spark_bar outer corner rounding. |
 | `subtitle` | [SubtitleStyle](#subtitlestyle) | Spark_bar subtitle font-sizing constants. |
 
-<a id="customchartstyle"></a>
-## CustomChartStyle
-Sizing for a custom chart; its look comes from the board's `style:`.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `aspect_ratio` | float | Chart aspect ratio (width/height). |
-| `min_height` | float | Minimum chart height in pixels. |
-| `max_height` | float | Maximum chart height in pixels. |
-
 <a id="griditem"></a>
 ## GridItem
 Grid layout item with position and span.
@@ -1191,7 +1147,7 @@ Grid layout item with position and span.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `item` | str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)] | Chart name or inline chart/board definition to place in this grid cell. |
+| `item` | str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)] | Chart name or inline chart/board definition to place in this grid cell. |
 
 **Optional**
 
@@ -1223,8 +1179,8 @@ Tab layout item.
 | `notes` | str | Optional metadata for AI search. Emitted into the SVG DOM as a data-layout-notes attribute; never painted as visible pixels. |
 | `text` | str | Markdown text content shown in this tab. |
 | `style` | [Style](#style) | Appearance overrides for this tab's content area. |
-| `rows` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)]] | Vertical stack layout for this tab's content. |
-| `cols` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)]] | Horizontal layout for this tab's content. |
+| `rows` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)]] | Vertical stack layout for this tab's content. |
+| `cols` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)]] | Horizontal layout for this tab's content. |
 | `grid` | [GridLayout](#gridlayout) | CSS-grid layout for this tab's content. |
 | `tabs` | [TabLayout](#tablayout) | A further set of tabs opening inside this one. |
 
@@ -1298,9 +1254,9 @@ Authored overlay for TextStyle. Markdown / plain text content.
 | `heading` | [BlockMarginStyle](#blockmarginstyle) | Spacing above/below heading blocks (H1–H6) in line-height units. |
 | `column` | [TextColumnStyle](#textcolumnstyle) | Multi-column layout for the board body-text block. |
 | `code` | [TextCodeStyle](#textcodestyle) | Inline + fenced code box styling (font, background, border). |
-| `blockquote` | [TextBlockquoteStyle](#textblockquotestyle) | Blockquote box styling (font, background, border/left-rule). |
+| `blockquote` | [TextBlockquoteStyle](#textblockquotestyle) | Blockquote box styling (font, background, border/left bar). |
 | `bold` | [TextBoldStyle](#textboldstyle) | Inline bold-run styling (weight), distinct from heading weight. |
-| `rule` | [TextRuleStyle](#textrulestyle) | Markdown horizontal-rule and table-gridline color. |
+| `divider` | [DividerStyle](#dividerstyle) | Markdown horizontal rules (`---`) and markdown-table gridlines. |
 
 <a id="placeholderstyle"></a>
 ## PlaceholderStyle
@@ -1392,7 +1348,7 @@ Authored overlay for VariablesStyle. Variable controls chrome styling.
 
 <a id="footerstyle"></a>
 ## FooterStyle
-Authored overlay for FooterStyle. Page footer chrome: visibility, attribution text, font, and rule.
+Authored overlay for FooterStyle. Page footer chrome: visibility, attribution text, font, and divider.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1401,7 +1357,7 @@ Authored overlay for FooterStyle. Page footer chrome: visibility, attribution te
 | `link` | str | URL the footer brand phrase 'dbt charts' links to; null renders plain text. |
 | `font` | [FontStyle](#fontstyle) | Footer text font style (size and color required). Unset fields fall back to [`style.font`](#style). |
 | `y_offset` | float | Vertical offset from bottom edge in pixels. |
-| `rule` | [FooterRule](#footerrule) | Hairline rule above footer text; null disables the rule. |
+| `divider` | [DividerStyle](#dividerstyle) | Hairline above the footer text. |
 
 <a id="timestampstyle"></a>
 ## TimestampStyle
@@ -1640,8 +1596,8 @@ Authored overlay for SupportTableStyle. Attached support_table style. Lives at s
 | Field | Type | Description |
 |-------|------|-------------|
 | `font` | [FontStyle](#fontstyle) | Support_table font style overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
-| `divider` | [RuleStyle](#rulestyle) | Rule at the boundary between the chart plot and the data strip. For position='bottom': rule sits above the strip (below the axis). For position='top': rule sits below the strip rows (above the plot top). |
-| `row` | [SupportTableRowStyle](#supporttablerowstyle) | Support_table row padding and rule style. |
+| `divider` | [DividerStyle](#dividerstyle) | Line at the boundary between the chart plot and the data strip. For position='bottom': the line sits above the strip (below the axis). For position='top': the line sits below the strip rows (above the plot top). |
+| `row` | [SupportTableRowStyle](#supporttablerowstyle) | Support_table row padding and divider style. |
 | `label` | [SupportTableLabelStyle](#supporttablelabelstyle) | Row label (series name) style. |
 | `padding_top` | float | Padding above the topmost strip row in pixels. For position='bottom': gap between axis labels and the first row. For position='top': space above the topmost row (outer edge of strip). |
 | `padding_bottom` | float | Padding below the last strip row in pixels. For position='bottom': space below the last row. For position='top': gap between the last row and the plot top edge. |
@@ -1852,14 +1808,6 @@ Authored overlay for StaticGradientColorStyle. Color config for geo/point_map/ta
 | `static` | str | One explicit color: the marks on most families when no color column is encoded, the cell text on a table. |
 | `gradient` | [ScaleTargetConfig](#scaletargetconfig) | Continuous gradient scale for the color encoding. |
 
-<a id="tablerulestyle"></a>
-## TableRuleStyle
-Authored overlay for TableRuleStyle. Table rule color override block.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `color` | str | Table rule color; None uses the theme default. |
-
 <a id="tablecolumnsstyle"></a>
 ## TableColumnsStyle
 Authored overlay for TableColumnsStyle.
@@ -1877,13 +1825,13 @@ Authored overlay for TableHeaderStyle.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `visible` | bool | Show the header row (column labels + rule). Set to False on series-keyed tables where column meanings are obvious from context (e.g. donut-attached tables: swatch / share / name / value). Theme YAML supplies the UX default (true) via _base.yaml. |
+| `visible` | bool | Show the header row (column labels + divider). Set to False on series-keyed tables where column meanings are obvious from context (e.g. donut-attached tables: swatch / share / name / value). Theme YAML supplies the UX default (true) via _base.yaml. |
 | `height` | float | Header row height in pixels. |
 | `font` | [FontStyle](#fontstyle) | Header font style overrides. Unset fields fall back to [`style.charts.table.font`](#tablechartstyle). |
 | `font_compact` | [FontStyle](#fontstyle) | Compact-tier font overrides applied when body size ≤11px; None means no compact override. |
-| `background` | str | Header background color; None means no fill (rule alone separates header from body). |
+| `background` | str | Header background color; None means no fill (the divider alone separates header from body). |
 | `overflow` | enum: "clip", "truncate", "wrap-two", "wrap" | What happens to header text too wide for its column (clip, truncate, wrap-two, wrap). |
-| `rule` | [RuleStyle](#rulestyle) | Header bottom rule style. |
+| `divider` | [TableDividerStyle](#tabledividerstyle) | Line between the header row and the body. |
 
 <a id="tablerowstyle"></a>
 ## TableRowStyle
@@ -1893,7 +1841,7 @@ Authored overlay for TableRowStyle.
 |-------|------|-------------|
 | `height` | float | Body row height in pixels. |
 | `stripe` | [TableRowStripeStyle](#tablerowstripestyle) | Alternating row stripe style; None means no stripe. |
-| `rule` | [RuleStyle](#rulestyle) | Row bottom rule style. |
+| `divider` | [TableDividerStyle](#tabledividerstyle) | Line under each body row. |
 | `role` | str | Default row role assignment; None means plain body row. |
 | `roles` | [TableRowRolesStyle](#tablerowrolesstyle) | Per-role style overrides for summary and total rows. |
 
@@ -2132,7 +2080,7 @@ Authored overlay for TextColumnStyle. Author overrides for the column layout of 
 | Field | Type | Description |
 |-------|------|-------------|
 | `max_number` | int | Ceiling on the column count. The renderer may choose fewer when there is not enough text to fill them. None = no ceiling. |
-| `rule` | [ColumnRuleStyle](#columnrulestyle) | Vertical rule drawn between columns. None = no rule. |
+| `divider` | [DividerStyle](#dividerstyle) | Vertical line drawn between columns. |
 | `max_chars` | int | Column text width as a character count, overriding the shipped measure. It caps the text inside a column; a column narrower than this limits the text first. |
 
 <a id="textcodestyle"></a>
@@ -2149,7 +2097,7 @@ Authored overlay for TextCodeStyle. Inline and fenced code spans in markdown pro
 
 <a id="textblockquotestyle"></a>
 ## TextBlockquoteStyle
-Authored overlay for TextBlockquoteStyle. Blockquote prose. Box group; border is the left rule.
+Authored overlay for TextBlockquoteStyle. Blockquote prose. Box group; border is the left bar.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -2165,13 +2113,16 @@ Authored overlay for TextBoldStyle. Inline **bold** text runs in markdown prose,
 |-------|------|-------------|
 | `weight` | str \| float | CSS font-weight for bold text runs and bold table cells. |
 
-<a id="textrulestyle"></a>
-## TextRuleStyle
-Authored overlay for TextRuleStyle. Horizontal rules in markdown prose: `---` and markdown-table gridlines.
+<a id="dividerstyle"></a>
+## DividerStyle
+Authored overlay for DividerStyle. A separator line: whether it draws, and its color, width and line style.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `color` | str | Color of markdown horizontal rules and markdown-table gridlines. |
+| `visible` | bool | Draw the divider. |
+| `color` | str | Divider color. |
+| `width` | float | Divider line width in pixels. |
+| `dasharray` | str | Dash pattern in pixels, such as "6 3" (6 drawn, 3 gap); unset draws a solid line. |
 
 <a id="placeholderoverlay"></a>
 ## PlaceholderOverlay
@@ -2367,15 +2318,6 @@ Authored overlay for InputStyle.
 | `padding` | [SpacingValues](#spacingvalues) | Input inner padding in pixels. |
 | `widths` | [InputWidths](#inputwidths) | Per-input-type default widths. |
 | `range` | [RangeDefaults](#rangedefaults) | Range input default min/max/step values. |
-
-<a id="footerrule"></a>
-## FooterRule
-Authored overlay for FooterRule. Hairline rule above the footer attribution text. None = no rule.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `color` | str | Rule stroke color. |
-| `stroke_width` | float | Rule stroke width in pixels. |
 
 <a id="baseaxisgridstyle"></a>
 ## BaseAxisGridStyle
@@ -2577,16 +2519,6 @@ Per-edge label override for the mirrored ``axis_y.mirror`` ghost axis.
 | `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Tick value format string for the mirrored edge; None reuses the primary axis's format. |
 | `expr` | str | Custom Vega expression for the mirrored edge's label text; None reuses the primary axis's label expression. |
 
-<a id="rulestyle"></a>
-## RuleStyle
-Authored overlay for RuleStyle. Shared rule-line primitive: width, color, continuous mode.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `width` | float | Rule line width in pixels. |
-| `color` | str | Rule color; None inherits from theme. |
-| `continuous` | bool | Draw a continuous full-width rule (true) or only under columns (false). |
-
 <a id="supporttablerowstyle"></a>
 ## SupportTableRowStyle
 Authored overlay for SupportTableRowStyle.
@@ -2594,7 +2526,7 @@ Authored overlay for SupportTableRowStyle.
 | Field | Type | Description |
 |-------|------|-------------|
 | `padding` | [SupportTableRowPaddingStyle](#supporttablerowpaddingstyle) | Row padding style. |
-| `rule` | [RuleStyle](#rulestyle) | Row bottom rule style. |
+| `divider` | [DividerStyle](#dividerstyle) | Line under each strip row. |
 
 <a id="supporttablelabelstyle"></a>
 ## SupportTableLabelStyle
@@ -2767,6 +2699,18 @@ Authored overlay for SliceMarkStyle. Pie/donut slice mark: mark-level paint and 
 | `stroke` | [StrokeStyle](#strokestyle) | Arc slice stroke style. |
 | `labels` | [SliceLabelsStyle](#slicelabelsstyle) | Per-slice label style. |
 
+<a id="tabledividerstyle"></a>
+## TableDividerStyle
+Authored overlay for TableDividerStyle. A table divider that also chooses how far the line runs.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `visible` | bool | Draw the divider. |
+| `color` | str | Divider color. |
+| `width` | float | Divider line width in pixels. |
+| `dasharray` | str | Dash pattern in pixels, such as "6 3" (6 drawn, 3 gap); unset draws a solid line. |
+| `continuous` | bool | Draw one unbroken line across the full table width (true) or only under each column (false). |
+
 <a id="tablerowstripestyle"></a>
 ## TableRowStripeStyle
 Authored overlay for TableRowStripeStyle. Alternating row stripe style.
@@ -2881,16 +2825,6 @@ Authored overlay for GeoshapeMarkStyle. Geoshape (choropleth) mark fill and boun
 |-------|------|-------------|
 | `fill` | str | Neutral geoshape fill color. |
 | `stroke` | [StrokeStyle](#strokestyle) | Geoshape boundary stroke style. |
-
-<a id="columnrulestyle"></a>
-## ColumnRuleStyle
-Authored overlay for ColumnRuleStyle. Vertical rule drawn between prose columns, structured like BorderStyle.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `width` | float | Rule line width in pixels. |
-| `color` | str | Rule color as a CSS color string. |
-| `style` | enum: "solid", "dashed", "dotted" | Rule line style. |
 
 <a id="tooltipslotstyle"></a>
 ## TooltipSlotStyle
@@ -3129,7 +3063,7 @@ Authored overlay for TableRowRoleStyle.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `rule_width` | float | Rule width above rows with this role in pixels. |
+| `divider` | [DividerStyle](#dividerstyle) | Line above rows with this role. |
 | `font` | [FontStyle](#fontstyle) | Per-role font style override; None uses the default row font. |
 | `background` | str | Per-role row background color; None means no override. |
 
@@ -3365,6 +3299,33 @@ Redshift source configuration.
 | `tcp_keepalive_idle` | int | Idle seconds before TCP keepalives begin. |
 | `tcp_keepalive_interval` | int | Seconds between TCP keepalive probes. |
 | `tcp_keepalive_count` | int | Number of TCP keepalive probes before failure. |
+
+<a id="databrickssourceconfig"></a>
+## DatabricksSourceConfig
+Databricks source configuration.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | const: "databricks" |  |
+| `host` | str | Databricks workspace host name. |
+| `http_path` | str | HTTP path of the SQL warehouse. |
+| `token` | str | Personal access token. |
+| `catalog` | str | Unity Catalog catalog name. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
+| `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
+| `schema` | str | Default schema for queries. |
+| `connect_retries` | int | Number of times to retry a failed connection. Has no effect unless retry_all is also set to true. |
+| `connect_timeout` | int | Seconds to wait between connection retry attempts, not a limit on how long a single attempt may take. Has no effect unless retry_all is also set to true. |
+| `socket_timeout` | int | Socket read timeout in seconds for the SQL warehouse connection. It also replaces the driver's own retry budget for a failed connection, which defaults to about 15 minutes, so a value below that shortens a hang against an unreachable warehouse while a larger value lengthens it. |
+| `retry_all` | bool | Whether dbt Charts itself retries a failed connection attempt, using connect_retries and connect_timeout. False (the default) means dbt Charts does not retry; the Databricks driver still retries certain connection failures on its own regardless of this setting. |
 
 <a id="mysqlsourceconfig"></a>
 ## MySQLSourceConfig

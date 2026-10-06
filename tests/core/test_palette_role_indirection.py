@@ -232,6 +232,8 @@ class TestCategoricalNamedHueRoles:
         "brown": 8,
         "gray": 9,
         "charcoal": 10,
+        "cyan": 2,
+        "moss": 7,
     }
     EDITORIAL_ROLES = {
         "blue": 1,
@@ -244,6 +246,8 @@ class TestCategoricalNamedHueRoles:
         "sage": 7,
         "gray": 9,
         "charcoal": 10,
+        "cyan": 2,
+        "moss": 7,
     }
     VIVID_FAMILY = ["vivid-10"]
     EDITORIAL_FAMILY = ["editorial-10"]
@@ -264,6 +268,17 @@ class TestCategoricalNamedHueRoles:
                         ).lower()
                         == stops[slot - 1].lower()
                     ), f"{pal} {name}"
+
+    @pytest.mark.parametrize("pal", ["vivid-10", "editorial-10"])
+    @pytest.mark.parametrize(("hue_name", "alias"), [("cyan", "sky"), ("moss", "sage")])
+    @pytest.mark.parametrize("tier", ["", ".deep", ".pale"])
+    def test_hue_name_resolves_like_its_alias(
+        self, pal: str, hue_name: str, alias: str, tier: str
+    ) -> None:
+        palettes = {"category": pal}
+        assert color_from_theme(
+            f"category.{hue_name}{tier}", palettes=palettes
+        ) == color_from_theme(f"category.{alias}{tier}", palettes=palettes)
 
     def test_all_family_members_define_identical_vocabulary(self) -> None:
         """Swap-invariance requires vivid-10 and editorial-10 to define the

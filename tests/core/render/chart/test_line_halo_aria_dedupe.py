@@ -212,3 +212,26 @@ def test_line_announced_mark_paints_its_series_color(make_chart, point_size):
         )
 
     assert swatches == {s: {c} for s, c in series_colors.items()}
+
+
+def _area_svg(make_chart, point_size: int) -> str:
+    pytest.importorskip("vl_convert")
+    import vl_convert as vlc
+
+    style = {"marks": {"point": {"size": point_size}}}
+    chart = make_chart("area", x="day", y="value", color="series", style=style)
+    return vlc.vegalite_to_svg(
+        generate_vega_lite_spec(chart, _MULTI_SERIES_DATA, width=400)
+    )
+
+
+@_POINT_SIZES
+def test_area_announces_each_datum_exactly_once(make_chart, point_size):
+    """Same rule as the line family: the drawn point announces the datum, the
+    hover overlay only when no point is drawn."""
+    marks = _datum_marks(_area_svg(make_chart, point_size))
+    counts = Counter(label for label, _ in marks)
+
+    assert len(counts) == len(_MULTI_SERIES_DATA), counts
+    repeated = {label: n for label, n in counts.items() if n > 1}
+    assert not repeated, f"Datum labels announced more than once: {repeated!r}"

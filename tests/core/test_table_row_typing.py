@@ -106,19 +106,29 @@ class TestRowTypingRendering:
         tc = es.table
         new_row = tc.row.model_copy(
             update={
-                "rule": tc.row.rule.model_copy(update={"width": 0.5}),
+                "divider": tc.row.divider.model_copy(
+                    update={"visible": True, "width": 0.5}
+                ),
                 "role": row_role,
                 "roles": tc.row.roles.model_copy(
                     update={
                         "summary": tc.row.roles.summary.model_copy(
-                            update={"rule_width": 0.5}
+                            update={
+                                "divider": tc.row.roles.summary.divider.model_copy(
+                                    update={"visible": True, "width": 0.5}
+                                )
+                            }
                         )
                     }
                 ),
             }
         )
         new_header = tc.header.model_copy(
-            update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+            update={
+                "divider": tc.header.divider.model_copy(
+                    update={"visible": False, "width": 1}
+                )
+            }
         )
         return dataclasses.replace(
             es, table=tc.model_copy(update={"row": new_row, "header": new_header})
@@ -231,14 +241,29 @@ class TestRowTypingRendering:
                 "roles": tc.row.roles.model_copy(
                     update={
                         "summary": tc.row.roles.summary.model_copy(
-                            update={"rule_width": 0}
-                        )
+                            update={
+                                "divider": tc.row.roles.summary.divider.model_copy(
+                                    update={"visible": False, "width": 1}
+                                )
+                            }
+                        ),
+                        "total": tc.row.roles.total.model_copy(
+                            update={
+                                "divider": tc.row.roles.total.divider.model_copy(
+                                    update={"visible": False, "width": 1}
+                                )
+                            }
+                        ),
                     }
                 ),
             }
         )
         new_header = tc.header.model_copy(
-            update={"rule": tc.header.rule.model_copy(update={"width": 0})}
+            update={
+                "divider": tc.header.divider.model_copy(
+                    update={"visible": False, "width": 1}
+                )
+            }
         )
         es = dataclasses.replace(
             es, table=tc.model_copy(update={"row": new_row, "header": new_header})

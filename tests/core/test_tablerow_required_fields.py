@@ -13,47 +13,67 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
     reset_config,
 )
-from dbt_charts.core.compile.models.primitives import RuleStyle
+from dbt_charts.core.compile.models.primitives import DividerStyle
 from dbt_charts.core.compile.models.style.theme import (
+    TableDividerStyle,
     TableRowRolesStyle,
     TableRowRoleStyle,
     TableRowStyle,
 )
 
+_DIVIDER = {"visible": True, "color": "#000000", "width": 1.0}
 
-def test_compiled_rule_style_requires_width():
+
+@pytest.mark.parametrize("missing", sorted(_DIVIDER))
+def test_divider_style_requires_every_field(missing: str) -> None:
     with pytest.raises(ValidationError):
-        RuleStyle(continuous=False)
+        DividerStyle.model_validate({k: v for k, v in _DIVIDER.items() if k != missing})
 
 
-def test_compiled_rule_style_requires_continuous():
+@pytest.mark.parametrize("dasharray", ["", "dashed", "6 -3", "6;3"])
+def test_divider_style_rejects_a_malformed_dasharray(dasharray: str) -> None:
     with pytest.raises(ValidationError):
-        RuleStyle(width=0.0)
+        DividerStyle.model_validate({**_DIVIDER, "dasharray": dasharray})
 
 
-def test_compiled_table_row_role_style_requires_rule_width():
+def test_divider_style_normalizes_a_comma_dasharray() -> None:
+    assert (
+        DividerStyle.model_validate({**_DIVIDER, "dasharray": "6, 3"}).dasharray
+        == "6 3"
+    )
+
+
+def test_divider_style_rejects_zero_width() -> None:
+    with pytest.raises(ValidationError):
+        DividerStyle.model_validate({**_DIVIDER, "width": 0})
+
+
+def test_table_divider_style_requires_continuous() -> None:
+    with pytest.raises(ValidationError):
+        TableDividerStyle.model_validate(_DIVIDER)
+
+
+def test_compiled_table_row_role_style_requires_divider():
     with pytest.raises(ValidationError):
         TableRowRoleStyle()
 
 
 def test_compiled_table_row_roles_style_requires_summary():
     with pytest.raises(ValidationError):
-        TableRowRolesStyle(total=TableRowRoleStyle(rule_width=0.0))
+        TableRowRolesStyle(total=TableRowRoleStyle(divider=DividerStyle(**_DIVIDER)))
 
 
 def test_compiled_table_row_roles_style_requires_total():
     with pytest.raises(ValidationError):
-        TableRowRolesStyle(summary=TableRowRoleStyle(rule_width=1.0))
+        TableRowRolesStyle(summary=TableRowRoleStyle(divider=DividerStyle(**_DIVIDER)))
 
 
 def test_compiled_table_row_style_requires_height():
+    role = TableRowRoleStyle(divider=DividerStyle(**_DIVIDER))
     with pytest.raises(ValidationError):
         TableRowStyle(
-            rule=RuleStyle(width=0.0, continuous=False),
-            roles=TableRowRolesStyle(
-                summary=TableRowRoleStyle(rule_width=1.0),
-                total=TableRowRoleStyle(rule_width=0.0),
-            ),
+            divider=TableDividerStyle(**_DIVIDER, continuous=False),
+            roles=TableRowRolesStyle(summary=role, total=role),
         )
 
 
@@ -63,9 +83,9 @@ def test_theme_pipeline_populates_row_fields():
     row = get_theme_style().charts.table.row
     assert isinstance(row, TableRowStyle)
     assert isinstance(row.height, float)
-    assert isinstance(row.rule, RuleStyle)
-    assert isinstance(row.rule.width, float)
-    assert isinstance(row.rule.continuous, bool)
+    assert isinstance(row.divider, TableDividerStyle)
+    assert isinstance(row.divider.width, float)
+    assert isinstance(row.divider.continuous, bool)
     assert isinstance(row.roles, TableRowRolesStyle)
-    assert isinstance(row.roles.summary.rule_width, float)
-    assert isinstance(row.roles.total.rule_width, float)
+    assert isinstance(row.roles.summary.divider.width, float)
+    assert isinstance(row.roles.total.divider.width, float)

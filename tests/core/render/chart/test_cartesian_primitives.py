@@ -115,7 +115,15 @@ def test_resolve_cartesian_x_returns_named_fields() -> None:
 def test_resolve_xy_titles_returns_named_fields() -> None:
     ax, ay = _axes()
     result = resolve_xy_titles(
-        "date", "revenue", None, None, ax, ay, RenderBox(width=600.0, height=300.0), ""
+        "date",
+        "revenue",
+        None,
+        None,
+        ax,
+        ay,
+        RenderBox(width=600.0, height=300.0),
+        "",
+        field_labels={},
     )
     assert isinstance(result, XYTitles)
     assert result.x_title == "date"

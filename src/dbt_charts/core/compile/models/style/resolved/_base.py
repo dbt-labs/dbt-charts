@@ -691,6 +691,7 @@ class ResolvedChartDefaults:
     hover_emphasis: HoverEmphasisStyle
     font_family: str | None
     title: TitleStyle
+    heading_sizes: list[float]
     pagination: PaginationConfig | None
     formats: FormatAliases | None
     background: str

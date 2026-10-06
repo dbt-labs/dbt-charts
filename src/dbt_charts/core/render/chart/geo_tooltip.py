@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved.geoshape import ResolvedGeoshapeChart
@@ -12,7 +13,8 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_MAP_LOOKUP_KEY_MISMATCH
 from dbt_charts.core.render.chart.spec_builders import tooltip_entry
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
-from dbt_charts.core.render.utils import is_integer_key_value, slug_to_text
+from dbt_charts.core.render.utils import is_integer_key_value
+from dbt_charts.core.text.case import field_title
 
 
 def _sample_lookup_values(
@@ -91,6 +93,7 @@ def build_point_tooltip_fields(
     max_fields: int = 6,
     tooltip_format: str,
     collapsed: bool = False,
+    field_labels: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     """Build tooltip fields for point and bubble maps.
 
@@ -106,11 +109,23 @@ def build_point_tooltip_fields(
 
     if lat_field:
         tooltip_fields.append(
-            tooltip_entry(lat_field, "quantitative", title="Latitude"),
+            tooltip_entry(
+                lat_field,
+                "quantitative",
+                title=field_labels.get(
+                    lat_field, "Latitude"
+                ),  # type-state: silent_fallback — default title
+            ),
         )
     if lng_field:
         tooltip_fields.append(
-            tooltip_entry(lng_field, "quantitative", title="Longitude"),
+            tooltip_entry(
+                lng_field,
+                "quantitative",
+                title=field_labels.get(
+                    lng_field, "Longitude"
+                ),  # type-state: silent_fallback — default title
+            ),
         )
     if collapsed:
         return tooltip_fields
@@ -119,7 +134,7 @@ def build_point_tooltip_fields(
             tooltip_entry(
                 size_field,
                 "quantitative",
-                title=slug_to_text(size_field),
+                title=field_title(size_field, field_labels),
                 format=tooltip_format,
             ),
         )
@@ -128,7 +143,7 @@ def build_point_tooltip_fields(
             tooltip_entry(
                 color_field,
                 infer_vega_type_from_data(data, color_field),
-                title=slug_to_text(color_field),
+                title=field_title(color_field, field_labels),
             ),
         )
 
@@ -140,7 +155,7 @@ def build_point_tooltip_fields(
                 tooltip_entry(
                     field,
                     infer_vega_type_from_data(data, field),
-                    title=slug_to_text(field),
+                    title=field_title(field, field_labels),
                 ),
             )
             if len(tooltip_fields) >= max_fields:

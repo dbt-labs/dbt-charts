@@ -1,0 +1,79 @@
+{#---
+description: Polar area ("coxcomb") diagram after Florence Nightingale, one row per period in query order. Each period is a wedge of equal angle whose area, not radius, is proportional to each series' value; series overlay largest first, so every one stays visible. Colors come from color_for(name, "series"), so a board can pin them under style.charts.category_colors.series. An optional panel column draws one rose per panel, side by side, on a shared scale.
+channels:
+  x:
+    description: Column labeling each wedge, such as the month.
+  y:
+    description: Columns drawn as overlaid wedges; their names key the colors.
+    multiple: true
+options:
+  panel:
+    type: column
+    default: null
+    description: Optional column; each distinct value draws its own rose, left to right in query order.
+  value_format:
+    type: string
+    default: ',.0f'
+  start_angle:
+    type: number
+    default: 270
+    description: Degrees clockwise from twelve o'clock where the first wedge starts.
+---#}
+{% set p = options %}
+{% set label_col = channels.x %}
+{% set series_col = channels.y %}
+{% if not rows %}{{ raise_error("A rose needs at least one period.") }}{% endif %}
+{% set ns = namespace(panels=[], peak=0) %}
+{% for r in rows %}
+  {% set key = (r[p.panel] | string) if p.panel else "" %}
+  {% if key not in ns.panels %}{% set ns.panels = ns.panels + [key] %}{% endif %}
+  {% for s in series_col %}{% set ns.peak = [ns.peak, r[s] | float] | max %}{% endfor %}
+{% endfor %}
+{% set size = style.font.size %}
+{% set small = style.charts.axis.labels.font.size %}
+{% set legend_h = size * 2.4 %}
+{% set caption_h = size * 2 if p.panel else 0 %}
+{% set n_panels = ns.panels | length %}
+{% set pw = width / n_panels %}
+{% set ph = height - legend_h - caption_h %}
+{% set label_room = small * 3.2 %}
+{% set r_max = [pw / 2, ph / 2] | min - label_room %}
+{% set k = r_max / (ns.peak ** 0.5) %}
+<g font-family="{{ style.font.family }}">
+{% for key in ns.panels %}
+  {% set cx = pw * loop.index0 + pw / 2 %}
+  {% set cy = ph / 2 %}
+  {% set pr = namespace(rows=[]) %}
+  {% for r in rows if not p.panel or (r[p.panel] | string) == key %}{% set pr.rows = pr.rows + [r] %}{% endfor %}
+  {% set step = 2 * math.pi / (pr.rows | length) %}
+  {% for r in pr.rows %}
+    {% set a0 = (p.start_angle / 180 * math.pi) + step * loop.index0 %}
+    {% set a1 = a0 + step %}
+    {% set wd = namespace(list=[]) %}
+    {% for s in series_col %}{% set wd.list = wd.list + [{"name": s, "v": r[s] | float}] %}{% endfor %}
+    {% set wedges = wd.list %}
+    <g>
+      <title>{{ r[label_col] }}{% for w in wedges %}; {{ w.name }} {{ w.v | format(p.value_format) }}{% endfor %}</title>
+    {% for w in wedges | sort(attribute="v", reverse=true) %}
+      {% set rr = k * (w.v ** 0.5) %}
+      {% if rr > 0.3 %}
+      <path d="M{{ cx|round(2) }},{{ cy|round(2) }}L{{ (cx + rr * math.sin(a0))|round(2) }},{{ (cy - rr * math.cos(a0))|round(2) }}A{{ rr|round(2) }},{{ rr|round(2) }} 0 0 1 {{ (cx + rr * math.sin(a1))|round(2) }},{{ (cy - rr * math.cos(a1))|round(2) }}Z" fill="{{ color_for(w.name, 'series') }}" stroke="{{ style.background }}" stroke-width="0.6"/>
+      {% endif %}
+    {% endfor %}
+    </g>
+    {% set am = (a0 + a1) / 2 %}
+    {% set top = k * ((wedges | map(attribute="v") | max) ** 0.5) %}
+    {% set lr = [top, r_max * 0.45] | max + small * 1.1 %}
+    <text x="{{ (cx + lr * math.sin(am))|round(1) }}" y="{{ (cy - lr * math.cos(am))|round(1) }}" dy="0.35em" text-anchor="middle" font-size="{{ small }}" fill="{{ style.muted }}">{{ r[label_col] }}</text>
+  {% endfor %}
+  {% if p.panel %}
+  <text x="{{ cx|round(1) }}" y="{{ (ph + size)|round(1) }}" text-anchor="middle" font-size="{{ size }}" fill="{{ style.font.color }}">{{ key }}</text>
+  {% endif %}
+{% endfor %}
+{% set lx = namespace(x=0) %}
+{% for s in series_col %}
+  <rect x="{{ lx.x }}" y="{{ (height - size - 2)|round(1) }}" width="10" height="10" rx="2" fill="{{ color_for(s, 'series') }}"/>
+  <text x="{{ lx.x + 14 }}" y="{{ (height - 3)|round(1) }}" font-size="{{ size }}" fill="{{ style.font.color }}">{{ s | replace("_", " ") }}</text>
+  {% set lx.x = lx.x + 14 + text_width(s | replace("_", " "), size) + 22 %}
+{% endfor %}
+</g>

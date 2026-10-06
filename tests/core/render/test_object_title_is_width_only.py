@@ -76,28 +76,28 @@ class TestChartTitleSpecAtTier:
 
         get_config()  # ensure settings initialized
         size, _, _ = chart_title_spec(300.0, chart_style_context=_charts())
-        assert size == int(get_theme_style().title.sizes[4])  # H5
+        assert size == int(get_theme_style().heading_ramp()[4])  # H5
 
     def test_narrow_picks_h3_slot(self) -> None:
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
         get_config()  # ensure settings initialized
         size, _, _ = chart_title_spec(400.0, chart_style_context=_charts())
-        assert size == int(get_theme_style().title.sizes[2])  # H3
+        assert size == int(get_theme_style().heading_ramp()[2])  # H3
 
     def test_medium_picks_h2_slot(self) -> None:
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
         get_config()  # ensure settings initialized
         size, _, _ = chart_title_spec(720.0, chart_style_context=_charts())
-        assert size == int(get_theme_style().title.sizes[1])  # H2
+        assert size == int(get_theme_style().heading_ramp()[1])  # H2
 
     def test_wide_picks_h2_slot(self) -> None:
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
         get_config()  # ensure settings initialized
         size, _, _ = chart_title_spec(1152.0, chart_style_context=_charts())
-        assert size == int(get_theme_style().title.sizes[1])  # H2
+        assert size == int(get_theme_style().heading_ramp()[1])  # H2
 
 
 class TestRendererTitleParityAcrossObjectTypes:

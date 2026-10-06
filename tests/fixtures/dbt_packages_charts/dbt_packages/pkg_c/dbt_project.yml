@@ -1,0 +1,2 @@
+name: pkg_c
+# No charts/ directory — pkg_c must not appear as a board root.

@@ -10,7 +10,7 @@ from __future__ import annotations
 import html as html_module
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cache
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
     from dbt_charts.core.compile.models.chart.authored import (
         SparkConfig,
+        TableSpanner,
     )
     from dbt_charts.core.compile.models.chart.resolved.table import ResolvedTableChart
     from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
@@ -369,6 +370,7 @@ def _row_number_column_width(
     table_config: TableChartStyle,
     font: FontStyle,
     measurer: FontMeasurer,
+    header_measurer: FontMeasurer,
 ) -> float:
     """Compute the synthetic row-number column width.
 
@@ -384,7 +386,7 @@ def _row_number_column_width(
     digits = max(len(str(max(total_row_count, 1))), len(row_numbers.header))
     text_w = max(
         measurer.measure("9" * digits, font_size),
-        measurer.measure(row_numbers.header, font_size),
+        header_measurer.measure(row_numbers.header, font_size),
     )
     cell_pad = int(table_config.column_layout.cell_padding)
     return float(text_w + cell_pad * 2)
@@ -926,7 +928,46 @@ def _compute_content_span(
     return x1, x2
 
 
-def _render_pivot_group_header(
+def _authored_spanner_level(
+    spanners: Sequence[TableSpanner],
+    queried_columns: Sequence[str],
+    visible_columns: Sequence[str],
+    chart_id: str,
+) -> list[tuple[str, int, int]]:
+    """Resolve authored spanners to ``(label, first_idx, n)`` over visible columns.
+
+    Hidden columns leave their span and a spanner left with none is dropped.
+    Adjacency is judged on the visible order, which the query alone decides —
+    a non-adjacent spanner raises rather than reorder anything.
+    """
+    for spanner in spanners:
+        unknown = [c for c in spanner.columns if c not in queried_columns]
+        if unknown:
+            raise ChartDataError(
+                f"table {chart_id!r}: spanner {spanner.label!r} names"
+                f" {unknown}, which are not query columns"
+                f" (columns: {list(queried_columns)})."
+            )
+
+    level: list[tuple[str, int, int]] = []
+    for spanner in spanners:
+        idxs = sorted(
+            visible_columns.index(c) for c in spanner.columns if c in visible_columns
+        )
+        if not idxs:
+            continue
+        if idxs[-1] - idxs[0] + 1 != len(idxs):
+            raise ChartDataError(
+                f"table {chart_id!r}: spanner {spanner.label!r} columns"
+                f" {spanner.columns} are not adjacent among the visible columns"
+                f" {list(visible_columns)}. Reorder the query's SELECT;"
+                " spanners never reorder columns."
+            )
+        level.append((spanner.label, idxs[0], len(idxs)))
+    return level
+
+
+def _render_header_group_rows(
     svg_parts: list[str],
     *,
     levels: list[list[tuple[str, int, int]]],
@@ -941,31 +982,23 @@ def _render_pivot_group_header(
     header_font: FontStyle,
     cell_pad: int,
 ) -> None:
-    """Render N group-label rows for a multi-dim or multi-measure pivot table.
+    """Render N group-label rows above the leaf headers.
 
     Draws one header row per descriptor level, stacked top→bottom (outermost
-    column dim on top, measure level at the bottom when present). Each span label
-    is centered horizontally over the leaf columns it covers.
+    pivot column dim on top, measure level at the bottom when present; an
+    authored ``spanners:`` list is a single level). Each span label is centered
+    horizontally over the columns it covers.
 
     ``levels`` is a list of descriptor levels, each being a list of
-    ``(label, first_leaf_idx, n_leaves)`` where ``first_leaf_idx`` is 0-indexed
-    into the leaf portion of ``columns`` (after any non-leaf columns).
-
-    Invariant: leaf columns are the ONLY columns whose key contains
-    ``_PIVOT_LEAF_SEP`` (the only producer of that key shape; the separator is
-    illegal in SQL aliases). Every other entry in ``columns`` — row-dimension fields
-    AND any synthetic injected column such as ``_ROW_NUMBER_COL`` — precedes the
-    leaves and is counted as a non-leaf below, so ``n_row_dims`` aligns the group
-    spans with ``col_x_offsets`` even when row numbers are enabled.
+    ``(label, first_col_idx, n_cols)`` where ``first_col_idx`` indexes
+    ``columns`` directly (the synthetic row-number column included). Columns no
+    span covers get a blank, unruled cell.
     """
     assert header_font.size is not None, "header_font.size must be set"
     assert header_font.weight is not None, "header_font.weight must be set"
     font_size = int(header_font.size)
     font_weight = str(header_font.weight)
     font_family = header_font.family or ""
-
-    # How many non-leaf columns (row dims + any synthetic columns) precede the leaves?
-    n_row_dims = sum(1 for c in columns if _PIVOT_LEAF_SEP not in c)
 
     rule_color = colors.get("label_color") or colors["color"]
     _RULE_H = 1.0
@@ -987,13 +1020,11 @@ def _render_pivot_group_header(
             + centered_baseline_offset(font_family, font_size)
         )
 
-        for group_label, first_leaf_idx, n_leaves in level:
-            abs_first = n_row_dims + first_leaf_idx
-            abs_last = abs_first + n_leaves - 1
-            x_left = padding_x + col_x_offsets[abs_first]
-            last_col_key = columns[abs_last]
+        for group_label, first_idx, n_cols in level:
+            last_idx = first_idx + n_cols - 1
+            x_left = padding_x + col_x_offsets[first_idx]
             x_right = (
-                padding_x + col_x_offsets[abs_last] + col_widths.get(last_col_key, 0)
+                padding_x + col_x_offsets[last_idx] + col_widths[columns[last_idx]]
             )
             center_x = (x_left + x_right) / 2
 
@@ -1340,7 +1371,9 @@ def _has_overflow(
             # "Growth", "Margin" shouldn't wrap, but "Opportunities
             # Subscription Start Date" is fine to wrap.
             if len(display_name) <= 12:
-                header_w = measurer.measure(display_name, _hfs)
+                header_w = get_font_measurer(header_font.family).measure(
+                    display_name, _hfs
+                )
                 if header_w > content_area:
                     return True
 
@@ -1907,7 +1940,6 @@ def _render_data_rows(
         column_formats[col] = resolve_format_parts(
             col_cfg.format if col_cfg else None,
             formats,
-            no_format_default=None,
         )
         column_symbol_modes[col] = column_symbol_mode(column_formats[col], symbol_mode)
 
@@ -3052,7 +3084,7 @@ def _column_format(
 ) -> ResolvedFormat | None:
     if config.format is None:
         return None
-    return resolve_format_parts(config.format, formats, no_format_default=None)
+    return resolve_format_parts(config.format, formats)
 
 
 def _as_resolved_table_column(
@@ -3256,8 +3288,8 @@ class TableLayout:
     columns: list[str]
     column_configs: dict[str, ResolvedTableColumnConfig]
     column_when_rules: WhenRules
-    pivot_groups: list[list[tuple[str, int, int]]] | None
-    pivot_group_row_height: int
+    header_groups: list[list[tuple[str, int, int]]] | None
+    header_group_row_height: int
     col_widths: dict[str, float]
     col_x_offsets: list[float]
     lane_positions: dict[str, tuple[float, float, float, float, float]]
@@ -3403,6 +3435,9 @@ def _layout_table(
     # tc.font.family is always filled by apply_inherit in production paths
     assert tc.font.family is not None, "style.font.family must be configured"
     table_font_family = _svg_font_family(tc.font.family)
+    assert tc.header.font.family is not None
+    header_font_family = _svg_font_family(tc.header.font.family)
+    header_measurer = get_font_measurer(header_font_family)
     numeric_cell_font = _table_numeric_cell_font(tc.font.family)
     bottom_padding = int(tc.bottom_padding)
     table_width: float = tc.preferred_width if width is None else width
@@ -3617,30 +3652,40 @@ def _layout_table(
     # theme/board, so it lands on tables that never asked for it.)
     if row_role_spec is not None:
         columns = [c for c in columns if c != row_role_spec]
+    _queried_columns = columns
     columns = [
         c
         for c in columns
         if (_cfg := column_configs.get(c)) is None or _cfg.visible is not False
     ]
-    # Group-span descriptors index the pre-filter leaf list — remap them to
-    # the surviving leaves so hiding a measure narrows each span instead of
-    # shifting every later group label off its columns (and drop spans whose
+    # Header-group descriptors are (label, first_idx, n) over `columns` as it
+    # stands after hiding. Pivot groups index the pre-filter leaf list — remap
+    # them to the surviving leaves so hiding a measure narrows each span instead
+    # of shifting every later group label off its columns (and drop spans whose
     # leaves are all hidden).
+    _header_groups: list[list[tuple[str, int, int]]] | None = None
     if _pivot_groups is not None and data:
         _pre_leaves = [k for k in data[0] if _PIVOT_LEAF_SEP in k]
         _kept_leaves = {c for c in columns if _PIVOT_LEAF_SEP in c}
-        if len(_kept_leaves) != len(_pre_leaves):
-            _kept_before = [0]
-            for k in _pre_leaves:
-                _kept_before.append(_kept_before[-1] + (k in _kept_leaves))
-            _pivot_groups = [
-                [
-                    (label, _kept_before[first], n_kept)
-                    for label, first, n in level
-                    if (n_kept := _kept_before[first + n] - _kept_before[first]) > 0
-                ]
-                for level in _pivot_groups
+        _n_stub = len(columns) - len(_kept_leaves)
+        _kept_before = [0]
+        for k in _pre_leaves:
+            _kept_before.append(_kept_before[-1] + (k in _kept_leaves))
+        _header_groups = [
+            [
+                (label, _n_stub + _kept_before[first], n_kept)
+                for label, first, n in level
+                if (n_kept := _kept_before[first + n] - _kept_before[first]) > 0
             ]
+            for level in _pivot_groups
+        ]
+    # Without rows, `columns` is only the authored `style.columns` keys, so real
+    # spanner columns would read as unknown; the empty state draws no spanners.
+    elif chart.spanners and data:
+        _spanner_level = _authored_spanner_level(
+            chart.spanners, _queried_columns, columns, chart_id
+        )
+        _header_groups = [_spanner_level] if _spanner_level else None
 
     # Computed once over the full (post-pivot) dataset — not per page — so a
     # column's bar/column spark layout can't flip anchor or auto-max between
@@ -3662,7 +3707,7 @@ def _layout_table(
     _cell_font = FontStyle(size=float(font_size), family=table_font_family)
     _header_font = FontStyle(
         size=float(header_font_size),
-        family=table_font_family,
+        family=header_font_family,
         weight=header_font_weight,
         case=tc.header.font.case,
     )
@@ -3681,6 +3726,7 @@ def _layout_table(
             table_config=table_config,
             font=_cell_font,
             measurer=get_font_measurer(table_font_family),
+            header_measurer=header_measurer,
         )
     data_column_budget = available_width - row_number_width
 
@@ -3689,6 +3735,7 @@ def _layout_table(
         column_configs,
         data,
         get_font_measurer(table_font_family),
+        header_measurer=header_measurer,
         font_size=float(font_size),
         header_font_size=float(header_font_size),
         header_case=_header_font.case or "none",
@@ -3702,6 +3749,7 @@ def _layout_table(
         column_configs,
         data,
         get_font_measurer(table_font_family),
+        header_measurer=header_measurer,
         font_size=float(font_size),
         header_font_size=float(header_font_size),
         header_case=_header_font.case or "none",
@@ -3760,7 +3808,7 @@ def _layout_table(
             _cell_font = FontStyle(size=float(font_size), family=table_font_family)
             _header_font = FontStyle(
                 size=float(header_font_size),
-                family=table_font_family,
+                family=header_font_family,
                 weight=header_font_weight,
                 case=tc.header.font.case,
             )
@@ -3777,6 +3825,7 @@ def _layout_table(
             table_config=table_config,
             font=_cell_font,
             measurer=get_font_measurer(table_font_family),
+            header_measurer=header_measurer,
         )
         data_column_budget = available_width - row_number_width
         col_demands, col_header_demands = measure_column_demands(
@@ -3784,6 +3833,7 @@ def _layout_table(
             column_configs,
             data,
             get_font_measurer(table_font_family),
+            header_measurer=header_measurer,
             font_size=float(font_size),
             header_font_size=float(header_font_size),
             header_case=_header_font.case or "none",
@@ -3797,6 +3847,7 @@ def _layout_table(
             column_configs,
             data,
             get_font_measurer(table_font_family),
+            header_measurer=header_measurer,
             font_size=float(font_size),
             header_font_size=float(header_font_size),
             header_case=_header_font.case or "none",
@@ -3819,6 +3870,11 @@ def _layout_table(
     # shift all data-column x_offsets right by row_number_width.
     if row_numbers.visible:
         columns = [_ROW_NUMBER_COL, *columns]
+        if _header_groups is not None:
+            _header_groups = [
+                [(label, first + 1, n) for label, first, n in level]
+                for level in _header_groups
+            ]
         col_widths = {_ROW_NUMBER_COL: row_number_width, **col_widths}
         col_x_offsets = [0.0, *[off + row_number_width for off in col_x_offsets]]
         actual_content_width += row_number_width
@@ -3885,18 +3941,18 @@ def _layout_table(
                 padding=padding,
                 table_config=table_config,
                 cell_pad=cell_pad,
-                measurer=get_font_measurer(table_font_family),
+                measurer=header_measurer,
             )
         )
         header_height = int(header_height_resolved)
 
-    # Multi-dim / multi-measure pivot: add one group-header row per descriptor level
-    # above the leaf-header row. Each group row has the same height as one leaf-header
-    # row (before the bump). _pivot_group_row_height is the height of a single row.
-    _pivot_group_row_height: int = 0
-    if _pivot_groups is not None and tc.header.visible:
-        _pivot_group_row_height = header_height
-        header_height = header_height + _pivot_group_row_height * len(_pivot_groups)
+    # Multi-dim / multi-measure pivot or authored spanners: add one group-header
+    # row per descriptor level above the leaf-header row. Each group row has the
+    # same height as one leaf-header row (before the bump).
+    _header_group_row_height: int = 0
+    if _header_groups is not None and tc.header.visible:
+        _header_group_row_height = header_height
+        header_height = header_height + _header_group_row_height * len(_header_groups)
 
     # Pagination: extract current page from variables using chart ID
     current_page = (
@@ -4101,8 +4157,8 @@ def _layout_table(
         columns=columns,
         column_configs=column_configs,
         column_when_rules=column_when_rules,
-        pivot_groups=_pivot_groups,
-        pivot_group_row_height=_pivot_group_row_height,
+        header_groups=_header_groups,
+        header_group_row_height=_header_group_row_height,
         col_widths=col_widths,
         col_x_offsets=col_x_offsets,
         lane_positions=lane_positions,
@@ -4334,14 +4390,14 @@ def _paint_table(
     if tc.header.visible:
         # Multi-dim / multi-measure pivot: render N group-label rows (one per level)
         # stacked above the leaf-header row.
-        if layout.pivot_groups is not None and layout.pivot_group_row_height > 0:
-            _render_pivot_group_header(
+        if layout.header_groups is not None and layout.header_group_row_height > 0:
+            _render_header_group_rows(
                 svg_parts,
-                levels=layout.pivot_groups,
+                levels=layout.header_groups,
                 columns=layout.columns,
                 colors=colors,
                 table_width=layout.table_width,
-                group_row_height=layout.pivot_group_row_height,
+                group_row_height=layout.header_group_row_height,
                 current_y=current_y,
                 padding_x=layout.padding,
                 col_x_offsets=layout.col_x_offsets,
@@ -4350,11 +4406,11 @@ def _paint_table(
                 cell_pad=layout.cell_pad,
             )
         _n_group_rows = (
-            len(layout.pivot_groups) if layout.pivot_groups is not None else 0
+            len(layout.header_groups) if layout.header_groups is not None else 0
         )
-        _leaf_header_y = current_y + layout.pivot_group_row_height * _n_group_rows
+        _leaf_header_y = current_y + layout.header_group_row_height * _n_group_rows
         _leaf_header_h = (
-            layout.header_height - layout.pivot_group_row_height * _n_group_rows
+            layout.header_height - layout.header_group_row_height * _n_group_rows
         )
         _render_header_section(
             svg_parts,

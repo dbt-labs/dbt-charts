@@ -868,6 +868,30 @@ def _make_data_aware_height_provider(
                     return _sizing_render_failed(item.chart, exc, width, resolved_style)
                 return actual_height + _vertical_inset(resolved_spark_bar)
 
+            # custom: sized from its aspect-ratio box; it has no natural
+            # height to measure, so a template failure shows at the main pass.
+            if item.chart.type == "custom":
+                resolved_custom = _require_resolved(
+                    render_ctx,
+                    item.chart,
+                    executor,
+                    render_ctx.variables,
+                    width,
+                    resolved_style,
+                    style_contexts[id(resolved_style)],
+                )
+                if resolved_custom is None:
+                    return _unresolved_height(item.chart, width, resolved_style)
+                inner_width = (
+                    width
+                    - 2 * card_pad
+                    - resolved_custom.layout_padding.left
+                    - resolved_custom.layout_padding.right
+                )
+                return get_chart_content_height(
+                    item.chart, width=inner_width, resolved_style=resolved_style
+                ) + _vertical_inset(resolved_custom)
+
             # Render-first Vega sizing.
             # Vega charts now render at full item width with card_pad as internal
             # Vega padding, so the returned SVG height already includes the inset.
@@ -1945,15 +1969,6 @@ def calculate_data_aware_layout(
     """
     frame = board.resolved_style.frame
 
-    container_width = board_container_width(board)
-    content_width = max(container_width - 2 * float(frame.margin), 0.0)
-    min_height = float(frame.min_height)
-    card_padding = float(frame.card_padding)
-
-    card_gap = float(frame.card_gap) if board.card_gap else 0.0
-    gap = get_board_gap(board)
-
-    # Create render context; executor=None disables render-first Vega sizing.
     # variables=None means "no variable overrides" — normalize to {} here so
     # downstream code (SizingRenderCtx, height provider) always works with a dict.
     effective_vars = variables if variables is not None else {}
@@ -1971,7 +1986,17 @@ def calculate_data_aware_layout(
     # overrides (e.g. `{}` for "no overrides") still gets the declared
     # defaults for everything else this pass measures.
     variable_values = {**board.variable_defaults, **effective_vars}
+
+    container_width = board_container_width(board, variable_values)
+    content_width = max(container_width - 2 * float(frame.margin), 0.0)
+    min_height = float(frame.min_height)
+    card_padding = float(frame.card_padding)
+
+    card_gap = float(frame.card_gap) if board.card_gap else 0.0
+    gap = get_board_gap(board)
+
     plan_board_prose(board, variable_values, content_width)
+    # executor=None disables render-first Vega sizing.
     render_ctx = SizingRenderCtx(
         resolved_style=board.resolved_style,
         chart_style_context=board.chart_style_context,

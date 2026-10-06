@@ -21,11 +21,11 @@ import yaml
 from dbt_charts.core.utils import YAML_LOADER
 
 # Leaf value types the setter writes; None deletes the key. A list of strings
-# is a leaf here because it is written as one: `y: ["revenue", "cost"]` is a
-# single line, so it splices exactly like a scalar does. Nothing else does —
-# a mapping value would have to be laid out over lines this setter never
-# rewrites.
-ScalarLeaf = str | int | float | bool | list[str]
+# or numbers is a leaf here because it is written as one: `y: ["revenue",
+# "cost"]` or `sizes: [24, 18]` is a single line, so it splices exactly like a
+# scalar does. Nothing else does — a mapping value would have to be laid out
+# over lines this setter never rewrites.
+ScalarLeaf = str | int | float | bool | list[str] | list[int | float]
 
 _BLANK_RE = re.compile(r"^\s*$")
 _COMMENT_RE = re.compile(r"^\s*#")
@@ -770,7 +770,10 @@ def _verify_written_values(result: str, updates: dict[str, ScalarLeaf | None]) -
                 missing = True
                 break
         if value is None:
-            if not missing:
+            # A write beneath a deleted path in the same batch replaces the
+            # value (a scalar becoming a mapping), so presence is expected.
+            replaced = any(other.startswith(f"{path}.") for other in updates)
+            if not missing and not replaced:
                 raise ValueError(
                     f"Setter bug: {path!r} was deleted but is still present."
                 )

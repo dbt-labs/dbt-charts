@@ -9,7 +9,10 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 from urllib.parse import quote_plus
 
-from dbt_charts.core.compile.format import resolve_format, resolve_format_parts
+from dbt_charts.core.compile.format import (
+    column_format,
+    resolve_format,
+)
 from dbt_charts.core.compile.models.chart.authored import (
     match_predicate,
 )
@@ -44,10 +47,6 @@ from dbt_charts.core.text.format_d3 import (
     portable_strftime,
 )
 from dbt_charts.core.text.numeral_scale import decimal_pad_for
-from dbt_charts.core.text.predefined_formats import (
-    PREDEFINED_TIME_SPECS,
-    PredefinedTimeFormat,
-)
 from dbt_charts.core.utils import coerce_numeric_cell, is_date_like
 from mdsvg.fonts import FontMeasurer
 
@@ -250,7 +249,7 @@ def format_table_cell_value(
     Temporal values (Python date/datetime objects and ISO timestamp strings)
     are formatted before numeric values so DuckDB-typed columns show
     human-readable dates without SQL-side strftime. The default format is the
-    engine-predefined ``date_short`` spec from ``PREDEFINED_TIME_SPECS``.
+    board's ``date_short`` (the engine's unless redefined).
 
     Explicit column ``format:`` strings recognized as strftime specs (see
     ``is_time_format``) are applied to temporal values directly. A format of
@@ -270,29 +269,19 @@ def format_table_cell_value(
     # the numeric check because datetime.date is not int/float but authors
     # may still set a format: spec that should be treated as a time format.
     if is_temporal_value(value):
-        if format_config is not None:
-            # A spec-less affix ({prefix: "As of "}) dates the default spec.
-            resolved = (
-                resolve_format(format_config, formats)
-                or (PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short])
-            )
-            if is_time_format(resolved):
-                # Author-provided strftime spec — raises ValueError for bad directives.
-                date_text = format_temporal_value(value, resolved)
-                affix = resolve_format_parts(
-                    format_config, formats, no_format_default=None
-                )
-                return f"{affix.prefix}{date_text}{affix.suffix}"
+        dated = column_format("time", formats, format_config)
+        if not is_time_format(dated.spec):
             raise ChartDataError.from_code(
                 ERR_TABLE_FORMAT_KIND_MISMATCH,
-                fmt=resolved,
+                fmt=dated.spec,
                 remedy=(
                     "use a strftime spec (e.g. '%-d %b %Y') or remove format: "
                     "to use date_short"
                 ),
             )
-        date_format = PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
-        return format_temporal_value(value, date_format)
+        # Raises ValueError for a bad directive.
+        date_text = format_temporal_value(value, dated.spec)
+        return f"{dated.prefix}{date_text}{dated.suffix}"
 
     if isinstance(value, (int, float)):
         if format_config is not None:
@@ -588,6 +577,7 @@ def _measure_min_word_width(
     values: list[Any],
     header_label: str,
     measurer: FontMeasurer,
+    header_measurer: FontMeasurer,
     font_size: float,
     header_font_size: float,
 ) -> float:
@@ -602,7 +592,7 @@ def _measure_min_word_width(
     This gives the minimum column width that avoids mid-word line breaks.
     """
     return max(
-        _widest_token_width(header_label, measurer, header_font_size),
+        _widest_token_width(header_label, header_measurer, header_font_size),
         max(
             (_widest_token_width(str(val), measurer, font_size) for val in values),
             default=0.0,
@@ -771,6 +761,7 @@ def measure_column_demands(
     data: list[dict[str, Any]],
     measurer: FontMeasurer,
     *,
+    header_measurer: FontMeasurer,
     font_size: float,
     header_font_size: float,
     header_case: CaseValue = "none",
@@ -818,7 +809,7 @@ def measure_column_demands(
                 col
             )
             display_name = apply_case(display_name, header_case)
-            header_w = measurer.measure(display_name, header_font_size)
+            header_w = header_measurer.measure(display_name, header_font_size)
 
         glyph_possible = _glyph_possible(column_configs, column_when_rules, col)
         pad_table = (
@@ -923,6 +914,7 @@ def measure_column_word_floors(
     data: list[dict[str, Any]],
     measurer: FontMeasurer,
     *,
+    header_measurer: FontMeasurer,
     font_size: float,
     header_font_size: float,
     header_case: CaseValue = "none",
@@ -981,7 +973,12 @@ def measure_column_word_floors(
 
         cell_values = [row.get(col, "") for row in sample]
         token_w = _measure_min_word_width(
-            cell_values, display_name, measurer, font_size, header_font_size
+            cell_values,
+            display_name,
+            measurer,
+            header_measurer,
+            font_size,
+            header_font_size,
         )
         if _glyph_possible(column_configs, column_when_rules, col):
             token_w = max(

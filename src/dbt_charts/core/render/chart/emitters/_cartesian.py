@@ -15,7 +15,7 @@ so the mutation is harmless, but it is a real exception to this convention.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, NamedTuple
 
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -88,7 +88,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 )
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.utils import normalize_scalar_for_json
-from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.case import field_title
 from dbt_charts.core.text.category_label import category_label_text
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SPECS,
@@ -638,20 +638,14 @@ def wrap_axis_title(
     return (lines if len(lines) > 1 else lines[0]), truncated or words != authored_words
 
 
-def wide_measures_title(measures: tuple[str, ...]) -> str:
+def wide_measures_title(
+    measures: tuple[str, ...], field_labels: Mapping[str, str]
+) -> str:
     """Y-axis title for a folded multi-measure (wide ``y: [...]``) chart.
 
-    Joins each measure's humanized label
-    (``_wide_fields.wide_measure_labels_for``) -- the same
-    derivation a single ``y:`` field's title already uses via
-    ``default_axis_title``, generalized to the list case, since the
-    measure names ARE real authored fields (unlike the synthetic
-    fold-key/color field, which has no name to derive a legend title
-    from). An authored ``y_label`` always overrides this -- callers pass
-    it through ``resolve_xy_titles``'s ``y_label`` param, not this
-    function.
+    Joins each measure's label (``_wide_fields.wide_measure_labels_for``).
     """
-    wide_measure_labels = wide_measure_labels_for(measures)
+    wide_measure_labels = wide_measure_labels_for(measures, field_labels)
     return ", ".join(wide_measure_labels[m] for m in measures)
 
 
@@ -666,8 +660,10 @@ def resolve_xy_titles(
     chart_id: str,
     x_authored_field: Literal["x_label", "y_label"] = "x_label",
     y_authored_field: Literal["x_label", "y_label"] = "y_label",
+    *,
+    field_labels: Mapping[str, str],
 ) -> XYTitles:
-    """Resolve x/y axis titles: explicit authored label, else title-cased field slug.
+    """Resolve x/y axis titles: authored ``x_label``/``y_label``, else ``field_title``.
 
     Titles are in Vega-Lite channel space, not authored space: a horizontal bar
     passes its authored ``y_label`` as ``x_label`` here, because that is the
@@ -690,8 +686,12 @@ def resolve_xy_titles(
     before calling). Tooltip *content* is a separate concern — built by
     ``features/structured_tooltip.py`` from the chart-axes LUT, not here.
     """
-    x_text: str | None = x_label or (default_axis_title(x_field) if x_field else None)
-    y_text: str | None = y_label or (default_axis_title(y_field) if y_field else None)
+    x_text: str | None = x_label or (
+        field_title(x_field, field_labels) if x_field else None
+    )
+    y_text: str | None = y_label or (
+        field_title(y_field, field_labels) if y_field else None
+    )
     x_title: AxisTitle
     y_title: AxisTitle
     if x_text:

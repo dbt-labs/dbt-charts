@@ -180,6 +180,79 @@ class TestHtmlPolicyRender:
         assert "<div" in output
 
 
+_BOARD_ROW_TEXT = f"""\
+title: Test
+html_policy: "trusted-raw"
+rows:
+  - text: |
+      {_HTML_TEXT}
+"""
+
+_BOARD_ROW_TEXT_OVERRIDE = f"""\
+title: Test
+html_policy: "trusted-raw"
+rows:
+  - html_policy: "none"
+    text: |
+      {_HTML_TEXT}
+"""
+
+_BOARD_TAB_TEXT = f"""\
+title: Test
+html_policy: "trusted-raw"
+tabs:
+  items:
+    - title: One
+      text: |
+        {_HTML_TEXT}
+"""
+
+_BOARD_TAB_ROWS_TEXT = f"""\
+title: Test
+html_policy: "trusted-raw"
+tabs:
+  items:
+    - title: One
+      rows:
+        - text: |
+            {_HTML_TEXT}
+"""
+
+
+class TestHtmlPolicyInheritedByNestedBoards:
+    """A layout `- text:` row or tab is a nested board; it inherits the parent's tier."""
+
+    @pytest.mark.parametrize(
+        "yaml_", [_BOARD_ROW_TEXT, _BOARD_TAB_TEXT, _BOARD_TAB_ROWS_TEXT]
+    )
+    def test_nested_text_inherits_trusted_raw(
+        self,
+        yaml_: str,
+        tmp_path: object,
+        local_project: Callable[..., Project],
+    ) -> None:
+        output = _compile_and_render(yaml_, tmp_path, local_project)
+        assert "<foreignObject" in output
+        assert "&lt;div" not in output
+
+    def test_nested_authored_policy_wins_over_parent(
+        self, tmp_path: object, local_project: Callable[..., Project]
+    ) -> None:
+        output = _compile_and_render(_BOARD_ROW_TEXT_OVERRIDE, tmp_path, local_project)
+        assert "<foreignObject" not in output
+        assert "&lt;div" in output
+
+    def test_ceiling_caps_inherited_policy(
+        self,
+        tmp_path: object,
+        local_project: Callable[..., Project],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DCT_HTML_POLICY_CEILING", "safe-subset")
+        output = _compile_and_render(_BOARD_ROW_TEXT, tmp_path, local_project)
+        assert "<foreignObject" not in output
+
+
 class TestReflectedXssViaBoardVariable:
     """Regression: URL-variable reflected-XSS path is closed by the nh3 sanitizer.
 

@@ -39,6 +39,12 @@ rows: [t]
         ("sales.yml", "sales", ""),
         # nested slug (regression: keep the full nested path)
         ("nested/sales.yml", "nested/sales", ""),
+        # index board: the leaf is kept (a file-identity slug), so a
+        # relative link authored on this board still resolves against its
+        # OWN directory ("reports"), not its parent (regression: collapsing
+        # "index" here made board_links._resolve_slug strip one directory
+        # level too many for every relative link on an index board).
+        ("charts/reports/index.yml", "reports/index", ""),
     ],
 )
 def test_build_link_context_slug_and_root(

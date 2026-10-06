@@ -224,6 +224,32 @@ class TestSearchIndexesEveryBoard:
 
         assert search_boards_hits("regional", local_project(tmp_path)) == []
 
+    def test_package_board_is_indexed_with_namespaced_path(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A pack's boards are discoverable through the same search index.
+
+        board_path carries the extension, like a host board's, but is
+        prefixed with the package's namespace (``pkg_a/overview.yml``): a
+        bare root-relative path can't round-trip through
+        ``render_board(path=...)`` for a package board, since
+        ``resolve_board_relpath``'s candidate search only matches a package
+        root when the slug is namespace-prefixed (see
+        ``TestSearchHitPathCoordinateSystems.test_package_board_path_is_namespaced_and_resolves_through_render_board``
+        for the round-trip proof)."""
+        (tmp_path / "charts").mkdir()
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text(
+            "title: Zendesk Overview\ntext: ticket volume\n"
+        )
+
+        hits = search_boards_hits("zendesk", local_project(tmp_path))
+
+        assert [h.title for h in hits] == ["Zendesk Overview"]
+        assert hits[0].board_path == "pkg_a/overview.yml"
+        assert hits[0].file_path == "dbt_packages/pkg_a/charts/overview.yml"
+
 
 class TestSearchDashboardsContract:
     """Verify the tool's input/output contract."""
@@ -926,6 +952,45 @@ class TestSearchHitPathCoordinateSystems:
 
         assert hit.board_path == "sub/x.yaml"
         board = resolve_board_or_error(Path(hit.board_path), project)
+
+        assert not isinstance(board, Diagnostic), board
+        rendered = ProjectSession(project=project).render_board(
+            board=board, as_link=True, server_port=8000
+        )
+        assert rendered.status == "ok", rendered.validation_errors
+
+    @pytest.mark.windows
+    def test_package_board_path_is_namespaced_and_resolves_through_render_board(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A package board's board_path is namespace-prefixed (``pkg_a/overview.yml``)
+        so it round-trips through render_board(path=...) the same way a host
+        board's does — a bare root-relative path (``overview.yml``) does not:
+        resolve_board_relpath's candidate search only matches a package root
+        when the slug is namespace-prefixed."""
+        from dbt_charts.agent_api import ProjectSession
+        from dbt_charts.agent_api._paths import resolve_board_or_error
+        from dbt_charts.core.diagnostics import Diagnostic
+
+        (tmp_path / "charts").mkdir()
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text(
+            "title: Zendesk Overview\n"
+            "notes: ticket volume\n"
+            "queries:\n  q:\n    columns: [n]\n    values:\n      - [1]\n"
+            "charts:\n  c:\n    query: q\n    type: kpi\n    value: n\n"
+            "rows:\n  - c\n"
+        )
+        project = local_project(tmp_path)
+
+        result = search_boards(query="zendesk", project=project)
+        assert len(result.results) == 1
+        hit = result.results[0]
+
+        assert hit.board_path == "pkg_a/overview.yml"
+        board = resolve_board_or_error(Path(hit.board_path), project)
+
         assert not isinstance(board, Diagnostic), board
         rendered = ProjectSession(project=project).render_board(
             board=board, as_link=True, server_port=8000

@@ -93,6 +93,31 @@ ERR_SQL_LITERAL_NEWLINES = REGISTRY.register(
     )
 )
 
+ERR_QUERY_DIALECT_MIXED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-DIALECT-MIXED",
+        domain="compile",
+        title="Composed queries declare different dialects",
+        message_template=(
+            "Query {query_name!r} (dialect: {dialect}) embeds "
+            "{{{{ queries.{dep_name} }}}} (dialect: {dep_dialect}). Queries "
+            "composed with {{{{ queries.X }}}} become one statement, so they "
+            "must all declare the same `dialect:`."
+        ),
+        fix_template=(
+            "Set the same `dialect:` on both queries, or on neither. A query "
+            "that sets none is written in its source's own dialect."
+        ),
+        summary="Fired when a query embeds another query that declares a different `dialect:`.",
+        doc=(
+            "Fired when a query embeds another with `{{ queries.X }}` and the "
+            "two declare different `dialect:` values, counting an unset "
+            "`dialect:` as a value."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_SQL_DATE_LITERAL_VARIABLE = REGISTRY.register(
     ErrorCode(
         code="ERR-SQL-DATE-LITERAL-VARIABLE",
@@ -651,6 +676,45 @@ ERR_SORT_FIELD_NOT_FOUND = REGISTRY.register(
     )
 )
 
+ERR_FIELD_LABELS_FIELD_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FIELD-LABELS-FIELD-NOT-FOUND",
+        domain="compile",
+        title="field_labels key names no column the chart reads",
+        message_template=(
+            "field_labels key(s) {fields} name no column of the chart's query. "
+            "Available columns: {available}."
+        ),
+        doc=(
+            "Fired when a `field_labels` key is neither a column of the chart's "
+            "query result nor a field one of its layers names. The label would "
+            "never paint. Check for a typo, including letter case."
+        ),
+        summary="Fired when a field_labels key names no column the chart reads.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FIELD_LABELS_WIDE_COLLISION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FIELD-LABELS-WIDE-COLLISION",
+        domain="compile",
+        title="field_labels gives two wide measures the same label",
+        message_template=(
+            "field_labels makes measures {measures} of `y:` share the label "
+            "{label!r}, so their series cannot be told apart."
+        ),
+        doc=(
+            "Fired when a `field_labels` entry for a `y: [...]` measure equals "
+            "another measure's label. Derived labels fall back to the raw "
+            "column name on a collision; an authored label never does. Give "
+            "each measure distinct text."
+        ),
+        summary="Fired when field_labels gives two wide measures the same label.",
+        docs_topic="charts",
+    )
+)
+
 ERR_MULTIPLES_VALUE_COLLISION = REGISTRY.register(
     ErrorCode(
         code="ERR-MULTIPLES-VALUE-COLLISION",
@@ -990,15 +1054,15 @@ ERR_FORMAT_INVALID = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-INVALID",
         domain="compile",
-        title="Format spec is not a predefined name, a name in style.formats.aliases, or a valid d3-format/d3-time-format spec",
+        title="Format spec is not a predefined name, a style.formats alias, or a valid d3-format/d3-time-format spec",
         message_template=(
             "Unknown {kind_noun} format {spec!r} at {field_path}: {explanation}"
         ),
         doc=(
             "Fired when an authored `format:` string is not one of the engine's "
             "predefined format names (e.g. `currency`, `number`, `percent_number`), "
-            "not a key defined in `style.formats.aliases`, and fails to parse as a d3-format "
-            "spec. Check for typos against the predefined names or your `style.formats.aliases` "
+            "not a key defined in `style.formats`, and fails to parse as a d3-format "
+            "spec. Check for typos against the predefined names or your `style.formats` "
             "keys, or use a valid d3-format spec (https://d3js.org/d3-format). "
             "In a slot that accepts a raw strftime spec (`%b %Y`), the same code "
             "also fires for a directive the engine does not implement (`%K`); "
@@ -1007,6 +1071,41 @@ ERR_FORMAT_INVALID = REGISTRY.register(
         summary="Fired when `format:` is not a predefined name, alias, or valid spec.",
         docs_topic="charts",
         hint_generator=suggest_close_format,
+    )
+)
+
+ERR_FONT_UNKNOWN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FONT-UNKNOWN",
+        domain="compile",
+        title="Font name is not an entry in style.fonts",
+        message_template="{message}",
+        doc=(
+            "Fired when a font slot or a `style.fonts` entry names a font "
+            "(`font: label`, `font: {extends: label}`, `fonts.h2: {extends: "
+            "heading}`) that `style.fonts` does not define. The message lists "
+            "the known names. Define the font under `style.fonts`, or fix the name."
+        ),
+        summary="Fired when a font name is not defined in `style.fonts`.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FONT_REGISTRY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FONT-REGISTRY",
+        domain="compile",
+        title="style.fonts entries do not resolve",
+        message_template="{message}",
+        doc=(
+            "Fired when `style.fonts` entries extend one another in a cycle "
+            "(`a` extends `b` extends `a`; the message names the path), or "
+            "when the `heading` entry inherits a `size` from the font it "
+            "extends (`heading` takes the `sizes` ramp, never `size`). Break "
+            "the cycle, or extend a font that sets no size."
+        ),
+        summary="Fired when `style.fonts` entries form a cycle or give `heading` a size.",
+        docs_topic="charts",
     )
 )
 
@@ -1159,8 +1258,8 @@ ERR_FORMAT_AFFIX_GEO_TOOLTIP_UNSUPPORTED = REGISTRY.register(
         doc=(
             "A point/bubble map or choropleth tooltip takes a plain d3 "
             "format string, so a prefix, suffix or notation on "
-            "`style.tooltip.format` (reachable through a name in "
-            "`style.formats.aliases`) cannot paint. Author `style.tooltip.format` as a plain "
+            "`style.tooltip.format` (reachable through a `style.formats` "
+            "alias) cannot paint. Author `style.tooltip.format` as a plain "
             "spec or alias without an affix. The tooltips of bar, line, "
             "area, scatter and pie charts do paint an affix."
         ),
@@ -1256,29 +1355,6 @@ ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED = REGISTRY.register(
         docs_topic="charts",
     )
 )
-
-ERR_FORMAT_PREDEFINED_SHADOW = REGISTRY.register(
-    ErrorCode(
-        code="ERR-FORMAT-PREDEFINED-SHADOW",
-        domain="compile",
-        title="style.formats.aliases name shadows an engine-predefined format name",
-        message_template=(
-            "Cannot define {spec!r} in style.formats.aliases at {field_path}: "
-            "this name is engine-predefined and cannot be overridden. "
-            "Choose a project-specific name (e.g. 'revenue', 'arr') for "
-            "custom format aliases."
-        ),
-        doc=(
-            "Fired when a `style.formats.aliases` name collides with an engine-owned "
-            "predefined format name such as `number`, `currency`, or "
-            "`date_short`. Predefined names resolve via engine rules and cannot "
-            "be shadowed. Define your custom alias under a different name."
-        ),
-        summary="style.formats.aliases name shadows an engine-predefined format name.",
-        docs_topic="charts",
-    )
-)
-
 
 # ──────────────────────────────── Warning codes ───────────────────────────────
 # Compile-time authoring warnings declared here in the leaf so the registry
@@ -1800,5 +1876,42 @@ ERR_VARIABLE_NAME_INVALID = REGISTRY.register(
         ),
         summary="Fired when a variable name is not a valid identifier.",
         docs_topic="variables",
+    )
+)
+
+ERR_CUSTOM_TEMPLATE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CUSTOM-TEMPLATE",
+        domain="compile",
+        title="Custom chart template is missing or invalid",
+        message_template="Chart {chart_id!r} (custom): {reason}",
+        doc=(
+            "Fired when a `type: custom` chart's template cannot be loaded: "
+            "`template:` names no `templates/<name>.svg.j2` file in the project, "
+            "the board has no project to read it from, the `{#--- ... ---#}` "
+            "header is not valid YAML or declares an unknown param type, or the "
+            "Jinja source has a syntax error."
+        ),
+        summary="Fired when a custom chart's template is missing, unparseable, or has a bad header.",
+        docs_topic="charts",
+    )
+)
+
+ERR_CUSTOM_FIELDS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CUSTOM-FIELDS",
+        domain="compile",
+        title="Custom chart channels or options do not match the template",
+        message_template="Chart {chart_id!r} (custom): {reason}",
+        doc=(
+            "Fired when a `type: custom` chart's channels (`x`, `y`, `color`, ...) "
+            "or `options:` disagree with what its template declares in its "
+            "header: an undeclared channel or option, a required one left out, "
+            "a list on a channel without `multiple: true`, a value of the wrong "
+            "type, or a color option that is not a color. A template with no "
+            "header accepts no channels and no options."
+        ),
+        summary="Fired when a custom chart's channels or options are undeclared, missing, or the wrong type.",
+        docs_topic="charts",
     )
 )

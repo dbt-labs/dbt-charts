@@ -57,6 +57,21 @@ rows:
         assert item.board.title == "Child Board"
         assert item.board.text == "This is child content"
 
+    def test_imported_board_does_not_inherit_html_policy(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ):
+        (tmp_path / "child.yml").write_text("title: Child\ntext: hi\n")
+        board = parse_yaml(
+            "title: Parent\nhtml_policy: trusted-raw\nrows:\n  - child.yml\n"
+        )
+        compiled = normalize_board(
+            board, base_dir=local_project(root=tmp_path).directory()
+        )
+        assert compiled.html_policy == "trusted-raw"
+        nested = compiled.layout.items[0].board
+        assert nested is not None
+        assert nested.html_policy == "none"
+
     def test_imported_board_subtree_carries_no_authoring_path(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ):

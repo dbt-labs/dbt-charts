@@ -22,7 +22,9 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _authored_legend,
     _bake_ay_position_left,
     cartesian_series_naming,
+    color_legend_entries,
     estimate_cartesian_plot_height,
+    legend_row_fits,
 )
 from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
@@ -43,6 +45,10 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     has_structured_tooltip,
     plan_cartesian,
 )
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    validate_wide_measure_labels,
+    wide_measure_labels_for,
+)
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
@@ -61,6 +67,7 @@ def _resolve_heatmap(
     automatic_link_candidate: AutomaticLinkCandidate,
     variables: ChartTextVariables,
 ) -> ResolvedHeatmapChart:
+    validate_wide_measure_labels(normalized)
     data = dataset.all_rows()
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
@@ -97,6 +104,7 @@ def _resolve_heatmap(
         suppress_wide_measure_series=False,
         multiples_wide_measure_series=False,
         top_legend_series=None,
+        legend_entries=(),
         plot_height_estimate=estimate_cartesian_plot_height(normalized, heatmap, width),
         # top_legend_series=None above means the row-fit check this feeds
         # never runs for this family -- 0.0 is inert, not a real estimate.
@@ -162,6 +170,18 @@ def _resolve_heatmap(
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=heatmap.padding,
+            wrap_legend=not legend_row_fits(
+                # A list `y` with no color field draws one legend entry per measure.
+                tuple(
+                    wide_measure_labels_for(
+                        tuple(normalized.y), normalized.field_labels
+                    ).values()
+                )
+                if isinstance(normalized.y, list) and not normalized.color
+                else color_legend_entries(channels, data),
+                width,
+                merge_legend(chart_style_context.legend, heatmap.legend),
+            ),
             suppress_legend=naming.suppress_legend,
             top_legend=naming.top_legend,
             force_legend_visible=naming.force_legend_visible,

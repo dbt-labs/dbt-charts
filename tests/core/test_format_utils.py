@@ -9,10 +9,11 @@ from pydantic import ValidationError
 
 from dbt_charts.core.compile.config import get_theme_style, list_built_in_themes
 from dbt_charts.core.compile.format import (
+    column_format,
     finalize_kpi_value_format,
     get_format_prefix_suffix,
+    resolve_format,
     resolve_format_parts,
-    resolve_format_parts_for_values,
     resolve_label_format,
 )
 from dbt_charts.core.compile.models.primitives import FormatConfig, ResolvedFormat
@@ -22,7 +23,6 @@ from dbt_charts.core.render.format_utils import (
     format_d3,
     format_kpi_parts,
     format_value,
-    resolve_format,
 )
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NUMBER_NAMES,
@@ -316,7 +316,7 @@ class TestResolvedNotation:
 
     @staticmethod
     def _notation(value, formats=None):
-        return resolve_format_parts(value, formats, no_format_default=None).notation
+        return resolve_format_parts(value, formats).notation
 
     def test_format_config_notation(self):
         assert self._notation(FormatConfig(spec="~s", notation="narrative")) == (
@@ -1166,18 +1166,14 @@ class TestSubUnitFloorVote:
 
     def test_all_values_below_one_falls_back_to_currency_full(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                "currency", None, [0.42, 0.25, 0.67], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("currency", None, [0.42, 0.25, 0.67]).spec
             == PREDEFINED_SPECS["currency_full"]
         )
 
     def test_one_value_below_one_pulls_the_whole_set(self) -> None:
         # Mixed set: any member in the band pulls the register.
         assert (
-            resolve_format_parts_for_values(
-                "currency", None, [0.42, 3.0], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("currency", None, [0.42, 3.0]).spec
             == PREDEFINED_SPECS["currency_full"]
         )
 
@@ -1185,25 +1181,19 @@ class TestSubUnitFloorVote:
         # The band test is on abs(v) -- a negative sub-$1 value must floor
         # the same as its positive counterpart.
         assert (
-            resolve_format_parts_for_values(
-                "currency", None, [-0.42], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("currency", None, [-0.42]).spec
             == PREDEFINED_SPECS["currency_full"]
         )
 
     def test_all_values_at_or_above_one_keeps_si_spec(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                "currency", None, [12.99, 100.0], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("currency", None, [12.99, 100.0]).spec
             == PREDEFINED_SPECS["currency"]
         )
 
     def test_all_zero_keeps_si_spec(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                "currency", None, [0.0, 0.0], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("currency", None, [0.0, 0.0]).spec
             == (PREDEFINED_SPECS["currency"])
         )
 
@@ -1212,9 +1202,7 @@ class TestSubUnitFloorVote:
         # either ($,.2f would print $0.00) -- stays on SI, same as the
         # per-value predicate.
         assert (
-            resolve_format_parts_for_values(
-                "currency", None, [0.0023], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("currency", None, [0.0023]).spec
             == (PREDEFINED_SPECS["currency"])
         )
 
@@ -1222,77 +1210,70 @@ class TestSubUnitFloorVote:
         # "number" below 1 reads correctly as an SI milli value -- only
         # money is wrong below the floor.
         assert (
-            resolve_format_parts_for_values(
-                "number", None, [0.671], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("number", None, [0.671]).spec
             == (PREDEFINED_SPECS["number"])
         )
 
     def test_money_prefix_below_one_falls_back(self) -> None:
         config = FormatConfig(spec="number", prefix="£")
         assert (
-            resolve_format_parts_for_values(
-                config, None, [0.67], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values(config, None, [0.67]).spec
             == PREDEFINED_SPECS["number_full"]
         )
 
     def test_inline_d3_spec_never_takes_house_floor(self) -> None:
         # Native d3 (not a predefined member) is a native-d3 opt-out --
         # never touched by the house sub-unit-floor vote.
-        assert (
-            resolve_format_parts_for_values(
-                "$.3~s", None, [0.67], no_format_default=None
-            ).spec
-            == "$.3~s"
-        )
+        assert resolve_format_parts_for_values("$.3~s", None, [0.67]).spec == "$.3~s"
 
     def test_style_formats_alias_never_takes_house_floor(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                "money", _ALIAS_FORMATS, [0.67], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("money", _ALIAS_FORMATS, [0.67]).spec
             == "$,.2f"
         )
 
     def test_none_values_are_skipped(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                "currency", None, [None, None], no_format_default=None
-            ).spec
+            resolve_format_parts_for_values("currency", None, [None, None]).spec
             == PREDEFINED_SPECS["currency"]
         )
 
     def test_parity_with_format_value_on_a_band_crossing_set(self) -> None:
         values = [0.42, 0.25, 0.67]
-        result_spec = resolve_format_parts_for_values(
-            "currency", None, values, no_format_default=None
-        ).spec
+        result_spec = resolve_format_parts_for_values("currency", None, values).spec
         for value in values:
             assert format_d3(value, result_spec) == format_value(value, "currency")
 
 
+def resolve_format_parts_for_values(format_input, formats, values):
+    """An authored format voted over ``values``."""
+    return column_format("number", formats, format_input, values=values)
+
+
+def _vote(format_input, formats, values, default):
+    """A slot's format voted over ``values``, the engine default being ``default``."""
+    return column_format(
+        "number",
+        formats,
+        format_input,
+        engine_default=lambda: default,
+        values=values,
+    )
+
+
 class TestSubUnitFloorVoteSpecLessAffix:
-    """resolve_format_parts_for_values's ``no_format_default`` keyword."""
+    """``column_format`` fills a spec-less affix from the engine default."""
 
     def test_spec_less_affix_dict_below_one_falls_back_to_number_full(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                {"prefix": "£"},
-                None,
-                [0.67],
-                no_format_default=PredefinedNumberFormat.number,
-            ).spec
+            _vote({"prefix": "£"}, None, [0.67], PredefinedNumberFormat.number).spec
             == PREDEFINED_SPECS["number_full"]
         )
 
     def test_spec_less_affix_format_config_below_one_falls_back(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                FormatConfig(prefix="£"),
-                None,
-                [0.67],
-                no_format_default=PredefinedNumberFormat.number,
+            _vote(
+                FormatConfig(prefix="£"), None, [0.67], PredefinedNumberFormat.number
             ).spec
             == PREDEFINED_SPECS["number_full"]
         )
@@ -1302,56 +1283,36 @@ class TestSubUnitFloorVoteSpecLessAffix:
         # resolution follows it to its target -- same shape, same fix.
         formats = {"gbp": FormatConfig(prefix="£")}
         assert (
-            resolve_format_parts_for_values(
-                "gbp",
-                formats,
-                [0.67],
-                no_format_default=PredefinedNumberFormat.number,
-            ).spec
+            _vote("gbp", formats, [0.67], PredefinedNumberFormat.number).spec
             == PREDEFINED_SPECS["number_full"]
         )
 
     def test_spec_less_affix_currency_default_below_one_falls_back(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                {"prefix": "£"},
-                None,
-                [0.67],
-                no_format_default=PredefinedNumberFormat.currency,
-            ).spec
+            _vote({"prefix": "£"}, None, [0.67], PredefinedNumberFormat.currency).spec
             == PREDEFINED_SPECS["currency_full"]
         )
 
     def test_spec_less_affix_above_one_keeps_si_spec(self) -> None:
         assert (
-            resolve_format_parts_for_values(
-                {"prefix": "£"},
-                None,
-                [12400.0],
-                no_format_default=PredefinedNumberFormat.number,
-            ).spec
+            _vote({"prefix": "£"}, None, [12400.0], PredefinedNumberFormat.number).spec
             == PREDEFINED_SPECS["number"]
         )
 
     def test_no_affix_no_default_is_unaffected(self) -> None:
-        # A caller that omits no_format_default gets a spec-less, affix-less input
-        # resolved to no spec at all; it never votes (nothing to vote with a "" raw).
-        assert (
-            resolve_format_parts_for_values(
-                None, None, [0.67], no_format_default=None
-            ).spec
-            == ""
-        )
+        # An input with no spec and no affix resolves to no spec at all; it never
+        # votes (nothing to vote with a "" raw).
+        assert resolve_format_parts(None).spec == ""
 
     def test_already_authored_spec_is_never_overridden_by_the_default(self) -> None:
-        # no_format_default only ever substitutes when resolution produces an affix but
-        # no spec -- an explicit spec (with or without affix) is untouched.
+        # The default only fills a spec-less input -- an explicit spec (with or
+        # without affix) is untouched.
         assert (
-            resolve_format_parts_for_values(
+            _vote(
                 FormatConfig(spec="currency", prefix="£"),
                 None,
                 [0.67],
-                no_format_default=PredefinedNumberFormat.number,
+                PredefinedNumberFormat.number,
             ).spec
             == PREDEFINED_SPECS["currency_full"]
         )
@@ -1361,11 +1322,11 @@ class TestResolveFormatPartsForValues:
     """The one vote every Vega-painted slot resolves through."""
 
     def test_voted_spec_carries_the_authored_affix_and_notation(self) -> None:
-        parts = resolve_format_parts_for_values(
+        parts = _vote(
             FormatConfig(prefix="£", suffix=" GBP", notation="analytic"),
             None,
             [0.5, 1234.5, 2456789.0],
-            no_format_default=PredefinedNumberFormat.number,
+            PredefinedNumberFormat.number,
         )
         assert parts.spec == PREDEFINED_SPECS["number_full"]
         assert (parts.prefix, parts.suffix, parts.notation) == (
@@ -1376,24 +1337,19 @@ class TestResolveFormatPartsForValues:
 
     def test_writing_no_spec_votes_exactly_like_writing_the_default(self) -> None:
         values = [2e6, 4.5e6, 7e6]
-        spec_less = resolve_format_parts_for_values(
-            {"prefix": "GBP "},
-            None,
-            values,
-            no_format_default=PredefinedNumberFormat.number,
+        spec_less = _vote(
+            {"prefix": "GBP "}, None, values, PredefinedNumberFormat.number
         )
-        explicit = resolve_format_parts_for_values(
+        explicit = _vote(
             {"spec": "number", "prefix": "GBP "},
             None,
             values,
-            no_format_default=PredefinedNumberFormat.number,
+            PredefinedNumberFormat.number,
         )
         assert spec_less == explicit
 
     def test_no_format_keeps_no_spec(self) -> None:
-        parts = resolve_format_parts_for_values(
-            None, None, [0.67], no_format_default=PredefinedNumberFormat.number
-        )
+        parts = resolve_format_parts(None)
         assert parts.spec == "" and not parts.has_affix
 
 
@@ -1453,19 +1409,15 @@ class TestAliasToPreset:
         ],
     )
     def test_resolves_as_the_preset(self, value, formats, prefix) -> None:
-        parts = resolve_format_parts(value, formats, no_format_default=None)
+        parts = resolve_format_parts(value, formats)
         assert parts.spec == resolve_format("number")
         assert parts.raw == "number"
         assert parts.is_house
         assert parts.prefix == prefix
 
     def test_sub_unit_vote_applies_through_the_alias(self) -> None:
-        direct = resolve_format_parts_for_values(
-            "number", None, [0.67], no_format_default=None
-        )
-        aliased = resolve_format_parts_for_values(
-            "mine", {"mine": "number"}, [0.67], no_format_default=None
-        )
+        direct = resolve_format_parts_for_values("number", None, [0.67])
+        aliased = resolve_format_parts_for_values("mine", {"mine": "number"}, [0.67])
         assert aliased.spec == direct.spec
 
 
@@ -1506,7 +1458,7 @@ class TestSignPlacement:
         ],
     )
     def test_resolves(self, config, formats, expected) -> None:
-        parts = resolve_format_parts(config, formats, no_format_default="number")
+        parts = column_format("number", formats, config)
         assert parts.placement == expected
 
     @pytest.mark.parametrize(
@@ -1526,7 +1478,7 @@ class TestSignPlacement:
         ],
     )
     def test_stores_only_the_authored_value(self, config, formats, authored) -> None:
-        parts = resolve_format_parts(config, formats, no_format_default="number")
+        parts = column_format("number", formats, config)
         assert parts.sign_placement == authored
 
     @pytest.mark.parametrize(
@@ -1579,22 +1531,18 @@ class TestSignPlacement:
 
 class TestRepeatResolves:
     def test_unset_is_none(self) -> None:
-        parts = resolve_format_parts(
-            FormatConfig(prefix="€"), None, no_format_default="number"
-        )
+        parts = column_format("number", None, FormatConfig(prefix="€"))
         assert parts.repeat is None
 
     def test_follows_the_alias(self) -> None:
         formats = {"eur": FormatConfig(prefix="€", repeat="every")}
-        parts = resolve_format_parts("eur", formats, no_format_default="number")
+        parts = column_format("number", formats, "eur")
         assert parts.repeat == "every"
 
     def test_own_wins_over_the_alias(self) -> None:
         formats = {"eur": FormatConfig(prefix="€", repeat="every")}
-        parts = resolve_format_parts(
-            FormatConfig(spec="eur", repeat="anchor"),
-            formats,
-            no_format_default="number",
+        parts = column_format(
+            "number", formats, FormatConfig(spec="eur", repeat="anchor")
         )
         assert parts.repeat == "anchor"
 
@@ -1604,7 +1552,6 @@ class TestResolvedFormatWire:
         parts = resolve_format_parts(
             FormatConfig(spec=",.0f", prefix="EUR ", repeat="anchor"),
             None,
-            no_format_default=None,
         )
         assert ResolvedFormat.model_validate(parts.model_dump(mode="json")) == parts
 

@@ -155,7 +155,7 @@ class Move:
         default=None, hash=False
     )
     drop_notes: Mapping[str, str] = dataclasses.field(default_factory=dict, hash=False)
-    # Where a board holds another board (`board_nesting_prefixes`): the move
+    # Where a board holds another board (`board_nesting_prefixes`): an expansion
     # follows these in the document, since `_relative_field_paths` stops at the
     # first self-nesting.
     sub_board_prefixes: tuple[YamlKeyPath, ...] = ()
@@ -1135,8 +1135,8 @@ def migrate_yaml_text(
                     )
                 deletion_reasons.extend(_apply_move(staged, move, catalog))
                 continue
-            for at, parent, key, bindings in list(
-                board_move_locations(staged, move, catalog)
+            for parent, key, bindings in list(
+                move_source_locations(staged, move, catalog)
             ):
                 if isinstance(parent, list) and move.old_path != move.new_path:
                     # A list-item destination only ever arises from an
@@ -1157,8 +1157,8 @@ def migrate_yaml_text(
                 else:
                     assert isinstance(key, str)
                     value = parent[key]
-                source = [*at, *_substitute_wildcards(move.old_path, bindings)]
-                destination = [*at, *_substitute_wildcards(move.new_path, bindings)]
+                source = _substitute_wildcards(move.old_path, bindings)
+                destination = _substitute_wildcards(move.new_path, bindings)
                 # A pure rename (same parent, only the final segment's spelling
                 # differs) never relocates content, so it carries no
                 # restriction on the value's shape -- a multi-line block
@@ -1222,12 +1222,9 @@ def migrate_yaml_text(
         staged["_schema_version"] = stop_target
         updates["_schema_version"] = stop_target
 
-    # A removal with an update beneath it (a flat format name called `aliases`)
-    # must go first; the rest go with the updates so blocks are edited in place.
-    cleared = {r for r in removals if any(u.startswith(r + ".") for u in updates)}
     final_text = set_board_values(
-        set_board_values(yaml_text, dict.fromkeys(cleared)),
-        {**updates, **dict.fromkeys(removals - cleared)},
+        yaml_text,
+        {**updates, **dict.fromkeys(removals)},
     )
     if "_schema_version" in updates:
         final_text = _mark_stamp_line_auto_written(final_text)
@@ -1546,11 +1543,11 @@ def retired_keys(
         for move in registry.transition_from(identifier):
             if move.old_path == move.new_path:
                 continue
-            for at, _parent, _key, bindings in board_move_locations(
+            for _parent, _key, bindings in move_source_locations(
                 document, move, catalog
             ):
-                path = (*at, *_substitute_wildcards(move.old_path, bindings))
-                successor = (*at, *_substitute_wildcards(move.new_path, bindings))
+                path = tuple(_substitute_wildcards(move.old_path, bindings))
+                successor = tuple(_substitute_wildcards(move.new_path, bindings))
                 found.setdefault(
                     path, RetiredKey(path, move.target_schema, successor, None)
                 )
@@ -2560,25 +2557,8 @@ def _apply_move(
                 assert isinstance(key, int)
                 parent[key] = expanded
         return notices
-    located = [
-        (at, parent, key, _substitute_wildcards(move.new_path, bindings))
-        for at, parent, key, bindings in list(
-            board_move_locations(mapping, move, catalog)
-        )
-    ]
-    # Vacate every source before placing any: one value's destination can pass
-    # through another's source slot (a flat format name called `aliases`
-    # moving under the `aliases` map its siblings move into).
-    held: JsonObject = {}
-    staged: list[tuple[JsonObject | list[JsonValue], str | int, list[str]]] = []
-    for index, (at, parent, key, destination) in enumerate(located):
-        if isinstance(parent, dict) and move.old_path != move.new_path:
-            assert isinstance(key, str)
-            held[str(index)] = parent.pop(key)
-            staged.append((held, str(index), [*at, *destination]))
-        else:
-            staged.append((parent, key, [*at, *destination]))
-    for parent, key, destination in staged:
+    for parent, key, bindings in list(move_source_locations(mapping, move, catalog)):
+        destination = _substitute_wildcards(move.new_path, bindings)
         _move_value(mapping, parent, key, destination, move)
     return notices
 
@@ -2769,7 +2749,8 @@ def move_source_locations(
     there.
 
     A trailing ``*`` is ungated: it names no key, so "is this a declared
-    property?" has no meaning there. No declaration produces one today.
+    property?" has no meaning there. An open map's own values use it
+    (v0.9.0's ``("style", "palettes", "*")``).
 
     A fourth gate applies only to an identity-path Move (``old_path ==
     new_path``, e.g. dbt charts' ``theme:`` sugar): the structural precondition
@@ -2789,43 +2770,23 @@ def move_source_locations(
         ):
             yield parent, key, bindings
         return
-    for _at, parent, key, bindings in board_move_locations(document, move, catalog):
-        yield parent, key, bindings
-
-
-def board_move_locations(
-    document: JsonObject, move: Move, catalog: YamlSchemaCatalog
-) -> Iterable[
-    tuple[YamlKeyPath, JsonObject | list[JsonValue], str | int, tuple[str, ...]]
-]:
-    """``move_source_locations`` with each location's board path.
-
-    *bindings* are relative to the board at that path: the root, then each board
-    ``move.sub_board_prefixes`` reaches. A position two walks both reach is
-    yielded once.
-    """
     source_schema = catalog.schema_for(move.source_schema)
     live = catalog.current_schema
     identity_move = move.old_path == move.new_path and move.value_map is not None
-    seen: set[tuple[int, str | int]] = set()
-    for at, node in _board_nodes(document, move.sub_board_prefixes):
-        for parent, key, bindings in _source_locations(
-            node, move.old_path, source_schema, [source_schema], live, [live]
-        ):
-            if identity_move:
-                if isinstance(parent, dict):
-                    assert isinstance(key, str)
-                    current_value = parent[key]
-                else:
-                    assert isinstance(key, int)
-                    current_value = parent[key]
-                assert move.value_map is not None
-                if not _identity_value_would_change(move.value_map, current_value):
-                    continue
-            if (id(parent), key) in seen:
+    for parent, key, bindings in _source_locations(
+        document, move.old_path, source_schema, [source_schema], live, [live]
+    ):
+        if identity_move:
+            if isinstance(parent, dict):
+                assert isinstance(key, str)
+                current_value = parent[key]
+            else:
+                assert isinstance(key, int)
+                current_value = parent[key]
+            assert move.value_map is not None
+            if not _identity_value_would_change(move.value_map, current_value):
                 continue
-            seen.add((id(parent), key))
-            yield at, parent, key, bindings
+        yield parent, key, bindings
 
 
 def _identity_value_would_change(
@@ -2857,14 +2818,8 @@ def _source_locations(
     part = parts[0]
     if len(parts) == 1:
         if part == "*" and isinstance(node, dict):
-            # A key the live grammar declares here, holding a value it accepts,
-            # is current grammar rather than an author-named map key: an
-            # `aliases:` map beside flat format names stays put, while a flat
-            # name that happens to be called `aliases` still moves.
-            live_plausible = _plausible_positions(live, live_positions, node)
-            for key, value in node.items():
-                if not _is_current_key(live, live_plausible, key, value):
-                    yield node, key, bindings + (str(key),)
+            for key in node:
+                yield node, key, bindings + (str(key),)
         elif part == "*" and isinstance(node, list):
             for index in range(len(node)):
                 yield node, index, bindings + (str(index),)
@@ -2910,17 +2865,6 @@ def _source_locations(
             _child_positions(live, live_positions, part),
             bindings,
         )
-
-
-def _is_current_key(
-    live: JsonObject, positions: Sequence[JsonObject], key: str, value: JsonValue
-) -> bool:
-    """Whether the live grammar declares *key* at *positions* and accepts *value*."""
-    return any(
-        _accepts(live, branch.get("properties"), key, value)
-        for position in positions
-        for branch in _schema_branches(live, position)
-    )
 
 
 def _substitute_wildcards(parts: YamlKeyPath, bindings: tuple[str, ...]) -> list[str]:
@@ -3160,7 +3104,16 @@ def _nested_models(
         yield from _nested_models(argument)
 
 
-def _schema_path_exists(schema: JsonObject, path: YamlKeyPath) -> bool:
+def _schema_path_exists(
+    schema: JsonObject, path: YamlKeyPath, *, open_map_keys: bool = False
+) -> bool:
+    """Whether ``path`` resolves in ``schema``.
+
+    ``open_map_keys`` lets a literal segment resolve through an open map's
+    ``additionalProperties`` (``style.fonts.heading``). Only a Move
+    *destination* may assert that; a source or deletion path that matched an
+    open map would treat any author-named key as a declared field.
+    """
     nodes = [schema]
     for part in path:
         next_nodes: list[JsonObject] = []
@@ -3181,20 +3134,13 @@ def _schema_path_exists(schema: JsonObject, path: YamlKeyPath) -> bool:
                         # and a Move that should reach a list item can never
                         # be declared.
                         child = {}
-                    if (
-                        child is None
-                        and branch.get("type") == "object"
-                        and "properties" not in branch
-                    ):
-                        # The object counterpart: `dict[str, str]` renders as
-                        # a bare `{"type": "object"}`, which accepts any key.
-                        # A branch that names its properties stays closed.
-                        child = {}
                 else:
                     properties = branch.get("properties")
                     child = (
                         properties.get(part) if isinstance(properties, dict) else None
                     )
+                    if child is None and open_map_keys and not properties:
+                        child = branch.get("additionalProperties")
                 if isinstance(child, dict):
                     next_nodes.append(child)
         nodes = next_nodes

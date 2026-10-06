@@ -93,7 +93,15 @@ def test_long_y_title_wraps_to_fit_the_chart_height() -> None:
     """A rotated title longer than the plot is wrapped, not left to collapse it."""
     ax, ay = _axes()
     titles = resolve_xy_titles(
-        "month", "observed", None, LONG, ax, ay, RenderBox(width=500, height=300), ""
+        "month",
+        "observed",
+        None,
+        LONG,
+        ax,
+        ay,
+        RenderBox(width=500, height=300),
+        "",
+        field_labels={},
     )
     assert isinstance(titles.y_title, list)
     assert len(titles.y_title) <= 2
@@ -104,7 +112,15 @@ def test_long_x_title_wraps_against_width_not_height() -> None:
     """A bottom/top title consumes width, so its budget comes from the width."""
     ax, ay = _axes()
     titles = resolve_xy_titles(
-        "month", "observed", LONG, None, ax, ay, RenderBox(width=200, height=900), ""
+        "month",
+        "observed",
+        LONG,
+        None,
+        ax,
+        ay,
+        RenderBox(width=200, height=900),
+        "",
+        field_labels={},
     )
     assert isinstance(titles.x_title, list)
     assert _fits(titles.x_title, axis_title_budget(200), ax.title.font)
@@ -118,7 +134,15 @@ def test_title_that_already_fits_is_left_alone() -> None:
     """
     ax, ay = _axes()
     titles = resolve_xy_titles(
-        "month", "observed", None, LONG, ax, ay, RenderBox(width=500, height=900), ""
+        "month",
+        "observed",
+        None,
+        LONG,
+        ax,
+        ay,
+        RenderBox(width=500, height=900),
+        "",
+        field_labels={},
     )
     assert titles.y_title == LONG
 
@@ -132,7 +156,15 @@ def test_unbreakable_word_is_ellipsized_never_split() -> None:
     ax, ay = _axes()
     word = "Supercalifragilisticexpialidociousandthensomemorecharacters"
     titles = resolve_xy_titles(
-        "month", "observed", None, word, ax, ay, RenderBox(width=500, height=220), ""
+        "month",
+        "observed",
+        None,
+        word,
+        ax,
+        ay,
+        RenderBox(width=500, height=220),
+        "",
+        field_labels={},
     )
     assert _fits(titles.y_title, axis_title_budget(220), ay.title.font)
     assert isinstance(titles.y_title, str)
@@ -156,6 +188,7 @@ def test_short_word_over_its_budget_is_ellipsized_not_split() -> None:
         ay,
         RenderBox(width=500, height=110),
         "",
+        field_labels={},
     )
     assert isinstance(titles.y_title, str)
     assert titles.y_title.endswith("…")
@@ -179,6 +212,7 @@ def test_over_wide_word_does_not_displace_the_words_that_fit() -> None:
         ay,
         RenderBox(width=500, height=180),
         "",
+        field_labels={},
     )
     assert isinstance(titles.y_title, list)
     assert titles.y_title[0].endswith("…")
@@ -204,6 +238,7 @@ def test_row_facet_panel_is_not_charged_whole_chart_chrome() -> None:
         ay,
         RenderBox(width=500, height=110, panel_rows=7),
         "",
+        field_labels={},
     )
     assert titles.y_title == "commits"
 
@@ -227,6 +262,7 @@ def test_column_facet_panel_is_not_charged_whole_chart_chrome() -> None:
         ay,
         RenderBox(width=97, height=500, panel_cols=7),
         "",
+        field_labels={},
     )
     assert titles.x_title == "commits"
 
@@ -284,6 +320,7 @@ def _bar_chart(bar_style: ResolvedBarStyle, orientation: str, **labels: str) -> 
         orientation=orientation,
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, **labels},
+        field_labels={},
     )
 
 
@@ -380,6 +417,7 @@ def test_multi_metric_line_wraps_its_x_label(line_style: Any) -> None:
         x_label=LONG,
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     spec = LineEmitter().emit(
         chart,
@@ -407,6 +445,7 @@ def test_multi_metric_area_wraps_its_y_label(area_style: Any) -> None:
         y_label=LONG,
         style=area_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     spec = AreaEmitter().emit(
         chart,
@@ -454,6 +493,7 @@ def test_layered_bar_base_legend_label_is_not_a_wrapped_list(
         ),
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     spec = BarEmitter().emit(
         chart,
@@ -498,6 +538,7 @@ def _scatter_chart(scatter_style: ResolvedScatterStyle, **labels: str) -> Any:
         y="y_val",
         style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, **labels},
+        field_labels={},
     )
 
 
@@ -569,6 +610,7 @@ def test_scatter_emitter_y_plain_stays_primitive_when_y_title_wraps(
         ),
         style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     spec = ScatterEmitter().emit(
         chart,
@@ -605,6 +647,7 @@ def _heatmap_chart(heatmap_style: ResolvedHeatmapStyle, **labels: str) -> Any:
         y="row",
         style=heatmap_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, **labels},
+        field_labels={},
     )
 
 

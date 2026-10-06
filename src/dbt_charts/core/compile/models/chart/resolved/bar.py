@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedBarStyle
 
 from ._base import _CartesianResolvedChartFields
@@ -28,6 +29,13 @@ class ResolvedBarChart(_CartesianResolvedChartFields):
         description=(
             "Value-axis data type: temporal only for a bar from one date "
             "column to another."
+        ),
+    )
+    span_date_format: ResolvedFormat | None = Field(
+        default=None,
+        description=(
+            "The board's `date_short`, baked for the dates a date-span bar's "
+            "tooltip prints; None unless the bar's measure is temporal."
         ),
     )
     # Original wide-measure column names when y was authored as a list.

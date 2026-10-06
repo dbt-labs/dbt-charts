@@ -18,7 +18,7 @@ property in ``$defs.ResolvedBoard`` for a ``$defs.StyleRef`` pointer (the
 ``$defs`` entry is recursive, so this single edit covers the root board and
 every nested board) and wraps the result in the envelope object.
 
-Entry point: ``render_board_resolved_schema(version: str) -> JsonSchemaValue``
+Entry point: ``render_board_resolved_schema() -> JsonSchemaValue``
 """
 
 from __future__ import annotations
@@ -48,25 +48,17 @@ class StyleRef(BaseModel):
     )
 
 
-def render_board_resolved_schema(version: str) -> JsonSchemaValue:
+def render_board_resolved_schema() -> JsonSchemaValue:
     """Render the resolved-board artifact JSON Schema (draft 2020-12).
-
-    Args:
-        version: Stamped verbatim into the envelope's top-level ``version``
-            key (drift-test-excluded — see test_board_resolved_schema.py —
-            so a version bump alone doesn't require regeneration). This
-            renderer has no way to know whether any installed ``dbt-charts``
-            distribution matches the source tree it is actually
-            introspecting, so the caller resolves and supplies the value.
 
     Returns:
         A self-contained JSON Schema dict describing the envelope
         ``{$id, version, styles, board}``: draft-2020-12 ``$schema``, a
-        stable ``$id``, ``version`` verbatim, and a Pydantic-derived
-        ``$defs`` body with ``ResolvedBoard.style`` rewritten to a
-        ``StyleRef`` pointer. Not yet canonicalized for cross-Python-version
-        stability — the generation script applies that pass before writing
-        the committed artifact.
+        stable ``$id``, and a Pydantic-derived ``$defs`` body with
+        ``ResolvedBoard.style`` rewritten to a ``StyleRef`` pointer. Not
+        yet canonicalized for cross-Python-version stability; the
+        generation script applies that pass before writing the committed
+        artifact.
     """
     defs = TypeAdapter(ResolvedBoard).json_schema(mode="serialization")["$defs"]
     defs["StyleRef"] = TypeAdapter(StyleRef).json_schema(mode="serialization")
@@ -75,7 +67,6 @@ def render_board_resolved_schema(version: str) -> JsonSchemaValue:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": SCHEMA_ID,
-        "version": version,
         "type": "object",
         "additionalProperties": False,
         "required": ["$id", "version", "styles", "board"],

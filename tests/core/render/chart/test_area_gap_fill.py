@@ -125,6 +125,7 @@ def area_with_gap_fill_axis(area_style: ResolvedAreaStyle) -> ResolvedAreaChart:
         ),
         resolved_channels=_SPARSE_WEEKLY_SERIES_CHANNEL,
         **{k: v for k, v in _C.items() if k not in ("resolved_channels",)},
+        field_labels={},
     )
 
 
@@ -205,6 +206,7 @@ def test_area_emitter_no_gap_fill_when_fill_null(
         ),
         resolved_channels=_SPARSE_WEEKLY_SERIES_CHANNEL,
         **{k: v for k, v in _C.items() if k not in ("resolved_channels",)},
+        field_labels={},
     )
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _SPARSE_WEEKLY_DATA))
     assert spec.data is not None
@@ -254,6 +256,7 @@ def test_area_emitter_no_gap_fill_for_temporal_axis(
         stack=None,
         style=area_style.model_copy(update={"axis_x": ax}),
         **_C,
+        field_labels={},
     )
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), single_series_data))
     # data not set by emitter → session would set it later; None here means no densification

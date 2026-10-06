@@ -27,6 +27,7 @@ def test_chartpatch_in_layout_omitted_title_stays_empty() -> None:
         depth=0,
         item_id="row0",
         sources={},
+        html_policy="none",
     )
     assert result.chart is not None
     assert result.chart.title == ""
@@ -43,6 +44,7 @@ def test_chartpatch_in_layout_respects_explicit_title() -> None:
         depth=0,
         item_id="row0",
         sources={},
+        html_policy="none",
     )
     assert result.chart is not None
     assert result.chart.title == "My Revenue Chart"

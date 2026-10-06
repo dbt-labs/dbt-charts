@@ -29,7 +29,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_series_names,
 )
 from dbt_charts.core.font_measure import get_font_measurer
-from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.case import field_title
 from dbt_charts.core.utils import (
     layered_endpoint_rail_fires,
     layered_endpoint_rail_shape,
@@ -128,7 +128,7 @@ def _estimated_series_names(
             chart.wide_measures,
             chart.color,
             data,
-            wide_measure_labels_for(chart.wide_measures),
+            wide_measure_labels_for(chart.wide_measures, chart.field_labels),
         )
     if has_series_color:
         assert color_ch is not None and color_ch.data_field
@@ -145,12 +145,14 @@ def _estimated_series_names(
     assert isinstance(chart, (ResolvedLineChart, ResolvedAreaChart, ResolvedBarChart))
     y_field = chart.y
     names = [
-        chart.y_label or default_axis_title(y_field) if isinstance(y_field, str) else ""
+        chart.y_label or field_title(y_field, chart.field_labels)
+        if isinstance(y_field, str)
+        else ""
     ]
     for layer in chart.layers:
         if layer.y is None:
             continue
-        names.append(layer.label or default_axis_title(layer.y))
+        names.append(layer.label or field_title(layer.y, chart.field_labels))
     return [name for name in names if name]
 
 

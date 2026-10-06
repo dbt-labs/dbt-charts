@@ -651,6 +651,7 @@ class TestSizingFunctionsRegression:
                 column_configs={"amount": col},
                 data=data,
                 measurer=measurer,
+                header_measurer=measurer,
                 font_size=11,
                 header_font_size=11,
                 cell_pad=8,

@@ -1214,10 +1214,9 @@ def _describe(
             # paints), which is all a wheel can know; the aliases this node's
             # scope authors are legal here too — in every slot, since a user's
             # alias carries no kind — and offering the snapshot alone tells an
-            # author the alias they wrote themselves is not a value. The dedup is not shadowing
-            # support — a `style.formats.aliases` name spelling a predefined name raises
-            # `ERR_FORMAT_PREDEFINED_SHADOW` — it keeps the offer honest for a
-            # board that does not compile, which this verb still parses.
+            # author the alias they wrote themselves is not a value. The dedup keeps the
+            # offer honest where a `style.formats` key spells a predefined name,
+            # which redefines it rather than adding a second entry.
             enum_values += tuple(a for a in aliases if a not in enum_values)
         if (
             enum_values
@@ -1617,11 +1616,11 @@ def _scope_style_patch(node: Any, inherited: StylePatch | None) -> StylePatch | 
 
     A tab or nested board that authors its own `style:` scopes it onto the
     parent's via `scope_patch` — the same helper `compile_board_resolved_style`
-    calls for the real cascade — so `formats.aliases` (a plain, unmarked dict
-    field) resolves key-wise here exactly as it does at compile. A scope that
-    authors `style:` without touching `formats` inherits the parent's table unchanged
+    calls for the real cascade — so `formats` (a plain, unmarked dict field)
+    resolves key-wise here exactly as it does at compile. A scope that authors
+    `style:` without touching `formats` inherits the parent's table unchanged
     (an unset field falls through in `merge_patches`); an explicit
-    `style.formats.aliases: null` clears it for that scope and everything under it,
+    `style.formats: null` clears it for that scope and everything under it,
     same as it does at compile.
     """
     if not isinstance(node, (AuthoredBoard, TabItem)):
@@ -1635,9 +1634,9 @@ def _scope_aliases(patch: StylePatch | None) -> tuple[str, ...]:
     Aliases an `extends:` template defines are in no scope's table here —
     resolving one is a read, and this half of the verb performs no I/O.
     """
-    if patch is None or patch.formats is None or patch.formats.aliases is None:
+    if patch is None or patch.formats is None:
         return ()
-    return tuple(patch.formats.aliases)
+    return tuple(patch.formats)
 
 
 def design_target(board: Path, path: str, *, project: Project) -> DesignTarget:

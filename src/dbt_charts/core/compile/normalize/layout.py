@@ -29,6 +29,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     _BaseChartFields,
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import HtmlPolicy
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -88,6 +89,7 @@ def build_unified_layout(
     chart_style_context: ChartStyleContext,
     parent_level: int = 0,
     sources: dict[str, Any],
+    html_policy: HtmlPolicy,
     cache_root: CachePatch | None = None,
     path_prefix: AuthoringPathPrefix = "",
 ) -> Layout:
@@ -106,6 +108,8 @@ def build_unified_layout(
         board_cache: The declaring dashboard's `cache:` layer, inherited
             by every query normalized below it
         theme: Vega-Lite theme to inherit to nested boards
+        html_policy: Effective html_policy of the enclosing board, inherited by
+            nested boards that do not author their own
         parent_variables: Variables from parent scope for template resolution
         parent_level: Semantic heading level of the enclosing board. Passed
             through to nested normalize_board calls so children compute their
@@ -138,6 +142,7 @@ def build_unified_layout(
             parent_level=parent_level,
             cache_root=cache_root,
             sources=sources,
+            html_policy=html_policy,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -161,6 +166,7 @@ def build_unified_layout(
             parent_level=parent_level,
             cache_root=cache_root,
             sources=sources,
+            html_policy=html_policy,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -184,6 +190,7 @@ def build_unified_layout(
             parent_level=parent_level,
             cache_root=cache_root,
             sources=sources,
+            html_policy=html_policy,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -210,6 +217,7 @@ def build_unified_layout(
             parent_level=parent_level,
             cache_root=cache_root,
             sources=sources,
+            html_policy=html_policy,
             path_prefix=path_prefix,
         )
 
@@ -269,6 +277,7 @@ def build_unified_layout(
             parent_level=parent_level,
             cache_root=cache_root,
             sources=sources,
+            html_policy=html_policy,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -296,6 +305,7 @@ def _resolve_layout_items(
     parent_level: int = 0,
     *,
     sources: dict[str, Any],
+    html_policy: HtmlPolicy,
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
@@ -346,6 +356,7 @@ def _resolve_layout_items(
             parent_level=parent_level,
             cache_root=cache_root,
             sources=sources,
+            html_policy=html_policy,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -371,6 +382,7 @@ def _resolve_single_item(
     parent_level: int = 0,
     *,
     sources: dict[str, Any],
+    html_policy: HtmlPolicy,
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
@@ -476,6 +488,7 @@ def _resolve_single_item(
                 "board_cache": board_cache,
                 "sources": sources,
                 "theme": theme,
+                "html_policy": html_policy,
                 "variables": parent_variables,
             },
             query_registry=query_registry,
@@ -707,6 +720,7 @@ def _resolve_grid_items(
     parent_level: int = 0,
     *,
     sources: dict[str, Any],
+    html_policy: HtmlPolicy,
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
@@ -761,6 +775,7 @@ def _resolve_grid_items(
             parent_level=parent_level,
             cache_root=cache_root,
             sources=sources,
+            html_policy=html_policy,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -813,6 +828,7 @@ def _resolve_tab_items(
     chart_style_context: ChartStyleContext,
     parent_level: int = 0,
     sources: dict[str, Any],
+    html_policy: HtmlPolicy,
     cache_root: CachePatch | None = None,
     path_prefix: AuthoringPathPrefix = "",
 ) -> tuple[list[LayoutItem], list[str]]:
@@ -868,6 +884,7 @@ def _resolve_tab_items(
                     "board_cache": board_cache,
                     "sources": sources,
                     "theme": theme,
+                    "html_policy": html_policy,
                 },
                 query_registry=query_registry,
                 chart_registry=chart_registry,
@@ -898,6 +915,7 @@ def _resolve_tab_items(
                 text=tab_item.text,
                 layout=Layout(type=LayoutType.ROWS, items=[]),
                 theme=theme,
+                html_policy=html_policy,
                 authored_style=tab_item.style,
                 resolved_style=resolved_style,
                 chart_style_context=chart_style_context,
@@ -923,6 +941,7 @@ def _resolve_tab_items(
                 base_dir=None if base_dir is None else base_dir.relpath,
                 layout=Layout(type=LayoutType.ROWS, items=[]),
                 theme=theme,
+                html_policy=html_policy,
                 authored_style=tab_item.style,
                 resolved_style=resolved_style,
                 chart_style_context=chart_style_context,

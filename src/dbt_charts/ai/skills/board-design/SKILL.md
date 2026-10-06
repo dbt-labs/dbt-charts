@@ -44,18 +44,6 @@ If the user needs a narrative analysis, use the `{{ s_skill_name_design_report }
 4. **Context for every number** — a number without comparison (trend, target, prior period) is meaningless.
 5. **Purpose-driven** — every chart answers a specific question.
 
-## Metadata Requirement
-
-Whenever you output or edit dbt charts YAML, add `notes` metadata (never rendered — AI
-search and maintainer context only):
-
-- `queries.*.notes` for query intent
-- `charts.*.notes` for chart intent
-- `variables.*.notes` for filter semantics
-- Layout object `notes` fields (`rows`/`cols`/`grid.items`/`tabs.items`) when they add context
-
-Notes should be concise and optimized for AI retrieval.
-
 ## Thinking Process
 
 Before designing, work through these in order:
@@ -86,9 +74,12 @@ Before designing, work through these in order:
 | Relationship? | `scatter` | Two numeric variables |
 | Precise values? | `table` | When exact numbers matter |
 
+**`type: custom` is a last resort.** Use it only when the user asks for a specific shape by name or description (a Sankey, a gauge, an isotype pictogram) that no built-in type or composed recipe draws. Never reach for it to make a board look more interesting, and never as a substitute for a built-in type that answers the question: a custom chart gets no axes, legend, sizing rules, or visual warnings for free.
+
 **Avoid:**
 - Pie for >3 categories (humans compare angles poorly — use bar)
 - Multiple chart types for visual variety (consistency aids scanning)
+- `type: custom` when a built-in type answers the question
 - Scrolling layouts (if it scrolls, it's usually a report — unless the user asked for more on one page or you're reproducing a scrolling source)
 
 ### 4. Layout — Inverted Pyramid
@@ -142,13 +133,19 @@ needed. Pin a specific value to a specific slot under
 `style.charts.category_colors.<field>.values`.{{#if_tool docs}} `{{ s_docs_charts }}` has the
 full syntax.{{/if_tool}}
 
+**Restyle type through the named fonts, not slot by slot.** Seven fonts under
+`style.fonts` (`heading`, `subtitle`, `body`, `label`, `caption`, `numeral`,
+`code`) own every text slot. A serif title font is `style.fonts.heading.family`
+once, not `family:` on each title; a one-off emphasis is `font: {extends: label,
+weight: 600}`, not a repeated inline block.
+
 ### 6. Numeric Display
 
 Apply standard numeric-display judgment (two-numeral rule, no false precision, tabular numerals in columns). dbt charts-specific defaults:
 
 - **Put format in the family slot — not chart root.** Cartesian charts: the measure → `style.number_format` (equivalently `style.axis_y.labels.format` — the measure, even on a horizontal bar where it draws along the bottom). The dimension (`style.axis_x.labels.format`) takes a number preset only when its ticks are themselves numbers; a text-category axis takes no number format, and a date axis takes a time token instead. A band-scale dimension raises `ERR-LABEL-FORMAT-AXIS-MISMATCH`; so does a temporal one now — dates get no numeric-tick exemption, so use a time token or `style.time_format` there instead. `heatmap` has no measure axis at all — its value is on the color channel, so a preset on either axis raises. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. KPI value → `style.value.format`. Table column → `style.columns.<col>.format`. Chart-root `format:` is rejected on cartesian families.
 - **Use format aliases, not raw d3 specs.** `currency`, `currency_whole`, `percent`, `percent_delta`, `integer`, `number` inside the slot above — not bare `format: currency_whole` at chart root. Raw d3 (`"$,.0f"`) only when no alias fits.
-- **Non-dollar currency: the object form of `format` (`spec`, `prefix`, `suffix`, `notation` keys), not a raw literal.** d3 only knows `$`/`#` as native symbols, so a euro/pound/etc. board authors the object form: a `$,.0f` spec with `prefix: "US "` for a disambiguated dollar, a `,.0f` spec with `prefix: "€"` for any other symbol. A glued symbol follows the sign (`−€500`), a spaced code leads it (`EUR −500`), and an anchored prefix always leads it; `sign_placement` overrides the default, and `repeat: every`/`anchor` sets whether the affix repeats. A suffix trails the digits (`500 EUR`). A table column keeps the sign against the digits (`€  −500`) and rejects `sign_placement`. Works as a name in `style.formats.aliases` target too, not just inline.
+- **Non-dollar currency: the object form of `format` (`spec`, `prefix`, `suffix`, `notation` keys), not a raw literal.** d3 only knows `$`/`#` as native symbols, so a euro/pound/etc. board authors the object form: a `$,.0f` spec with `prefix: "US "` for a disambiguated dollar, a `,.0f` spec with `prefix: "€"` for any other symbol. A glued symbol follows the sign (`−€500`), a spaced code leads it (`EUR −500`), and an anchored prefix always leads it; `sign_placement` overrides the default, and `repeat: every`/`anchor` sets whether the affix repeats. A suffix trails the digits (`500 EUR`). A table column keeps the sign against the digits (`€  −500`) and rejects `sign_placement`. Works as a `style.formats` alias target too, not just inline.
 - **Drop cents above $10.** `style.number_format: currency_whole` (or `style.value.format` on KPIs) is the dashboard default. Reserve `currency_full` (with cents) for reconciliation surfaces — billing, financial statements.
 - **Notation family: analytic for chrome, narrative for prose.** Analytic (`$2.5 M`, space, uppercase K/M/B) for axes, KPIs, tables, tooltips. Narrative (`$2.5mn`, no space, lowercase) only for text cards, titles, annotations. Independent of theme choice.
 - **Zero strips trailing decimals even when siblings have them.** A `$0` KPI uses `currency_whole` even if its partner uses `currency`. A `0%` KPI uses `percent_whole` even if its partner uses `.2%`. The rule generalizes to any unit.
@@ -189,7 +186,6 @@ Before delivering:
 - [ ] Color is purposeful, not decorative — and authored as palette tokens, with no raw hex anywhere
 - [ ] Titles are informative ("Revenue by Region, Last 30 Days" not "Chart 1")
 - [ ] User's most important question answered at a glance
-- [ ] Query/chart/layout/variable `notes` metadata is filled for AI context
 - [ ] No word repeats across every series label — it lives once in the title
 
 ## Common Mistakes

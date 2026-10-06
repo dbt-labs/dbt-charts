@@ -4,7 +4,7 @@ Stage: RENDER
 Purpose: Resolve format aliases from the theme cascade and format values
          using D3-style format strings.
 
-The format alias vocabulary lives in theme YAML (style.formats.aliases). Callers
+The format alias vocabulary lives in theme YAML (style.formats). Callers
 pass compiled_style.formats to resolve_format(); unknown keys and raw d3
 specs pass through unchanged for d3 to parse.
 
@@ -36,7 +36,11 @@ from d3_format import format as _d3_format
 # (format-alias resolution is a cascade concern); imported here for internal
 # use by format_value/format_kpi_parts. Render callers must import from
 # dbt_charts.core.compile.format directly.
-from dbt_charts.core.compile.format import resolve_format, resolve_format_parts
+from dbt_charts.core.compile.format import (
+    column_format,
+    resolve_format_parts,
+    sub_unit_spec,
+)
 from dbt_charts.core.compile.models.primitives import AuthoredFormat, FormatAliases
 from dbt_charts.core.compile.models.style.resolved.table import (
     ResolvedColumnSharedScale,
@@ -55,7 +59,6 @@ from dbt_charts.core.text.format_d3 import (
 from dbt_charts.core.text.numeral_scale import SuffixMode, suffix_at_register
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
-    PREDEFINED_SPECS,
     PREDEFINED_SUB_UNIT_FALLBACK,
     PredefinedNumberFormat,
     _with_minus,
@@ -145,8 +148,10 @@ def format_value(
     Returns:
         Formatted string
     """
-    parts = resolve_format_parts(
-        format_input, formats, no_format_default=PredefinedNumberFormat.number
+    parts = (
+        resolve_format_parts(None)
+        if format_input is None
+        else column_format("number", formats, format_input)
     )
     format_spec = parts.spec
     prefix, suffix = parts.prefix, parts.suffix
@@ -160,7 +165,7 @@ def format_value(
         # floor is 0.0 -- `<` excludes zero there; the non-money floor is
         # 1.0, where this comparison is always false either way).
         if floor < abs(value) < 1.0:
-            format_spec = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[parts.raw]]
+            format_spec = sub_unit_spec(parts.raw, formats)
     if value is not None:
         _check_percent_range(value, format_spec)
     effective_notation = (
@@ -244,26 +249,17 @@ def format_kpi_parts(
     if value is None:
         return "", NULL_DISPLAY, ""
 
-    parts = resolve_format_parts(
-        format_input,
-        formats,
-        no_format_default=(PredefinedNumberFormat.number if default_number else None),
+    parts = (
+        column_format("number", formats, format_input)
+        if default_number
+        else resolve_format_parts(format_input, formats)
     )
     explicit_prefix, explicit_suffix = parts.prefix, parts.suffix
     # parts.raw keeps the predefined identity the sub-unit-floor guard keys on,
-    # through the spec-less-affix default substitution.
+    # through the spec-less default substitution.
     _raw = parts.raw
     _is_house = parts.is_house
     format_spec = parts.spec
-    if not format_spec and default_number:
-        # number is always a predefined (house) format. _raw must follow
-        # format_spec here, or the sub-unit-floor guard below (keyed on
-        # _raw) never sees this row as PREDEFINED_SUB_UNIT_FALLBACK's
-        # "number" member and a money-prefixed cell keeps its SI spec.
-        _is_house = True
-        _raw = default_number_format()
-        format_spec = resolve_format(_raw, formats)
-
     # Money below $1 has no sub-cent unit to name and must not take the SI
     # spec (see si_sub_unit_floor). Only meaningful when this row picks its
     # own spec -- shared_scale has already baked the column's one magnitude,
@@ -273,7 +269,7 @@ def format_kpi_parts(
         # See the strict-floor note in format_value: zero must not take the
         # fallback.
         if floor < abs(value) < 1.0:
-            format_spec = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[_raw]]
+            format_spec = sub_unit_spec(_raw, formats)
 
     # Predefined native formatters bypass D3 and know their own unit; the
     # authored affix rides around number-and-unit.

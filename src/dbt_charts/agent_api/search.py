@@ -11,7 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.agent_api.boards import board_declaring_keys
 from dbt_charts.core.diagnostics import Diagnostic
-from dbt_charts.core.project import CHARTS_SUBDIR, Project, posix_relpath
+from dbt_charts.core.project import (
+    Project,
+    board_root_for_relpath,
+    board_roots,
+    posix_relpath,
+)
 from dbt_charts.core.utils import YAML_LOADER
 
 MAX_SEARCH_LIMIT = 50
@@ -29,7 +34,7 @@ def _agent_safe_summary(notes: str) -> str:
 
 
 class SearchBoardsArgs(BaseModel):
-    """Search existing dashboards by keyword. Returns ranked results with match scores and reasons. Use to discover relevant dashboards and reuse validated query patterns before creating new ones. Each hit's `charts` list carries per-chart detail (id, title, type, query) parsed from the same board — a chart-title or chart-id match is called out in match_reasons (e.g. "chart-title: monthly_revenue"), so you can see which chart already answers the question without opening the file. Each hit carries two path forms, named for the coordinate system they resolve in: board_path (relative to charts/) for render_board(path=board_path, chart=<chart id>, ...), and file_path (relative to the project root) for read_file/write_file/edit_file. Reuse the matching field's value unchanged — do not convert between the two. Results may also include sample SQL and literal file paths from matching queries; reuse those exact paths instead of inventing new file globs."""
+    """Search existing dashboards by keyword. Returns ranked results with match scores and reasons. Use to discover relevant dashboards and reuse validated query patterns before creating new ones. Each hit's `charts` list carries per-chart detail (id, title, type, query) parsed from the same board — a chart-title or chart-id match is called out in match_reasons (e.g. "chart-title: monthly_revenue"), so you can see which chart already answers the question without opening the file. Each hit carries two path forms, named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...), and file_path (relative to the project root) for read_file/write_file/edit_file. Reuse the matching field's value unchanged — do not convert between the two. Results may also include sample SQL and literal file paths from matching queries; reuse those exact paths instead of inventing new file globs."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -65,8 +70,11 @@ class BoardSearchHit(BaseModel):
     match_reasons: list[str]
     board_path: str = Field(
         description=(
-            "Path relative to charts/ (charts/ prefix stripped). Pass unchanged "
-            "to render_board(path=...)."
+            "Path relative to charts/ for a host board. A package board's "
+            "path carries a `<pkg>/` namespace prefix (dbt_packages/pkg_a/"
+            'charts/overview.yml -> "pkg_a/overview.yml") since that prefix '
+            "is required for render_board(path=...) to resolve a package "
+            "board. Pass unchanged to render_board(path=...)."
         )
     )
     file_path: str = Field(
@@ -137,7 +145,7 @@ def search_boards_hits(
     if not query_tokens:
         return []
 
-    index = _build_index(project, CHARTS_SUBDIR)
+    index = _build_index(project)
 
     if tags:
         required_tags = {t.lower() for t in tags}
@@ -227,11 +235,10 @@ def _index_entry_from_content(
     }
 
 
-def _build_index(project: Project, under: str) -> list[dict[str, Any]]:
+def _build_index(project: Project) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    for pf in sorted(
-        project.iter_boards(under=under, recursive=True), key=lambda p: p.relpath
-    ):
+    roots = board_roots(project)
+    for pf in sorted(project.iter_boards(), key=lambda p: p.relpath):
         if not pf.is_yaml or pf.is_meta:
             continue
         try:
@@ -241,13 +248,19 @@ def _build_index(project: Project, under: str) -> list[dict[str, Any]]:
         if not isinstance(content, dict):
             continue
         title = content.get("title", pf.stem)
-        rel = PurePosixPath(pf.relpath)
-        # iter_boards(under=CHARTS_SUBDIR) guarantees relpath is under "charts/",
-        # but the fallback keeps board_path sane if that ever changes.
+        # iter_boards() only ever yields paths under a board root, so the
+        # root lookup here can't miss.
+        root = board_root_for_relpath(pf.relpath, roots)
+        assert root is not None, f"{pf.relpath!r} is not under any board root"
+        root_relative = posix_relpath(
+            PurePosixPath(pf.relpath), PurePosixPath(root.relpath)
+        )
+        # A bare root-relative path only resolves through render_board(path=...)
+        # for the host root: resolve_board_relpath's candidate search matches a
+        # package root exclusively via its namespace-prefixed slug, so a
+        # package board's board_path needs that prefix to round-trip.
         board_path = (
-            posix_relpath(rel, PurePosixPath(CHARTS_SUBDIR))
-            if rel.is_relative_to(CHARTS_SUBDIR)
-            else pf.relpath
+            f"{root.namespace}/{root_relative}" if root.namespace else root_relative
         )
         entry = _index_entry_from_content(
             board_path=board_path,
@@ -256,6 +269,7 @@ def _build_index(project: Project, under: str) -> list[dict[str, Any]]:
             notes=content.get("notes", ""),
             content=content,
         )
+
         if entry is not None:
             entries.append(entry)
     return entries

@@ -93,6 +93,7 @@ CHART_FIELDS = (
     "format",
     "x_label",
     "y_label",
+    "field_labels",
     "geo",
     "geo_source",
     "lookup",
@@ -112,6 +113,7 @@ CHART_FIELDS = (
     "sort",
     "multiples",
     "support_table",
+    "spanners",
     "conditional_formatting",
     "style",
 )
@@ -193,6 +195,8 @@ def chart_to_dict(item: dict[str, Any], query_name: str | None) -> dict[str, Any
         if field in ("title", "subtitle", "label", "notes") and val == "":
             continue
         if field == "collapse" and val is False:
+            continue
+        if field == "field_labels" and not val:
             continue
         d[field] = clean_value(val)
 
@@ -305,7 +309,7 @@ def _render_chart_item(
     ``chart_style_context`` is the board's own compiled cascade context
     (``board.chart_style_context``, threaded down by ``_render_board_items``)
     — the same one every other render-layer consumer resolves a chart
-    against, so a board's own ``style.formats.aliases`` names apply here too.
+    against, so a board's own ``style.formats`` aliases apply here too.
 
     ``include_text_format`` is True only when ``render_board_text`` is the
     caller. It gates the ``kpi_text``/``y_range_display`` keys, which are

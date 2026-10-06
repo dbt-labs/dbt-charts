@@ -9,8 +9,7 @@ from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     check_anchored_sign,
-    resolve_format_parts,
-    resolve_format_parts_for_values,
+    column_format,
     resolve_label_format,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
@@ -65,9 +64,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
 )
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
-from dbt_charts.core.text.predefined_formats import (
-    PredefinedNumberFormat,
-)
 
 __all__ = [
     "_check_layers_y_domain",
@@ -168,11 +164,7 @@ def _resolve_one_layer(
     if authored_axis_y.labels is not None and authored_axis_y.labels.format is not None:
         raw_format = authored_axis_y.labels.format
         # A spec-less affix takes the ``number`` default so the painter has digits.
-        axis_format = resolve_format_parts(
-            raw_format,
-            chart_style_context.formats,
-            no_format_default=PredefinedNumberFormat.number,
-        )
+        axis_format = column_format("number", chart_style_context.formats, raw_format)
         if is_d3_si_spec(axis_format.spec) and axis_format.is_house:
             tick_label = ladderless_tick_label(axis_format, list(_layer_values()))
         else:
@@ -181,11 +173,11 @@ def _resolve_one_layer(
             check_anchored_sign(
                 axis_format, f"charts.{chart_id}.layers[{index}].axis_y.labels.format"
             )
-        voted = resolve_format_parts_for_values(
-            raw_format,
+        voted = column_format(
+            "number",
             chart_style_context.formats,
-            _layer_values(),
-            no_format_default=PredefinedNumberFormat.number,
+            raw_format,
+            values=_layer_values(),
         )
         if voted.spec != axis_format.spec:
             tooltip_format = voted

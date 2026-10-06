@@ -633,6 +633,14 @@ def normalize_board(
         )
 
     parent_context = parent_context or {}
+    # model_fields_set, not a default comparison: an authored `none` must win.
+    inherits_html_policy = (
+        "html_policy" not in board.model_fields_set and "html_policy" in parent_context
+    )
+    html_policy = cap_html_policy(
+        parent_context["html_policy"] if inherits_html_policy else board.html_policy,
+        resolve_html_policy_ceiling().value,
+    )
     if base_dir is None:
         base_dir = parent_context.get("base_dir")
 
@@ -938,6 +946,7 @@ def normalize_board(
         chart_style_context=chart_style_context,
         parent_level=this_level,
         sources=sources,
+        html_policy=html_policy,
         cache_root=cache_root,
         path_prefix=path_prefix,
     )
@@ -983,9 +992,7 @@ def normalize_board(
         aliases=board.aliases if board.aliases is not None else [],
         text=board.text if board.text is not None else "",
         base_dir=None if base_dir is None else base_dir.relpath,
-        html_policy=cap_html_policy(
-            board.html_policy, resolve_html_policy_ceiling().value
-        ),
+        html_policy=html_policy,
         variables=local_variables,  # Local variables for UI controls
         queries=local_queries,
         charts=charts,

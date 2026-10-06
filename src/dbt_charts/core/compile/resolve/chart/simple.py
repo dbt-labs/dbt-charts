@@ -85,6 +85,7 @@ def _resolve_kpi(
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=kpi.padding,
             legendless=True,
+            wrap_legend=False,
         ),
         chart_type="kpi",
         value=normalized.value,
@@ -98,9 +99,7 @@ def _resolve_kpi(
                 format=(
                     None
                     if normalized.support.format is None
-                    else resolve_format_parts(
-                        normalized.support.format, formats, no_format_default=None
-                    )
+                    else resolve_format_parts(normalized.support.format, formats)
                 ),
             )
         ),
@@ -173,6 +172,7 @@ def _resolve_spark_bar(
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=spark_bar.padding,
             legendless=True,
+            wrap_legend=False,
         ),
         **_shared_kwargs(normalized, variables, chart_local_style_context),
         chart_type="spark_bar",

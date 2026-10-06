@@ -10,13 +10,22 @@ source.
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
+from dbt_charts.core.compile.models.board.normalized import (
+    Board,
+    Layout,
+    LayoutItem,
+    VariableValues,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedStyle,
     effective_padding,
 )
 from dbt_charts.core.compile.resolve import preferred_chart_width
+from dbt_charts.core.compile.resolve.style.markdown_style import (
+    prose_max_content_width,
+    title_max_content_width,
+)
 
 DEFAULT_GRID_COLUMNS = 24
 
@@ -158,11 +167,15 @@ def measure_preferred_layout_width(
     max_content_width: float,
     gap: float,
     card_gap: float,
+    card_padding: float,
+    variable_values: VariableValues,
 ) -> float | None:
-    """Measure a layout's intrinsic width from its charts' preferred widths.
+    """Measure a layout's intrinsic width from its items' preferred widths.
 
-    Preferred widths are pure config (authored chart width, chart-local style
-    patch, theme family default), so this runs before any chart is resolved —
+    A chart prefers its theme width; a nested board prefers the widest of its
+    layout, title and prose (``_board_content_width``). Preferred widths are
+    pure config (authored chart width, chart-local style patch, theme family
+    default) and authored text, so this runs before any chart is resolved —
     chart resolution happens lazily at the final slot widths this measurement
     helps determine. ``chart_style_context`` supplies the chart-local-style-patch
     merge ``preferred_chart_width`` needs; ``resolved_style`` supplies board
@@ -187,13 +200,12 @@ def measure_preferred_layout_width(
             return None
 
         nested = item.board
-        measured = measure_preferred_layout_width(
-            nested.layout,
-            nested.resolved_style,
-            nested.chart_style_context,
+        measured = _board_content_width(
+            nested,
             max_content_width=max_content_width,
-            gap=get_board_gap(nested),
             card_gap=card_gap,
+            card_padding=card_padding,
+            variable_values=variable_values,
         )
         if measured is None:
             return None
@@ -243,14 +255,68 @@ def measure_preferred_layout_width(
     return max(present)
 
 
-def board_container_width(board: Board) -> float:
+def own_text_width(board: Board, variable_values: VariableValues) -> float | None:
+    """Width a board's own title and prose ask for, before card padding.
+
+    A title asks for its whole one-line width; prose asks for it up to the
+    theme's readable line length.
+    """
+    style = board.resolved_style
+    widths: list[float] = []
+    if board.title:
+        widths.append(
+            title_max_content_width(
+                board.title, board.level, style, variable_values, board.base_dir
+            )
+        )
+    if board.text:
+        widths.append(
+            min(
+                prose_max_content_width(
+                    board.text, style, variable_values, board.base_dir
+                ),
+                float(style.text.preferred_width),
+            )
+        )
+    return max(widths) if widths else None
+
+
+def _board_content_width(
+    board: Board,
+    *,
+    max_content_width: float,
+    card_gap: float,
+    card_padding: float,
+    variable_values: VariableValues,
+) -> float | None:
+    """The content width a board prefers: the widest of its layout, title and prose."""
+    text_width = own_text_width(board, variable_values)
+    widths = [
+        measure_preferred_layout_width(
+            board.layout,
+            board.resolved_style,
+            board.chart_style_context,
+            max_content_width=max_content_width,
+            gap=get_board_gap(board),
+            card_gap=card_gap,
+            card_padding=card_padding,
+            variable_values=variable_values,
+        ),
+        None if text_width is None else text_width + 2 * card_padding,
+    ]
+    present = [width for width in widths if width is not None]
+    return max(present) if present else None
+
+
+def board_container_width(board: Board, variable_values: VariableValues) -> float:
     """Final board container width: ``frame.width`` exactly, else the hug.
 
     ``width`` set anywhere in the cascade (board, extends template, meta.yml
     — root ``width:`` sugar lands in the same slot) is the board's exact
     width; the layout distributes it. Without one, the board hugs whatever
-    its charts prefer, bounded by ``frame.max_width``, so a lone KPI does not
-    sit in a full-width card.
+    its charts, title and prose prefer, bounded by ``frame.max_width``, so a
+    lone KPI does not sit in a full-width card. ``variable_values`` resolve the
+    Jinja a title or prose block interpolates.
 
     Single source for the container computation shared by the render sizing
     pass and chart_slot_width.
@@ -260,20 +326,21 @@ def board_container_width(board: Board) -> float:
         return float(frame.width)
     max_container_width = float(frame.max_width)
     max_content_width = max(max_container_width - 2 * float(frame.margin), 0.0)
-    preferred_content_width = measure_preferred_layout_width(
-        board.layout,
-        board.resolved_style,
-        board.chart_style_context,
+    preferred_content_width = _board_content_width(
+        board,
         max_content_width=max_content_width,
-        gap=get_board_gap(board),
         card_gap=float(frame.card_gap) if board.card_gap else 0.0,
+        card_padding=float(frame.card_padding),
+        variable_values=variable_values,
     )
     if preferred_content_width is None:
         return max_container_width
     return min(max_container_width, preferred_content_width + 2 * float(frame.margin))
 
 
-def chart_slot_width(board: Board, chart_id: str) -> float | None:
+def chart_slot_width(
+    board: Board, chart_id: str, variable_values: VariableValues
+) -> float | None:
     """The px slot width ``board``'s layout assigns to ``chart_id``, from config alone.
 
     Mirrors the per-layout-type width arithmetic of the render-time sizing
@@ -282,7 +349,9 @@ def chart_slot_width(board: Board, chart_id: str) -> float | None:
     an unplaced chart has no slot.
     """
     frame = board.resolved_style.frame
-    content_width = max(board_container_width(board) - 2 * float(frame.margin), 0.0)
+    content_width = max(
+        board_container_width(board, variable_values) - 2 * float(frame.margin), 0.0
+    )
     card_gap = float(frame.card_gap) if board.card_gap else 0.0
     return _chart_slot_in_layout(
         board.layout, chart_id, content_width, get_board_gap(board), card_gap

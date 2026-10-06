@@ -22,6 +22,8 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.factories import (
+    FontAlias,
+    FontSlotBase,
     _PatchBase,
     build_patch_model_ext,
     register_as_own_patch,
@@ -202,7 +204,7 @@ AuthoredFormat = str | FormatConfig
 """A format as authored: a spec, preset or alias name, or a format block."""
 
 FormatAliases = dict[str, AuthoredFormat]
-"""The ``style.formats.aliases`` alias table."""
+"""The ``style.formats`` alias table."""
 
 
 AUTHORED_FORMATS = "authored_formats"
@@ -294,7 +296,7 @@ class ResolvedFormat(FormatConfig):
 
     @property
     def is_spec_less_affix(self) -> bool:
-        """True when an affix is present but no spec (``no_format_default`` fills it)."""
+        """True when an affix is present but no spec (``column_format`` fills it)."""
         return not self.spec and self.has_affix
 
     @property
@@ -408,12 +410,23 @@ register_patch(SpacingValues)(SpacingValues)
 # =============================================================================
 
 
-class FontStyle(_PatchBase):
+class FontStyle(FontSlotBase):
     """Text appearance. Merged as a unit.
 
     All fields Optional — FontStyle doubles as a patch at every level.
+
+    A font slot also accepts a registry name (``font: label``) or
+    ``{extends: label, ...overrides}``; the cascade expands both before
+    anything downstream reads the slot, so ``extends`` never survives it.
     """
 
+    extends: FontAlias | None = Field(
+        default=None,
+        description=(
+            "Name of a ``style.fonts`` entry this slot starts from; the fields "
+            "set beside it override that entry."
+        ),
+    )
     family: Annotated[str | None, FontFamily()] = Field(
         default=None, description="Font family name (e.g., 'sans-serif', 'Roboto')."
     )
@@ -449,6 +462,18 @@ class FontStyle(_PatchBase):
             "Line height as a unitless multiple of font size. Cascades through "
             "Style.font to all text roles that carry a FontStyle slot. Body prose "
             "defaults to 1.25; titles override tighter via their font patch in theme YAML."
+        ),
+    )
+
+
+class NamedFont(FontStyle):
+    """A ``style.fonts`` registry entry: a font other slots reference by name."""
+
+    sizes: Annotated[list[float] | None, Merge(Strategy.OVERRIDE)] = Field(
+        default=None,
+        description=(
+            "The H1–H6 heading ramp (six sizes, indexed by heading level - 1). "
+            "Valid only on the ``heading`` font."
         ),
     )
 

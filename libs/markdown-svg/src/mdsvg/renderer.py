@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import html as _html
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -1101,6 +1102,109 @@ class SVGRenderer:
         _, height = self._render_blocks_to_elements(blocks, width, padding)
         return Size(width=width, height=height)
 
+    def max_content_width(self, blocks: Sequence[Block]) -> float:
+        """Narrowest width at which ``blocks`` lay out with no line wrapped.
+
+        CSS calls this max-content: every paragraph, heading, list item and
+        table cell on a single line, plus the indents and padding the renderer
+        puts around them. Runs are built with no available width, so an inline
+        image keeps its natural size rather than shrinking to fit. A block
+        image asks for its set width or ``style.image_width``; with neither it
+        fills the container, so like rules and raw HTML it asks for none.
+        Rounded up to 0.01px: a width that round-trips through layout
+        arithmetic a hair short would wrap its last character.
+        """
+        return math.ceil(self._blocks_max_content(blocks) * 100) / 100
+
+    def _blocks_max_content(self, blocks: Sequence[Block]) -> float:
+        return max((self._block_max_content(block) for block in blocks), default=0.0)
+
+    def _one_line_width(
+        self,
+        runs: List[TextRun],
+        font_size: float,
+        font_weight: str | int | None = None,
+        is_heading: bool = False,
+    ) -> float:
+        """Width of ``runs`` on one line: the pieces wrapping would lay out."""
+        pieces = self._run_pieces(runs, math.inf, font_size, font_weight, is_heading)
+        return sum(piece.width for piece in pieces) + sum(
+            piece.separator_width for piece in pieces[1:]
+        )
+
+    def _table_max_content(self, table: Table) -> float:
+        def row_widths(row: TableRow, is_header: bool) -> list[float]:
+            return [
+                self._one_line_width(
+                    self._table_cell_runs(cell, is_header, 0.0),
+                    self.style.base_font_size,
+                )
+                for cell in row.cells
+            ]
+
+        # Columns are drawn equal, so the widest cell sets every column's width.
+        cells = row_widths(table.header, True) + [
+            width for row in table.rows for width in row_widths(row, False)
+        ]
+        column_width = max(cells) + 2 * self.style.table_cell_padding
+        return column_width * len(table.header.cells)
+
+    def _block_max_content(self, block: Block) -> float:
+        style = self.style
+        if isinstance(block, Paragraph):
+            return self._one_line_width(
+                self._build_text_runs(block.spans, 0.0),
+                style.base_font_size,
+                "normal",
+            )
+        if isinstance(block, Heading):
+            size = style.get_heading_size(block.level)
+            return self._one_line_width(
+                self._build_text_runs(block.spans, 0.0),
+                size,
+                style.heading_font_weight,
+                True,
+            )
+        if isinstance(block, (UnorderedList, OrderedList)):
+            return style.list_indent + max(
+                (
+                    max(
+                        self._one_line_width(
+                            self._build_text_runs(item.spans, 0.0),
+                            style.base_font_size,
+                            "normal",
+                        ),
+                        self._blocks_max_content(item.children),
+                    )
+                    for item in block.items
+                ),
+                default=0.0,
+            )
+        if isinstance(block, Blockquote):
+            return style.blockquote_padding + max(
+                (
+                    self._blockquote_paragraph_width(inner)
+                    if isinstance(inner, Paragraph)
+                    else self._block_max_content(inner)
+                    for inner in block.blocks
+                ),
+                default=0.0,
+            )
+        if isinstance(block, Table):
+            return self._table_max_content(block)
+        if isinstance(block, CodeBlock):
+            char_width = self._block_code_size() * self._ensure_mono_char_width()
+            content = self._code_content_width(block.code.splitlines(), char_width)
+            return content + 2 * self._code_block_padding()[0]
+        if isinstance(block, ImageBlock):
+            width = block.width if block.width is not None else style.image_width
+            return width or 0.0
+        return 0.0
+
+    def _blockquote_paragraph_width(self, para: Paragraph) -> float:
+        spans, size = self._blockquote_text(para)
+        return self._one_line_width(self._build_text_runs(spans, 0.0), size, "normal")
+
     # Fixed order: also the order the rules are hashed and rendered in, so
     # changing it would churn every class prefix for no visual reason.
     _STYLE_RULE_NAMES: Tuple[str, ...] = (
@@ -1713,21 +1817,22 @@ class SVGRenderer:
 
         Case transform is applied here so blockquote_font_case is honored.
         """
-        bq_case = self.style.blockquote_font_case
-        if bq_case:
-            transformed = tuple(
-                replace(s, text=_apply_case(s.text, bq_case)) for s in para.spans
-            )
-        else:
-            transformed = para.spans
-
-        bq_font_size = self.style.blockquote_font_size or self.style.base_font_size
+        spans, font_size = self._blockquote_text(para)
         return self._render_text_block(
-            transformed,
+            spans,
             ctx,
-            font_size=bq_font_size,
+            font_size=font_size,
             css_class=self._scoped_class("blockquote"),
         )
+
+    def _blockquote_text(self, para: Paragraph) -> Tuple[Tuple[Span, ...], float]:
+        bq_case = self.style.blockquote_font_case
+        spans = (
+            tuple(replace(s, text=_apply_case(s.text, bq_case)) for s in para.spans)
+            if bq_case
+            else para.spans
+        )
+        return spans, self.style.blockquote_font_size or self.style.base_font_size
 
     def _render_blockquote(
         self,
@@ -2732,18 +2837,19 @@ class SVGRenderer:
             for span in spans
         ]
 
-    def _wrap_runs(
+    def _run_pieces(
         self,
         runs: List[TextRun],
         max_width: float,
         font_size: float,
-        font_weight: str | int | None = None,
-        is_heading: bool = False,
-    ) -> List[List[TextRun]]:
-        """Wrap text runs to fit within max_width."""
-        if not runs:
-            return []
+        font_weight: str | int | None,
+        is_heading: bool,
+    ) -> List[WrapPiece]:
+        """Break runs into measured pieces, each carrying the separator before it.
 
+        Shared by wrapping and `max_content_width`, so the width a line is
+        asked for is the width it is laid out at.
+        """
         pieces: List[WrapPiece] = []
         separator = ""
         for run in runs:
@@ -2822,6 +2928,21 @@ class SVGRenderer:
                         )
                     )
                     separator = ""
+        return pieces
+
+    def _wrap_runs(
+        self,
+        runs: List[TextRun],
+        max_width: float,
+        font_size: float,
+        font_weight: str | int | None = None,
+        is_heading: bool = False,
+    ) -> List[List[TextRun]]:
+        """Wrap text runs to fit within max_width."""
+        if not runs:
+            return []
+
+        pieces = self._run_pieces(runs, max_width, font_size, font_weight, is_heading)
 
         wrapped = wrap_measured_pieces(
             pieces, max_width, avoid_runts=self.style.avoid_runts

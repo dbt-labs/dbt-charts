@@ -207,7 +207,6 @@ When stuck, work through this in order:
 1. **Check column names** — INFORMATION_SCHEMA via `{{ s_execute_query }}`{{#if_tool describe_query}}, or `{{ s_describe_query }}` to verify{{/if_tool}}.
 1. **Simplify** — Remove charts until you find the one that's broken.
 1. **Re-render** — Confirm the fix visually.
-1. **Restore metadata** — Ensure `notes` fields remain populated for queries/charts/layout sections and variables.
 
 ## Common Mistakes
 

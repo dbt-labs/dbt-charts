@@ -40,16 +40,6 @@ If the user needs at-a-glance monitoring, use the `{{ s_skill_name_design_board 
 4. **Be specific** — "Revenue dropped 12% because Region X lost 3 key accounts" not "Revenue decreased"
 5. **Professional tone** — direct, concise, active voice
 
-## Metadata Requirement
-
-When producing dbt charts YAML, include `notes` metadata for AI context/search — it
-never renders:
-
-- `queries.*.notes`: query purpose
-- `charts.*.notes`: what evidence the chart provides
-- `variables.*.notes`: filter meaning (if variables are present)
-- Layout object `notes` fields (`rows`/`cols`/`grid.items`/`tabs.items`) where section context helps
-
 ## Narrative Structure
 
 Every report follows this arc:
@@ -162,7 +152,6 @@ Key differences from dashboard YAML:
 - [ ] Story flows logically section to section
 - [ ] Appropriate length (3-6 analysis sections)
 - [ ] Professional tone (direct, specific, active voice)
-- [ ] Query/chart/layout/variable `notes` metadata is filled for AI context
 
 ## Common Mistakes
 

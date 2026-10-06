@@ -1,0 +1,3 @@
+kind: Features
+body: A board restyles an engine format everywhere by redefining its name in `style.formats`, such as `currency` or `date_short`.
+time: 2026-10-04T21:00:00.000000-07:00

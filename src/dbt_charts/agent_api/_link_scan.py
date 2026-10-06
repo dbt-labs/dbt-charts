@@ -15,7 +15,11 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.project import CHARTS_SUBDIR, Project
+from dbt_charts.core.project import (
+    CHARTS_SUBDIR,
+    Project,
+    board_slug as _core_board_slug,
+)
 
 _BOARDS_GLOB = f"{CHARTS_SUBDIR}/**/*"
 
@@ -24,14 +28,17 @@ def board_slug(relpath: str) -> str | None:
     """Return the dashboard slug for a ``charts/`` path (no prefix, no suffix).
 
     ``charts/finance/rev.yml`` -> ``finance/rev``. Returns None for a path
-    outside ``charts/`` -- link scanning only has meaning for dashboard slugs.
+    outside ``charts/`` -- link scanning is host-boards-only (see
+    ``_BOARDS_GLOB``), so a package board's slug is out of scope here too.
+
+    No try/except around the delegated call: any relpath that passes the
+    ``charts/`` prefix guard above always has ``charts`` as its first path
+    part, so ``_core_board_slug`` -- via ``_split_board_root`` -- can never
+    raise ValueError for it.
     """
-    prefix = f"{CHARTS_SUBDIR}/"
-    if not relpath.startswith(prefix):
+    if not relpath.startswith(f"{CHARTS_SUBDIR}/"):
         return None
-    tail = relpath[len(prefix) :]
-    slug, dot, _suffix = tail.rpartition(".")
-    return slug if dot else tail
+    return _core_board_slug(relpath)
 
 
 def _link_field_pattern(slug: str) -> re.Pattern[str]:

@@ -361,6 +361,212 @@ class TestFindMetaFiles:
         assert relpaths == ["analytics/meta.yml", "analytics/sales/meta.yml"]
 
 
+class TestFindMetaFilesPackageBoards:
+    """A package board's own directory-walk never reaches the host's
+    charts/meta.yml (dbt_packages/pkg/charts -> dbt_packages/pkg ->
+    dbt_packages -> the project root, never the sibling charts/ subtree) —
+    it is prepended explicitly as the outermost layer instead."""
+
+    def test_host_charts_meta_is_outermost_layer(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "meta.yml").write_text("source: host_db\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "meta.yml").write_text("style: {frame: {width: 700}}\n")
+        board_path_fs = pkg_charts / "overview.yml"
+        board_path_fs.write_text("title: Overview\n")
+
+        project = local_project(tmp_path)
+        board_file = project.path_for_fspath(board_path_fs)
+        files = find_meta_files(board_file, project.directory("."))
+
+        relpaths = [f.relpath for f in files]
+        assert relpaths == [
+            "charts/meta.yml",
+            "dbt_packages/pkg_a/charts/meta.yml",
+        ]
+
+    def test_host_charts_meta_sits_above_project_root_meta(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Host boards read root meta.yml below charts/meta.yml; a package board
+        must keep that order, so charts/meta.yml goes in after the root-level
+        layers the walk collected, not at index 0 below them."""
+        (tmp_path / "meta.yml").write_text("source: root_db\n")
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "meta.yml").write_text("source: charts_db\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "meta.yml").write_text("style: {frame: {width: 700}}\n")
+        board_path_fs = pkg_charts / "overview.yml"
+        board_path_fs.write_text("title: Overview\n")
+
+        project = local_project(tmp_path)
+        files = find_meta_files(
+            project.path_for_fspath(board_path_fs), project.directory(".")
+        )
+
+        assert [f.relpath for f in files] == [
+            "meta.yml",
+            "charts/meta.yml",
+            "dbt_packages/pkg_a/charts/meta.yml",
+        ]
+
+    def test_no_host_meta_yields_only_package_meta(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir()
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "meta.yml").write_text("style: {frame: {width: 700}}\n")
+        board_path_fs = pkg_charts / "overview.yml"
+        board_path_fs.write_text("title: Overview\n")
+
+        project = local_project(tmp_path)
+        board_file = project.path_for_fspath(board_path_fs)
+        files = find_meta_files(board_file, project.directory("."))
+
+        assert [f.relpath for f in files] == ["dbt_packages/pkg_a/charts/meta.yml"]
+
+    def test_host_board_never_gets_the_package_prepend(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Sanity: the prepend is package-boards-only, applied once, never
+        duplicated for a host board that already visits charts/meta.yml
+        through the ordinary upward walk."""
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "meta.yml").write_text("source: host_db\n")
+        (tmp_path / "charts" / "home.yml").write_text("title: Home\n")
+
+        project = local_project(tmp_path)
+        board_file = project.path("charts/home.yml")
+        files = find_meta_files(board_file, project.directory("."))
+
+        assert [f.relpath for f in files] == ["charts/meta.yml"]
+
+    def test_host_meta_found_even_when_root_dir_is_not_the_project_root(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Regression: the host-meta prepend must come from the board's own
+        project (board_path.project), not from `root_dir / "charts/meta.yml"`
+        -- the old computation was only correct because every caller happened
+        to pass the actual project root as root_dir. Passing a different
+        (but still valid) root_dir -- the walk's upper bound for a scoped
+        caller -- must not lose the host-meta layer."""
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "meta.yml").write_text("source: host_db\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        board_path_fs = pkg_charts / "overview.yml"
+        board_path_fs.write_text("title: Overview\n")
+
+        project = local_project(tmp_path)
+        board_file = project.path_for_fspath(board_path_fs)
+        # A root_dir that is NOT project.directory(".") -- still a real,
+        # valid ancestor for the upward walk, just not the project root.
+        files = find_meta_files(board_file, project.directory("dbt_packages"))
+
+        assert [f.relpath for f in files] == ["charts/meta.yml"]
+
+
+class TestPackageBoardSourceCascadeCompiles:
+    """End-to-end: a package board authors no `source:` of its own — the host's
+    `charts/meta.yml` is the one place it can come from."""
+
+    _SOURCES_CONFIG = "sources:\n  db:\n    type: duckdb\n    path: ':memory:'\n"
+
+    def _package_board(self, tmp_path: Path) -> None:
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text(
+            "title: Overview\n"
+            "queries:\n  q:\n    sql: SELECT 1 AS n\n"
+            "charts:\n  t:\n    query: q\n    type: table\n"
+            "rows:\n  - t\n"
+        )
+
+    def test_package_board_compiles_against_host_source(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text(self._SOURCES_CONFIG)
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "meta.yml").write_text("source: db\n")
+        self._package_board(tmp_path)
+
+        project = local_project(tmp_path)
+        board = project.path("dbt_packages/pkg_a/charts/overview.yml").read_board()
+        result = compile_file(board)
+
+        assert result.success, [e.message for e in result.errors]
+        assert result.board is not None
+        assert result.query_registry["q"].source == "db"
+
+    def test_package_meta_overrides_host_meta_for_non_source_key(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text(self._SOURCES_CONFIG)
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "meta.yml").write_text(
+            "source: db\nstyle: {frame: {width: 500}}\n"
+        )
+        self._package_board(tmp_path)
+        pkg_meta = tmp_path / "dbt_packages" / "pkg_a" / "charts" / "meta.yml"
+        pkg_meta.write_text("style: {frame: {width: 900}}\n")
+
+        project = local_project(tmp_path)
+        board = project.path("dbt_packages/pkg_a/charts/overview.yml").read_board()
+        result = compile_file(board)
+
+        assert result.success, [e.message for e in result.errors]
+        assert result.board is not None
+        assert result.board.authored_style is not None
+        assert result.board.authored_style.frame is not None
+        assert result.board.authored_style.frame.width == 900
+
+    def test_no_host_source_yields_source_required_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text(self._SOURCES_CONFIG)
+        (tmp_path / "charts").mkdir()  # no meta.yml -> no default source
+        self._package_board(tmp_path)
+
+        project = local_project(tmp_path)
+        board = project.path("dbt_packages/pkg_a/charts/overview.yml").read_board()
+        result = compile_file(board)
+
+        assert not result.success
+        assert any(e.code == "ERR-SOURCE-REQUIRED" for e in result.errors)
+
+    def test_package_board_naming_an_unknown_source_fails_with_existing_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A package board's own meta.yml (or the board itself) can still name
+        a `source:` -- it just fails the ordinary unknown-source check, the
+        same as a host board naming one, rather than some package-specific
+        error path."""
+        (tmp_path / "dbt_charts.yml").write_text(self._SOURCES_CONFIG)
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "meta.yml").write_text("source: db\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text(
+            "source: nonexistent_db\n"
+            "title: Overview\n"
+            "queries:\n  q:\n    sql: SELECT 1 AS n\n"
+            "charts:\n  t:\n    query: q\n    type: table\n"
+            "rows:\n  - t\n"
+        )
+
+        project = local_project(tmp_path)
+        board = project.path("dbt_packages/pkg_a/charts/overview.yml").read_board()
+        result = compile_file(board)
+
+        assert not result.success
+        assert any(e.code == "ERR-SOURCE-NOT-FOUND" for e in result.errors)
+
+
 # ============================================================================
 # compile_file integration
 # ============================================================================

@@ -32,6 +32,7 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _ChartCardStyleMixinAllOptional,
     _ChartStyleBaseAllOptional,
+    _TitledChartStyleBaseAllOptional,
 )
 
 
@@ -397,7 +398,11 @@ class TableRuleStyle(BaseModel):
     )
 
 
-class TableChartStyle(_ChartCardStyleMixinAllOptional, _ChartStyleBaseAllOptional):
+class TableChartStyle(
+    _ChartCardStyleMixinAllOptional,
+    _ChartStyleBaseAllOptional,
+    _TitledChartStyleBaseAllOptional,
+):
     """Table chart style overrides layered on top of shared chart defaults.
 
     Table uses a fixed sizing contract and paints no legend — ``aspect_ratio``,

@@ -113,7 +113,7 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
     # Pin the dashboard slot width so the focused chart keeps the exact
     # geometry it had on the board (band widths, axis-label fit). The board
     # container hugs the pinned width the same way it hugs preferred widths.
-    slot_width = chart_slot_width(board, chart_id)
+    slot_width = chart_slot_width(board, chart_id, board.variable_defaults)
     chart_item = LayoutItem(
         type="chart",
         chart=chart,

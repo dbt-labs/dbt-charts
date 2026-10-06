@@ -95,6 +95,28 @@ class TestAliasIndexInMemoryBoards:
         assert index.lookup("/old-sales/") == "/sales/"
 
 
+class TestAliasIndexIndexBoardCanonicalUrl:
+    """An index board's canonical URL collapses the `index` leaf (a display
+    concern), even though board_slug -- the file-identity slug -- keeps it."""
+
+    def test_nested_index_board_alias_redirects_to_collapsed_url(
+        self, in_memory_project: Callable[[Path, dict[str, str]], Project]
+    ) -> None:
+        index = _build(
+            {
+                "charts/reports/index.yml": (
+                    "title: Reports\n"
+                    "aliases:\n  - /old-reports/\n"
+                    "queries: {q: {type: values, rows: [{n: 1}]}}\n"
+                    "charts: {t: {query: q, type: table}}\n"
+                    "rows: [t]\n"
+                ),
+            },
+            in_memory_project,
+        )
+        assert index.lookup("/old-reports/") == "/reports/"
+
+
 class TestAliasIndexCollisionDetectionViaProject:
     """AliasIndex.build's collision check must see real boards served from a
     non-filesystem Project store, not just ones written to disk."""

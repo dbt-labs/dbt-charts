@@ -258,7 +258,7 @@ rows:
 def test_board_may_still_name_a_palette_file():
     """A resolvable literal name still expands to stops — the model
     validator is now the only expander for a board-level `palette:` field,
-    since `_merge_style` no longer re-runs `expand_palette_refs`."""
+    since `merge_style` no longer re-runs `expand_palette_refs`."""
     result = compile_board(_board("vivid-10"))
     assert result.success, [e.message for e in result.errors]
     assert result.board is not None

@@ -1,9 +1,10 @@
 """Engine decisions for the legend placement leaves an author left unset.
 
 ``legend.position`` carries three independent leaves (``edge``, ``align``,
-``overlay``). No theme populates them: a leaf nobody authored is decided here,
-once, and the concrete placement is baked into ``ResolvedLegendStyle``. Render
-reads only the baked value.
+``overlay``), and ``legend.direction`` is inferred from the edge. No theme
+populates them: a leaf nobody authored is decided here, once, and the concrete
+placement is baked into ``ResolvedLegendStyle``. Render reads only the baked
+value.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedLegendStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
+    LegendDirection,
     LegendEdge,
     LegendPositionStyle,
     LegendStyle,
@@ -45,11 +47,19 @@ def merge_authored_position(
     return merge_onto_base(board, None if patch is None else patch.position)
 
 
-def without_position(patch: _Patch | None) -> _Patch | None:
-    """*patch* minus its ``position``; ``decide_legend_position`` owns placement."""
+def merge_authored_direction(
+    board: LegendStyle, patch: LegendStyle | PieLegendStyle | None
+) -> LegendDirection | None:
+    return (
+        board.direction if patch is None or patch.direction is None else patch.direction
+    )
+
+
+def without_placement(patch: _Patch | None) -> _Patch | None:
+    """*patch* minus ``position`` and ``direction``, which the engine decides."""
     if patch is None:
         return None
-    fields = patch.model_fields_set - {"position"}
+    fields = patch.model_fields_set - {"position", "direction"}
     return patch.model_construct(
         _fields_set=fields, **{field: getattr(patch, field) for field in fields}
     )
@@ -59,7 +69,7 @@ def merge_legend(
     base: ResolvedLegendStyle, patch: LegendStyle | PieLegendStyle | None
 ) -> ResolvedLegendStyle:
     """*patch* folded onto the resolved legend, placement left to the engine."""
-    return merge_onto_base(base, without_position(patch))
+    return merge_onto_base(base, without_placement(patch))
 
 
 def decide_legend_position(
@@ -86,6 +96,15 @@ def decide_legend_position(
     else:
         edge = "right"
     return ResolvedLegendPosition(edge=edge, align=align, overlay=overlay)
+
+
+def decide_legend_direction(
+    authored: LegendDirection | None, edge: LegendEdge
+) -> LegendDirection:
+    """The authored direction, else horizontal on top/bottom and vertical on a side."""
+    if authored is not None:
+        return authored
+    return "horizontal" if edge in ("top", "bottom") else "vertical"
 
 
 def validate_cartesian_position(

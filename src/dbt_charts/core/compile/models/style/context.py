@@ -230,10 +230,17 @@ class ChartStyleContext:
     title: TitleStyle
     pagination: PaginationConfig | None
 
+    # H1–H6 font sizes from `style.fonts.heading.sizes`, indexed by level - 1.
+    heading_sizes: list[float]
+
     # --- Pre-`apply_inherit` Style tree ---
     # Per-chart style patches use this to re-run the full inherit graph
     # against a chart-local override without touching board-global state.
     pre_style: Style
+
+    # The post-`apply_inherit` Style tree: what a `type: custom` template
+    # reads as `style`.
+    cascaded: Style
 
     # --- Board-authored chart style overrides (board layers of the axis cascade) ---
     # The board's accumulated `style.charts.*` patch, kept separate from the

@@ -35,8 +35,12 @@ _FULL = [(f"R{i}", 7.0) for i in range(14)]
 _DIRECT = [("A", 40.0), ("B", 30.0), ("C", 20.0), ("D", 10.0)]
 
 
-def _bar(position: dict[str, Any] | None = None) -> BarChart:
+def _bar(
+    position: dict[str, Any] | None = None, direction: str | None = None
+) -> BarChart:
     legend: dict[str, Any] = {} if position is None else {"position": position}
+    if direction is not None:
+        legend["direction"] = direction
     return BarChart(
         id="c1",
         type="bar",
@@ -342,3 +346,206 @@ rows:
 """
     )
     assert "ERR-" not in svg
+
+
+@pytest.mark.parametrize(
+    ("edge", "expected"),
+    [
+        ("top", "horizontal"),
+        ("bottom", "horizontal"),
+        ("left", "vertical"),
+        ("right", "vertical"),
+    ],
+)
+def test_unauthored_direction_follows_the_edge(edge: str, expected: str) -> None:
+    resolved = make_test_resolved_chart(_bar({"edge": edge}), _ROWS, width=900.0)
+    assert resolved.legend.direction == expected
+
+
+def test_authored_direction_wins_over_the_edge() -> None:
+    resolved = make_test_resolved_chart(
+        _bar({"edge": "bottom"}, direction="vertical"), _ROWS, width=900.0
+    )
+    assert resolved.legend.direction == "vertical"
+
+
+def test_direction_follows_a_top_edge_off_the_top_strip() -> None:
+    resolved = make_test_resolved_chart(
+        _pie({"edge": "top"}, visible=True), _pie_rows(_DIRECT), width=1000.0
+    )
+    assert resolved.legend.direction == "horizontal"
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {"legend": {"direction": "vertical"}},
+        {"bar": {"legend": {"direction": "vertical"}}},
+    ],
+    ids=["board", "family"],
+)
+def test_authored_direction_survives_the_board_and_family_cascade(
+    scope: dict[str, Any],
+) -> None:
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+
+    context = resolve_chart_style_context(
+        get_theme_style(), StylePatch.model_validate({"charts": scope})
+    )
+    resolved = resolve(_bar({"edge": "bottom"}), _ROWS, context, width=900.0)
+    assert resolved.legend.direction == "vertical"
+
+
+_MANY_ROWS: list[dict[str, Any]] = [
+    {"cat": cat, "series": f"Series number {i}", "val": i + 1}
+    for cat in "ab"
+    for i in range(12)
+]
+
+
+def _many(width: float, **legend: Any) -> Any:
+    legend = {"position": {"edge": "bottom"}, **legend}
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="cat",
+        y="val",
+        color="series",
+        style=BarChartStylePatch.model_validate({"legend": legend}),
+    )
+    return make_test_resolved_chart(chart, _MANY_ROWS, width=width).legend
+
+
+def test_a_bottom_legend_that_fits_stays_one_row() -> None:
+    legend = _many(3000.0)
+    assert (legend.direction, legend.columns) == ("horizontal", 0)
+
+
+def test_a_bottom_legend_too_wide_for_one_row_wraps() -> None:
+    legend = _many(500.0)
+    assert (legend.direction, legend.columns) == ("horizontal", legend.compact_columns)
+
+
+def test_authored_direction_and_columns_skip_the_fit_fallback() -> None:
+    forced = _many(500.0, direction="horizontal")
+    assert (forced.direction, forced.columns) == ("horizontal", 0)
+    assert _many(500.0, columns=3).columns == 3
+
+
+@pytest.mark.parametrize("family", ["bar", "line", "area", "scatter"])
+@pytest.mark.parametrize("edge", ["bottom", "top"])
+def test_every_cartesian_family_wraps_a_legend_too_wide_for_one_row(
+    family: str, edge: str
+) -> None:
+    from dbt_charts.core.compile.models.chart import normalized as n
+    from dbt_charts.core.compile.models.style import authored as a
+
+    style = getattr(a, f"{family.capitalize()}ChartStylePatch").model_validate(
+        {"legend": {"visible": True, "position": {"edge": edge}}}
+    )
+    chart = getattr(n, f"{family.capitalize()}Chart")(
+        id="c1",
+        type=family,
+        query_name="q",
+        x="cat",
+        y="val",
+        color="series",
+        style=style,
+    )
+    wide = make_test_resolved_chart(chart, _MANY_ROWS, width=3000.0).legend
+    narrow = make_test_resolved_chart(chart, _MANY_ROWS, width=500.0).legend
+    assert (wide.direction, wide.columns) == ("horizontal", 0)
+    assert (narrow.direction, narrow.columns) == ("horizontal", narrow.compact_columns)
+
+
+def test_an_overlay_legend_is_never_wrapped() -> None:
+    legend = _many(500.0, position={"edge": "bottom", "align": "end", "overlay": True})
+    assert legend.columns == 0
+
+
+def test_a_categorical_heatmap_legend_wraps() -> None:
+    from dbt_charts.core.compile.models.chart.normalized import HeatmapChart
+
+    chart = HeatmapChart(
+        id="h1",
+        type="heatmap",
+        query_name="q",
+        x="cat",
+        y="val",
+        color="series",
+        style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
+    )
+    legend = make_test_resolved_chart(chart, _MANY_ROWS, width=500.0).legend
+    assert (legend.direction, legend.columns) == ("horizontal", legend.compact_columns)
+
+
+def test_a_direct_pie_key_too_wide_for_one_row_wraps() -> None:
+    rows = _pie_rows([(f"Segment name {i}", 14.0) for i in range(7)])
+    resolved = make_test_resolved_chart(
+        _pie({"edge": "bottom"}, visible=True), rows, width=600.0
+    )
+    assert resolved.legend.visible
+    assert (resolved.legend.direction, resolved.legend.columns) == (
+        "horizontal",
+        resolved.legend.compact_columns,
+    )
+
+
+def test_a_categorical_point_map_legend_wraps() -> None:
+    from dbt_charts.core.compile.models.chart.normalized import PointMapChart
+
+    rows = [{**r, "lat": 40.0, "lon": -100.0} for r in _MANY_ROWS]
+    chart = PointMapChart(
+        id="m1",
+        type="point_map",
+        query_name="q",
+        latitude="lat",
+        longitude="lon",
+        color="series",
+        style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
+    )
+    legend = make_test_resolved_chart(chart, rows, width=500.0).legend
+    assert (legend.direction, legend.columns) == ("horizontal", legend.compact_columns)
+
+
+def test_a_multi_measure_heatmap_legend_wraps() -> None:
+    from dbt_charts.core.compile.models.chart.normalized import HeatmapChart
+
+    measures = [f"Measure name number {i}" for i in range(12)]
+    chart = HeatmapChart(
+        id="h2",
+        type="heatmap",
+        query_name="q",
+        x="cat",
+        y=measures,
+        style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
+    )
+    rows = [{"cat": "a", **dict.fromkeys(measures, 1)}]
+    legend = make_test_resolved_chart(chart, rows, width=500.0).legend
+    assert (legend.direction, legend.columns) == ("horizontal", legend.compact_columns)
+
+
+def test_a_choropleth_legend_reads_the_value_field_not_the_color_channel() -> None:
+    from dbt_charts.core.compile.models.chart.normalized import GeoshapeChart
+
+    rows = [
+        {"region": f"R{i}", "tier": f"Tier group number {i}", "n": i} for i in range(14)
+    ]
+    chart = GeoshapeChart(
+        id="g1",
+        type="geoshape",
+        query_name="q",
+        geo_source="us-states",
+        lookup="region",
+        value="tier",
+        color="n",
+        style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
+    )
+    legend = make_test_resolved_chart(chart, rows, width=500.0).legend
+    assert legend.columns == legend.compact_columns

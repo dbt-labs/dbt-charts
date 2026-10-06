@@ -344,7 +344,7 @@ def resolve_hybrid_heading_font(table_style: TableChartStyle) -> ResolvedFontSty
     color = sanitize_color(color_override, table_style.font.color)
     return ResolvedFontStyle(
         **(
-            table_style.font.model_dump()
+            table_style.font.model_dump(exclude={"extends"})
             | {
                 "weight": table_style.header.font.weight,
                 "color": color,

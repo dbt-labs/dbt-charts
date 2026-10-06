@@ -176,6 +176,7 @@ _OMITTED_FROM_PROJECTION = {
     "pivot_columns": "emitted as `columns` (pure rename of authored `columns`)",
     "id": "the key of the charts map",
     "measure_type": "derived at resolve from the y and y_start columns' data",
+    "span_date_format": "baked from `style.formats.date_short` for a date-span tooltip",
     # Shares a name with an authored field but not a shape: the resolved layer
     # carries the full set of baked mark styles (line_mark/point_mark/...) plus
     # `query_name`, none of which the authored layer accepts. Projecting it
@@ -193,6 +194,14 @@ _OMITTED_FROM_PROJECTION = {
     # where it is used — `Diagnostic.path` and the `data-editor-path` handle.
     "source_path": "authoring coordinates, not chart content",
     "defined_in_other_file": "internal: ChartRef provenance, not chart content",
+    # `type: custom` carries the template and its options; the project file (or
+    # inline `svg:`) is the content, and these are its resolved form.
+    "channels": "authored as the root x/y/color/... fields; keyed by declared name",
+    "options": "validated against the template header; authored as `options:`",
+    "template_name": "authored as `template:`/`svg:`",
+    "template_source": "project file content, not chart config",
+    "column_options": "derived from the template header",
+    "category_pins": "board style.charts.category_colors, resolved per chart",
     "base_dir": "internal: directory the chart was written in, not chart content",
     # Resolved/derived internals with no authored counterpart.
     "aspect_ratio": "derived at resolve time",
@@ -328,9 +337,7 @@ def test_y_range_display_takes_the_standalone_sign_placement(config, expected):
     from dbt_charts.core.compile.models.primitives import FormatConfig
     from dbt_charts.core.render.board_to_dict import _cartesian_y_range_display
 
-    fmt = resolve_format_parts(
-        FormatConfig(spec=",.0f", **config), None, no_format_default=None
-    )
+    fmt = resolve_format_parts(FormatConfig(spec=",.0f", **config), None)
     chart = SimpleNamespace(y="v")
     data = [{"v": -500}, {"v": 1000}]
     assert _cartesian_y_range_display(chart, data, fmt, None) == expected

@@ -208,7 +208,7 @@ class TestMultiYAxisTitle:
         assert isinstance(rc, ResolvedBarChart)
         artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
         spec = artifact.payload
-        expected = wide_measures_title(("rev", "cost"))
+        expected = wide_measures_title(("rev", "cost"), {})
         titles = _find_field_titles(spec, "__dbt_charts_wide_value__")
         assert titles == [expected], titles
 
@@ -226,7 +226,7 @@ class TestMultiYAxisTitle:
         assert isinstance(rc, ResolvedAreaChart)
         artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
         spec = artifact.payload
-        expected = wide_measures_title(("rev", "cost"))
+        expected = wide_measures_title(("rev", "cost"), {})
         titles = _find_field_titles(spec, "__dbt_charts_wide_value__")
         assert titles == [expected], titles
 
@@ -244,7 +244,7 @@ class TestMultiYAxisTitle:
         assert isinstance(rc, ResolvedLineChart)
         artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
         spec = artifact.payload
-        expected = wide_measures_title(("rev", "cost"))
+        expected = wide_measures_title(("rev", "cost"), {})
         titles = _find_field_titles(spec, "__dbt_charts_wide_value__")
         assert titles == [expected], titles
 

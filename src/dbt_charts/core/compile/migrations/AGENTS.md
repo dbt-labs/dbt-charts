@@ -59,8 +59,9 @@ deliberate refusal to fuzzy-match, because the nearest spelling to
 drops compaction. Silence is the failure mode here, not a crash.
 
 **Renames go through `suffix_rename_moves`**, never a hand-enumerated path
-list. Its `seen` guard makes a self-nested `AuthoredBoard` opaque; a Move reaches
-nested boards through `sub_board_prefixes` (`board_nesting_prefixes`).
+list. Not exhaustive: `_relative_field_paths`' `seen` guard makes a
+self-nested `AuthoredBoard` opaque, so a sub-board declaring its own `charts:`
+map is outside the resolved set.
 
 **A resolved path is not permission to rewrite; the gate is.** Its `*` came
 from one declared union arm while application is arm-blind, so wherever an

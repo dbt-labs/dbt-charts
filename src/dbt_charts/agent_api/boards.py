@@ -205,10 +205,15 @@ class RenderBoardArgs(BaseModel):
 def list_boards(
     project: Project,
     *,
-    under: str = CHARTS_SUBDIR,
+    under: str | None = None,
     recursive: bool = True,
 ) -> ListBoardsResult:
-    """List all available dashboards in a project."""
+    """List all available dashboards in a project.
+
+    *under* ``None`` (the default) lists every board root — the host
+    ``charts/`` plus every installed package's ``charts/``. Pass an explicit
+    *under* to scope the listing to one subtree.
+    """
     dashboards: list[BoardSummary] = []
     skipped: list[SkippedFile] = []
 
@@ -242,7 +247,7 @@ def list_boards(
         success=True,
         boards=dashboards,
         count=len(dashboards),
-        directory=project.directory(under),
+        directory=project.directory(under if under is not None else CHARTS_SUBDIR),
         skipped_files=skipped,
     )
 

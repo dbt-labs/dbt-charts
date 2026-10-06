@@ -290,7 +290,10 @@ class TestLegendRowFitsAxisReserveRegression:
 class TestCartesianTopLegendEntries:
     def test_no_layers_and_no_color_domain_is_empty(self) -> None:
         assert (
-            cartesian_top_legend_entries("revenue", None, [], (), has_color=False) == ()
+            cartesian_top_legend_entries(
+                "revenue", None, [], (), has_color=False, field_labels={}
+            )
+            == ()
         )
 
     def test_layers_present_names_base_and_each_layer(self) -> None:
@@ -300,6 +303,7 @@ class TestCartesianTopLegendEntries:
             [LineLayer(type="line", y="target", label="Target")],
             (),
             has_color=False,
+            field_labels={},
         )
         assert entries == ("Revenue", "Target")
 
@@ -312,6 +316,7 @@ class TestCartesianTopLegendEntries:
             [LineLayer(type="line", y="order_target", label=None)],
             (),
             has_color=False,
+            field_labels={},
         )
         assert entries == ("Revenue", "order target")
 
@@ -322,6 +327,7 @@ class TestCartesianTopLegendEntries:
             [LineLayer(type="line", y="target", label="Target")],
             ("S1", "S2"),
             has_color=False,
+            field_labels={},
         )
         assert entries == ("Revenue", "Target", "S1", "S2")
 
@@ -337,6 +343,7 @@ class TestCartesianTopLegendEntries:
             [LineLayer(type="line", y="target", label="Target")],
             ("S1", "S2"),
             has_color=True,
+            field_labels={},
         )
         assert entries == ("Target", "S1", "S2")
 
@@ -350,5 +357,6 @@ class TestCartesianTopLegendEntries:
             [LineLayer(type="line", y=None, label="Ghost")],
             (),
             has_color=False,
+            field_labels={},
         )
         assert entries == ("Revenue",)

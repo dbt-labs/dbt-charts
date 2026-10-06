@@ -136,12 +136,12 @@ def _prose_typography(
     Planning and rendering both measure through this, so the width a grid is
     chosen at is the width the text is wrapped at.
     """
-    from dbt_charts.core.font_measure import markdown_font_faces
-    from dbt_charts.core.render.sizing import (
+    from dbt_charts.core.compile.resolve.style.markdown_style import (
         body_text_font_family,
         get_compact_style,
-        max_chars_to_px,
     )
+    from dbt_charts.core.font_measure import markdown_font_faces
+    from dbt_charts.core.render.sizing import max_chars_to_px
 
     family = body_text_font_family(resolved_style)
     style = get_compact_style(resolved_style, text_align=text_style.align)
@@ -186,9 +186,9 @@ def render_prose_svg(
     assert plan is not None, (
         "board text must be planned (plan_board_prose) before it is sized or drawn"
     )
+    from dbt_charts.core.compile.image_assets import rewrite_board_markdown_images
     from dbt_charts.core.render.column_packer import PackUnit, pack_columns
     from dbt_charts.core.render.font_selection import record_painted_faces
-    from dbt_charts.core.render.image_assets import rewrite_board_markdown_images
     from mdsvg.renderer import SVGRenderer
 
     col = text_style.column
@@ -233,6 +233,18 @@ def render_prose_svg(
     metrics = renderer.measure_blocks(blocks, width=measure)
     ceiling = spans if col.max_number is None else min(spans, col.max_number)
     n_cols = columns_earned(sum(len(m.line_advances) for m in metrics), ceiling)
+    if n_cols == 1 and not tables:
+        # Columns are for text long enough to earn them. A lone column wraps at
+        # least as wide as sizing asked for, so a line that fits stays one line;
+        # once it outgrows its span it sits in the whole card.
+        wanted = min(
+            renderer.max_content_width(blocks),
+            float(resolved_style.text.preferred_width),
+            _measure(width, col.max_chars, char_px),
+        )
+        if wanted > measure:
+            measure = wanted
+            boxes = ((0.0, width + 2 * pad),)
 
     # Alignment belongs to the span the reader sees, not to a width the renderer chose.
     insets = [

@@ -114,20 +114,6 @@ class _ChartStyleBase(BaseModel):
         default=None,
         description="Chart-local background color override; None inherits from theme.",
     )
-    # TitleStylePatch (all-Optional), not TitleStyle: authoring only
-    # font.family must not force every other TitleStyle required field
-    # (compact_weight, sizes, ...) alongside it. SkipInheritSlots (no
-    # cascade): per-family title overrides (charts.kpi.title, charts.bar.title,
-    # ...) stay sparse patches — giving every per-family class its own
-    # cascade fill here would make it inherit straight from Style.title,
-    # bypassing the board-level charts.title override entirely. ChartsStyle
-    # (the one board-wide slot) overrides this field with its own
-    # InheritSlot(from_path="Style.title") below, same split as
-    # padding/SkipInheritSlots above.
-    title: Annotated[TitleStylePatch | None, SkipInheritSlots()] = Field(
-        default=None,
-        description="Chart-level title style override; None inherits the theme title style.",
-    )
 
 
 if TYPE_CHECKING:
@@ -142,6 +128,30 @@ if TYPE_CHECKING:
 else:
     _ChartStyleBaseAllOptional = build_patch_model_ext(
         _ChartStyleBase, is_recursive=True
+    )
+
+
+class _TitledChartStyleBase(BaseModel):
+    """The per-family title slot, a sparse override of ``ChartsStyle.title``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # TitleStylePatch: authoring only font.family must not require every other
+    # TitleStyle field. SkipInheritSlots: read-time fallback to ChartsStyle.title.
+    title: Annotated[TitleStylePatch | None, SkipInheritSlots()] = Field(
+        default=None,
+        description="Chart-level title style override; None inherits the theme title style.",
+    )
+
+
+if TYPE_CHECKING:
+
+    class _TitledChartStyleBaseAllOptional(_TitledChartStyleBase):
+        pass
+
+else:
+    _TitledChartStyleBaseAllOptional = build_patch_model_ext(
+        _TitledChartStyleBase, is_recursive=True
     )
 
 
@@ -266,7 +276,9 @@ else:
 
 
 class _CartesianChartStyle(
-    _PaintedChartStyleBaseAllOptional, _LegendedChartStyleBaseAllOptional
+    _PaintedChartStyleBaseAllOptional,
+    _LegendedChartStyleBaseAllOptional,
+    _TitledChartStyleBaseAllOptional,
 ):
     """Cartesian families: bar, line, area, scatter, histogram, heatmap.
 
@@ -349,7 +361,9 @@ class _QuantitativeAxisChartStyleMixin(BaseModel):
 
 
 class _RadialChartStyle(
-    _PaintedChartStyleBaseAllOptional, _PieLegendedChartStyleBaseAllOptional
+    _PaintedChartStyleBaseAllOptional,
+    _PieLegendedChartStyleBaseAllOptional,
+    _TitledChartStyleBaseAllOptional,
 ):
     """Radial families: pie, donut."""
 
@@ -372,6 +386,7 @@ class _GeoChartStyle(
     _ChartCardStyleMixinAllOptional,
     _PaintedChartStyleBaseAllOptional,
     _LegendedChartStyleBaseAllOptional,
+    _TitledChartStyleBaseAllOptional,
 ):
     """Geo families: geoshape (choropleth), point_map.
 

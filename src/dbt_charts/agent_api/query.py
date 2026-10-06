@@ -14,6 +14,7 @@ else:
 from dbt_charts.agent_api._paths import resolve_board_path
 from dbt_charts.core.compile import compile_file
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.sql_guard import source_dialect
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
 from dbt_charts.core.project import Project
@@ -82,7 +83,8 @@ def lookup_board_query_sql(
         render_parameterized_with_queries,
     )
     from dbt_charts.core.dbt_ref_check import named_source_target_path
-    from dbt_charts.core.diagnostics.execution import ExecutionError
+    from dbt_charts.core.diagnostics.base import DbtChartsError
+    from dbt_charts.core.execute.adapters.adapter_registry import linked_dbt_path
     from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
     from dbt_charts.core.execute.executor import resolve_query_references
 
@@ -126,9 +128,24 @@ def lookup_board_query_sql(
     # source whose warehouse is only knowable at execute (`dbt_profile`, a
     # file source); this preview then falls to the default dialect rather than
     # refusing.
+    from dbt_charts.core.compile.models.source import is_file_source
     from dbt_charts.core.compile.normalize.queries import dialect_for_source
     from dbt_charts.core.dialects import get_dialect
     from dbt_charts.core.execute.executor import merge_board_variables
+    from dbt_charts.core.execute.source_resolver import (
+        DbtContext,
+        DefaultSourceResolver,
+    )
+    from dbt_charts.core.execute.sql_literals import (
+        INLINE_PLACEHOLDERS,
+        inline_params_for_dialect,
+    )
+    from dbt_charts.core.execute.sql_translate import (
+        dialect_differs,
+        dialect_unsupported,
+        engine_dialect,
+        render_in_dialect,
+    )
 
     source_type = dialect_for_source(query.source, project.sources.sources)
     warehouse = get_dialect(source_type) if source_type else None
@@ -149,6 +166,52 @@ def lookup_board_query_sql(
             query_name=name,
         )
         assert isinstance(expanded_query, SqlQuery)
+        if query.dialect is not None:
+            # Resolved the way execution resolves it, so the preview agrees with
+            # what runs for file and dbt_profile sources.
+            dbt_path = linked_dbt_path(project)
+            dbt_context = (
+                DbtContext(dbt_project_path=dbt_path) if dbt_path is not None else None
+            )
+            source_config = DefaultSourceResolver().resolve(
+                query.source, board.sources, project.sources, dbt_context, name
+            )
+            if source_config is None:
+                raise dialect_unsupported(
+                    query.dialect,
+                    "the source's warehouse",
+                    "no source resolved for this query",
+                )
+            if dialect_differs(query.dialect, source_config):
+                if is_file_source(source_config):
+                    raise dialect_unsupported(
+                        query.dialect,
+                        "duckdb",
+                        "queries on a file source are not translated, so write "
+                        "the SQL in duckdb",
+                    )
+                engine = engine_dialect(query.dialect, source_config)
+                translated_sql, translated_params = render_in_dialect(
+                    expanded_query.sql,
+                    query.dialect,
+                    engine,
+                    merged_vars,
+                    board.queries,
+                    not query.lenient_variables,
+                    dbt_refs,
+                    target_path,
+                    INLINE_PLACEHOLDERS,
+                )
+                return BoardQueryLookupResult(
+                    success=True,
+                    sql=inline_params_for_dialect(
+                        translated_sql,
+                        translated_params,
+                        INLINE_PLACEHOLDERS,
+                        get_dialect(engine),
+                    ),
+                    source=query.source,
+                )
         resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql, target_path)
         rendered = render_parameterized_with_queries(
             resolved_sql,
@@ -164,7 +227,7 @@ def lookup_board_query_sql(
         # is inlined there instead — carrying any `ref()` call X's own SQL had.
         # Do not remove this as redundant with the first resolve above.
         composed_sql, _inlined_relations = dbt_refs.resolve(rendered.sql, target_path)
-    except (JinjaError, ExecutionError) as exc:
+    except (JinjaError, DbtChartsError) as exc:
         return BoardQueryLookupResult(success=False, errors=[str(exc)])
 
     return BoardQueryLookupResult(success=True, sql=composed_sql, source=query.source)
@@ -237,7 +300,9 @@ def _query_diagnostics(
     try:
         dialect: str | None = None
         try:
-            dialect = adapter_registry.resolve_source_config(source).get("type")
+            dialect = source_dialect(
+                adapter_registry.resolve_source_config(source).get("type")
+            )
         except Exception:  # noqa: BLE001 — best-effort dialect hint
             dialect = None
         return validate_query(sql, dialect=dialect)

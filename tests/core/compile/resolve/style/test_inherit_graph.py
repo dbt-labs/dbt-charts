@@ -469,4 +469,3 @@ def test_charts_title_inherits_from_board_title():
     assert graph.get("Style.charts.title") == "Style.title"
     assert graph.get("Style.charts.title.font") == "Style.title.font"
     assert graph.get("Style.charts.title.font.family") == "Style.title.font.family"
-    assert graph.get("Style.charts.title.sizes") == "Style.title.sizes"

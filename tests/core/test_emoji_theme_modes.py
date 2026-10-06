@@ -135,7 +135,9 @@ class TestHelpersModeAware:
     def test_get_compact_style_system_default_opts_out(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         self._inject_config(monkeypatch, "system-default")
         style = get_compact_style(resolve_style(get_theme_style()))

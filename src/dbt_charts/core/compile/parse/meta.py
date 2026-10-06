@@ -144,6 +144,14 @@ def find_meta_files(
     collecting meta.yml files found. Returns them ordered root → board directory
     (so child configs come last for proper override order).
 
+    A package board (``dbt_packages/<pkg>/charts/...``) additionally gets the
+    host's own ``charts/meta.yml`` inserted above any project-root layers and
+    below its own: the walk
+    above never reaches it (it stops at ``root_dir``, above ``dbt_packages/``,
+    without ever visiting the sibling ``charts/`` subtree) but a package ships
+    no ``source:`` of its own — the host names one for it, in the one place
+    presentation defaults already live.
+
     Args:
         board_path: ProjectPath handle for the board file.
         root_dir:  Root directory to stop searching (the walk upper bound).
@@ -166,6 +174,18 @@ def find_meta_files(
         current = current.parent
 
     meta_paths.reverse()
+
+    if board_path.is_package:
+        # Above the package's own layers, below the project-root layers the
+        # walk collected: the same order a host board reads them in.
+        host_layer = sum(1 for p in meta_paths if not p.is_package)
+        host_charts = board_path.project.host_charts_directory()
+        for name in ("meta.yml", "meta.yaml"):
+            host_meta = host_charts / name
+            if host_meta.exists():
+                meta_paths.insert(host_layer, host_meta)
+                break
+
     return meta_paths
 
 

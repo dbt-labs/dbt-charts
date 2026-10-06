@@ -374,6 +374,62 @@ Color {value!r} is not a valid CSS color ({detail}). Use a hex color, a CSS name
 
 Fired when a value destined for a style="..." CSS declaration (a table row/cell link color, a board title's font color, or the variables strip's border color) does not parse as exactly one CSS color. Escaping alone cannot make such a value safe: a string like `red; background-image:url(//evil)` needs no quote or angle bracket to open a second declaration, so the value itself must be proven to be nothing but a color before it reaches the attribute.
 
+### ERR-CUSTOM-FIELDS: Custom chart channels or options do not match the template
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (custom): {reason}
+```
+
+Fired when a `type: custom` chart's channels (`x`, `y`, `color`, ...) or `options:` disagree with what its template declares in its header: an undeclared channel or option, a required one left out, a list on a channel without `multiple: true`, a value of the wrong type, or a color option that is not a color. A template with no header accepts no channels and no options.
+
+### ERR-CUSTOM-RENDER: Custom chart template failed to render
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (custom): {reason}
+```
+
+Fired when a `type: custom` chart's template fails while rendering: a Jinja runtime error, a misspelled column, param, or style key (templates use strict undefined), a column param naming a column the query did not return, or the template calling `raise_error()`.
+
+### ERR-CUSTOM-SVG: Custom chart template produced disallowed SVG
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (custom): {reason}
+```
+
+Fired when a `type: custom` chart's template output is not well-formed SVG or uses a construct outside the allowlist: `script`, `foreignObject`, `style`, `image`, `a`, or animation elements; `on*` attributes; a `href` that is not a `#local` reference; `url(...)` that is not `url(#local)`; `javascript:`; or a DOCTYPE or ENTITY declaration. Nothing is stripped; the chart fails.
+
+### ERR-CUSTOM-TEMPLATE: Custom chart template is missing or invalid
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (custom): {reason}
+```
+
+Fired when a `type: custom` chart's template cannot be loaded: `template:` names no `templates/<name>.svg.j2` file in the project, the board has no project to read it from, the `{#--- ... ---#}` header is not valid YAML or declares an unknown param type, or the Jinja source has a syntax error.
+
 ### ERR-ENDPOINT-LABELS-CENTER-STACK: stack: center is not supported for horizontal endpoint labels
 
 - **Level:** error
@@ -416,6 +472,62 @@ Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked ba
 
 Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values while its endpoint-label rail is visible. The rail places its labels from the order the sorted axis draws (a vertical rail anchors each series at its own last drawn column, a horizontal one anchors every series on the top row), so it has to know that order before the chart renders. dbt Charts confirms it only for a numeric sort column, and labels placed from the wrong order name series in the wrong place, which is worse than a legend. Sort by a measure, or turn the rail off with `style.endpoint_labels.visible: false`.
 
+### ERR-FIELD-LABELS-FIELD-NOT-FOUND: field_labels key names no column the chart reads
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+field_labels key(s) {fields} name no column of the chart's query. Available columns: {available}.
+```
+
+Fired when a `field_labels` key is neither a column of the chart's query result nor a field one of its layers names. The label would never paint. Check for a typo, including letter case.
+
+### ERR-FIELD-LABELS-WIDE-COLLISION: field_labels gives two wide measures the same label
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+field_labels makes measures {measures} of `y:` share the label {label!r}, so their series cannot be told apart.
+```
+
+Fired when a `field_labels` entry for a `y: [...]` measure equals another measure's label. Derived labels fall back to the raw column name on a collision; an authored label never does. Give each measure distinct text.
+
+### ERR-FONT-REGISTRY: style.fonts entries do not resolve
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{message}
+```
+
+Fired when `style.fonts` entries extend one another in a cycle (`a` extends `b` extends `a`; the message names the path), or when the `heading` entry inherits a `size` from the font it extends (`heading` takes the `sizes` ramp, never `size`). Break the cycle, or extend a font that sets no size.
+
+### ERR-FONT-UNKNOWN: Font name is not an entry in style.fonts
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{message}
+```
+
+Fired when a font slot or a `style.fonts` entry names a font (`font: label`, `font: {extends: label}`, `fonts.h2: {extends: heading}`) that `style.fonts` does not define. The message lists the known names. Define the font under `style.fonts`, or fix the name.
+
 ### ERR-FORMAT-AFFIX-GEO-TOOLTIP-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach a geo tooltip
 
 - **Level:** error
@@ -428,7 +540,7 @@ Fired when a stacked bar chart authors `sort:` by a column that carries no numer
 style.tooltip.format at {field_path} authors a prefix/suffix/notation, but a {chart_type} tooltip takes a plain d3 spec and has no place for an affix. Drop the prefix/suffix/notation, or author a plain spec.
 ```
 
-A point/bubble map or choropleth tooltip takes a plain d3 format string, so a prefix, suffix or notation on `style.tooltip.format` (reachable through a name in `style.formats.aliases`) cannot paint. Author `style.tooltip.format` as a plain spec or alias without an affix. The tooltips of bar, line, area, scatter and pie charts do paint an affix.
+A point/bubble map or choropleth tooltip takes a plain d3 format string, so a prefix, suffix or notation on `style.tooltip.format` (reachable through a `style.formats` alias) cannot paint. Author `style.tooltip.format` as a plain spec or alias without an affix. The tooltips of bar, line, area, scatter and pie charts do paint an affix.
 
 ### ERR-FORMAT-AFFIX-NATIVE-TOOLTIP-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach this chart's tooltip
 
@@ -472,7 +584,7 @@ Format at {field_path} combines a prefix/suffix/notation with time-format spec {
 
 A prefix, suffix or notation next to a strftime spec ('%b %Y') is rejected on `time_format` and on a temporal axis's format: those paint through a date formatter, which has no place for an affix. Author a prefix/suffix on a number slot (`number_format`), or on a KPI value or table column format, which paint it around the date (`FY Jan 2026`). `notation` only affects an SI number spec; it does nothing to a date anywhere, so drop it.
 
-### ERR-FORMAT-INVALID: Format spec is not a predefined name, a name in style.formats.aliases, or a valid d3-format/d3-time-format spec
+### ERR-FORMAT-INVALID: Format spec is not a predefined name, a style.formats alias, or a valid d3-format/d3-time-format spec
 
 - **Level:** error
 - **Domain:** compile
@@ -484,7 +596,7 @@ A prefix, suffix or notation next to a strftime spec ('%b %Y') is rejected on `t
 Unknown {kind_noun} format {spec!r} at {field_path}: {explanation}
 ```
 
-Fired when an authored `format:` string is not one of the engine's predefined format names (e.g. `currency`, `number`, `percent_number`), not a key defined in `style.formats.aliases`, and fails to parse as a d3-format spec. Check for typos against the predefined names or your `style.formats.aliases` keys, or use a valid d3-format spec (https://d3js.org/d3-format). In a slot that accepts a raw strftime spec (`%b %Y`), the same code also fires for a directive the engine does not implement (`%K`); the message names the accepted directives.
+Fired when an authored `format:` string is not one of the engine's predefined format names (e.g. `currency`, `number`, `percent_number`), not a key defined in `style.formats`, and fails to parse as a d3-format spec. Check for typos against the predefined names or your `style.formats` keys, or use a valid d3-format spec (https://d3js.org/d3-format). In a slot that accepts a raw strftime spec (`%b %Y`), the same code also fires for a directive the engine does not implement (`%K`); the message names the accepted directives.
 
 ### ERR-FORMAT-KIND-MISMATCH: Predefined format name is the wrong kind for this slot
 
@@ -513,20 +625,6 @@ Format {spec!r} at {field_path} is a Python-only native formatter and cannot be 
 ```
 
 Fired when `percent_number`, `percent_number_delta`, or `percentage_points_delta` appears in a Vega-rendered format slot such as an axis label, mark value-label format, number_format, time_format, or support_table format. These names bypass d3 entirely and are only valid in Python-rendered slots (KPI headline and table cells). To keep the value in a Vega-rendered slot, transform it in the query to match a plain d3 spec: for a whole-number percent, divide by 100 and then use a d3 percent spec such as `.1%`.
-
-### ERR-FORMAT-PREDEFINED-SHADOW: style.formats.aliases name shadows an engine-predefined format name
-
-- **Level:** error
-- **Domain:** compile
-- **Suppressible:** no
-
-**Message template:**
-
-```
-Cannot define {spec!r} in style.formats.aliases at {field_path}: this name is engine-predefined and cannot be overridden. Choose a project-specific name (e.g. 'revenue', 'arr') for custom format aliases.
-```
-
-Fired when a `style.formats.aliases` name collides with an engine-owned predefined format name such as `number`, `currency`, or `date_short`. Predefined names resolve via engine rules and cannot be shadowed. Define your custom alias under a different name.
 
 ### ERR-FORMAT-SIGN-BEFORE-ANCHORED-PREFIX: A sign cannot lead a prefix that paints on one value only
 
@@ -649,10 +747,10 @@ Fired when the render layer receives input data that fails a structural check. T
 **Message template:**
 
 ```
-KPI chart {chart_id!r} support value is a date/time, but its format {spec!r} is not a date format. Use date_short, a strftime spec via a name in style.formats.aliases, or remove format: to use date_short.
+KPI chart {chart_id!r} support value is a date/time, but its format {spec!r} is not a date format. Use date_short, a strftime spec via a style.formats alias, or remove format: to use date_short.
 ```
 
-Fired when a KPI's support.format is a number format (not date_short, time_short, or a name in style.formats.aliases resolving to a strftime spec) and support.value is a date/datetime column. support.format is always authored for that one chart, unlike the headline value's format, which can be a board-wide cascade default -- so a mismatch here is never ambiguous.
+Fired when a KPI's support.format is a number format (not date_short, time_short, or a style.formats alias resolving to a strftime spec) and support.value is a date/datetime column. support.format is always authored for that one chart, unlike the headline value's format, which can be a board-wide cascade default -- so a mismatch here is never ambiguous.
 
 ### ERR-KPI-MULTIROW: KPI query returned more than one row
 
@@ -2037,6 +2135,22 @@ Source name required: {available}. Name a source for the query.
 
 Fired when a query reaches execution without a source name and there is no default source configured. Specify a source name on the query or configure a default source.
 
+### ERR-QUERY-DIALECT-MIXED: Composed queries declare different dialects
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r} (dialect: {dialect}) embeds {{{{ queries.{dep_name} }}}} (dialect: {dep_dialect}). Queries composed with {{{{ queries.X }}}} become one statement, so they must all declare the same `dialect:`.
+```
+
+**Fix:** Set the same `dialect:` on both queries, or on neither. A query that sets none is written in its source's own dialect.
+
+Fired when a query embeds another with `{{ queries.X }}` and the two declare different `dialect:` values, counting an unset `dialect:` as a value.
+
 ### ERR-QUERY-DURATION-EXCEEDED: Query exceeded the maximum allowed duration
 
 - **Level:** error
@@ -2206,6 +2320,22 @@ Query {query_name!r} {field_label} casts a variable with {keyword} '{{{{ {variab
 ```
 
 Fired when a query casts a Jinja variable to a date/time/timestamp using the SQL literal syntax (`date '{{{{ var }}}}'`) on a source whose adapter binds variables as real query parameters (duckdb, sqlite). The parameterizer strips the quotes around every placeholder, so `date '{{{{ var }}}}'` compiles to `date $1` -- syntax the warehouse does not accept. Other sources (postgres, snowflake, bigquery, dbt_profile, etc.) render variables as inline literal text instead, so the same SQL is valid there and this check does not fire. Use `cast('{{{{ var }}}}' as date)` (or `time`/`timestamp`) instead, which keeps the variable an ordinary string parameter and works on every source.
+
+### ERR-SQL-DIALECT-UNSUPPORTED: SQL cannot be translated to the warehouse dialect
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Cannot translate this {read} SQL to {write}: {reason}
+```
+
+**Fix:** Rewrite the statement with constructs both dialects share, or remove `dialect:` from the query and write it in the warehouse's own SQL.
+
+Fired when a query sets `dialect:` to something other than its source's warehouse and its SQL cannot be translated safely: it calls a function the translator does not know, uses a construct with no equivalent in the warehouse, holds more than one statement, or does not parse. It also covers paths that do not translate at all (file sources, `{{ queries.X.cache }}` references, incremental queries) when `dialect:` differs from the warehouse.
 
 ### ERR-SQL-LITERAL-NEWLINES: SQL contains literal backslash-n from single-quoted YAML
 

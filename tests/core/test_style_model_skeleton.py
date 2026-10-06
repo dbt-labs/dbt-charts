@@ -187,8 +187,7 @@ def test_compiled_style_charts_table_nested():
 
     s = get_theme_style()
     assert s.charts.table is not None
-    # font is a cascade placeholder — empty FontStyle before apply_inherit fills leaf fields.
-    assert s.charts.table.font == FontStyle()
+    assert s.charts.table.font == FontStyle(extends="label")
     assert s.charts.table.header is not None
     assert isinstance(s.charts.table.header.font, FontStyle)
     assert s.charts.table.row is not None

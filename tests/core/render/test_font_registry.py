@@ -104,8 +104,11 @@ def test_body_prose_measures_every_run_against_a_real_face(theme: str) -> None:
     """
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import (
+        body_text_font_family,
+        get_compact_style,
+    )
     from dbt_charts.core.font_measure import markdown_font_faces
-    from dbt_charts.core.render.sizing import body_text_font_family, get_compact_style
 
     resolved = resolve_style(get_theme_style(theme))
     style = get_compact_style(resolved)

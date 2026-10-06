@@ -463,10 +463,10 @@ class TestEmissionScan:
     """
 
     def test_sub_assertion_sql_lint_codes_found_in_inspect_and_adapter(self) -> None:
-        """Narrowing to core/inspect/ + from_query_diagnostic.py must still find 4 SQL-lint codes.
+        """Narrowing to core/inspect/ + from_query_diagnostic.py must still find every SQL-lint code.
 
         This sub-assertion documents that the wide scan must reach core/inspect/ (where
-        QueryDiagnostic.code is a 4-member Literal for the SQL-lint codes) and
+        QueryDiagnostic.code is one of the SQL-lint codes) and
         from_query_diagnostic.py (the adapter that maps lowercase codes to WARN-* strings).
         """
         narrow_roots = [
@@ -492,6 +492,7 @@ class TestEmissionScan:
             "WARN-MISSING-JOIN-PREDICATE",
             "WARN-PARSE-ERROR",
             "WARN-REAGGREGATION",
+            "WARN-DATE-AS-TEXT",
         }
         missing = sql_lint_codes - narrow_emitted
         assert missing == set(), (

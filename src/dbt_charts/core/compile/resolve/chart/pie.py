@@ -6,7 +6,7 @@ from types import EllipsisType
 from typing import Any, Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import resolve_format_parts_for_values
+from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     PieChart,
@@ -27,6 +27,10 @@ from dbt_charts.core.compile.models.style.theme import (
     LegendAlign,
     SliceLabelsStyle,
     SliceMarkStyle,
+)
+from dbt_charts.core.compile.resolve.chart._axes import (
+    color_legend_entries,
+    legend_row_fits,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
@@ -69,6 +73,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
     merge_authored_position,
+    merge_legend,
 )
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -184,16 +189,15 @@ def _resolve_pie(
     # Voted against the slice tooltip's set so the two never disagree.
     is_donut_shape = pie.inner_radius is not None and pie.inner_radius > 0
     raw_total_format = pie.total.value.format
-    if raw_total_format is None and is_donut_shape:
-        raw_total_format = str(PredefinedNumberFormat.integer)
     total_format = (
         None
-        if raw_total_format is None
-        else resolve_format_parts_for_values(
-            raw_total_format,
+        if raw_total_format is None and not is_donut_shape
+        else column_format(
+            "number",
             chart_style_context.formats,
-            format_vote_values,
-            no_format_default=PredefinedNumberFormat.integer,
+            raw_total_format,
+            engine_default=lambda: PredefinedNumberFormat.integer,
+            values=format_vote_values,
         )
     )
     total_style = resolved_as(
@@ -357,6 +361,11 @@ def _resolve_pie(
             layout_padding=pie.padding,
             suppress_legend=mode != "direct",
             radial_legend=True,
+            wrap_legend=not legend_row_fits(
+                color_legend_entries(channels, data, resolved_color_field),
+                width,
+                merge_legend(chart_style_context.legend, pie.legend),
+            ),
             legend_position_overridden_by_width=(
                 plan.overridden_edge if plan is not None else None
             ),
@@ -364,6 +373,7 @@ def _resolve_pie(
         **_shared_kwargs(normalized, variables, chart_local_style_context),
         chart_type="pie",
         theta=normalized.theta,
+        field_labels=normalized.field_labels,
         color=normalized.color,
         identity_field=resolved_color_field,
         total=total,
@@ -371,11 +381,11 @@ def _resolve_pie(
         style=ResolvedPieStyle(
             inner_radius=pie.inner_radius if pie.inner_radius is not None else 0.0,
             slice_mark=effective_slice_mark,
-            tooltip_format=resolve_format_parts_for_values(
-                chart_style_context.tooltip.format,
+            tooltip_format=column_format(
+                "number",
                 chart_style_context.formats,
-                format_vote_values,
-                no_format_default=PredefinedNumberFormat.number,
+                chart_style_context.tooltip.format,
+                values=format_vote_values,
             ),
             total_style=total_style,
             title_font=_tf,

@@ -383,6 +383,41 @@ style:
 When set to an integer, it cascades to descendants: titled children render at
 `level + 1`, bare wrappers inherit the locked level unchanged.
 
+#### Named fonts
+
+Text is styled through seven named fonts under `style.fonts`: `heading`
+(board and chart titles, markdown `#` to `######`), `subtitle`, `body` (prose),
+`label` (axis, legend, tooltip, KPI label, table cells and header,
+variable controls), `caption` (footers, timestamps), `numeral` (KPI values,
+quantitative axis labels) and `code`. Set a family or size once and every slot
+bound to that font follows. Do not repeat `family:` on individual slots.
+
+```yaml
+style:
+  fonts:
+    heading:
+      family: "'Source Serif 4', Georgia, serif"
+      sizes: [30, 20, 16, 14, 11, 11]   # H1 to H6; only heading takes sizes
+    body:
+      family: Inter
+    tag:                                 # a new font extending a shipped one
+      extends: label
+      weight: 600
+      case: upper
+  charts:
+    kpi:
+      label:
+        font: tag                        # a slot by name
+      value:
+        font:
+          extends: numeral               # a slot by name plus overrides
+          size: 40
+```
+
+- A `font:` slot takes a bare name (`font: heading`), `{extends: <name>, ...overrides}`, or an inline block (`family`, `color`, `size`, `weight`, `style`, `decoration`, `case`, `line_height`). A bare string is always a font name, never a family.
+- A named slot replaces whatever a theme bound to it, so prefer editing the named font. The root `style.font` and `details.arrow.font` take no name; restyle base text with `fonts.body`.
+- A board's `fonts:` merge key by key with the theme's. An unknown name raises `ERR-FONT-UNKNOWN`; an `extends` cycle raises `ERR-FONT-REGISTRY`.
+
 **See also:** `dct docs queries` (data layer), `dct docs charts` (display layer),
 `dct docs layout` (composition), `dct docs cheatsheet` (one-page essentials).
 
@@ -641,7 +676,7 @@ charts:
       # bar/area families also accept style.orientation and style.stack
 ```
 
-### Chart types (16 authorable)
+### Chart types (17 authorable)
 
 Set `type:` to one of:
 
@@ -656,6 +691,8 @@ Set `type:` to one of:
 **Sparklines** -- `spark_bar` (compact horizontal bars used in profiler cards).
 
 **Auxiliary** -- `callout` (message card with a `style.tone:` field; `message:` required).
+
+**Custom** -- `custom` draws a shape the types above lack from a sandboxed Jinja SVG template (`template:` names `templates/<name>.svg.j2`, or `svg:` carries the source inline; channels such as `x:`/`y:` sit at the chart root and `options:` carries the template's other settings, both declared in its header). **A last resort:** use it only when the user asks for a specific shape by name or description that no built-in type or composed recipe draws; otherwise use the built-in types. See [Custom charts](#custom-charts-type-custom).
 
 Note: `donut` is an internal alias for `pie` -- `donut` is accepted but normalizes to `pie` internally. `auto` is an internal sentinel (not authored). `boxplot`, `errorbar`, and `errorband` are Vega-Lite mark types that are not in the authorable surface.
 
@@ -694,7 +731,7 @@ resolve to the same recipe, and the same error names the recipe if you guess a `
 | candlestick, ohlc, stock chart | type: bar with y_start: low and y: high as a thin wick, plus a layers: bar with y_start: open and y: close as the body. Same-color convention: color: on the query's session column on both the base bar and the body layer, with style.marks.bar.border.width: 0 to drop the knockout outline and border.radius: 0 for square candles. Ink-outline convention: no color: on the base bar (an ink palette slot), color: on the body layer alone, and style.marks.bar.border in ink |
 | gantt | type: bar with a date y and a date y_start, style.orientation: horizontal so time runs left to right, keeping the query's row order rather than the usual value-descending default |
 
-Shapes dbt charts cannot draw at all — naming them is the half a recipe cannot cover:
+Shapes with no built-in type — naming them is the half a recipe cannot cover. When the user asks for one of these by name, draw it with `type: custom`; never substitute one for a built-in chart the user did not ask to replace:
 `alluvial`, `chord`, `funnel`, `gauge`, `marimekko`, `network`, `radar`, `sankey`, `spider`, `sunburst`, `treemap`, `violin`, `word cloud`.
 
 ### Shared chart fields
@@ -732,7 +769,8 @@ All chart types accept the channels and style fields below — but each type rej
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
 | `conditional_formatting` | object | Discrete style rules by column — `table`/`kpi` only (see [Conditional formatting](#conditional-formatting)) |
 | `support_table` | list | Attached mini-table on bar/line/area charts, above the plot by default (including those with `layers:`) — see [Composition](#composition) |
-| `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
+| `spanners` | list | Flat `table` only: `[{label, columns: [...]}]` — a label centered over a run of adjacent columns in an extra header row. Columns must be adjacent in query order and in at most one spanner; not combinable with `rows`/`columns`/`values` pivot channels |
+| `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`, `custom`. |
 | `aspect_ratio` | float | Chart shape: `height = width / aspect_ratio`. Theme default is `1.5`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `min_height` | float | Height floor for this chart only; overrides `style.charts.min_height`. Ignored when `height` is set. |
 | `max_height` | float | Height ceiling for this chart only; overrides `style.charts.max_height`. Ignored when `height` is set. |
@@ -821,9 +859,16 @@ style:
 The sign leads: a prefix reads `−€500` (sign, then prefix, then digits); a
 suffix trails the digits unaffected: `−500 USD`. A table column keeps the sign
 against the digits (`€−500`) because its prefix lane is shared down the column.
-`style.formats.aliases` names work the same way: an entry can name an object with
+`style.formats` aliases work the same way: an entry can name an object with
 the same keys instead of a bare spec string, and every slot above resolves it
 identically to writing the object inline.
+
+A board restyles an engine format everywhere by redefining its name in
+`style.formats` (`currency: "$,.0f"`, `number: ",.0f"`, `date_short: "%b %Y"`).
+Slots with no format of their own read it; `number_format`, `format:` and
+`labels.format` still win. A redefined name prints exactly its own spec at every
+magnitude: no compaction, no trim, no switch to `currency_full` / `number_full`
+below 1. It must stay the same kind (`ERR-FORMAT-KIND-MISMATCH`).
 Pairing a prefix with a spec that already carries its own native `$`/`#`
 composes around it (a `$,.0f` spec with prefix `"US "` paints `US $154,500`),
 including a spec that is both SI-shaped and native-symbol-bearing (the
@@ -1006,6 +1051,28 @@ type: spark_bar
 x: count
 y: category
 
+# custom — rows in, SVG out, drawn by a sandboxed Jinja template
+type: custom
+query: flows
+template: sankey          # templates/sankey.svg.j2; or `svg: |` with inline source
+x: [from_stage, to_stage] # channels at the root, as declared in the template header
+value: visitors
+options:
+  node_width: 12          # template-specific knobs, validated against the header
+style:
+  aspect_ratio: 2         # sizing only: aspect_ratio, min_height, max_height
+
+# custom, inline — the template under `svg:`; no channels or options, read columns off rows
+type: custom
+query: quota
+svg: |
+  {% set band = height / (rows | length) %}
+  {% for r in rows %}
+    <rect y="{{ loop.index0 * band }}" height="{{ band * 0.6 }}"
+          width="{{ (r.attainment | float) * width / 1.25 }}"
+          fill="{{ style.charts.color.categorical.single_series_palette[0] }}"/>
+  {% endfor %}
+
 # Pure marks (advanced use — not accepted as base chart types):
 # circle, square, tick, rule, trail, rect, arc, image
 
@@ -1018,6 +1085,67 @@ style:
   # you set wins; `by_tone` (the default) is the tone's color.
 
 ```
+
+### Custom charts (`type: custom`)
+
+Use `type: custom` only when the user asks for a shape by name or description that no built-in type or composed recipe draws; a custom chart gets no axes, legend, sizing rules, or visual warnings for free. A custom chart is drawn by a Jinja template that emits SVG content. SQL does the
+math (positions, stacking, binning); the template draws. Exactly one of
+`template:` (a project file, `templates/<name>.svg.j2`) or `svg:` (inline
+source) is required. Write one-off charts inline; an inline template has no
+header and takes no channels or options, so it reads columns by name (`r.revenue`).
+`dct examples charts/custom-inline` is a complete inline board. The platform wraps the output in a root `<svg>` sized
+`width x height` and draws `title`/`subtitle` above it.
+
+A template file may open with a Jinja comment holding YAML that declares its
+`channels` and `options`:
+
+```jinja
+{#---
+description: Flow diagram from an edge list.
+channels:
+  x:
+    description: Two columns, source node then target node.
+    multiple: true
+  value:
+    description: Size of each flow.
+options:
+  node_width:
+    type: number
+    default: 12
+---#}
+```
+
+Channels use the built-in channel names (`x`, `y`, `color`, `size`, `shape`,
+`theta`, `value`) and are set at the chart root, like any chart; pick the one
+that matches the role (a funnel's stage is `x`, its count `y`; a waffle's parts
+are `color` and `theta`, as on a pie). `multiple: true` allows a list of columns
+and always passes a list. Option types: `column`, `columns`, `string`, `number`,
+`integer`, `boolean`, `color`. A channel or option with no `default` is
+required; `default: null` makes it optional (value `none`). Undeclared,
+missing, or wrongly typed channels and options are compile errors
+(`ERR-CUSTOM-FIELDS`); channel and column-option columns are checked against
+the result columns at render. A headerless template takes neither.
+
+`dct describe templates/` (or one `templates/<name>.svg.j2`) prints each
+template's description, channels (required/optional, `multiple`), and options
+(type, default, description); `--json` adds a `template` object to the result.
+Run it before writing a custom chart to see which templates the project
+already has and what they take. A missing `template:` name lists the available
+ones.
+
+Template context: `rows` (list of row dicts, raw values), `columns`, `channels`
+(declared channel → column, or list), `options`,
+`width`/`height` (px, below the title), `uid` (id prefix for `id=`/`url(#...)`),
+`style` (the merged style tree; `style.palettes.<role>` is a list of hex colors,
+or an alias dict for tone roles such as `info`), `math` (`sin`, `cos`, `tan`,
+`asin`, `acos`, `atan2`, `sqrt`, `log`, `exp`, `floor`, `ceil`, `pi`, `tau`),
+filter `format` (d3-format), and the helpers `text_width(text, size, weight)`,
+`color_for(value, column=None)` (board pin for that column's value, else the
+categorical palette in first-call order), `raise_error(message)`. Names are
+strict: a misspelling fails the chart. Output is autoescaped and validated
+against an SVG allowlist (no `script`, `foreignObject`, `style`, `image`, `a`,
+animation, `on*` attributes, non-`#local` `href`/`url()`); a violation fails the
+chart (`ERR-CUSTOM-SVG`) rather than being stripped.
 
 ### Small multiples (`multiples`)
 

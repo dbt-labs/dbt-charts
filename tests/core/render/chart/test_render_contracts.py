@@ -363,4 +363,5 @@ def _make_bar_chart(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
         y="revenue",
         style=bar_style,
         **_C,
+        field_labels={},
     )

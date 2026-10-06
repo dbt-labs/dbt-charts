@@ -135,7 +135,7 @@ class TestChartTitleSpec:
         assert isinstance(font_size, int)
         assert weight == 500
         assert family.startswith(
-            get_theme_style().title.font.family.split(",")[0].strip()
+            resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
         )
 
     def test_wide_returns_title_family_at_default_weight(self):
@@ -147,7 +147,7 @@ class TestChartTitleSpec:
         assert isinstance(font_size, int)
         assert weight == 500
         assert family.startswith(
-            get_theme_style().title.font.family.split(",")[0].strip()
+            resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
         )
 
     def test_width_branch_uses_body_at_narrow_title_at_medium(self):
@@ -549,7 +549,9 @@ class TestTableTitleTypography:
 
         w = 700.0
         expected_size = chart_title_spec(w, chart_style_context=_EFF)[0]
-        title_family = get_theme_style().title.font.family.split(",")[0].strip()
+        title_family = (
+            resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
+        )
         _chart = resolve(self._make_chart(), [], chart_style_context=_BOARD_CONTEXT)
         svg = render_table_svg(
             _chart,
@@ -572,7 +574,9 @@ class TestTableTitleTypography:
 
         w = 1152.0
         expected_size = chart_title_spec(w, chart_style_context=_EFF)[0]
-        title_family = get_theme_style().title.font.family.split(",")[0].strip()
+        title_family = (
+            resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
+        )
         _chart = resolve(self._make_chart(), [], chart_style_context=_BOARD_CONTEXT)
         svg = render_table_svg(
             _chart,
@@ -632,7 +636,9 @@ class TestSparkBarTitleTypography:
         """Wide tier spark-bar title uses style.title.font.family."""
         from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
 
-        title_family = get_theme_style().title.font.family.split(",")[0].strip()
+        title_family = (
+            resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
+        )
         w = 1152.0
         _chart = resolve(self._make_chart(), [], chart_style_context=_BOARD_CONTEXT)
         svg = render_spark_bar_svg(
@@ -684,7 +690,9 @@ class TestVegaLiteTitleTypography:
         """Wide chart title font in the Vega spec is style.title.font.family."""
         from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
-        title_family = get_theme_style().title.font.family.split(",")[0].strip()
+        title_family = (
+            resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
+        )
         spec = generate_vega_lite_spec(self._make_chart(), self._data, width=1152.0)
         title_font = spec.get("config", {}).get("title", {}).get("font")
         assert title_family in str(title_font)

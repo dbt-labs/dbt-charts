@@ -895,18 +895,21 @@ class TestMergedStyleIsMergedChartsStyle:
 
 
 class TestStyleFormats:
-    """style.formats.aliases cascades from theme to resolved_style.charts.formats.
+    """style.formats cascades from theme to resolved_style.charts.formats.
 
     The 5 canonical aliases (currency, percent, compact, integer, number) are
     now engine-owned predefined names. They are NOT in the theme's formats
     dict — the engine resolves them without needing a user-alias entry.
     """
 
-    def test_default_theme_has_no_predefined_names_in_formats(self):
-        # Predefined names are engine-owned; the default theme ships no aliases.
+    def test_compiled_style_formats_field_type(self):
         style = get_theme_style()
-        assert style.formats is not None
-        assert style.formats.aliases is None
+        assert style.formats is None or isinstance(style.formats, dict)
+
+    def test_default_theme_has_no_predefined_names_in_formats(self):
+        # Predefined names are engine-owned; the default theme ships no formats dict at all.
+        style = get_theme_style()
+        assert style.formats is None
 
     def test_formats_propagate_to_resolved_charts(self):
         from dbt_charts.core.compile.models.style.authored import StylePatch
@@ -914,7 +917,7 @@ class TestStyleFormats:
 
         base_style = get_theme_style()
         # Custom (non-predefined) user aliases propagate.
-        patch = StylePatch(formats={"aliases": {"revenue": "$~s", "cost": ",.0f"}})
+        patch = StylePatch(formats={"revenue": "$~s", "cost": ",.0f"})
         resolved = resolve_style(base_style, patch)
         formats = resolved.chart_defaults.formats
         assert formats is not None
@@ -928,11 +931,11 @@ class TestStyleFormats:
 
         base_style = get_theme_style()
         # Board adds custom aliases; predefined names are never in the dict.
-        patch = StylePatch(formats={"aliases": {"revenue": "$~s", "cost": ",.0f"}})
+        patch = StylePatch(formats={"revenue": "$~s", "cost": ",.0f"})
         merged = merge_onto_base(base_style, patch)
         assert isinstance(merged, Style)
-        assert merged.formats is not None
-        assert merged.formats.aliases == {"revenue": "$~s", "cost": ",.0f"}
+        assert merged.formats["revenue"] == "$~s"
+        assert merged.formats["cost"] == ",.0f"
 
     def test_resolved_charts_formats_carries_board_override(self):
         from dbt_charts.core.compile.models.style.authored import StylePatch
@@ -940,7 +943,7 @@ class TestStyleFormats:
 
         base_style = get_theme_style()
         # A custom alias propagates to resolved chart defaults.
-        patch = StylePatch(formats={"aliases": {"revenue": "$~s"}})
+        patch = StylePatch(formats={"revenue": "$~s"})
         resolved = resolve_style(base_style, patch)
         assert resolved.chart_defaults.formats["revenue"] == "$~s"
 

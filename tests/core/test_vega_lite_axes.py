@@ -1248,7 +1248,7 @@ class TestChartFormatApplied:
 
         base_style = get_theme_style()
         resolved_rs, resolved_ctx = resolve_style_and_context(
-            base_style, StylePatch(formats={"aliases": {"revenue": "$~s"}})
+            base_style, StylePatch(formats={"revenue": "$~s"})
         )
         formats = resolved_ctx.formats
         assert formats is not None and "revenue" in formats
@@ -1297,7 +1297,7 @@ class TestChartFormatApplied:
 
         base_style = get_theme_style()
         resolved_rs, resolved_ctx = resolve_style_and_context(
-            base_style, StylePatch(formats={"aliases": {"myalias": "$,.0f"}})
+            base_style, StylePatch(formats={"myalias": "$,.0f"})
         )
         chart_with = make_chart(
             "bar",

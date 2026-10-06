@@ -22,6 +22,7 @@ Package layout (one family per file, mirroring the initiative's anti-mega-module
   geoshape.py   — GeoshapeChart
   callout.py    — CalloutChart
   spark_bar.py  — SparkBarChart
+  custom.py     — CustomChart
 
 Families: BarChart, LineChart, AreaChart, ScatterChart, HeatmapChart, PieChart, KpiChart,
     TableChart, PointMapChart, GeoshapeChart, CalloutChart, SparkBarChart.
@@ -93,6 +94,7 @@ from ._type import (
 from .area import AreaChart
 from .bar import BarChart
 from .callout import CalloutChart
+from .custom import CustomChart, CustomChartStylePatch
 from .geoshape import GeoshapeChart
 from .heatmap import HeatmapChart
 from .kpi import KpiChart, KpiSupportConfig
@@ -101,7 +103,7 @@ from .pie import PieChart
 from .point_map import PointMapChart
 from .scatter import ScatterChart
 from .spark_bar import SparkBarChart
-from .table import TableChart
+from .table import TableChart, TableSpanner
 
 
 def _discriminate_authored_chart(v: Any) -> str | None:
@@ -137,7 +139,8 @@ AuthoredChart = Annotated[
     | Annotated[GeoshapeChart, Tag("map")]
     | Annotated[GeoshapeChart, Tag("geoshape")]
     | Annotated[CalloutChart, Tag("callout")]
-    | Annotated[SparkBarChart, Tag("spark_bar")],
+    | Annotated[SparkBarChart, Tag("spark_bar")]
+    | Annotated[CustomChart, Tag("custom")],
     Discriminator(_discriminate_authored_chart),
 ]
 """Discriminated union of per-family authored chart patches.
@@ -251,7 +254,10 @@ __all__ = [
     "PointMapChart",
     "ScatterChart",
     "SparkBarChart",
+    "CustomChart",
+    "CustomChartStylePatch",
     "TableChart",
+    "TableSpanner",
     "ToneLiteral",
     # discriminated union
     "AuthoredChart",

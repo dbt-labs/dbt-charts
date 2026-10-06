@@ -80,6 +80,12 @@ from dbt_charts.core.project import (
     Project,
     ProjectDirectory,
     ProjectPath,
+    board_directory_candidates,
+    board_root_for_relpath,
+    board_roots,
+    board_slug,
+    package_board_roots,
+    posix_relpath,
 )
 
 if TYPE_CHECKING:
@@ -134,6 +140,25 @@ def _board_dir_mtime(scan_root: Path) -> float:
     )
 
 
+def _all_board_roots_mtime(project: FilesystemProject) -> tuple[float, frozenset[str]]:
+    """Invalidation signature for the alias index / adapter registry watch:
+    max board mtime across every board root (the host charts/ plus every
+    installed package's charts/), paired with the SET of package charts/
+    directories currently present.
+
+    The max-mtime alone misses a package add or remove whose own files don't
+    hold the newest mtime -- e.g. a `dbt deps` reinstall that preserves a
+    package's original file mtimes, or removing a package that never held
+    the max. Pairing the mtime with the root set catches those cases too.
+    """
+    package_dirs = project.package_charts_dirs()
+    mtime = max(
+        (_board_dir_mtime(d) for d in (project.charts_dir, *package_dirs)),
+        default=0.0,
+    )
+    return mtime, frozenset(str(d) for d in package_dirs)
+
+
 def _config_mtime(root: Path) -> float:
     """Mtime of the project config file (dbt_charts.yml); 0.0 when absent.
 
@@ -176,16 +201,16 @@ def _build_link_context(
     """Build board-link rewrite context for a served board."""
     from dbt_charts.core.render.board_links import LinkContext
 
-    rel_no_ext = PurePosixPath(board.relpath).with_suffix("")
-    parts = rel_no_ext.parts
-    # charts/ is always mounted at /; strip the leading "charts" component.
-    board_slug = (
-        "/".join(parts[1:]) if parts and parts[0] == CHARTS_SUBDIR else str(rel_no_ext)
-    )
-
     prefix = serve_storage_prefix.strip("/") if serve_storage_prefix is not None else ""
     root = f"/{prefix}" if prefix else ""
-    return LinkContext(root=root, current_board_slug=board_slug)
+    try:
+        slug = board_slug(board.relpath)
+    except ValueError:
+        # A board outside every board root (an ad-hoc `dct render some.yml`)
+        # has no root-relative slug — fall back to its own stem-path so
+        # link rewriting still has a stable, if non-canonical, identity.
+        slug = str(PurePosixPath(board.relpath).with_suffix(""))
+    return LinkContext(root=root, current_board_slug=slug)
 
 
 def _resolve_folder_index_board(directory: ProjectDirectory) -> ProjectPath | None:
@@ -205,19 +230,30 @@ def _resolve_folder_index_board(directory: ProjectDirectory) -> ProjectPath | No
 def _directory_candidates(
     charts_dir: Path,
     clean_path: str,
+    project: FilesystemProject,
 ) -> list[tuple[Path, str]]:
-    """Build candidate directories to render for the request path."""
-    if clean_path:
-        if clean_path.startswith(f"{CHARTS_SUBDIR}/"):
-            return []
-        return [(charts_dir / clean_path, clean_path)]
-    # Root case: always use charts_dir as the listing source. list_dir_entries
-    # returns [] for a missing directory, so an empty project serves a valid
-    # "No boards or directories found." listing at /.
-    return [(charts_dir, "")]
+    """Build candidate directories to render for the request path.
+
+    A ``clean_path`` whose leading segment matches an installed package's
+    namespace (e.g. ``pkg_a`` or ``pkg_a/reports``) resolves under that
+    package's own ``charts/`` directory, not ``charts_dir`` — a package root
+    is a sibling subtree, not a child of the host ``charts/``. Root matching
+    itself comes from ``board_directory_candidates`` (shared with the alias
+    index's directory-listing check), so package-name matching is never
+    duplicated. ``listing_path`` (the tuple's second element) is always
+    *clean_path* verbatim, regardless of which root matched — the URL the
+    caller renders never changes shape across roots.
+    """
+    if clean_path.startswith(f"{CHARTS_SUBDIR}/"):
+        return []
+    candidates: list[tuple[Path, str]] = []
+    for root, rest in board_directory_candidates(clean_path, board_roots(project)):
+        base = charts_dir if not root.namespace else project.root / root.relpath
+        candidates.append((base / rest if rest else base, clean_path))
+    return candidates
 
 
-def _resolve_board_file_path(charts: ProjectDirectory, clean_path: str) -> ProjectPath:
+def _resolve_board_file_path(project: Project, clean_path: str) -> ProjectPath:
     """Resolve the request path to a board file handle.
 
     Uses the canonical board_file_candidates list so that candidate order is
@@ -229,7 +265,7 @@ def _resolve_board_file_path(charts: ProjectDirectory, clean_path: str) -> Proje
         raise HTTPException(status_code=403, detail="Path outside project directory")
     file_path: ProjectPath | None = None
     first_yml_candidate: ProjectPath | None = None
-    for candidate in board_file_candidates(charts, clean_path):
+    for candidate in board_file_candidates(project, clean_path):
         is_board = candidate.relpath.endswith(BOARD_CANDIDATE_SUFFIXES)
         if candidate.exists():
             if is_board:
@@ -240,7 +276,9 @@ def _resolve_board_file_path(charts: ProjectDirectory, clean_path: str) -> Proje
 
     if file_path is not None:
         return file_path
-    return first_yml_candidate or (charts / f"{clean_path}.yml")
+    return first_yml_candidate or (
+        project.directory(CHARTS_SUBDIR) / f"{clean_path}.yml"
+    )
 
 
 _error_jinja_template: Any = None
@@ -349,16 +387,19 @@ def _synthetic_error(message: str) -> BoardRenderResult:
     )
 
 
-def _url_mount_dir(path: Path, project_dir: Path) -> str:
-    """On-disk mount dir so lazy_dir_context yields serve-router-relative URLs.
+def _url_mount_dir(path: Path, project: FilesystemProject) -> str:
+    """The board root's own relpath, so lazy_dir_context yields serve-router-
+    relative URLs.
 
-    charts/ is always mounted at /; strip "charts" when ``path`` lives under it.
-    A path outside charts/ mounts at project root.
+    The host charts/ is always mounted at /; a package root
+    (dbt_packages/<pkg>/charts) mounts at /<pkg>/ — ``_strip_mount_prefix``
+    resolves the namespace rewrite from this value via
+    ``board_namespace_for_root``. A path outside every board root mounts at
+    the project root (empty string, a no-op for ``_strip_mount_prefix``).
     """
-    rel_parts = path.relative_to(project_dir).parts
-    if rel_parts and rel_parts[0] == CHARTS_SUBDIR:
-        return rel_parts[0]
-    return ""
+    relpath = posix_relpath(path, project.root)
+    root = board_root_for_relpath(relpath, board_roots(project))
+    return root.relpath if root is not None else ""
 
 
 def _render_nav_html(
@@ -499,7 +540,7 @@ def _render_board_file(
     )
 
     file_fspath = project.root / file_path.relpath
-    url_mount_dir = _url_mount_dir(file_fspath, project.root)
+    url_mount_dir = _url_mount_dir(file_fspath, project)
 
     # Compile once, reuse for the nav's theme read and the render — render_dashboard
     # otherwise re-opens the same YAML to recompile it.
@@ -602,7 +643,7 @@ def _render_board_download(
     )
 
     file_fspath = project.root / file_path.relpath
-    url_mount_dir = _url_mount_dir(file_fspath, project.root)
+    url_mount_dir = _url_mount_dir(file_fspath, project)
     if result.status == "failed" or not result.data:
         board_theme = _board_theme_name(file_path)
         return _render_structured_errors_html(
@@ -814,6 +855,13 @@ def _render_directory_listing(
             # extensions, so non-board files never reach here.
             listing_lines.append(f"- [{entry.name}]({entry.url})")
 
+    # The root listing additionally shows one virtual group per installed
+    # package that ships boards — a package root is a sibling subtree of
+    # charts/, not a child directory list_dir_entries can see.
+    if not url_path:
+        for root in sorted(package_board_roots(project), key=lambda r: r.namespace):
+            listing_lines.append(f"- [{root.namespace}/](/{root.namespace}/)")
+
     # ``directory_title``/``listing_markdown`` carry untrusted filenames, so they
     # reach the board only as render-time Jinja variable values below -- never
     # spliced into template text ahead of a render (same rule as
@@ -1006,7 +1054,7 @@ def create_server(
             _app.state.result_cache = cache
             _app.state.adapter_registry = _build_registry(core_project)
             _app.state.config_mtime = _config_mtime(core_project.root)
-            _app.state.alias_index_mtime = _board_dir_mtime(core_project.charts_dir)
+            _app.state.alias_index_mtime = _all_board_roots_mtime(core_project)
             _app.state.alias_index = AliasIndex.build(core_project)
             await _app.state.watcher.start()
             yield
@@ -1041,7 +1089,7 @@ def create_server(
     app.state.allow_external_access_in_readonly = allow_external_access_in_readonly
     app.state.duckdb_config = duckdb_config
     # Fallbacks until the lifespan sets the real signatures on startup.
-    app.state.alias_index_mtime = 0.0
+    app.state.alias_index_mtime = (0.0, frozenset())
     app.state.config_mtime = 0.0
     # Built here so shutdown.py can take it before the app runs. Watches the
     # root, not charts_dir, which lives under it and need not exist yet.
@@ -1087,7 +1135,7 @@ def create_server(
                 old_registry.close()
                 state.config_mtime = config_mtime
             # Board add/edit/remove → rebuild the alias index.
-            charts_mtime = _board_dir_mtime(project.charts_dir)
+            charts_mtime = _all_board_roots_mtime(project)
             if charts_mtime != state.alias_index_mtime:
                 state.alias_index = AliasIndex.build(project)
                 state.alias_index_mtime = charts_mtime
@@ -1258,7 +1306,6 @@ def create_server(
         """
         clean_path = path.strip("/")
         charts_dir = app.state.project.charts_dir
-        charts = app.state.project.directory(CHARTS_SUBDIR)
 
         if clean_path == CHARTS_SUBDIR or clean_path.startswith(f"{CHARTS_SUBDIR}/"):
             raise HTTPException(status_code=404, detail="Not found")
@@ -1267,7 +1314,7 @@ def create_server(
         for url_suffix, fmt in _URL_FORMAT_SUFFIXES.items():
             if clean_path.endswith(url_suffix):
                 base = clean_path[: -len(url_suffix)]
-                file_path = _resolve_board_file_path(charts, base)
+                file_path = _resolve_board_file_path(app.state.project, base)
                 raw_variables = variables_from_query_pairs(
                     request.query_params.multi_items()
                 )
@@ -1288,7 +1335,7 @@ def create_server(
         # contains .yaml) so it isn't redirected to the HTML render.
         if clean_path.endswith(".yaml"):
             base = clean_path[: -len(".yaml")]
-            raw_file = _resolve_board_file_path(charts, base)
+            raw_file = _resolve_board_file_path(app.state.project, base)
             if not raw_file.exists():
                 raise HTTPException(
                     status_code=404, detail=f"Board file not found: {raw_file.relpath}"
@@ -1359,6 +1406,7 @@ def create_server(
         for dir_path, listing_path in _directory_candidates(
             charts_dir=charts_dir,
             clean_path=clean_path,
+            project=project,
         ):
             _ensure_within_project(dir_path, project.root)
             if dir_path.is_dir() or not listing_path:
@@ -1384,7 +1432,7 @@ def create_server(
                     dir_handle,
                     listing_path,
                     project=project,
-                    url_mount_dir=_url_mount_dir(dir_path, project.root),
+                    url_mount_dir=_url_mount_dir(dir_path, project),
                     result_cache=app.state.result_cache,
                     include_nav=app.state.server_nav,
                 )
@@ -1422,7 +1470,7 @@ def create_server(
                 app.state.project,
             )
 
-        file_path = _resolve_board_file_path(charts, clean_path)
+        file_path = _resolve_board_file_path(app.state.project, clean_path)
 
         # Parameterized alias fallback: only when no real board file resolves, so
         # real files / dirs / system views always win. A pattern like

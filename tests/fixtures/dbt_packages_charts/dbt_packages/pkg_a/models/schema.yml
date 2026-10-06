@@ -1,0 +1,4 @@
+version: 2
+models:
+  - name: zendesk__ticket_metrics
+    description: not a board — dbt schema.yml, must not enumerate

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal
@@ -60,6 +60,13 @@ from dbt_charts.core.compile.models.cache import (
     INHERIT_CACHE,
     CachePatch,
     merge_cache_layers,
+)
+from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
+    BarChart,
+    LineChart,
+    ScatterChart,
+    _CartesianChartFields,
 )
 from dbt_charts.core.compile.models.config import ProjectCacheConfig
 from dbt_charts.core.compile.models.primitives import IncrementalValue
@@ -99,7 +106,11 @@ from dbt_charts.core.compile.parse.source_map import (
 from dbt_charts.core.compile.parse.yaml_error_formatter import (
     format_validation_errors_structured,
 )
-from dbt_charts.core.compile.template.jinja import detect_query_dependencies
+from dbt_charts.core.compile.template.custom_chart_env import available_template_names
+from dbt_charts.core.compile.template.jinja import (
+    check_dialect_composition,
+    detect_query_dependencies,
+)
 from dbt_charts.core.compile.validate.authoring_warnings import (
     YamlValue,
     detect_authoring_warnings,
@@ -419,6 +430,13 @@ def compile_authored_board(
 
     compiled.sources = _to_plain_dict(sources_registry)
 
+    # Inline chart queries only exist after normalize, so the rules that read
+    # every query run here.
+    try:
+        check_dialect_composition({**query_registry, **compiled.queries})
+    except CompilationError as e:
+        return CompileResult(errors=[e.to_diagnostic(file=file)])
+
     if authored.html_policy != compiled.html_policy:
         ceiling = resolve_html_policy_ceiling()
         warnings.append(
@@ -543,7 +561,9 @@ def compile(
         except ParseError as e:
             result = _stamp_compile_result(
                 CompileResult(
-                    errors=_parse_error_to_diagnostics(e, yaml_content, file=file)
+                    errors=_parse_error_to_diagnostics(
+                        e, yaml_content, file=file, base_dir=base_dir
+                    )
                 ),
                 yaml_content,
                 file,
@@ -589,7 +609,12 @@ def _with_migration_warnings(
 
 
 def _parse_error_to_diagnostics(
-    e: ParseError, yaml_content: str, *, file: str | None = None
+    e: ParseError,
+    yaml_content: str,
+    *,
+    file: str | None = None,
+    base_dir: ProjectDirectory
+    | None,  # type-state: optional — a standalone board has no project
 ) -> list[Diagnostic]:
     """Convert a ParseError into Diagnostics.
 
@@ -600,7 +625,19 @@ def _parse_error_to_diagnostics(
     (bad YAML syntax) produces one Diagnostic straight from ``e``.
     """
     if isinstance(e.__cause__, PydanticValidationError):
-        return format_validation_errors_structured(e.__cause__, yaml_content)
+        # Templates only feed the unknown-chart-type hint; skip the listing
+        # (a git-tree read on Cloud) for every other validation error.
+        wants_templates = base_dir is not None and any(
+            err.get("type") == "union_tag_not_found" for err in e.__cause__.errors()
+        )
+        template_names = (
+            tuple(available_template_names(base_dir.project))
+            if wants_templates and base_dir is not None
+            else ()
+        )
+        return format_validation_errors_structured(
+            e.__cause__, yaml_content, template_names
+        )
     if e.code is ERR_EMPTY_YAML_DOCUMENT:
         named = DbtChartsError.from_code(
             ERR_EMPTY_YAML_DOCUMENT,
@@ -725,6 +762,25 @@ def _collect_suppressed_codes(
     return per_query
 
 
+def _x_columns_by_query(
+    board: Board, query_names: Iterable[str]
+) -> dict[str, frozenset[str]]:
+    """Columns each query supplies as the x of a placed chart or layer."""
+    by_query: dict[str, set[str]] = {name: set() for name in query_names}
+    for chart in board.placed_charts():
+        if not isinstance(chart, _CartesianChartFields):
+            continue
+        if chart.query_name is not None and chart.x is not None:
+            by_query.setdefault(chart.query_name, set()).add(chart.x)
+        if isinstance(chart, BarChart | LineChart | AreaChart | ScatterChart):
+            for layer in chart.layers:
+                query_name = layer.query or chart.query_name
+                x = layer.x or chart.x
+                if query_name is not None and x is not None:
+                    by_query.setdefault(query_name, set()).add(x)
+    return {name: frozenset(cols) for name, cols in by_query.items()}
+
+
 def validate_compiled_queries(
     result: CompileResult,
     relationship_context: RelationshipContext | None = None,
@@ -759,6 +815,7 @@ def validate_compiled_queries(
 
     sources = result.board.sources
     suppressed = _collect_suppressed_codes(result, result.meta_lint)
+    x_columns = _x_columns_by_query(result.board, result.query_registry)
 
     for name, query in result.query_registry.items():
         if name.startswith("_"):
@@ -780,11 +837,12 @@ def validate_compiled_queries(
         if query.parse_error is not None or query.variable_dependencies:
             continue
         query_suppress = suppressed.get(name, set())
-        dialect = dialect_for_source(query.source, sources)
+        dialect = query.dialect or dialect_for_source(query.source, sources)
         diags, suppressed_diags = validate_query(
             query.sql,
             dialect=dialect,
             relationship_context=relationship_context,
+            x_columns=x_columns[name],
             suppress=query_suppress,
             return_suppressed=True,
         )
@@ -966,7 +1024,9 @@ def _compile_file(
     except ParseError as e:
         return _stamp_compile_result(
             CompileResult(
-                errors=_parse_error_to_diagnostics(e, yaml_content, file=relpath)
+                errors=_parse_error_to_diagnostics(
+                    e, yaml_content, file=relpath, base_dir=board_path.parent
+                )
             ),
             yaml_content,
             relpath,

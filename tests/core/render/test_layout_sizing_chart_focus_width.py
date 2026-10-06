@@ -266,7 +266,10 @@ def test_focused_chart_on_authored_width_board_hugs_the_pinned_slot(
     yaml = "style:\n  frame:\n    width: 1800\n" + _THREE_COL_YAML
     dashboard = compile(yaml)
     assert dashboard.success and dashboard.board is not None, dashboard.errors
-    assert board_container_width(dashboard.board) == 1800.0
+    assert (
+        board_container_width(dashboard.board, dashboard.board.variable_defaults)
+        == 1800.0
+    )
     dashboard_sized = _sized_layout(dashboard.board, local_project)
     slot_width = _chart_item_width(dashboard_sized, "small_bar")
 
@@ -275,7 +278,9 @@ def test_focused_chart_on_authored_width_board_hugs_the_pinned_slot(
     focused_width = _chart_item_width(focused_sized, "small_bar")
 
     assert focused_width == slot_width
-    assert board_container_width(focused_board) < 1800.0
+    assert (
+        board_container_width(focused_board, focused_board.variable_defaults) < 1800.0
+    )
 
 
 def test_focused_chart_from_wide_board_keeps_its_wide_slot(
@@ -294,7 +299,9 @@ def test_focused_chart_from_wide_board_keeps_its_wide_slot(
     )
     dashboard = compile(yaml)
     assert dashboard.success and dashboard.board is not None, dashboard.errors
-    slot_width = chart_slot_width(dashboard.board, "wide_bar")
+    slot_width = chart_slot_width(
+        dashboard.board, "wide_bar", dashboard.board.variable_defaults
+    )
     assert slot_width is not None
     margin = float(dashboard.board.resolved_style.frame.margin)
     assert slot_width > float(dashboard.board.resolved_style.frame.max_width)
@@ -302,4 +309,7 @@ def test_focused_chart_from_wide_board_keeps_its_wide_slot(
     focused_board = focus_on_chart(dashboard.board, "wide_bar")
     focused_sized = _sized_layout(focused_board, local_project)
     assert _chart_item_width(focused_sized, "wide_bar") == slot_width
-    assert board_container_width(focused_board) == slot_width + 2 * margin
+    assert (
+        board_container_width(focused_board, focused_board.variable_defaults)
+        == slot_width + 2 * margin
+    )

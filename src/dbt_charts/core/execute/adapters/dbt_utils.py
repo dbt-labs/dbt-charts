@@ -2,6 +2,7 @@
 
 import re
 import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.source import (
@@ -42,8 +43,13 @@ def source_target_path(source_config: "ResolvedSourceConfig | None") -> str | No
 def resolve_dbt_refs_with_provenance(
     sql: str,
     index: "RefIndex",
+    encode_relation: Callable[[str], str] | None = None,
 ) -> tuple[str, list[ResolvedRelation]]:
-    """Resolve ref/source in SQL and record the resolved relation per call."""
+    """Resolve ref/source in SQL and record the resolved relation per call.
+
+    `encode_relation` receives each resolved relation's text and returns what
+    to splice in its place; None splices the relation text itself.
+    """
     relations: list[ResolvedRelation] = []
 
     def resolve_ref(match: re.Match[str]) -> str:
@@ -57,7 +63,7 @@ def resolve_dbt_refs_with_provenance(
             )
         fragment, schema = entry
         relations.append(ResolvedRelation(ref_name=ref_name, schema=schema))
-        return fragment
+        return fragment if encode_relation is None else encode_relation(fragment)
 
     sql = REF_CALL_RE.sub(resolve_ref, sql)
 
@@ -75,7 +81,7 @@ def resolve_dbt_refs_with_provenance(
         fragment, schema = entry
         ref_name = f"{source_name}.{table_name}"
         relations.append(ResolvedRelation(ref_name=ref_name, schema=schema))
-        return fragment
+        return fragment if encode_relation is None else encode_relation(fragment)
 
     sql = SOURCE_CALL_RE.sub(resolve_source, sql)
 
@@ -131,7 +137,10 @@ class DbtRefResolver:
         self._load_lock = threading.Lock()
 
     def resolve(
-        self, sql: str, target_path: str | None = None
+        self,
+        sql: str,
+        target_path: str | None = None,
+        encode_relation: Callable[[str], str] | None = None,
     ) -> tuple[str, list[ResolvedRelation]]:
         """Return `sql` with refs replaced by relations, plus their lineage.
 
@@ -154,7 +163,7 @@ class DbtRefResolver:
                 kind=dbt_macro_kind(sql),
                 paths=[relpath],
             )
-        return resolve_dbt_refs_with_provenance(sql, index)
+        return resolve_dbt_refs_with_provenance(sql, index, encode_relation)
 
     def _index_for(self, target_path: str | None) -> tuple[str, "RefIndex | None"]:
         """The manifest path and its ref/source index, built once per target_path."""

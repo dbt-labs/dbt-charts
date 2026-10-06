@@ -2040,8 +2040,7 @@ def test_a_board_s_own_aliases_reach_both_halves() -> None:
     board = (
         "style:\n"
         "  formats:\n"
-        "    aliases:\n"
-        '      arr: "$,.0f"\n'
+        '    arr: "$,.0f"\n'
         "rows:\n"
         "  - title: R\n"
         "    type: bar\n"
@@ -2086,8 +2085,7 @@ def test_a_board_s_own_format_aliases_are_offered_beside_the_built_in_ones() -> 
     board = (
         "style:\n"
         "  formats:\n"
-        "    aliases:\n"
-        '      arr: "$,.0f"\n'
+        '    arr: "$,.0f"\n'
         "rows:\n"
         "  - title: R\n"
         "    type: bar\n"
@@ -2122,15 +2120,13 @@ def test_a_nested_scope_s_own_aliases_merge_onto_its_parent_s() -> None:
     board = (
         "style:\n"
         "  formats:\n"
-        "    aliases:\n"
-        '      arr: "$,.0f"\n'
+        '    arr: "$,.0f"\n'
         "tabs:\n"
         "  items:\n"
         "    - title: Detail\n"
         "      style:\n"
         "        formats:\n"
-        "          aliases:\n"
-        '            bps: ".2%"\n'
+        '          bps: ".2%"\n'
         "      rows:\n"
         "        - title: R\n"
         "          type: bar\n"
@@ -2157,14 +2153,12 @@ def test_a_rows_nested_board_scopes_its_aliases_the_same_way() -> None:
     board = (
         "style:\n"
         "  formats:\n"
-        "    aliases:\n"
-        '      arr: "$,.0f"\n'
+        '    arr: "$,.0f"\n'
         "rows:\n"
         "  - title: Section\n"
         "    style:\n"
         "      formats:\n"
-        "        aliases:\n"
-        '          bps: ".2%"\n'
+        '        bps: ".2%"\n'
         "    rows:\n"
         "      - title: R\n"
         "        type: bar\n"
@@ -2192,8 +2186,7 @@ def test_a_scope_that_styles_without_touching_formats_inherits_the_parent_s() ->
     board = (
         "style:\n"
         "  formats:\n"
-        "    aliases:\n"
-        '      arr: "$,.0f"\n'
+        '    arr: "$,.0f"\n'
         "tabs:\n"
         "  items:\n"
         "    - title: Detail\n"
@@ -2226,14 +2219,12 @@ def test_an_explicit_formats_null_clears_the_table_for_that_scope() -> None:
     board = (
         "style:\n"
         "  formats:\n"
-        "    aliases:\n"
-        '      arr: "$,.0f"\n'
+        '    arr: "$,.0f"\n'
         "tabs:\n"
         "  items:\n"
         "    - title: Detail\n"
         "      style:\n"
-        "        formats:\n"
-        "          aliases: null\n"
+        "        formats: null\n"
         '        background: "#fff"\n'
         "      rows:\n"
         "        - title: R\n"

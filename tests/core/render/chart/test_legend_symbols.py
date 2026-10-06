@@ -665,7 +665,7 @@ def _render_unauthored_overlay() -> tuple[dict[str, Any], Any, list[dict[str, An
     must follow the same naming rule.
 
     Multi-word fields on both sides deliberately — a single-word field cannot
-    tell ``default_axis_title`` and ``format_display_text`` apart, which is
+    tell ``field_title`` and ``field_display_text`` apart, which is
     how the mixed-convention bug survived the existing tests.
     """
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer

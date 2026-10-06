@@ -2229,7 +2229,6 @@ def _house_prefix(prefix, **options):
     return resolve_format_parts(
         FormatConfig(spec="number", prefix=prefix, **options),
         None,
-        no_format_default=None,
     )
 
 

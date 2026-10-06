@@ -70,6 +70,9 @@ class LayeredResolvedChart(Protocol):
     @property
     def layers(self) -> tuple[ResolvedLayer, ...]: ...
 
+    @property
+    def field_labels(self) -> dict[str, str]: ...
+
 
 # ---------------------------------------------------------------------------
 # Typed resolved layer union (BarLayer / LineLayer / AreaLayer / ScatterLayer)

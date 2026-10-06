@@ -29,7 +29,7 @@ def label_jinja_env() -> BoardTemplateEnvironment:
         autoescape=False,
         finalize=_finalize_none,
     )
-    env.filters["format"] = _format_filter
+    env.filters["format"] = format_filter
     return env
 
 
@@ -38,7 +38,10 @@ def _finalize_none(value: Any) -> Any:
     return "" if value is None else value
 
 
-def _format_filter(value: Any, spec: str) -> str:
+def format_filter(
+    value: Any,  # type-state: explicit_any — any row value
+    spec: str,
+) -> str:
     """Jinja filter: ``{{ value | format('$,.0f') }}`` → d3-formatted."""
     return format_d3(value, spec)
 

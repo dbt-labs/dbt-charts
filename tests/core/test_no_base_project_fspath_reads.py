@@ -62,63 +62,57 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/compile/config.py", 567): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 201): (
+    ("core/execute/adapters/adapter_registry.py", 225): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 207): (
-        "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
+    ("core/execute/adapters/adapter_registry.py", 118): (
+        "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 209): (
-        "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
+    ("core/execute/adapters/adapter_registry.py", 120): (
+        "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
     # dct serve is filesystem-only: create_server(project: FilesystemProject)
     # and app.state.project are FilesystemProject throughout server.py — no
     # runtime isinstance narrow needed, only the FilesystemProject import
     # (under TYPE_CHECKING) and explicit local annotations below.
-    ("core/serve/server.py", 501): (
+    ("core/serve/server.py", 156): (
+        "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
+    ),
+    ("core/serve/server.py", 251): (
+        "_directory_candidates(..., project: FilesystemProject) — already FS-typed"
+    ),
+    ("core/serve/server.py", 400): (
+        "_url_mount_dir(path, project: FilesystemProject) — already FS-typed"
+    ),
+    ("core/serve/server.py", 542): (
         "_render_board_file(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 502): (
-        "_render_board_file(project: FilesystemProject) — already FS-typed"
-    ),
-    ("core/serve/server.py", 604): (
+    ("core/serve/server.py", 645): (
         "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 605): (
-        "_render_board_download(project: FilesystemProject) — already FS-typed"
-    ),
-    ("core/serve/server.py", 1008): (
+    ("core/serve/server.py", 1056): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1009): (
-        "create_server: core_project inferred FilesystemProject from the parameter"
-    ),
-    ("core/serve/server.py", 1048): (
+    ("core/serve/server.py", 1096): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1078): (
+    ("core/serve/server.py", 1126): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1090): (
-        "_reload_on_change: project explicitly typed FilesystemProject"
-    ),
-    ("core/serve/server.py", 1174): (
+    ("core/serve/server.py", 1222): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1260): (
+    ("core/serve/server.py", 1308): (
         "get_board: app.state.project is always FilesystemProject (dct serve is "
         "filesystem-only); the local a few lines below makes this explicit"
     ),
-    ("core/serve/server.py", 1363): (
+    ("core/serve/server.py", 1411): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
-    ("core/serve/server.py", 1365): (
-        "get_board: project explicitly typed FilesystemProject just above"
-    ),
-    ("core/serve/server.py", 1387): (
+    ("core/serve/server.py", 1413): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (
@@ -137,13 +131,13 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 367): (
+    ("agent_api/_paths.py", 374): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 422): (
+    ("agent_api/_paths.py", 429): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 566): (
+    ("agent_api/_paths.py", 573): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
     ("agent_api/project_session.py", 323): (

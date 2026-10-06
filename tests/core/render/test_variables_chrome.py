@@ -142,7 +142,7 @@ def test_a_group_carries_the_box_the_layout_engine_gave_it() -> None:
     layout = lay_out_variables(
         [c.spec for c in resolve_controls(defs, {}, None, _rs().variables)],
         _WIDE,
-        get_theme_style().variables,
+        _rs().variables,
     )
 
     group = _groups(svg)[0]
@@ -162,7 +162,7 @@ def test_the_band_is_exactly_as_tall_as_the_layout() -> None:
     layout = lay_out_variables(
         [c.spec for c in resolve_controls(defs, {}, None, _rs().variables)],
         400.0,
-        get_theme_style().variables,
+        _rs().variables,
     )
 
     assert layout.rows > 1
@@ -994,7 +994,7 @@ def test_a_label_sits_on_the_baseline_its_own_face_centers_it_on() -> None:
     layout = lay_out_variables(
         [c.spec for c in resolve_controls(defs, {}, None, _rs().variables)],
         _WIDE,
-        get_theme_style().variables,
+        _rs().variables,
     )
 
     label_font = _rs().variables.label.font

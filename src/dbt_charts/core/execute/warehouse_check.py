@@ -82,6 +82,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import UnparseableSqlError
 from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
+from dbt_charts.core.execute.sql_translate import dialect_differs
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
@@ -196,6 +197,21 @@ def warehouse_check(
         query, board=board, query_name=query_name
     )
     variables = merge_board_variables(board, {})
+
+    # EXPLAIN-wrapping and dry runs send the SQL untranslated.
+    if query.dialect is not None and (
+        source_config is None or dialect_differs(query.dialect, source_config)
+    ):
+        return WarehouseCheck(
+            status="unchecked",
+            adapter_type="none",
+            mechanism="dialect",
+            columns_checked=False,
+            reason=(
+                f"its SQL is written in {query.dialect} and translated when it "
+                "runs, so the warehouse check would send the untranslated text"
+            ),
+        )
 
     # Multi-hop {{ queries.X }} composition and the setup_sql of everything in
     # the chain, resolved exactly as the executor resolves it. AdapterRegistry's

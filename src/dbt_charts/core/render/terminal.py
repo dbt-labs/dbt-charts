@@ -254,7 +254,7 @@ def render_chart_item_terminal(
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
-        formats: Board-level style.formats.aliases map (ResolvedStyle.formats).
+        formats: Board-level style.formats alias map (ResolvedStyle.formats).
 
     Returns:
         Terminal-formatted chart string

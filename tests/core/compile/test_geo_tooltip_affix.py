@@ -12,7 +12,6 @@ from dbt_charts.core.compile.models.chart.normalized.geoshape import GeoshapeCha
 from dbt_charts.core.compile.models.chart.normalized.point_map import PointMapChart
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.compile.models.style.theme.style import FormatsStyle
 from dbt_charts.core.compile.resolve.chart.geo import (
     _EMPTY_CHART_TEXT_VARIABLES,
     _resolve_geoshape,
@@ -36,9 +35,7 @@ def _board_with_tooltip_alias_affix() -> ChartStyleContext:
         compiled.model_copy(
             update={
                 "charts": new_charts,
-                "formats": FormatsStyle(
-                    aliases={"eur": FormatConfig(spec=",.0f", prefix="EUR ")}
-                ),
+                "formats": {"eur": FormatConfig(spec=",.0f", prefix="EUR ")},
             }
         )
     )
@@ -70,12 +67,7 @@ def test_geoshape_plain_tooltip_alias_compiles_clean() -> None:
     new_tooltip = compiled.charts.tooltip.model_copy(update={"format": "plain"})
     new_charts = compiled.charts.model_copy(update={"tooltip": new_tooltip})
     board_style = resolve_chart_style_context(
-        compiled.model_copy(
-            update={
-                "charts": new_charts,
-                "formats": FormatsStyle(aliases={"plain": ",.0f"}),
-            }
-        )
+        compiled.model_copy(update={"charts": new_charts, "formats": {"plain": ",.0f"}})
     )
     chart = GeoshapeChart(id="geo1", type="geoshape", **_GEOSHAPE_KWARGS)
 

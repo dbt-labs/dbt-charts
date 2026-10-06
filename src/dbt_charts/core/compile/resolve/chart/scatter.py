@@ -23,8 +23,10 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _NO_RAIL_ENDPOINT_LABELS,
     _authored_legend,
     _bake_ay_position_right,
+    cartesian_color_domain_values,
     cartesian_series_naming,
     estimate_cartesian_plot_height,
+    estimate_left_axis_reserve_px,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _classify_to_channel_type,
@@ -170,12 +172,13 @@ def _resolve_scatter(
         suppress_wide_measure_series=wide_measure_series,
         multiples_wide_measure_series=wide_measure_series,
         top_legend_series=None,
+        legend_entries=cartesian_color_domain_values(dataset, normalized.color),
         plot_height_estimate=estimate_cartesian_plot_height(normalized, scatter, width),
-        # top_legend_series=None above means the row-fit check this feeds
-        # never runs for this family -- 0.0 is inert, not a real estimate.
-        left_axis_reserve_px=0.0,
+        left_axis_reserve_px=estimate_left_axis_reserve_px(
+            None, merge_legend(chart_style_context.legend, scatter.legend)
+        ),
         # top_legend_series=None above means rung 2's floor check never runs
-        # for this family either -- these three are inert, not real facts.
+        # for this family -- these three are inert, not real facts.
         card_padding_px=0.0,
         subtitle_present=False,
         axis_title_costs_height=False,
@@ -344,6 +347,7 @@ def _resolve_scatter(
             layout_padding=scatter.padding,
             suppress_legend=naming.suppress_legend,
             top_legend=naming.top_legend,
+            wrap_legend=naming.wrap_legend,
             force_legend_visible=naming.force_legend_visible,
             legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         ),

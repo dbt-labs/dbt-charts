@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json as _json
 import math
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from dbt_charts.core.compile.models.chart.resolved._layer import (
@@ -98,7 +99,7 @@ from dbt_charts.core.render.utils import (
     normalize_data_types,
     ordered_distinct_values,
 )
-from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.case import field_title
 
 # VL scale types where the domain is an ordered list of discrete categories
 # (as opposed to a continuous [min, max] range). Union-domain reconciliation
@@ -749,6 +750,7 @@ def _layer_tooltip_description(
     tooltip_format: ResolvedFormat,
     color_field: str | None,
     span_start: str | None,
+    field_labels: Mapping[str, str],
 ) -> tuple[str, list[VLDict]]:
     """Build this overlay layer's own structured-tooltip description expr, and
     the transforms it reads.
@@ -807,7 +809,7 @@ def _layer_tooltip_description(
     if span_start is not None:
         start = TooltipField(
             span_start,
-            default_axis_title(span_start),
+            field_title(span_start, field_labels),
             kind="quantitative",
             format=tooltip_format,
         )
@@ -983,6 +985,7 @@ def render_cartesian_overlay(
     base_label: str | None = None,
     datasets: dict[str | None, list[dict[str, Any]]] | None = None,
     base_query_name: str | None,
+    field_labels: Mapping[str, str],
 ) -> ChartSpec:
     """Wrap ``base_spec`` + typed overlay layers into an outer layered VL spec.
 
@@ -1329,7 +1332,7 @@ def render_cartesian_overlay(
     # authored layer `label:`s, never a real field) -- collected for a single
     # aria-label patch decision below, once scale_domain is fully known.
     label_scale_legend_encs: list[VLDict] = []
-    # label -> {label, y_field, default_axis_title(y_field)}, one entry for
+    # label -> {label, y_field, default title}, one entry for
     # the base (added just below, when it contributes a LABEL) and one per
     # layer that does the same -- the alias map an authored `legend.values`
     # needs to resolve a y-column name against its rendered label, same as
@@ -1371,7 +1374,7 @@ def render_cartesian_overlay(
         scale_range.append(single_series_fill)
         base_y_field = y_enc_base.get("field")
         label_domain_aliases[base_label] = (
-            layer_label_and_aliases(base_label, base_y_field)[1]
+            layer_label_and_aliases(base_label, base_y_field, field_labels)[1]
             if isinstance(base_y_field, str)
             else frozenset({base_label})
         )
@@ -1446,7 +1449,9 @@ def render_cartesian_overlay(
         # is the pure config-to-config alias set (label, raw y-column,
         # default title) an authored `legend.values` may name -- shared
         # with the render-warnings detector via layer_label_and_aliases.
-        label, layer_legend_aliases = layer_label_and_aliases(layer.label, y_field)
+        label, layer_legend_aliases = layer_label_and_aliases(
+            layer.label, y_field, field_labels
+        )
 
         own_data = resolved_layer_rows[layer_idx][1]
         rows_for_layer = own_data if own_data is not None else data
@@ -1589,6 +1594,7 @@ def render_cartesian_overlay(
                 layer_tooltip_format,
                 layer.color,
                 layer.y_start if isinstance(layer, ResolvedBarLayer) else None,
+                field_labels,
             )
             if base_mark_type in _STRUCTURED_TOOLTIP_BASE_FAMILIES
             else ("", [])

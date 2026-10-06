@@ -358,6 +358,15 @@ def query_command(
         context, query_text, file
     )
 
+    if dialect is not None and (validate or describe):
+        from dbt_charts.agent_api.validate_query import require_sqlglot_dialect
+
+        try:
+            require_sqlglot_dialect(dialect)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+
     # --- 2. Apply mode flags ---
     # All branches open a ProjectSession so relationship context is available for
     # validate paths (raw-SQL validate-only was previously a stateless short-
@@ -402,10 +411,12 @@ def query_command(
         if validate and not describe and not mode_is_named:
             if show_suppressed:
                 active, suppressed = project_session.validate_query(
-                    sql_text, dialect=dialect, return_suppressed=True
+                    sql_text, dialect=dialect, source=source, return_suppressed=True
                 )
             else:
-                active = project_session.validate_query(sql_text, dialect=dialect)
+                active = project_session.validate_query(
+                    sql_text, dialect=dialect, source=source
+                )
                 suppressed = None
             _print_validate_result(active, suppressed, json_output=json_output)
             return
@@ -421,15 +432,21 @@ def query_command(
                 _handle_lookup_failure(lr, query_name)
             sql_text = lr.sql
             board_source = lr.source
+        lint_source = source or board_source
 
         if validate and describe:
             # Run validate first; skip describe on error-severity diagnostics.
             if show_suppressed:
                 active, suppressed = project_session.validate_query(
-                    sql_text, dialect=dialect, return_suppressed=True
+                    sql_text,
+                    dialect=dialect,
+                    source=lint_source,
+                    return_suppressed=True,
                 )
             else:
-                active = project_session.validate_query(sql_text, dialect=dialect)
+                active = project_session.validate_query(
+                    sql_text, dialect=dialect, source=lint_source
+                )
                 suppressed = None
             has_errors = any(d.severity == "error" for d in active)
             # Build the validate payload the same way on both error and success paths.
@@ -474,10 +491,15 @@ def query_command(
             # Named-query validate (mode_is_named=True).
             if show_suppressed:
                 active, suppressed = project_session.validate_query(
-                    sql_text, dialect=dialect, return_suppressed=True
+                    sql_text,
+                    dialect=dialect,
+                    source=lint_source,
+                    return_suppressed=True,
                 )
             else:
-                active = project_session.validate_query(sql_text, dialect=dialect)
+                active = project_session.validate_query(
+                    sql_text, dialect=dialect, source=lint_source
+                )
                 suppressed = None
             _print_validate_result(active, suppressed, json_output=json_output)
 

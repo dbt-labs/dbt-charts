@@ -84,9 +84,6 @@ this is the cheap pass.
 
 ### Descriptive metadata
 
-- [ ] Every query has a `notes:` (what it returns and why)
-- [ ] Every chart has a `notes:` (what question it answers)
-- [ ] Every variable has a `notes:` (how it should be used)
 - [ ] Chart names communicate intent (`revenue_trend`, not `chart_1`)
 - [ ] Titles state what the chart answers (`"Revenue by Region, Last 30 Days"`,
       not `"Sales"`)
@@ -163,8 +160,8 @@ A markdown bulleted list, severity-tagged. Group by severity, most severe first:
   exactly 1. Aggregate with `SUM()` or take the latest row only.
 - `warning` `charts.region_pie`: 7 segments in a pie chart — humans compare
   angles poorly past 3. Switch to `type: bar` ordered by value.
-- `warning` `queries.orders`: no `notes:` field. Add one sentence stating
-  what the query returns.
+- `warning` `queries.orders_copy`: same SQL as `queries.orders`. Delete it and
+  point the chart at `orders`.
 - `nit` `charts.chart_1`: generic name. Rename to indicate intent
   (e.g. `daily_active_users`).
 ```
@@ -177,7 +174,7 @@ can short-circuit.
 | Tag | Meaning | Examples |
 |---|---|---|
 | `blocker` | The board will render wrong, error, or mislead | KPI on multi-row query; bar chart on raw rows when GROUP BY is expected |
-| `warning` | The board renders but violates a clear design principle | Pie with >3 segments; missing notes; generic titles |
+| `warning` | The board renders but violates a clear design principle | Pie with >3 segments; generic titles |
 | `nit` | Stylistic — author can take or leave | Suboptimal chart name; consistent-but-verbose pattern |
 
 ## Common mistakes

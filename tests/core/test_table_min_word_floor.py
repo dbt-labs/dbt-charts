@@ -23,12 +23,30 @@ class TestMeasureMinWordWidth:
 
         return get_font_measurer()
 
+    def test_header_label_is_measured_with_the_header_measurer(self, measurer):
+        from dbt_charts.core.font_measure import get_font_measurer
+        from dbt_charts.core.render.chart.table_support import _measure_min_word_width
+
+        header_measurer = get_font_measurer("'Source Serif 4', Georgia, serif")
+        result = _measure_min_word_width(
+            [],
+            "Illinois",
+            measurer,
+            header_measurer,
+            font_size=13.0,
+            header_font_size=13.0,
+        )
+        assert result == pytest.approx(
+            header_measurer.measure("Illinois", 13.0), abs=0.01
+        )
+        assert result != pytest.approx(measurer.measure("Illinois", 13.0), abs=1.0)
+
     def test_empty_cells_returns_header_floor(self, measurer):
         """With no cell values, floor equals the header label width."""
         from dbt_charts.core.render.chart.table_support import _measure_min_word_width
 
         result = _measure_min_word_width(
-            [], "Revenue", measurer, font_size=13.0, header_font_size=13.0
+            [], "Revenue", measurer, measurer, font_size=13.0, header_font_size=13.0
         )
         header_w = measurer.measure("Revenue", 13.0)
         assert result == pytest.approx(header_w, abs=1.0)
@@ -38,7 +56,7 @@ class TestMeasureMinWordWidth:
         from dbt_charts.core.render.chart.table_support import _measure_min_word_width
 
         result = _measure_min_word_width(
-            ["Hello"], "Hi", measurer, font_size=13.0, header_font_size=13.0
+            ["Hello"], "Hi", measurer, measurer, font_size=13.0, header_font_size=13.0
         )
         expected = max(
             measurer.measure("Hello", 13.0),
@@ -55,6 +73,7 @@ class TestMeasureMinWordWidth:
             ["Next steps to close"],
             "Notes",
             measurer,
+            measurer,
             font_size=13.0,
             header_font_size=13.0,
         )
@@ -70,7 +89,7 @@ class TestMeasureMinWordWidth:
         long_url = "https://docs.google.com/spreadsheets/d/1tqWJ_very_long_id/edit"
         values = [f"See {long_url} for details"]
         result = _measure_min_word_width(
-            values, "Link", measurer, font_size=13.0, header_font_size=13.0
+            values, "Link", measurer, measurer, font_size=13.0, header_font_size=13.0
         )
 
         # Floor should not be driven by the URL — just by "See", "for", "details", "Link"
@@ -88,7 +107,7 @@ class TestMeasureMinWordWidth:
         short_token = "short"
         values = [f"{long_token} {short_token}"]
         result = _measure_min_word_width(
-            values, "Col", measurer, font_size=13.0, header_font_size=13.0
+            values, "Col", measurer, measurer, font_size=13.0, header_font_size=13.0
         )
 
         long_w = measurer.measure(long_token, 13.0)
@@ -106,6 +125,7 @@ class TestMeasureMinWordWidth:
             ["Yes", "No"],
             "CustomerSegmentation",
             measurer,
+            measurer,
             font_size=13.0,
             header_font_size=13.0,
         )
@@ -122,7 +142,12 @@ class TestMeasureMinWordWidth:
             "The longest individual word might be 'Responsibilities'.\n"
         )
         result = _measure_min_word_width(
-            [paragraph], "Notes", measurer, font_size=13.0, header_font_size=13.0
+            [paragraph],
+            "Notes",
+            measurer,
+            measurer,
+            font_size=13.0,
+            header_font_size=13.0,
         )
         # Floor must be narrower than the full paragraph
         full_w = measurer.measure(paragraph, 13.0)
@@ -138,7 +163,7 @@ class TestMeasureMinWordWidth:
         token_41 = "b" * 41  # 41 — excluded
         values = [f"{token_41} {token_40}"]
         result = _measure_min_word_width(
-            values, "H", measurer, font_size=13.0, header_font_size=13.0
+            values, "H", measurer, measurer, font_size=13.0, header_font_size=13.0
         )
         expected = measurer.measure(token_40, 13.0)
         assert result == pytest.approx(expected, abs=1.0)
@@ -149,7 +174,7 @@ class TestMeasureMinWordWidth:
 
         values = ["short text", "medium length text here", "tiny"]
         result = _measure_min_word_width(
-            values, "Notes", measurer, font_size=13.0, header_font_size=13.0
+            values, "Notes", measurer, measurer, font_size=13.0, header_font_size=13.0
         )
 
         # Manually compute expected: max token across all cells + header

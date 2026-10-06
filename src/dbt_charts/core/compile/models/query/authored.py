@@ -40,6 +40,25 @@ from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 
 RestMethod = Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
 
+# Every warehouse dialect, one spelling each: the dialect registry's names
+# minus its aliases (postgresql, mssql, mariadb).
+QueryDialect = Literal[
+    "athena",
+    "bigquery",
+    "clickhouse",
+    "databricks",
+    "duckdb",
+    "mysql",
+    "postgres",
+    "presto",
+    "redshift",
+    "snowflake",
+    "spark",
+    "sqlite",
+    "sqlserver",
+    "trino",
+]
+
 
 # ============================================================================
 # AUTHORED QUERY MODELS — one class per query type, discriminated on `type`
@@ -143,6 +162,10 @@ class AuthoredSqlQuery(_BaseQueryFields):
     target: str | None = Field(
         default=None,
         description="dbt target name for queries against a dbt_profile source (defaults to 'dev').",
+    )
+    dialect: QueryDialect | None = Field(
+        default=None,
+        description="Warehouse dialect the SQL is written in, translated to the source's.",
     )
 
 

@@ -35,6 +35,7 @@ def _demands(
         col_configs,
         data,
         get_font_measurer(),
+        header_measurer=get_font_measurer(),
         font_size=13.0,
         header_font_size=12.0,
         cell_pad=8,

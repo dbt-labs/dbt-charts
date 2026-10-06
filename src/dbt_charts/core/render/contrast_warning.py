@@ -230,7 +230,7 @@ def check_markdown_contrast(
     actually present: WCAG's large-text exception is a floor per font size,
     and a block mixing an authored H1 with an H4 in the same ink is only as
     readable as its smallest heading. Callers must already have validated
-    ``resolved_style.title.sizes`` has 6 entries (rendering the block does
+    ``resolved_style.chart_defaults.heading_sizes`` has 6 entries (rendering the block does
     this) — ``sizes[level - 1]`` indexes it directly.
 
     No-op (no work at all, including the markdown parse) when no sink is
@@ -263,7 +263,7 @@ def check_markdown_contrast(
             has_body = True
 
     if heading_levels:
-        sizes = resolved_style.title.sizes
+        sizes = resolved_style.chart_defaults.heading_sizes
         heading_size = min(sizes[level - 1] for level in heading_levels)
         heading_color = resolved_style.title.font.color
         assert heading_color is not None, (

@@ -207,7 +207,7 @@ queries:
           priority,
           (bounds.today - created_at::DATE)         AS age_days,
           (bounds.today - created_at::DATE)         AS age_bar,
-          strftime(created_at, '%-d %b')            AS opened,
+          created_at                                AS opened,
           CASE priority
             WHEN 'urgent' THEN 1 WHEN 'high' THEN 2
             WHEN 'normal' THEN 3 WHEN 'low'  THEN 4
@@ -505,6 +505,7 @@ charts:
           width: 75
         opened:
           label: Opened
+          format: "%-d %b"
           align: left
           width: 75
 

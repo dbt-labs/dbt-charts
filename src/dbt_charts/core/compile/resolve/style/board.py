@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel
 
-from dbt_charts.core.compile.merge import merge_onto_base, merge_patches, to_title_style
+from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     FormatAliases,
@@ -54,9 +54,22 @@ from dbt_charts.core.compile.models.style.theme import (
     TitleStyle,
     font_weight_as_css,
 )
-from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
-from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
+from dbt_charts.core.compile.resolve.style.fonts import (
+    expand_named_fonts,
+    resolve_registry,
+)
+from dbt_charts.core.compile.resolve.style.inherit_graph import (
+    InheritGraph,
+    get_inherit_graph,
+)
+from dbt_charts.core.compile.resolve.style.inherit_resolver import (
+    apply_inherit,
+    defer_base_none_children,
+    null_paths,
+    prune_path,
+)
 from dbt_charts.core.compile.resolve.style.legend_position import (
+    decide_legend_direction,
     decide_legend_position,
 )
 from dbt_charts.core.compile.resolve.style.palette import color, ink_canvas, mark_ink
@@ -177,9 +190,10 @@ def _seed_spark_colors(style: Style) -> Style:
 
 
 def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
+    position = decide_legend_position(legend.position, top_strip=False)
     return ResolvedLegendStyle(
-        position=decide_legend_position(legend.position, top_strip=False),
-        direction=legend.direction,
+        position=position,
+        direction=decide_legend_direction(legend.direction, position.edge),
         columns=legend.columns,
         compact_columns=legend.compact_columns,
         visible=legend.visible is not False,
@@ -256,8 +270,10 @@ def _build_chart_style_context(
     roles: dict[str, str],
     tones: KpiTonesStyle,
     pre_style: Style,
+    cascaded: Style,
     charts_board_overrides: ChartsStylePatch,
     card_padding: float,
+    heading_sizes: list[float],
     formats: FormatAliases | None = None,
 ) -> ChartStyleContext:
     # Deferred: a module-level import here would cycle back through
@@ -289,8 +305,10 @@ def _build_chart_style_context(
         "roles",
         "tones",
         "pre_style",
+        "cascaded",
         "charts_board_overrides",
         "card_padding",
+        "heading_sizes",
     }
     # Chart-local-only fields that have no representation on ChartsStyle —
     # they're populated only by build_chart_style_context from a chart's
@@ -407,8 +425,10 @@ def _build_chart_style_context(
         roles=roles,
         tones=tones,
         pre_style=pre_style,
+        cascaded=cascaded,
         charts_board_overrides=charts_board_overrides,
         card_padding=card_padding,
+        heading_sizes=heading_sizes,
     )
 
 
@@ -420,14 +440,23 @@ def clear_resolve_style_cache() -> None:
     _RESOLVED_STYLE_CACHE.clear()
 
 
-def _merge_style(
+def _links_under(paths: list[str]) -> InheritGraph:
+    return {
+        path: parent
+        for path, parent in get_inherit_graph().items()
+        if any(path == held or path.startswith(f"{held}.") for held in paths)
+    }
+
+
+def merge_style(
     base: Style,
     *patches: Any,  # type-state: explicit_any — heterogeneous cascade patch fragments
 ) -> tuple[Style, ChartsStylePatch]:
-    """Deep-merge patches onto base. No apply_inherit — pure merge only.
+    """Deep-merge patches onto base.
 
-    Callers that need a fully-cascaded ResolvedStyle call _finalize_style() on
-    the result.
+    A partial write into an empty slot that inherits from a parent is merged
+    only after the slot is filled from that parent, so it never has to be
+    complete on its own.
 
     The base comes from ``get_theme_style``, which already ran
     ``_resolve_self_tokens`` and ``_resolve_color_tokens`` at theme-load time.
@@ -443,11 +472,28 @@ def _merge_style(
     # model_construct() seeds a genuinely empty patch with model_fields_set
     # empty, exactly like merge_patches's own construction.
     acc = ChartsStylePatch.model_construct()
+    held_patches: list[BaseModel] = []
+    held: list[str] = []
     for patch in patches:
         resolved_patch = _resolve_tokens_on_patch(patch, base)
-        merged = merge_onto_base(merged, resolved_patch)
+        for null_path in null_paths(resolved_patch, "Style"):
+            held_patches = [prune_path(h, null_path, "Style") for h in held_patches]
+            held = [
+                h for h in held if h != null_path and not h.startswith(f"{null_path}.")
+            ]
+        remainder, held_patch, deferred = defer_base_none_children(
+            merged, resolved_patch, "Style"
+        )
+        held_patches.append(held_patch)
+        held.extend(deferred)
+        merged = merge_onto_base(merged, remainder)
         if resolved_patch.charts is not None:
             acc = merge_patches(acc, resolved_patch.charts, nested=False)
+
+    if held:
+        merged = apply_inherit(merged, _links_under(held))
+        for held_patch in held_patches:
+            merged = merge_onto_base(merged, held_patch)
     return merged, acc
 
 
@@ -477,22 +523,14 @@ def _finalize_chart_style_context(
             "style.palettes / style.roles are unset after the theme cascade; "
             "the _base theme seeds both for every built-in theme."
         )
-    # ChartsStyle.title's InheritSlot(from_path="Style.title") already filled
-    # every unset leaf from the board title during apply_inherit (including
-    # copying whole unset sub-objects wholesale via each one's own
-    # container-level link) -- to_title_style only re-validates the
-    # cascade's own result into the compiled type; it does no merging itself.
-    charts_title = cascaded.charts.title
-    assert charts_title is not None, (
-        "ChartsStyle.title must be populated by apply_inherit's title "
-        "InheritSlot container-level copy link"
-    )
+    if cascaded.charts.title is None:
+        raise ValueError("style.charts.title is unset after the cascade.")
     return _build_chart_style_context(
         cascaded.charts,
         base_background,
         cascaded.background,
         font_family=resolved_root_font.family,
-        title=to_title_style(charts_title),
+        title=cascaded.charts.title,
         spark=cascaded.charts.table.spark,
         pagination=cascaded.charts.table.pagination,
         bold_font_weight=font_weight_as_css(cascaded.text.bold.weight),
@@ -500,9 +538,11 @@ def _finalize_chart_style_context(
         roles=cascaded.roles,
         tones=cascaded.tones,
         pre_style=pre_style,
-        formats=None if cascaded.formats is None else cascaded.formats.aliases,
+        cascaded=cascaded,
+        formats=cascaded.formats,
         charts_board_overrides=charts_board_overrides,
         card_padding=cascaded.frame.card_padding,
+        heading_sizes=pre_style.heading_ramp(),
     )
 
 
@@ -518,7 +558,15 @@ def _finalize_style(
     style patches can re-run the full graph against a chart-local override
     without touching board-global state.
     """
-    pre_style = merged
+    registry = merged.fonts
+    assert registry is not None, "Style._validate_fonts requires style.fonts"
+    registry = resolve_registry(registry)
+    pre_style = expand_named_fonts(
+        merged.model_copy(update={"fonts": registry}), registry
+    )
+    charts_board_overrides = expand_named_fonts(
+        charts_board_overrides, registry, "style.charts"
+    )
     cascaded = apply_inherit(pre_style, get_inherit_graph())
     cascaded = _seed_spark_colors(cascaded)
     emoji_family = _EMOJI_MODE_TO_FAMILY.get(cascaded.font.emoji)
@@ -604,7 +652,7 @@ def resolve_style_and_context(
     """
     background = base.background if base_background is None else base_background
     if patches:
-        return _finalize_style(*_merge_style(base, *patches), background)
+        return _finalize_style(*merge_style(base, *patches), background)
 
     # The no-patch fast path is only ever reached today with base_background
     # unset (a nested board with a cascade to run always has own_patch, so it
@@ -614,6 +662,6 @@ def resolve_style_and_context(
     if cached is not None and cached[0] is base:
         return cached[1], cached[2]
 
-    resolved, chart_context = _finalize_style(*_merge_style(base), background)
+    resolved, chart_context = _finalize_style(*merge_style(base), background)
     _RESOLVED_STYLE_CACHE[cache_key] = (base, resolved, chart_context)
     return resolved, chart_context

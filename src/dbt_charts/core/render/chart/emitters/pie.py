@@ -36,7 +36,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 from dbt_charts.core.render.utils import font_style_to_mark, normalize_data_types
-from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.text.case import field_display_text
 
 _ARC_TOTAL_FIELD = "__dbt_arc_total"
 # Composed text field for a center total with an affix a d3 spec cannot hold.
@@ -225,7 +225,7 @@ class PieEmitter:
         theta_enc = {
             "field": chart.theta,
             "type": "quantitative",
-            "title": format_display_text(chart.theta, from_slug=True, font=legend_font),
+            "title": field_display_text(chart.theta, chart.field_labels, legend_font),
         }
         if fmt.spec:
             theta_enc["format"] = fmt.spec
@@ -236,9 +236,7 @@ class PieEmitter:
             enc = channel_to_encoding(
                 color_ch,
                 data,
-                title=format_display_text(
-                    color_field, from_slug=True, font=legend_font
-                ),
+                title=field_display_text(color_field, chart.field_labels, legend_font),
             )
             apply_color_legend(enc, chart.legend)
             # A gradient/conditional pie color still reaches this call

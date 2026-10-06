@@ -31,6 +31,8 @@ from dbt_charts.core.project import (
     assert_relpath,
     glob_literal_prefix,
     glob_to_regex,
+    is_package_relpath,
+    package_board_roots,
     posix_relpath,
 )
 
@@ -123,6 +125,15 @@ class FilesystemProject(Project):
     @cached_property
     def charts_dir(self) -> Path:
         return self.root / self._boards_physical_subdir()
+
+    def package_charts_dirs(self) -> list[Path]:
+        """Absolute paths of every installed package's ``charts/`` directory.
+
+        Filesystem-only edge currency (mirrors ``charts_dir``) — probed per
+        call, not cached, so ``dct serve``'s alias-index invalidation watch
+        notices a package added or removed by a ``dbt deps`` re-run.
+        """
+        return [self.root / root.relpath for root in package_board_roots(self)]
 
     def _boards_physical_subdir(self) -> str:
         """The on-disk directory that answers canonical ``charts/`` paths.
@@ -331,13 +342,24 @@ class FilesystemProject(Project):
         Resolves symlinks and refuses any path that escapes the root — a
         stronger containment check than the read methods' ``assert_relpath``,
         which collapses ``..`` but does not follow symlinks. Raises ValueError
-        for an escaping path, OSError on a write failure.
+        for an escaping path, OSError on a write failure. A ``dbt_packages/``
+        path is dbt-managed and refused outright — ``dbt deps`` is the only
+        writer.
+
+        The package-relpath check runs against the RESOLVED path's
+        project-relative form, not the raw *relpath* string — checking the
+        raw string only inspects its first path component, so a
+        ``..``-escape (``charts/../dbt_packages/pkg/charts/x.yml``) passed
+        that guard while ``resolve()`` still collapsed it back onto the
+        package file underneath.
         """
         candidate = Path(self._physical(relpath))
         candidate = candidate if candidate.is_absolute() else self.root / candidate
         resolved = candidate.resolve()
         if resolved != self.root and self.root not in resolved.parents:
             raise ValueError(f"path {relpath!r} escapes the project root")
+        if is_package_relpath(posix_relpath(resolved, self.root)):
+            raise ValueError(f"path {relpath!r} is a package board — read-only")
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content, encoding="utf-8")
 
@@ -346,13 +368,17 @@ class FilesystemProject(Project):
         that escapes the root — the same containment check as ``write_text``.
 
         Raises ValueError for an escaping path, FileNotFoundError if the file
-        does not exist (``Path.unlink``'s default — no silent no-op).
+        does not exist (``Path.unlink``'s default — no silent no-op). A
+        ``dbt_packages/`` path is refused outright — see ``write_text`` for why
+        the check runs against the resolved path, not the raw *relpath*.
         """
         candidate = Path(self._physical(relpath))
         candidate = candidate if candidate.is_absolute() else self.root / candidate
         resolved = candidate.resolve()
         if resolved != self.root and self.root not in resolved.parents:
             raise ValueError(f"path {relpath!r} escapes the project root")
+        if is_package_relpath(posix_relpath(resolved, self.root)):
+            raise ValueError(f"path {relpath!r} is a package board — read-only")
         resolved.unlink()
 
     @cached_property

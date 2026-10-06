@@ -483,6 +483,33 @@ def test_resolve_board_relpath_non_filesystem_store_fallback(
     assert resolved.relpath == "charts/looker/x.yaml"
 
 
+def test_resolve_board_relpath_package_slug_resolves_under_dbt_packages(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """A package-namespaced slug (``pkg_a/overview``) resolves to the package's
+    own board root, not the host ``charts/``."""
+    pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+    pkg_charts.mkdir(parents=True)
+    (pkg_charts / "overview.yml").write_text(_VALID_BOARD)
+
+    resolved = resolve_board_relpath(
+        PurePosixPath("pkg_a/overview"), local_project(tmp_path)
+    )
+    assert resolved.relpath == "dbt_packages/pkg_a/charts/overview.yml"
+
+
+def test_resolve_board_relpath_extensionless_slug_resolves_host_board(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """An extensionless slug now resolves through the full candidate list, not
+    just a single charts/-prefix retry."""
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "home.yml").write_text(_VALID_BOARD)
+
+    resolved = resolve_board_relpath(PurePosixPath("home"), local_project(tmp_path))
+    assert resolved.relpath == "charts/home.yml"
+
+
 @pytest.mark.windows
 def test_resolve_board_relpath_escaping_relpath_raises(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]

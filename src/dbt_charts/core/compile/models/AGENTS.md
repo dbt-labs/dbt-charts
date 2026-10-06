@@ -70,7 +70,26 @@ Regenerating after a description edit takes five commands, each gated by its own
 
 ### Design + coding patterns
 
-For the broader Pydantic conventions that `check_models.py` can't enforce mechanically — discriminated unions, inheritance for variant style slots, the three-stage cascade discipline, `Field(description=...)` requirements, `Annotated` style preference, the validator hierarchy, `exclude_unset` merging, `frozen=True` for immutables, and the full red-flag list — the rules above are the contract; an existing model that breaks one is debt, not precedent. Never hand-write an all-Optional patch group: `build_patch_model` recurses per field to generate them.
+Reviewer-enforced beyond `check_models.py`; an existing model that breaks one is debt, not precedent.
+
+**Shape**
+
+- **Type-tagged variants use `Annotated[A | B, Discriminator(...)]`, never a bare union.** See `board/authored.py` (`_chart_discriminator`, `_query_discriminator`, `_var_discriminator`). Alternatives with no shared tag are not a union; make one model with optional fields.
+- **A slot needing the base model plus one extra field subclasses the base** (`RootFontStyle(FontStyle)` in `style/theme/board.py`). Do not add the extra to the base or write a parallel duplicate.
+- **No flat-prefix siblings.** Two or more fields sharing a prefix (`value_color`, `value_size`) become a nested block (`value: KpiValueStyle`).
+- **Never hand-write an all-Optional patch group**; `build_patch_model` / `build_patch_model_ext` (`factories.py`) generate them.
+- **No `mode="before"` validator that splits dotted keys** (`axis.label: x`) into nested structure; it forks the syntax tree and breaks schema/IDE completion. `before` validators are for coercion only (string shorthand to object, scalar list to object list).
+
+**Fields**
+
+- **`extra="forbid"` is the default, never `ignore`.** Documented exceptions, each justified in the class docstring: `ConfigNode`/theme dynamic-section bases and `vega_lite/contracts.py` (`allow`), and `cloud_client/contract.py`'s `ContractModel` (`ignore`, because the installed CLI lags the deployed server).
+- **Every authored, patch, and normalized field has `Field(description=...)`**, at most 12 words, one sentence. Never restate the name, type, or enum values; never state optionality. A single-value `type` literal gets no rendered description unless the field carries `ExplicitTag`. The "published API copy" rules above apply.
+- **New fields use `Annotated[T, Field(...)]`** so metadata composes with `Discriminator`/`BeforeValidator`; don't mass-rewrite old ones.
+- **Mutable defaults use `default_factory=list|dict|<Model>`**; `default_factory=lambda: <literal>` is a hardcoded default in disguise.
+- **No `dict[str, Any]` / `Any` values in this tree** except Vega-Lite passthrough; define the model. Agent-API return types wrapping variable JSON are typed at the boundary.
+- **Validator order of preference:** typed field (Literal, Enum, constrained type), then `field_validator(mode="after")`, then `model_validator(mode="after")` for cross-field invariants. No custom `__init__`.
+- **Merge cascade overlays with `model_dump(exclude_unset=True)`**; without it every `None` on a patch overwrites its parent. Re-validate the merged dict with `model_validate`.
+- **Immutable settled data uses `ConfigDict(frozen=True)` with `tuple[...]`** sequences (frozen does not make lists immutable).
 
 ### Engine config types in `config.py`
 

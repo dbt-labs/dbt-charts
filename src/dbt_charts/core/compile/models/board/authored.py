@@ -500,7 +500,9 @@ class AuthoredBoard(BaseModel):
     html_policy: Annotated[HtmlPolicy, Merge(Strategy.OVERRIDE)] = Field(
         default="none",
         description=(
-            "HTML rendering policy for the board's body text. One of: "
+            "HTML rendering policy for the board's body text. Inline nested "
+            "boards inherit it unless they set their own; tabs always "
+            "inherit, and imported board files do not. One of: "
             '"none" (default): HTML is escaped and rendered as plain markdown; '
             '"safe-subset": reserved for a parser-checked allowlist (not yet '
             "enforced; currently renders as none); "

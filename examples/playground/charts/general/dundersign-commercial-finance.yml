@@ -286,7 +286,7 @@ queries:
             / NULLIF(COUNT(*), 0)                                       AS win_rate,
           ROUND(AVG(amount) FILTER (WHERE is_won), 0)::INT              AS avg_deal,
           COUNT(DISTINCT lead_source) FILTER (WHERE is_won)             AS sources,
-          strftime(MAX(close_at) FILTER (WHERE is_won), '%-d %B %Y')    AS last_close,
+          MAX(close_at) FILTER (WHERE is_won)                           AS last_close,
           (SELECT today FROM bounds) - MAX(close_at)
             FILTER (WHERE is_won)::DATE                                 AS days_since_close,
           MODE() WITHIN GROUP (ORDER BY plan)
@@ -510,6 +510,7 @@ charts:
           align: right
         last_close:
           label: Last close
+          format: "%-d %B %Y"
           align: left
         days_since_close:
           label: Aging

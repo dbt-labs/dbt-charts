@@ -1,0 +1,12 @@
+chart_id: chart1
+chart:
+  type: custom
+  query: q
+  svg: '<rect width="10" height="10"/>'
+  title: Value Distribution
+queries:
+  q:
+    columns: [category, frequency]
+    values:
+      - [Category A, 100]
+      - [Category B, 75]

@@ -109,7 +109,16 @@ class _SharedChartFields(_BaseChartFields):
     subtitle: str = Field(default="", description="Secondary title line.")
 
 
-class _CartesianChartFields(_SharedChartFields):
+class _FieldLabelsField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Authored display text per query column, painted verbatim.",
+    )
+
+
+class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
     """Cartesian (x/y-axis) chart families: bar, line, area, scatter, heatmap."""
 
     x: str | None = Field(default=None, description="Field mapped to the x-axis.")
@@ -149,7 +158,7 @@ class _CartesianChartFields(_SharedChartFields):
     )
 
 
-class _GeoChartFields(_SharedChartFields):
+class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
     """Geographic chart families: point_map/bubble_map, geoshape/map."""
 
     color: str | None = Field(default=None, description="Field mapped to fill color.")
@@ -189,6 +198,7 @@ class _GeoChartFields(_SharedChartFields):
 __all__ = [
     "_BaseChartFields",
     "_CartesianChartFields",
+    "_FieldLabelsField",
     "_GeoChartFields",
     "_SharedChartFields",
 ]
@@ -200,12 +210,12 @@ __all__ = [
 #   - Vega render-first sizing (not Vega charts)
 #   - cols height alignment re-renders (non-Vega, don't benefit from re-render)
 # Each renderer owns its own sizing contract — there is no shared fixed height for this group.
-NON_ASPECT_RATIO_TYPES = frozenset({"table", "kpi", "spark_bar", "callout"})
-SVG_LAYOUT_PADDED_TYPES = frozenset({"table", "kpi", "spark_bar"})
+NON_ASPECT_RATIO_TYPES = frozenset({"table", "kpi", "spark_bar", "callout", "custom"})
+SVG_LAYOUT_PADDED_TYPES = frozenset({"table", "kpi", "spark_bar", "custom"})
 
 # Chart-type strings dispatched through get_emitter() (render/chart/emitters/__init__.py)
 # — the families that emit Vega-Lite marks. The complement (table, kpi, spark_bar,
-# callout) never paints a mark; it is drawn by a hand-crafted SVG renderer instead.
+# callout, custom) never paints a mark; it is drawn by a hand-crafted SVG renderer instead.
 # This is a different fact from SVG_LAYOUT_PADDED_TYPES above (that one is about
 # layout padding, not mark-painting) even though their complements happen to
 # coincide today — don't fold them into one set.

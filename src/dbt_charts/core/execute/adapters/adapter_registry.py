@@ -12,6 +12,9 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from pathlib import (
+    Path,  # noqa: TID251 — names the dbt project directory dbt reads on disk
+)
 from typing import TYPE_CHECKING, Any, Final
 
 from dbt_charts.cli.filesystem_project import (
@@ -67,6 +70,12 @@ from dbt_charts.core.execute.source_resolver import (
     DefaultSourceResolver,
 )
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+from dbt_charts.core.execute.sql_translate import (
+    dialect_differs,
+    dialect_unsupported,
+    engine_dialect,
+    render_in_dialect,
+)
 from dbt_charts.core.project import Project
 
 if TYPE_CHECKING:
@@ -96,6 +105,21 @@ LOCAL_AUTHORING_REGISTRY_KWARGS: dict[str, Any] = {
     "allow_external_access_in_readonly": True,
     "duckdb_config": {"enable_external_access": True},
 }
+
+
+def linked_dbt_path(project: Project) -> Path | None:
+    """The project's dbt project directory, or None when it has no dbt project.
+
+    dbt_project.yml is valid at project.dbt_root (see resolve_dbt_project_dir for
+    how that's resolved) -- meaningful only for a real filesystem project (dbt's
+    own profiles/target resolution assumes a directory).
+    """
+    return (
+        project.dbt_root
+        if isinstance(project, FilesystemProject)
+        and project.dbt_project.exists("dbt_project.yml")
+        else None
+    )
 
 
 def build_adapter_registry(
@@ -200,15 +224,7 @@ def build_adapter_registry(
     # read_only connection, which needs no data_dir either).
     data_dir = project.root if isinstance(project, FilesystemProject) else None
 
-    # dbt_project.yml is valid at project.dbt_root (see resolve_dbt_project_dir
-    # for how that's resolved) -- meaningful only for a real filesystem project
-    # (dbt's own profiles/target resolution assumes a directory).
-    resolved_dbt_path = (
-        project.dbt_root
-        if isinstance(project, FilesystemProject)
-        and project.dbt_project.exists("dbt_project.yml")
-        else None
-    )
+    resolved_dbt_path = linked_dbt_path(project)
 
     # DbtAdapter first (handles SQL queries with dbt features, takes priority)
     if resolved_dbt_path is not None and _should_register({"sql"}):
@@ -518,6 +534,18 @@ class AdapterRegistry:
                     "supported for file sources."
                 )
 
+            if query.dialect is not None and dialect_differs(
+                query.dialect, source_config
+            ):
+                return handle_adapter_error(
+                    "File-source execution",
+                    dialect_unsupported(
+                        query.dialect,
+                        "duckdb",
+                        "queries on a file source are not translated, so write "
+                        "the SQL in duckdb",
+                    ),
+                )
             materializer = self._get_file_materializer()
             if materializer is None:
                 return plain_error(
@@ -724,6 +752,25 @@ class AdapterRegistry:
         ``render_dialect`` is the placeholder style the adapter declared via
         ``param_render_dialect``.
         """
+        if is_sql_query(query) and query.dialect is not None:
+            if source_config is None:
+                return handle_adapter_error(
+                    "Dialect translation",
+                    dialect_unsupported(
+                        query.dialect,
+                        "the source's warehouse",
+                        "no source resolved for this query, so its warehouse is unknown",
+                    ),
+                )
+            try:
+                differs = dialect_differs(query.dialect, source_config)
+            except DbtChartsError as exc:
+                return handle_adapter_error("Dialect translation", exc)
+            if differs:
+                return self._compose_translated(
+                    query, variables, params, board, source_config, render_dialect
+                )
+
         if not (
             params is None
             and is_sql_query(query)
@@ -766,6 +813,48 @@ class AdapterRegistry:
         except (ValueError, KeyError, TypeError) as exc:
             return plain_error(str(exc))
         return query.model_copy(update={"sql": rendered.sql}), list(rendered.params)
+
+    def _compose_translated(
+        self,
+        query: SqlQuery,
+        variables: VariableValues | None,
+        params: QueryParams,
+        board: Board | None,
+        source_config: ResolvedSourceConfig,
+        render_dialect: SQLDialect,
+    ) -> tuple[AnyQuery, QueryParams] | QueryResult:
+        """Compose a query whose `dialect:` differs from its source's.
+
+        Always composes, even for a board with no queries, and hands the adapter
+        SQL in the source's dialect with params in `render_dialect`'s style.
+        """
+        assert query.dialect is not None  # the caller's dialect_differs check
+        if params is not None:
+            return handle_adapter_error(
+                "Dialect translation",
+                dialect_unsupported(
+                    query.dialect,
+                    source_config.type,
+                    "its SQL arrived already rendered with bound parameters",
+                ),
+            )
+        try:
+            sql, translated_params = render_in_dialect(
+                query.sql,
+                query.dialect,
+                engine_dialect(query.dialect, source_config),
+                variables if variables is not None else {},
+                board.queries if board is not None else None,
+                not query.lenient_variables,
+                self._dbt_refs,
+                source_target_path(source_config),
+                render_dialect,
+            )
+        except DbtChartsError as exc:
+            return handle_adapter_error("Dialect translation", exc)
+        except (ValueError, KeyError, TypeError) as exc:
+            return plain_error(str(exc))
+        return query.model_copy(update={"sql": sql}), translated_params
 
     def prepare_sql(
         self,

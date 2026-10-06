@@ -127,6 +127,7 @@ def _bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
         query_name="q",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 

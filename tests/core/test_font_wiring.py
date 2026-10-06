@@ -34,7 +34,9 @@ class TestCompactStyleIncludesConfig:
 
     def test_font_family_from_resolved_text_stack(self):
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -49,7 +51,9 @@ class TestCompactStyleIncludesConfig:
         """
         from dbt_charts.core.compile.models.style.authored import StylePatch
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         patch = StylePatch.model_validate({"title": {"font": {"family": "Poppins"}}})
         rs = resolve_style(get_theme_style(), patch)
@@ -61,14 +65,18 @@ class TestCompactStyleIncludesConfig:
         assert style.heading_font_family != style.font_family
 
     def test_base_font_size_from_config(self):
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         style = get_compact_style(resolve_style(get_theme_style()))
-        assert style.base_font_size == get_theme_style().text.font.size
+        assert style.base_font_size == resolve_style(get_theme_style()).text.font.size
 
     def test_line_height_on_font_slot_propagates_to_mdsvg(self):
         """line_height lives on font slot; mdsvg gets it from text.font.line_height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -77,7 +85,9 @@ class TestCompactStyleIncludesConfig:
 
     def test_title_line_height_from_title_font_slot(self):
         """heading_line_height comes from title.font.line_height after Stage 1."""
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         rs = resolve_style(get_theme_style())
         kwargs = compact_style_kwargs(rs)
@@ -111,7 +121,9 @@ class TestCompactStyleIncludesConfig:
         with a number instead.
         """
         from dbt_charts.core.compile.models.style.authored import StylePatch
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         base = resolve_style(get_theme_style())
         bumped = resolve_style(
@@ -150,7 +162,9 @@ class TestCompactStyleIncludesConfig:
         assert rs.variables.font.line_height != 1.93
 
     def test_dark_theme_changes_colors(self):
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         light_style = get_compact_style(resolve_style(get_theme_style()))
         dark_rs = resolve_style(get_theme_style("neon"))
@@ -167,14 +181,18 @@ class TestCompactStyleColorsTrackTheme:
     rest of the board."""
 
     def test_text_color_tracks_text_font_color(self):
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         assert get_compact_style(rs).text_color == rs.text.font.color
 
     def test_text_color_independent_of_font_color_override(self):
         from dbt_charts.core.compile.models.style.authored import StylePatch
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         # #a1a1a1/#b2b2b2 are picked to collide with no built-in theme's
         # resolved ink (e.g. clarity's is #222222) — a colliding sentinel
@@ -191,7 +209,9 @@ class TestCompactStyleColorsTrackTheme:
     @pytest.mark.parametrize("theme", ["clarity", "paper", "stark", "vivid", "neon"])
     def test_text_color_inherits_bare_font_color_override(self, theme):
         from dbt_charts.core.compile.models.style.authored import StylePatch
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         patch = StylePatch.model_validate({"font": {"color": "#a1a1a1"}})
         rs = resolve_style(get_theme_style(theme), patch)
@@ -200,7 +220,9 @@ class TestCompactStyleColorsTrackTheme:
         assert get_compact_style(rs).text_color == "#a1a1a1"
 
     def test_heading_color_tracks_title_color(self):
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         assert get_compact_style(rs).heading_color == rs.title.font.color
@@ -209,7 +231,9 @@ class TestCompactStyleColorsTrackTheme:
         """Inline links paint with the accent so the affordance tracks the theme.
         (Inline code uses its own box token — covered in test_text_box_style_cascade.)
         """
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         assert get_compact_style(rs).link_color == rs.accent
@@ -217,7 +241,9 @@ class TestCompactStyleColorsTrackTheme:
     def test_table_and_hr_rules_track_text_rule_tier(self):
         """Table grid + hr track the soft table-border tier (code/blockquote box
         tokens are covered in test_text_box_style_cascade)."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -225,7 +251,9 @@ class TestCompactStyleColorsTrackTheme:
         assert style.hr_color == rs.text.rule.color
 
     def test_table_header_background_tracks_theme(self):
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         csc = resolve_chart_style_context(get_theme_style())

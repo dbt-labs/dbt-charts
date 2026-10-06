@@ -101,11 +101,13 @@ def extract_base_column_refs(
     for name, query in compile_result.query_registry.items():
         if not is_sql_query(query):
             continue
-        dialect = sqlglot_dialect(dialect_for_source(query.source, sources))
-        refs = _refs_for_sql(query.sql, dialect=dialect)
+        source_dialect = sqlglot_dialect(dialect_for_source(query.source, sources))
+        refs = _refs_for_sql(
+            query.sql, dialect=sqlglot_dialect(query.dialect) or source_dialect
+        )
         if query.setup_sql and refs.indeterminate is None:
             setup_columns, defined, setup_via_dbt, setup_indeterminate = _setup_refs(
-                query.setup_sql, dialect=dialect
+                query.setup_sql, dialect=source_dialect
             )
             if setup_indeterminate is not None:
                 refs = QueryColumnRefs(indeterminate=setup_indeterminate)

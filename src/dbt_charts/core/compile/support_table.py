@@ -19,8 +19,8 @@ from typing import Any, Literal
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
+    column_format,
     resolve_format_parts,
-    resolve_format_parts_for_values,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored import (
@@ -238,7 +238,7 @@ def resolve_support_table(
         voted_columns = y if isinstance(entry, ChartSupportTablePerSeries) else column
         fmt: ResolvedFormat | None = None
         if entry.format is not None:
-            fmt = resolve_format_parts(entry.format, formats, no_format_default=None)
+            fmt = resolve_format_parts(entry.format, formats)
             if fmt.is_spec_less_affix or fmt.raw in PREDEFINED_SUB_UNIT_FALLBACK:
                 fields = (
                     voted_columns
@@ -247,18 +247,16 @@ def resolve_support_table(
                     if voted_columns is not None
                     else []
                 )
-                voted = resolve_format_parts_for_values(
-                    entry.format,
+                voted = column_format(
+                    "number",
                     formats,
-                    [v for f in fields for v in _column_numeric_values(data, f)],
-                    no_format_default=PredefinedNumberFormat.number,
+                    entry.format,
+                    values=[v for f in fields for v in _column_numeric_values(data, f)],
                 )
                 if voted.spec != fmt.spec:
                     fmt = voted.model_copy(update={"raw": None})
         elif stamp_number and column == y:
-            fmt = resolve_format_parts(
-                PredefinedNumberFormat.number, formats, no_format_default=None
-            )
+            fmt = resolve_format_parts(PredefinedNumberFormat.number, formats)
         entries.append(_with_resolved_format(entry, fmt))
     return ResolvedSupportTable(entries=entries)
 

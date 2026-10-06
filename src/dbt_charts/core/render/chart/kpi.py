@@ -21,7 +21,10 @@ from typing import Any, Literal
 
 from dbt_charts.core.colors import sanitize_color
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import resolve_format, resolve_format_parts
+from dbt_charts.core.compile.format import (
+    column_format,
+    resolve_format,
+)
 from dbt_charts.core.compile.models.chart.authored import (
     ConditionalRule,
     match_predicate,
@@ -33,6 +36,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import (
     FormatAliases,
+    FormatConfig,
     ResolvedFormat,
     SpacingValues,
     ToneLiteral,
@@ -78,10 +82,6 @@ from dbt_charts.core.render.svg_utils import (
 )
 from dbt_charts.core.render.utils import resolve_tone_color
 from dbt_charts.core.text.format_d3 import is_time_format
-from dbt_charts.core.text.predefined_formats import (
-    PREDEFINED_TIME_SPECS,
-    PredefinedTimeFormat,
-)
 from dbt_charts.core.utils import coerce_numeric_cell
 
 # Typographic ratios for KPI geometry. Tuned by eye against the playground
@@ -308,7 +308,7 @@ def _format_value_parts(
     """Format a KPI cell into ``(prefix, number_str, suffix, is_numeric)``.
 
     Temporal cells are formatted with a strftime spec (``date_short``, or a
-    ``style.formats.aliases`` alias resolving to one -- an inline ``%``-spec is
+    ``style.formats`` alias resolving to one -- an inline ``%``-spec is
     compile-rejected on this slot), defaulting to ``date_short`` when
     unformatted. ``format_may_be_cascaded`` is True only for the headline
     value slot, whose format can be a board-wide cascade default shared
@@ -325,20 +325,26 @@ def _format_value_parts(
     empty affixes -- used for status-style KPIs like ``"At risk"``.
     """
     if is_temporal_value(cell):
-        resolved = resolve_format(format_input, formats)
-        date_prefix = date_suffix = ""
-        if not resolved or is_time_format(resolved):
-            spec = resolved or PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
-            authored = resolve_format_parts(
-                format_input, formats, no_format_default=None
+        # Re-resolved as authored: a name the resolve-time table could not see (a
+        # render-time alias) resolves here.
+        authored = (
+            FormatConfig(
+                spec=format_input.spec or None,
+                prefix=format_input.prefix or None,
+                suffix=format_input.suffix or None,
+                notation=format_input.notation,
             )
-            date_prefix, date_suffix = authored.prefix, authored.suffix
-        elif format_may_be_cascaded:
-            spec = PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
-        else:
-            raise ChartDataError.from_code(
-                ERR_KPI_FORMAT_KIND_MISMATCH, chart_id=chart_id, spec=resolved
-            )
+            if isinstance(format_input, ResolvedFormat)
+            else format_input
+        )
+        dated = column_format("time", formats, authored)
+        if not is_time_format(dated.spec):
+            if not format_may_be_cascaded:
+                raise ChartDataError.from_code(
+                    ERR_KPI_FORMAT_KIND_MISMATCH, chart_id=chart_id, spec=dated.spec
+                )
+            dated = column_format("time", formats)
+        spec, date_prefix, date_suffix = dated.spec, dated.prefix, dated.suffix
         try:
             date_text = format_temporal_value(cell, spec)
             return "", f"{date_prefix}{date_text}{date_suffix}", "", False

@@ -40,8 +40,7 @@ from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.spec_builders import tooltip_entry
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
 from dbt_charts.core.render.utils import normalize_data_types
-from dbt_charts.core.text.case import format_display_text
-from dbt_charts.core.utils import slug_to_text
+from dbt_charts.core.text.case import field_display_text, field_title
 
 # (min_lat, min_lon, max_lat, max_lon) bounding boxes for albersUsa's three regions.
 # Heuristic: rectangles approximate d3-geo's actual albersUsa clip boundaries; they
@@ -348,8 +347,8 @@ class GeoshapeEmitter:
             color_enc = {
                 "field": value_field,
                 "type": "nominal",
-                "title": format_display_text(
-                    value_field, from_slug=True, font=chart.legend.title.font
+                "title": field_display_text(
+                    value_field, chart.field_labels, chart.legend.title.font
                 ),
                 "scale": {"domain": seen, "range": range_},
             }
@@ -384,10 +383,8 @@ class GeoshapeEmitter:
             color_enc = {
                 "field": value_field,
                 "type": "quantitative",
-                "title": format_display_text(
-                    value_field,
-                    from_slug=True,
-                    font=chart.legend.title.font,
+                "title": field_display_text(
+                    value_field, chart.field_labels, chart.legend.title.font
                 ),
                 "scale": _geo_scale,
             }
@@ -410,7 +407,7 @@ class GeoshapeEmitter:
                 tooltip_entry(
                     chart.lookup_field,
                     "nominal",
-                    title=slug_to_text(chart.lookup_field),
+                    title=field_title(chart.lookup_field, chart.field_labels),
                 )
             )
         if value_field != chart.lookup_field:
@@ -418,7 +415,7 @@ class GeoshapeEmitter:
                 tooltip_entry(
                     value_field,
                     value_field_type,
-                    title=slug_to_text(value_field),
+                    title=field_title(value_field, chart.field_labels),
                     format=(
                         chart.style.tooltip_format
                         if value_field_type == "quantitative"
@@ -538,8 +535,8 @@ class PointMapEmitter:
             encoding["size"] = {
                 "field": size_field,
                 "type": "quantitative",
-                "title": format_display_text(
-                    size_field, from_slug=True, font=chart.legend.title.font
+                "title": field_display_text(
+                    size_field, chart.field_labels, chart.legend.title.font
                 ),
                 "scale": dict(_AREA_PROPORTIONAL_SIZE_SCALE),
             }
@@ -576,8 +573,8 @@ class PointMapEmitter:
 
         if color_ch is not None and color_field is not None:
             enc = channel_to_encoding(color_ch, data)
-            enc["title"] = format_display_text(
-                color_field, from_slug=True, font=chart.legend.title.font
+            enc["title"] = field_display_text(
+                color_field, chart.field_labels, chart.legend.title.font
             )
             # A bound field still owes every value its board slot's
             # color — VL's own alphabetical default range would
@@ -606,6 +603,7 @@ class PointMapEmitter:
             color_field=color_field,
             tooltip_format=tooltip_format,
             collapsed=chart.collapse,
+            field_labels=chart.field_labels,
         )
         if chart.collapse:
             tooltip_fields.append(

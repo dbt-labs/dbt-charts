@@ -9,6 +9,7 @@ image a decoy of the same name in the directory it must not resolve against.
 from __future__ import annotations
 
 import base64
+import re
 import struct
 import zlib
 from pathlib import Path
@@ -408,3 +409,34 @@ def _keys(value: object) -> set[str]:
     if isinstance(value, list):
         return {k for v in value for k in _keys(v)}
     return set()
+
+
+def test_a_focused_chart_keeps_the_slot_its_imaged_title_gave_it() -> None:
+    banner = '<svg xmlns="http://www.w3.org/2000/svg" width="700" height="10"></svg>'
+    project = InMemoryProject(
+        Path("/proj"),
+        {
+            "sales.yml": (
+                "title: '![b](banner.svg)'\n"
+                "queries:\n  q:\n    type: values\n    rows:\n      - {v: 1}\n"
+                "charts:\n  c1:\n    query: q\n    type: kpi\n    value: v\n"
+                "rows:\n  - c1\n"
+            ),
+            "banner.svg": banner,
+        },
+    )
+
+    def width(chart: str | None) -> str:
+        result = render_dashboard(
+            board=project.path("sales.yml").read_board(),
+            project=project,
+            adapter_registry=build_adapter_registry(project, read_only=False),
+            result_cache=None,
+            format="svg",
+            chart=chart,
+        )
+        match = re.search(r'<svg[^>]*\bwidth="([\d.]+)"', _svg(result))
+        assert match is not None
+        return match.group(1)
+
+    assert width("c1") == width(None)

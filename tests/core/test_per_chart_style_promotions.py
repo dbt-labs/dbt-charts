@@ -517,7 +517,7 @@ class TestKpiStylePromotion:
     """KpiStyle visual fields come from theme YAML (presence test)."""
 
     def test_kpi_visual_fields_present(self):
-        compiled = get_theme_style()
+        compiled = resolve_style_and_context(get_theme_style())[1].pre_style
         kpi = compiled.charts.kpi
         # Presence: field is set (not None, not missing — would raise AttributeError if absent)
         assert kpi.preferred_width > 0

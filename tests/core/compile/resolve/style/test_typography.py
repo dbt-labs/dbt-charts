@@ -85,7 +85,9 @@ class TestBoardMarginRegression:
         charts_style = resolve_chart_style_context(editorial)
         _, _, family = chart_title_spec(card_width, chart_style_context=charts_style)
 
-        title_family_first = editorial.title.font.family.split(",")[0].strip()
+        title_family_first = (
+            resolve_style(editorial).title.font.family.split(",")[0].strip()
+        )
         body_family_first = charts_style.font_family.split(",")[0].strip()
 
         assert family.startswith(title_family_first), (
@@ -144,7 +146,9 @@ class TestNarrowBoundary:
             _NARROW_MAX + 1.0, chart_style_context=charts_style
         )
 
-        title_family_first = editorial.title.font.family.split(",")[0].strip()
+        title_family_first = (
+            resolve_style(editorial).title.font.family.split(",")[0].strip()
+        )
         body_family_first = charts_style.font_family.split(",")[0].strip()
 
         assert below_family.startswith(body_family_first), (

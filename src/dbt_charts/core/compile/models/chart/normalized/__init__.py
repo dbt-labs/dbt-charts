@@ -17,6 +17,7 @@ Package layout (one family per file):
   geoshape.py   — GeoshapeChart
   callout.py    — CalloutChart
   spark_bar.py  — SparkBarChart
+  custom.py     — CustomChart
 
 Chart is a type alias over a Discriminator("type") union — not a BaseModel.
 Use TypeAdapter(Chart) for validation.
@@ -41,6 +42,7 @@ from ._base import (
 from .area import AreaChart
 from .bar import BarChart
 from .callout import CalloutChart
+from .custom import CustomChart
 from .geoshape import GeoshapeChart
 from .heatmap import HeatmapChart
 from .kpi import KpiChart
@@ -63,7 +65,8 @@ Chart = Annotated[
     | PointMapChart
     | GeoshapeChart
     | CalloutChart
-    | SparkBarChart,
+    | SparkBarChart
+    | CustomChart,
     Discriminator("type"),
 ]
 """Normalized chart union discriminated on ``type:``.
@@ -93,6 +96,7 @@ __all__ = [
     "PointMapChart",
     "ScatterChart",
     "SparkBarChart",
+    "CustomChart",
     "TableChart",
     # bases (exported for isinstance checks and type hints in tests/resolve v2)
     "_BaseChartFields",

@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from dbt_charts.core.compile.models.chart.authored import TableSpanner
 from dbt_charts.core.compile.models.style.authored import TableColumnDefaultsConfig
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedTableColumnConfig,
@@ -32,6 +33,10 @@ class ResolvedTableChart(_SharedResolvedChartFields):
     values: list[str] | None = Field(
         default=None,
         description="Pivot measure fields.",
+    )
+    spanners: list[TableSpanner] | None = Field(
+        default=None,
+        description="Authored column spanners.",
     )
     min_height: float | None = Field(default=None, description="Minimum height.")
     max_height: float | None = Field(default=None, description="Maximum height.")

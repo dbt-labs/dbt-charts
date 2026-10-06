@@ -7,7 +7,10 @@ from typing import Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format import (
+    column_format,
+    resolve_format,
+)
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTablePerSeries,
@@ -465,7 +468,7 @@ def _horizontal_rail_labels_would_collide(
     elif isinstance(normalized.y, list):
         series_field, y_field = WIDE_LABEL_FIELD, WIDE_VALUE_FIELD
         measure_data = unfold_wide_rows(data, y_fields, color)
-        wide_labels = wide_measure_labels_for(y_fields)
+        wide_labels = wide_measure_labels_for(y_fields, normalized.field_labels)
         series_names = raw_wide_series_names(y_fields, color, data)
         label_of_series = {
             raw: humanize_wide_series_name(raw, color, wide_labels)
@@ -762,17 +765,15 @@ def _resolve_bar(
     # ignores them for the two rungs that measure rows -- once, for every
     # family that calls it (see that function's own docstring), not here.
     color_domain_values = cartesian_color_domain_values(dataset, normalized.color)
-    top_legend_series = (
-        cartesian_top_legend_entries(
-            normalized.y if isinstance(normalized.y, str) else None,
-            normalized.y_label,
-            normalized.layers,
-            color_domain_values=color_domain_values,
-            has_color=normalized.color is not None,
-        )
-        if not is_stacked
-        else None
+    legend_entries = cartesian_top_legend_entries(
+        normalized.y if isinstance(normalized.y, str) else None,
+        normalized.y_label,
+        normalized.layers,
+        color_domain_values=color_domain_values,
+        has_color=normalized.color is not None,
+        field_labels=normalized.field_labels,
     )
+    top_legend_series = legend_entries if not is_stacked else None
     # A horizontal bar puts its dimension field on Vega-Lite's y-channel --
     # the axis a top legend's row actually loses width to (see
     # estimate_left_axis_reserve_px). Every other orientation keeps that
@@ -836,6 +837,7 @@ def _resolve_bar(
         suppress_wide_measure_series=wide_measure_series,
         multiples_wide_measure_series=wide_measure_series,
         top_legend_series=top_legend_series,
+        legend_entries=legend_entries,
         plot_height_estimate=plot_height_estimate,
         left_axis_reserve_px=left_axis_reserve_px,
         card_padding_px=chart_style_context.card_padding,
@@ -1149,6 +1151,7 @@ def _resolve_bar(
         layout_padding=bar.padding,
         suppress_legend=naming.suppress_legend or stack_legend_yield,
         top_legend=naming.top_legend,
+        wrap_legend=naming.wrap_legend,
         force_legend_visible=naming.force_legend_visible,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
     )
@@ -1215,6 +1218,11 @@ def _resolve_bar(
         chart_type="bar",
         y_start=normalized.y_start,
         measure_type=measure_type,
+        span_date_format=(
+            column_format("time", chart_style_context.formats)
+            if measure_type == "temporal"
+            else None
+        ),
         stack=resolved_stack,
         stacked_domain_max=stacked_domain_max,
         orientation=orientation,
@@ -1362,6 +1370,7 @@ def _resolve_histogram(
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=hist.padding,
+            wrap_legend=False,  # a histogram has one series, no legend entries
         ),
         **{
             **_cartesian_kwargs(

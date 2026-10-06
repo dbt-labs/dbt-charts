@@ -11,11 +11,11 @@ from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, Resolve
 from dbt_charts.core.compile.models.style.resolved import ResolvedPieStyle
 from dbt_charts.core.compile.models.style.theme import LegendAlign
 
-from ._base import _SharedResolvedChartFields
+from ._base import _PieResolvedChartFields
 from .table import ResolvedTableChart
 
 
-class ResolvedPieChart(_SharedResolvedChartFields):
+class ResolvedPieChart(_PieResolvedChartFields):
     """Render-ready pie or donut chart."""
 
     chart_type: Literal["pie"] = Field(

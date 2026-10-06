@@ -6,9 +6,9 @@ returns the predefined name ``"number"``, which the engine resolves to
 of full float or full-precision-string output.
 
 ``"number"`` is an engine-owned predefined name. It does not need to
-live in the theme's ``formats`` dict, and a user alias under the same name
-cannot shadow it (the compile step raises ``ERR-FORMAT-INVALID`` for any user
-alias that shadows a predefined name). An explicit column format always wins.
+live in the theme's ``formats`` dict; a board that redefines the name replaces
+the default. An explicit column
+format always wins.
 """
 
 from __future__ import annotations
@@ -17,12 +17,8 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.render.chart.table_support import format_table_cell_value
 from dbt_charts.core.render.format_utils import format_kpi_parts
 
-# Any non-empty formats dict — number absent because it is predefined.
-_FORMATS = {
-    "number": ",.2f",
-    "date_short": "%-d %b %Y",
-    "percent": ".1%",
-}
+# Any non-empty formats dict.
+_FORMATS = {"mine": ",.2f"}
 
 
 class TestUnformattedNumericDefault:
@@ -83,8 +79,6 @@ class TestUnformattedNumericDefault:
 class TestThemeCascadeSuppliesDefault:
     def test_predefined_number_independent_of_theme_formats(self) -> None:
         # "number" is predefined; themes need not include it in formats.
-        # Stark defines no format names but numeric defaults still work.
-        stark_formats = get_theme_style("stark").formats
-        assert stark_formats is not None
-        assert stark_formats.aliases is None
+        # Stark has no formats dict but numeric defaults still work.
+        assert get_theme_style("stark").formats is None
         assert format_table_cell_value(452342060.0, None, None) == "452 M"

@@ -11,13 +11,14 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.variables_layout import ControlSpec, lay_out_variables
 
 _WIDE = 1112.0
 
 
 def _style():
-    return get_theme_style().variables
+    return resolve_style(get_theme_style()).variables
 
 
 def _spec(name: str, input_type: str, label: str, value: str = "") -> ControlSpec:

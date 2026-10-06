@@ -29,6 +29,11 @@ from .conftest import chart_pane
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
+
+def _themed(name: str):
+    return resolve_style_and_context(get_theme_style(name))[1].pre_style
+
+
 EDITORIAL_THEMES = ["clarity", "paper"]
 
 
@@ -51,8 +56,8 @@ def _isolate_config_style():
 @pytest.mark.parametrize("theme_name", EDITORIAL_THEMES)
 def test_kpi_value_font_family_overrides_stark(theme_name: str) -> None:
     """The editorial-voiced themes set a serif `kpi.value.font.family` distinct from stark."""
-    stark = get_theme_style("stark").charts.kpi.value.font.family
-    editorial = get_theme_style(theme_name).charts.kpi.value.font.family
+    stark = _themed("stark").charts.kpi.value.font.family
+    editorial = _themed(theme_name).charts.kpi.value.font.family
     assert editorial is not None, (
         f"{theme_name}.charts.kpi.value.font.family is None — "
         f"default.yaml did not set the override."
@@ -121,8 +126,8 @@ def test_axis_domain_not_visible_by_default(theme_name, axis):
 
 def test_paper_inherits_clarity_kpi_value_font():
     """`paper` inherits its parent `clarity`'s KPI value font."""
-    parent = get_theme_style("clarity").charts.kpi.value.font.family
-    child = get_theme_style("paper").charts.kpi.value.font.family
+    parent = _themed("clarity").charts.kpi.value.font.family
+    child = _themed("paper").charts.kpi.value.font.family
     assert child == parent, (
         f"paper.charts.kpi.value.font.family is {child!r}, "
         f"clarity parent is {parent!r}; the `extends: clarity` "

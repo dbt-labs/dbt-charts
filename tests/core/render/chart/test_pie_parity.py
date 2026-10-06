@@ -163,6 +163,7 @@ def test_pie_emitter_uses_finalized_labels(pie_style: Any) -> None:
         style=rs,
         dark_companion_stops=("#0e4786",),
         **_base(),
+        field_labels={},
     )
     spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
     # Data rows in the spec must carry formatted labels, not raw numbers.
@@ -459,6 +460,7 @@ def test_pie_emitter_total_emits_joinaggregate_layer(pie_style: Any) -> None:
         style=rs,
         dark_companion_stops=("#0e4786",),
         **_base(),
+        field_labels={},
     )
     spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
     assert spec.mark == "layered"
@@ -514,6 +516,7 @@ def test_pie_emitter_total_label_layer_emitted(pie_style: Any) -> None:
         style=rs,
         dark_companion_stops=("#0e4786",),
         **_base(),
+        field_labels={},
     )
     spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
     # Find the static text label layer (the "Total Revenue" caption)
@@ -568,6 +571,7 @@ def test_pie_emitter_no_leader_labels_when_labels_none() -> None:
         style=rs,
         dark_companion_stops=("#0e4786",),
         **_base(),
+        field_labels={},
     )
     spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
     # Should have arc + total value + total label = 3 layers (NO leader label layer)

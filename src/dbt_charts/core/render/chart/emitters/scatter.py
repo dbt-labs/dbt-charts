@@ -60,7 +60,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     measure_axis_to_vl,
 )
 from dbt_charts.core.render.utils import normalize_data_types
-from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.text.case import field_display_text
 from dbt_charts.core.text.format_d3 import is_time_format
 
 
@@ -82,7 +82,7 @@ def _wide_scatter_fold(
     assert chart.wide_measures
     measures = list(chart.wide_measures)
     dimension = chart.color
-    wide_labels = wide_measure_labels_for(chart.wide_measures)
+    wide_labels = wide_measure_labels_for(chart.wide_measures, chart.field_labels)
     series = wide_series_names(measures, dimension, data, wide_labels)
     raw_series = raw_wide_series_names(measures, dimension, data)
     return fold_wide_measures(
@@ -181,7 +181,8 @@ class ScatterEmitter:
             None if chart.wide_measures else chart.y,
             chart.x_label,
             (
-                chart.y_label or wide_measures_title(chart.wide_measures)
+                chart.y_label
+                or wide_measures_title(chart.wide_measures, chart.field_labels)
                 if chart.wide_measures
                 else chart.y_label
             ),
@@ -189,6 +190,7 @@ class ScatterEmitter:
             ay,
             box,
             chart.id,
+            field_labels=chart.field_labels,
         )
         encoding: dict[str, Any] = {}
         transforms: list[VLDict] = []
@@ -390,10 +392,8 @@ class ScatterEmitter:
             color_ch = chart.resolved_channels.get("color")
             if color_ch is not None:
                 color_title = (
-                    format_display_text(
-                        color_ch.data_field,
-                        from_slug=True,
-                        font=chart.legend.title.font,
+                    field_display_text(
+                        color_ch.data_field, chart.field_labels, chart.legend.title.font
                     )
                     if color_ch.data_field
                     else None
@@ -433,8 +433,8 @@ class ScatterEmitter:
 
         if chart.size:
             size_enc = field_encoding(chart.size, "quantitative")
-            size_enc["title"] = format_display_text(
-                chart.size, from_slug=True, font=chart.legend.title.font
+            size_enc["title"] = field_display_text(
+                chart.size, chart.field_labels, chart.legend.title.font
             )
             # drop_values: chart.legend.values, when authored, is a
             # categorical reorder for the COLOR legend -- this is a
@@ -509,6 +509,7 @@ class ScatterEmitter:
                 base_stack_normalize=False,
                 base_stack_center=False,
                 multiples_scale_independent=multiples_scale_independent(chart),
+                field_labels=chart.field_labels,
             )
 
         return spec

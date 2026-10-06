@@ -248,6 +248,7 @@ def _v2_line(line_style, domain: list[int]):
         y="y",
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_v2_base_kwargs(),
+        field_labels={},
     )
 
 
@@ -275,6 +276,7 @@ def test_v2_area_y_ticks_and_scale_span_authored_domain(area_style) -> None:
         y="y",
         style=area_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_v2_base_kwargs(),
+        field_labels={},
     )
     y_enc = _v2_y_enc(chart, _BAND_DATA)
     _assert_spans_wide_domain(y_enc["axis"]["values"])
@@ -294,6 +296,7 @@ def test_v2_bar_y_ticks_and_scale_span_authored_domain(bar_style) -> None:
         y="y",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_v2_base_kwargs(),
+        field_labels={},
     )
     y_enc = _v2_y_enc(chart, _BAND_DATA)
     _assert_spans_wide_domain(y_enc["axis"]["values"])
@@ -331,6 +334,7 @@ def test_v2_stacked_bar_authored_domain_wins_over_stacked_totals(bar_style) -> N
         stack="zero",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_v2_base_kwargs(), "resolved_channels": {"color": color_ch}},
+        field_labels={},
     )
     y_enc = _v2_y_enc(chart, stacked_data)
     _assert_spans_wide_domain(y_enc["axis"]["values"])
@@ -353,6 +357,7 @@ def test_v2_scatter_y_ticks_span_authored_domain(scatter_style) -> None:
         y="y",
         style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_v2_base_kwargs(),
+        field_labels={},
     )
     _assert_spans_wide_domain(_v2_y_enc(chart, _BAND_DATA)["axis"]["values"])
 
@@ -381,6 +386,7 @@ def test_v2_zero_anchored_authored_domain_replaces_scale(chart_type, request) ->
         panel_axes=(),
         style=style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_v2_base_kwargs(),
+        field_labels={},
     )
     data = [{"month": f"2024-{i:02d}", "y": v} for i, v in enumerate([1.05, 1.13], 1)]
     scale = _v2_y_enc(chart, data)["scale"]

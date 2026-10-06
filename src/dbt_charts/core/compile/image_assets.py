@@ -3,7 +3,7 @@
 A relative ref resolves through ``resolve_image`` against the directory of the
 file its markdown was written in, and its bytes embed as a ``data:`` URI, so
 every export format shows the image with no separate asset serving. Remote
-refs pass through untouched: a render never fetches over the network.
+refs pass through untouched: nothing here fetches over the network.
 """
 
 from __future__ import annotations
@@ -24,8 +24,6 @@ from dbt_charts.core.compile.file_refs import (
 )
 from dbt_charts.core.compile.markdown_blocks import SpanRun, map_span_runs
 from dbt_charts.core.diagnostics.codes_render import ERR_IMAGE_REF_UNRESOLVED
-from dbt_charts.core.project import Project
-from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.utils import IMAGE_SUFFIXES
 from mdsvg import parse as parse_markdown
 from mdsvg.images import get_image_size
@@ -33,19 +31,20 @@ from mdsvg.types import AnyBlock, ImageBlock, SpanType
 
 if TYPE_CHECKING:
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
+    from dbt_charts.core.project import Project
 
-# The project the render in flight reads images from. Scoped, like
+# The project the compile or render in flight reads images from. Scoped, like
 # ``svg_cache_scope``, because images resolve in painters a dozen frames below
-# the render entry. The anchor is never ambient: each surface passes its
+# the entry point. The anchor is never ambient: each surface passes its
 # content's own ``base_dir``.
 _image_source: ContextVar[Project | None] = ContextVar("_image_source", default=None)
 
 
 @contextmanager
 def image_scope(project: Project) -> Generator[None]:
-    """Bind *project* as where images are read from for the duration of a render.
+    """Bind *project* as where images are read from for the duration of a compile or render.
 
-    Restored on exit, so a render nested in another puts the outer project back.
+    Restored on exit, so a scope nested in another puts the outer project back.
     """
     token = _image_source.set(project)
     try:
@@ -54,16 +53,16 @@ def image_scope(project: Project) -> Generator[None]:
         _image_source.reset(token)
 
 
-def _unresolved(ref: str, reason: str) -> RenderError:
+def _unresolved(ref: str, reason: str) -> CompilationError:
     # A data: ref is named by its header and size: echoing the payload turns a
     # one-line error into pages of base64 that mdsvg must wrap, slowly.
     if ref.lower().startswith("data:"):
         ref = f"{ref.partition(',')[0]},… ({max(1, round(len(ref) / 1024))} KB)"
-    return RenderError.from_code(ERR_IMAGE_REF_UNRESOLVED, ref=ref, reason=reason)
+    return CompilationError.from_code(ERR_IMAGE_REF_UNRESOLVED, ref=ref, reason=reason)
 
 
 def _validate_embeddable(url: str, ref: str) -> None:
-    """Raise ``RenderError`` if mdsvg cannot parse *url*'s own image payload.
+    """Raise ``CompilationError`` if mdsvg cannot parse *url*'s own image payload.
 
     mdsvg's size probe raises ``ValueError`` on a malformed payload (a renamed
     non-SVG ``.svg``, a truncated export, a raster header declaring a zero
@@ -79,7 +78,7 @@ def _validate_embeddable(url: str, ref: str) -> None:
 def _read_image(ref: str, base_dir: str | None) -> str:
     project = _image_source.get()
     if project is None:
-        raise _unresolved(ref, "this render has no project to read images from")
+        raise _unresolved(ref, "no project is in scope to read images from")
     written_in = None if base_dir is None else project.directory(base_dir)
     try:
         path = resolve_image(ref, written_in)
@@ -94,7 +93,7 @@ def resolve_image_ref(ref: str, base_dir: str | None) -> str:
     """Return an embeddable URL for *ref*, written in the file whose directory is
     *base_dir*, reading it from the project bound by ``image_scope``.
 
-    Raises ``RenderError`` (ERR-IMAGE-REF-UNRESOLVED) when a local ref does not
+    Raises ``CompilationError`` (ERR-IMAGE-REF-UNRESOLVED) when a local ref does not
     resolve or any embedded payload, local or an authored ``data:`` URI, is
     malformed.
     """
@@ -150,7 +149,7 @@ def rewrite_board_markdown_images(
     try:
         check_images_written_out(authored, rendered)
         return rewrite_markdown_images(blocks, base_dir)
-    except (CompilationError, RenderError) as exc:
+    except CompilationError as exc:
         if error_collector is not None:
             error_collector.append(exc.to_diagnostic())
         return list(parse_markdown(f"Image error: {exc.message}"))

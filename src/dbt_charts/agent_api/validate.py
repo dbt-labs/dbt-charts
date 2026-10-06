@@ -156,7 +156,10 @@ def _validate_one_path(
     if resolved.is_yaml:
         return [_validate_resolved(resolved, project, adapter_registry)]
 
-    boards = iter_expanded_board_files(project, resolved.relpath)
+    # No explicit path -> validate every board root (host + installed
+    # packages), not just the host charts/ dir `resolved` degenerated to.
+    under = None if path is None else resolved.relpath
+    boards = iter_expanded_board_files(project, under)
     if not boards:
         return [
             ValidateResult(

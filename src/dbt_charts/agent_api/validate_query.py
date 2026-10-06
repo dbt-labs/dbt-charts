@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Literal, overload
 
+from dbt_charts.core.compile.sql_guard import require_sqlglot_dialect
 from dbt_charts.core.inspect.query_validator import (
     QueryDiagnostic,
     validate_query as _core_validate,
 )
 
-__all__ = ["QueryDiagnostic", "validate_query"]
+__all__ = ["QueryDiagnostic", "require_sqlglot_dialect", "validate_query"]
 
 
 @overload

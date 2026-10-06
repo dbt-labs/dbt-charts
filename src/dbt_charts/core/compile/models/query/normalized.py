@@ -42,6 +42,7 @@ from dbt_charts.core.compile.models.cache import NEVER_CACHED, CachePolicy
 from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredQuery,
+    QueryDialect,
     RestMethod,
 )
 from dbt_charts.core.diagnostics.execution import SqlErrorPosition
@@ -219,6 +220,10 @@ class SqlQuery(Query):
     target: str | None = Field(
         default=None,
         description="dbt target name (defaults to 'dev' if not specified).",
+    )
+    dialect: QueryDialect | None = Field(
+        default=None,
+        description="Warehouse dialect the SQL is written in. Translated to the source's dialect when they differ.",
     )
     lenient_variables: bool = Field(
         default=False,

@@ -12,7 +12,7 @@ Three-way resolution contract (see predefined_formats.py's module docstring):
 | source         | behavior                                               |
 |----------------|---------------------------------------------------------|
 | enum member    | house rules: engine spec + round-aware trim             |
-| style.formats.aliases  | native d3: literal spec, no trim, no post-process       |
+| style.formats  | native d3: literal spec, no trim, no post-process       |
 | inline d3      | native d3: literal spec, no trim, no post-process       |
 
 House glyphs (MINUS, NULL_DISPLAY) are typography, not format semantics, and
@@ -21,16 +21,18 @@ remain universal regardless of resolution path.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal
 
 from d3_format import parse as _d3_parse
 from d3_format.errors import D3FormatError
+from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
     FormatAliases,
     FormatConfig,
+    Notation,
     ResolvedFormat,
     signs_before_prefix,
 )
@@ -45,12 +47,14 @@ from dbt_charts.core.text.format_d3 import (
 )
 from dbt_charts.core.text.numeral_scale import build_decimal_pad_table
 from dbt_charts.core.text.predefined_formats import (
+    ALL_PREDEFINED_NAMES,
     PREDEFINED_NUMBER_NAMES,
     PREDEFINED_SPECS,
     PREDEFINED_SUB_UNIT_FALLBACK,
     PREDEFINED_TIME_NAMES,
     PREDEFINED_TIME_SPECS,
     PredefinedNumberFormat,
+    PredefinedTimeFormat,
     si_sub_unit_floor,
 )
 
@@ -79,9 +83,10 @@ def resolve_format(
     """Convert format input to a d3 format string.
 
     Resolution order (three-way contract):
-    1. Predefined enum member — engine-owned spec with round-aware trim.
-    2. style.formats.aliases name — its preset, resolved as in 1, else its literal
-       target spec, no trim.
+    1. style.formats name — its preset, resolved as in 2, else its literal
+       target spec, no trim. A board redefining an engine name lands here,
+       so the author's spec replaces the engine's.
+    2. Predefined enum member — engine-owned spec with round-aware trim.
     3. Inline d3 passthrough — literal spec, no trim.
 
     This function itself never validates the passthrough case — compile-time
@@ -103,7 +108,15 @@ def resolve_format(
     if not format_str:
         return ""
 
-    # Path 1: predefined enum member — house rules, engine-owned spec + trim.
+    if (preset := _alias_preset(format_str, formats)) is not None:
+        return resolve_format(preset)
+    if formats and format_str in formats:
+        aliased = formats[format_str]
+        if isinstance(aliased, FormatConfig):
+            return aliased.spec or ""  # type-state: silent_fallback — no spec authored
+        return aliased
+
+    # Path 2: predefined enum member — house rules, engine-owned spec + trim.
     # Native predefined formatters (PREDEFINED_NATIVE) are not d3 specs; they
     # pass through as-is so format_value / format_kpi_parts can detect them.
     if format_str in PREDEFINED_NUMBER_NAMES:
@@ -112,15 +125,6 @@ def resolve_format(
         return round_aware_spec(PREDEFINED_SPECS[format_str])
     if format_str in PREDEFINED_TIME_NAMES:
         return PREDEFINED_TIME_SPECS[format_str]
-
-    # Path 2: user-defined alias — its preset's house spec, else native d3.
-    if (preset := _alias_preset(format_str, formats)) is not None:
-        return resolve_format(preset)
-    if formats and format_str in formats:
-        aliased = formats[format_str]
-        if isinstance(aliased, FormatConfig):
-            return aliased.spec or ""  # type-state: silent_fallback — no spec authored
-        return aliased
 
     # Path 3: inline d3 string — native d3, no trim.
     return format_str
@@ -137,6 +141,29 @@ def _alias_preset(
     if spec in PREDEFINED_NUMBER_NAMES or spec in PREDEFINED_TIME_NAMES:
         return spec
     return None
+
+
+def _resolved_raw(
+    raw: str | None, formats: Mapping[str, AuthoredFormat] | None
+) -> str | None:
+    """The identity downstream rules key on: the preset a name resolves to, the
+    author's literal spec when a board redefined an engine name (so the engine's
+    rules for that name stop applying), else the name itself."""
+    if (preset := _alias_preset(raw, formats)) is not None:
+        return preset
+    if raw in ALL_PREDEFINED_NAMES and formats and raw in formats:
+        target = formats[raw]
+        return (target.spec if isinstance(target, FormatConfig) else target) or None
+    return raw
+
+
+def sub_unit_spec(raw: str, formats: FormatAliases | None) -> str:
+    """The plain-digit spec an engine SI member swaps to below 1: the board's own
+    spec for the ``_full`` sibling if it redefined it, else the engine's."""
+    sibling = PREDEFINED_SUB_UNIT_FALLBACK[raw]
+    if formats and sibling in formats:
+        return resolve_format(sibling, formats)
+    return PREDEFINED_SPECS[sibling]
 
 
 def _alias_target(
@@ -225,6 +252,9 @@ def get_format_prefix_suffix(
 
 
 _OPTIONS = ("notation", "sign_placement", "repeat")
+# What a spec-less format takes from its default beside the spec: a redefined
+# default carries its own affix and options.
+_FILLED_FROM_DEFAULT = ("prefix", "suffix", *_OPTIONS)
 
 
 def _format_options(
@@ -255,7 +285,6 @@ def _format_fields(
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
     formats: FormatAliases | None,
-    no_format_default: str | None,
 ) -> dict[str, Any]:  # type-state: explicit_any — ResolvedFormat constructor kwargs
     if isinstance(format_input, ResolvedFormat):
         fields = dict(format_input)
@@ -268,12 +297,91 @@ def _format_fields(
             "prefix": prefix,
             "suffix": suffix,
             **options,
-            "raw": raw if (preset := _alias_preset(raw, formats)) is None else preset,
+            "raw": _resolved_raw(raw, formats),
         }
-    has_affix = fields["prefix"] or fields["suffix"] or fields["notation"] is not None
-    if no_format_default is not None and not fields["spec"] and has_affix:
-        fields["spec"] = resolve_format(no_format_default, formats)
-        fields["raw"] = no_format_default
+    return fields
+
+
+_Fields = dict[str, Any]  # type-state: explicit_any — ResolvedFormat constructor kwargs
+
+
+def _fill(fields: _Fields, lower: _Fields) -> _Fields:
+    """``fields`` with the spec of a lower tier, and any affix or option it
+    leaves unset."""
+    return (
+        fields
+        | {k: lower[k] for k in ("spec", "raw")}
+        | {k: lower[k] for k in _FILLED_FROM_DEFAULT if not fields[k]}
+    )
+
+
+_AnyFormat = dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+
+_DEFAULT_NAME = {
+    "number": PredefinedNumberFormat.number,
+    "time": PredefinedTimeFormat.date_short,
+}
+
+
+def column_format(
+    kind: Literal["number", "time"],
+    formats: FormatAliases | None,
+    fmt: AuthoredFormat | _AnyFormat | None = None,
+    *,
+    engine_default: Callable[[], str] | None = None,
+    values: Iterable[float | None] | None = None,
+    notation: Notation | None = None,
+) -> ResolvedFormat:
+    """The format a value of ``kind`` gets in one slot.
+
+    ``fmt`` is the slot's own format after the style cascade, if any. One with a
+    spec decides the look whole. Without one (no format, or only an affix), the
+    board's default for the kind decides: ``number`` or ``date_short`` through
+    ``formats``, so a name the board redefined supplies spec, affix and notation
+    together, and an affix ``fmt`` keeps its own.
+
+    ``engine_default`` is a destination's policy for the engine's own default,
+    returning the format name or spec to print instead (a KPI compacts it with
+    ``.2~s``, ``""`` leaves digits exact; a donut total says ``integer``). It
+    never replaces a board's redefinition of the default, which prints as
+    written; the name it returns resolves through ``formats`` whole, and the
+    default's own affix fills only what that name leaves unset.
+
+    ``values`` is what a Vega-painted slot will paint: Vega bakes one spec per
+    slot, so any value inside the sub-unit band pulls an engine SI member to its
+    plain-digit sibling. ``notation`` is the destination's register when the
+    format sets none.
+    """
+    fields = None if fmt is None else _format_fields(fmt, formats)
+    if fields is None or not fields["spec"]:
+        name = _DEFAULT_NAME[kind]
+        default = _format_fields(name, formats)
+        if engine_default is not None and default["raw"] == name:
+            # The destination's name resolves through the board like any other,
+            # so a board that redefined it (affix included) prints it whole.
+            instead = _format_fields(engine_default(), formats)
+            default = (
+                instead
+                | {"raw": instead["raw"] or None}
+                | {k: default[k] for k in _FILLED_FROM_DEFAULT if not instead[k]}
+            )
+        fields = default if fields is None else _fill(fields, default)
+    return ResolvedFormat(**_finished(fields, formats, values, notation))
+
+
+def _finished(
+    fields: _Fields,
+    formats: FormatAliases | None,
+    values: Iterable[float | None] | None,
+    notation: Notation | None,
+) -> _Fields:
+    """``fields`` with the destination's notation and the sub-unit vote applied."""
+    if notation is not None and fields["notation"] is None:
+        fields = fields | {"notation": notation}
+    if values is not None and fields["raw"] in PREDEFINED_SUB_UNIT_FALLBACK:
+        floor = si_sub_unit_floor(fields["spec"], fields["prefix"], fields["suffix"])
+        if any(v is not None and floor < abs(v) < 1.0 for v in values):
+            fields = fields | {"spec": sub_unit_spec(fields["raw"], formats)}
     return fields
 
 
@@ -315,41 +423,18 @@ def resolve_format_parts(
     | None,
     formats: FormatAliases | None = None,
     *,
-    no_format_default: str | None,
     spec: str | None = None,
+    notation: Notation | None = None,
 ) -> ResolvedFormat:
     """Resolve spec, prefix, suffix and notation; idempotent on a ``ResolvedFormat``.
 
-    ``no_format_default`` is the spec (and ``raw``) substituted when resolution
-    yields an affix but no spec; ``None`` leaves it spec-less. ``spec``, when
-    given, replaces the resolved digits (a baked tick spec).
+    Resolves what was authored and nothing more: a slot's default comes from
+    ``column_format``. ``spec``, when given, replaces the resolved digits (a
+    baked tick spec); ``notation`` is the destination's register when none is set.
     """
-    fields = _format_fields(format_input, formats, no_format_default)
+    fields = _finished(_format_fields(format_input, formats), formats, None, notation)
     if spec is not None:
         fields["spec"] = spec
-    return ResolvedFormat(**fields)
-
-
-def resolve_format_parts_for_values(
-    format_input: AuthoredFormat
-    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
-    | None,
-    formats: FormatAliases | None,
-    values: Iterable[float | None],
-    *,
-    no_format_default: str | None,
-) -> ResolvedFormat:
-    """Resolve a Vega-painted slot's format, voting its spec over its values.
-
-    Vega bakes one spec per slot, so any value inside the sub-unit band pulls
-    the whole slot to the preset's plain-digit sibling.
-    """
-    fields = _format_fields(format_input, formats, no_format_default)
-    raw = fields["raw"]
-    if raw in PREDEFINED_SUB_UNIT_FALLBACK:
-        floor = si_sub_unit_floor(fields["spec"], fields["prefix"], fields["suffix"])
-        if any(v is not None and floor < abs(v) < 1.0 for v in values):
-            fields["spec"] = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[raw]]
     return ResolvedFormat(**fields)
 
 
@@ -365,23 +450,11 @@ def resolve_label_format(
     """
     if raw is None:
         return None, False
-    parts = resolve_format_parts(
-        raw, formats, no_format_default=PredefinedNumberFormat.number
-    )
+    parts = column_format("number", formats, raw)
     if not parts.spec:
         return None, False
-    voted = resolve_format_parts_for_values(
-        raw, formats, values, no_format_default=PredefinedNumberFormat.number
-    )
+    voted = column_format("number", formats, raw, values=values)
     return voted, parts.is_house and is_d3_si_spec(parts.spec)
-
-
-# d3's first SI prefix ("k") engages at 1000. Below it, ".2s" doesn't compact —
-# it rounds to 2 significant figures on plain digits instead (131 -> "130"),
-# which drops information the author never asked to lose. Digit-integrity
-# rule: rounding is acceptable under SI compaction, never on plain digits —
-# so the default only compacts once compaction is real.
-_KPI_SI_COMPACT_THRESHOLD = 1000.0
 
 
 def kpi_format_native(
@@ -407,41 +480,34 @@ def finalize_kpi_value_format(
     value: float | None,
     formats: FormatAliases | None = None,
 ) -> ResolvedFormat | None:
-    """The headline's final format: narrative notation by default, and compact
-    SI (``.2~s``) when no spec is authored and ``|value| >= 1000``.
-
-    Below the threshold an unspecced value keeps its exact digits. An explicit
-    spec always wins.
+    """The headline's final format: ``column_format`` with the KPI's policy for
+    the engine's own ``number`` (``chart_rendering.kpi.compact_spec`` once
+    ``|value|`` reaches ``compact_threshold``, exact digits below it), and
+    narrative notation unless one is set. A date or text headline has no
+    numeric value, so no number look reaches it.
     """
-    compact_eligible = value is not None and abs(value) >= _KPI_SI_COMPACT_THRESHOLD
-    parts = (
-        resolve_format_parts(format_input, formats, no_format_default=None)
-        if format_input is not None
-        else None
-    )
-    # A predefined name stays a name: the sub-$1 money fallback keys on it.
-    spec = (parts.raw if parts.is_house else parts.spec) if parts is not None else None
-    notation = parts.notation if parts is not None else None
-    if notation is None:
-        notation = "narrative"
-    if not spec and notation in ("narrative", "analytic") and compact_eligible:
-        # 2 sig figs (the KPI precision) with trim. Not a predefined name: the
-        # predefined "compact" is 3 sig figs, one more than a tile wants.
-        # FormatConfig.notation above carries "narrative" so the inline spec still
-        # gets narrative register.
-        spec = ".2~s"
-    if format_input is None and not spec:
-        return None
-    return resolve_format_parts(
-        FormatConfig(
-            spec=spec or None,
-            prefix=(parts.prefix or None) if parts is not None else None,
-            suffix=(parts.suffix or None) if parts is not None else None,
-            notation=notation,
-        ),
+    kpi_rendering = get_chart_rendering().kpi
+
+    def compact() -> str:
+        # Not a predefined name: the predefined "compact" is 3 sig figs, one
+        # more than a tile wants.
+        reached = value is not None and abs(value) >= kpi_rendering.compact_threshold
+        return kpi_rendering.compact_spec if reached else ""
+
+    if value is None:
+        if format_input is None:
+            return None
+        return resolve_format_parts(format_input, formats, notation="narrative")
+    parts = column_format(
+        "number",
         formats,
-        no_format_default=None,
+        format_input,
+        engine_default=compact,
+        notation="narrative",
     )
+    if format_input is None and not (parts.spec or parts.prefix or parts.suffix):
+        return None
+    return parts
 
 
 def decimal_pad_table_for(

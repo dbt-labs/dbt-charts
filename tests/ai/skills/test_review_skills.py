@@ -53,7 +53,7 @@ class TestReviewSkillsParseAsValidSkills:
     """Each review skill is a valid Skill per dbt_charts.agent_api.skills.
 
     Description *length* is capped in one place for both skill corpora —
-    ``.claude/skills/skill-review/tests/test_description_budget.py``.
+    ``.claude/skills/skill-creator/tests/test_description_budget.py``.
     """
 
     def test_description_has_negative_boundary(self, name: str) -> None:
@@ -103,7 +103,8 @@ class TestStructuralReviewChecklist:
         assert "Chart-data shape" in body or "chart-data shape" in body.lower()
 
     def test_descriptive_metadata_section(self, body: str) -> None:
-        assert "notes:" in body
+        assert "Descriptive metadata" in body
+        assert "notes:" not in body
 
     def test_layout_intent_section(self, body: str) -> None:
         assert "Layout intent" in body or "layout intent" in body.lower()

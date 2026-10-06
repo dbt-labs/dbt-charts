@@ -1,3 +1,5 @@
+Using dbt Charts in your own project rather than developing it? Run `dct skills intro`.
+
 # dbt charts
 
 The dbt charts core engine: YAML board compiler, query executor, renderer, HTTP server, and inspector. The CLI (`dct`) and AI/MCP interfaces are thin wrappers over this package's Python APIs.
@@ -44,7 +46,7 @@ just test-file tests/<path>/test_foo.py::test_name  # one test
 
 `test-file` takes a package-relative path; in the monorepo run both from the repo root.
 
-**Changing a golden under `tests/visual/goldens/` requires `just viz-review` before pushing** — pre-push and the `visual` CI job check each golden's sha256 against an APPROVED viz-review artifact on the branch. Run it from the worktree holding the changed goldens; from any other checkout it silently no-ops. Workflow: `docs/contributing/visual-tests.md`.
+**Changing a golden under `tests/visual/goldens/` requires `just viz-review` before pushing** — pre-push and the `visual` CI job check each golden's sha256 against an APPROVED viz-review artifact on the branch. Run it from the worktree holding the changed goldens; from any other checkout it silently no-ops. Workflow: `docs/contributing/visual-tests.md`. Read `docs/contributing/visual-testing-methodology.md` before authoring, gating, or reviewing a visual specimen or golden.
 
 Put test output in a temp file so further searches can be done without re-running. Repeatedly running the suite without code changes is inefficient.
 
@@ -103,9 +105,8 @@ Comments in this package are about this library only — never about how it is h
 `libs/chart-svg/`.** *(Monorepo-only — the paths below don't exist in the
 exported OSS repo.)* The Rust port measures itself against this package —
 production is its differential *oracle*, not a consumer — so a render change
-moves the port's target by definition. Reconciling that is
-`chart-svg-sweep-nightly.yml`'s job, not yours: it ratchets the sweep nightly
-and, when one regresses, opens its own `chart-svg:` PR or files an issue. Do not mirror a semantic
+moves the port's target by definition. Reconciling that is the port's job, in
+its own `chart-svg:` PRs, not yours. Do not mirror a semantic
 into the Rust, do not refresh `libs/chart-svg/sweep/` baselines, and do not
 refresh the production-source citations the Rust comments carry — and reviewers must
 not ask for any of it. A render diff that also touches `libs/chart-svg/` is

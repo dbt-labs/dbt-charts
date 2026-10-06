@@ -42,7 +42,7 @@ from dbt_charts.core.render.chart.emitters._endpoint_rail import (
     endpoint_rail_layout,
     measure_label_pane_width,
 )
-from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.case import field_title
 from dbt_charts.core.utils import (
     VlSortOp,
     cumulative_stack_midpoints,
@@ -888,7 +888,9 @@ class EndpointLabelFeature:
             order_series_names = raw_wide_series_names(
                 chart.wide_measures, wide_dimension, domain_rows
             )
-            wide_measure_labels = wide_measure_labels_for(chart.wide_measures)
+            wide_measure_labels = wide_measure_labels_for(
+                chart.wide_measures, chart.field_labels
+            )
             # Color domain comes from wide_measures, not observed data: a
             # measure absent from every row would otherwise be missing and
             # desync the palette slot from the chart's own scale domain.
@@ -1178,7 +1180,7 @@ class EndpointLabelFeature:
         # `fill_by_label` lookup below reads that already-built scale, not a
         # re-derivation, so any divergence is a KeyError, not a cosmetic
         # mismatch.
-        base_label = chart.y_label or default_axis_title(y_field)
+        base_label = chart.y_label or field_title(y_field, chart.field_labels)
         entries: list[tuple[str, ChartRenderData, str, str]] = [
             (base_label, data, x_field, y_field)
         ]
@@ -1193,7 +1195,7 @@ class EndpointLabelFeature:
                 datasets.get(layer.query_name) if layer.query_name is not None else None
             )
             rows = own_data if own_data is not None else data
-            label = layer.label or default_axis_title(layer_y)
+            label = layer.label or field_title(layer_y, chart.field_labels)
             entries.append((label, rows, layer_x, layer_y))
 
         # The categorical-x endpoint (_anchor_rows) is deliberately not applied

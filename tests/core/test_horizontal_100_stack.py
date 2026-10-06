@@ -276,7 +276,7 @@ _WIDE_STACK_DATA = [
 ]
 # The long-form "series" values are spelled with a space, not an underscore,
 # on purpose: a wide chart's legend/scale domain is now the HUMANIZED measure
-# name (default_axis_title("non_named") == "non named"), so this is what a
+# name (field_title("non_named") == "non named"), so this is what a
 # long-form color: chart's raw data would have to say to render byte-identical
 # legend text -- the geometry-parity tests below compare rendered SVG paths,
 # which shift a hair when the legend text (and thus its pixel width) differs.
@@ -360,7 +360,7 @@ class TestLayersStackNormalize:
         assert chart_pane["encoding"]["color"]["field"] == WIDE_LABEL_FIELD
 
     def test_wide_measure_series_labels_are_humanized(self) -> None:
-        """A wide chart's color domain is default_axis_title(measure), not
+        """A wide chart's color domain is field_title(measure), not
         the raw column name -- matching the humanized text a long-form
         color: chart of equivalent data would need for byte-identical
         rendering (see _LONG_STACK_DATA's own comment)."""

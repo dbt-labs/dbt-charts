@@ -78,7 +78,7 @@ queries:
 
   monthly_revenue: |
     SELECT
-      strftime(o.order_date, '%Y-%m') as month,
+      date_trunc('month', o.order_date) as month,
       SUM(o.revenue) as total_revenue,
       COUNT(*) as order_count,
       SUM(o.quantity) as total_quantity
@@ -89,7 +89,7 @@ queries:
       AND {{ filter('o.region', region) }}
       AND {{ filter('p.category', category) }}
       AND {{ filter('p.product_name', product) }}
-    GROUP BY strftime(o.order_date, '%Y-%m')
+    GROUP BY date_trunc('month', o.order_date)
     ORDER BY month
 
   revenue_by_region: |

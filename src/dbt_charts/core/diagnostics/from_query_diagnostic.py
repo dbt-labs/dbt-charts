@@ -1,6 +1,6 @@
 """Adapter: QueryDiagnostic → Diagnostic.
 
-``QueryDiagnostic.code`` is already one of the four registered WARN-* query
+``QueryDiagnostic.code`` is already one of the registered WARN-* query
 codes (core/diagnostics/codes_query.py) — this adapter builds the message
 through that code's own message_template and carries the validator's richer
 ``severity``/``confidence``/``detail``/``evidence`` as typed fields, rather
@@ -27,7 +27,7 @@ def from_query_diagnostic(query_name: str, diag: QueryDiagnostic) -> Diagnostic:
     without parsing a concatenated string.
     """
     wc = REGISTRY.get(diag.code)  # also validates diag.code is registered
-    # QueryDiagnostic.code is one of the four query codes (all WarningCode —
+    # QueryDiagnostic.code is a query code (all WarningCode —
     # see _QUERY_CODES in query_validator.py); narrow to reach fix_template,
     # which lives on WarningCode/ErrorCode independently, not the base.
     if not isinstance(wc, WarningCode):

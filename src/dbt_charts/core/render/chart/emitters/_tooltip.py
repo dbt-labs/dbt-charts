@@ -52,10 +52,6 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     _affixed_digits_expr,
     sign_affixed_expr,
 )
-from dbt_charts.core.text.predefined_formats import (
-    PREDEFINED_TIME_SPECS,
-    PredefinedTimeFormat,
-)
 from dbt_charts.core.utils import coerce_numeric_cell
 
 # Zero-width Unicode "format" characters (general category Cf — the same
@@ -315,8 +311,6 @@ _DURATION_UNITS: tuple[tuple[str, float, float, str], ...] = (
     ("week", 7, 56, ".1~f"),
     ("month", 30.4375, math.inf, ".1~f"),
 )
-# The house date, as every other date the board prints (19 Sep 2026).
-SPAN_DATE_FORMAT = PREDEFINED_TIME_SPECS[PredefinedTimeFormat.date_short]
 
 
 def _days_expr(end_field: str, start_field: str) -> str:
@@ -440,7 +434,6 @@ __all__ = [
     "field_cardinality",
     "header_tooltip_field",
     "series_row_promoted",
-    "SPAN_DATE_FORMAT",
     "span_duration_expr",
     "span_duration_unit",
     "span_rises_only",

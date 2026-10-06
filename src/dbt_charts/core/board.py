@@ -66,6 +66,8 @@ from dbt_charts.core.project import (
     Project,
     ProjectDirectory,
     ProjectPath,
+    board_slug,
+    is_package_relpath,
 )
 
 # Probe once at import time: avoids repeated find_spec calls and avoids
@@ -90,12 +92,12 @@ def _relationship_context(project: Project) -> RelationshipContext | None:
 
 
 from dbt_charts.core.compile.compiler import validate_compiled_queries
+from dbt_charts.core.compile.image_assets import image_scope
 from dbt_charts.core.dbt_ref_check import check_manifest_refs
 from dbt_charts.core.render import RenderError, render
 from dbt_charts.core.render.board_links import LinkContext
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.dir_context import lazy_dir_context
-from dbt_charts.core.render.image_assets import image_scope
 from dbt_charts.core.render_format import RenderFormat
 
 # "failed" — no output produced (board_error, or validation_errors from a failed
@@ -166,10 +168,14 @@ def _view_url(
         return None
     from urllib.parse import urlencode
 
-    rel = PurePosixPath(board_path.relpath).with_suffix("")
-    if rel.is_relative_to(CHARTS_SUBDIR):
-        rel = rel.relative_to(CHARTS_SUBDIR)
-    url_path = rel.as_posix()
+    relpath = board_path.relpath
+    if is_package_relpath(relpath):
+        url_path = board_slug(relpath)
+    else:
+        rel = PurePosixPath(relpath).with_suffix("")
+        if rel.is_relative_to(CHARTS_SUBDIR):
+            rel = rel.relative_to(CHARTS_SUBDIR)
+        url_path = rel.as_posix()
     qs = "?" + urlencode(variables) if variables else ""
     return f"http://localhost:{port}/{url_path}{qs}"
 
@@ -414,20 +420,23 @@ def render_dashboard(
         )
     else:
         assert board is not None  # guaranteed by the check above
-        if board.path is not None:
-            result = compile_file(board)
-        else:
-            # Pathless in-memory content: no meta.yml cascade to run, so
-            # compile the string directly — the historical yaml_content arm.
-            result = compile(
-                board.content,
-                base_dir=project.directory(CHARTS_SUBDIR),
-                project_sources=project.sources,
-                project_cache=project.cache,
-                host_default_source=_charts_meta_default_source(
-                    project.directory(CHARTS_SUBDIR)
-                ),
-            )
+        # An authored chart_focus measures the board's title and text, images
+        # included, when it pins the chart's slot width at compile.
+        with image_scope(project):
+            if board.path is not None:
+                result = compile_file(board)
+            else:
+                # Pathless in-memory content: no meta.yml cascade to run, so
+                # compile the string directly — the historical yaml_content arm.
+                result = compile(
+                    board.content,
+                    base_dir=project.directory(CHARTS_SUBDIR),
+                    project_sources=project.sources,
+                    project_cache=project.cache,
+                    host_default_source=_charts_meta_default_source(
+                        project.directory(CHARTS_SUBDIR)
+                    ),
+                )
     _t_compile = time.perf_counter()
 
     if not result.success:
@@ -446,7 +455,8 @@ def render_dashboard(
         # variables) instead of the whole board. Unknown ids fail loudly with
         # the available chart ids — never fall back to the full dashboard.
         try:
-            compiled_board = focus_on_chart(compiled_board, chart)
+            with image_scope(project):
+                compiled_board = focus_on_chart(compiled_board, chart)
         except ValueError as exc:
             return _input_error(str(exc))
     if compiled_board is None:

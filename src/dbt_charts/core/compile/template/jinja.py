@@ -51,12 +51,15 @@ from dbt_charts.core.compile.errors import (
     JinjaError,
     TemplateOutputTooLargeError,
 )
+from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.compile.template.output_budget import (
     TemplateOutputBudgetExceeded,
     render_with_budget,
 )
+from dbt_charts.core.diagnostics.codes_compile import ERR_QUERY_DIALECT_MIXED
+from dbt_charts.core.diagnostics.codes_execute import ERR_SQL_DIALECT_UNSUPPORTED
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +426,44 @@ def detect_query_dependencies(queries: dict[str, Any]) -> dict[str, list[str]]:
     _detect_circular(dependencies)
 
     return dependencies
+
+
+def check_dialect_composition(queries: Mapping[str, AnyQuery]) -> None:
+    """Enforce the compile-time rules for queries that set `dialect:`.
+
+    Every `{{ queries.X }}` embedding must share its host's dialect, an unset
+    `dialect:` counting as a value. A `{{ queries.X.cache }}` reference runs the
+    composing SQL on DuckDB, so its `dialect:` must be duckdb or unset.
+
+    Raises:
+        CompilationError: ERR-QUERY-DIALECT-MIXED or ERR-SQL-DIALECT-UNSUPPORTED
+            on the first violation.
+    """
+    for name, query in queries.items():
+        if not is_sql_query(query):
+            continue
+        if query.dialect not in (None, "duckdb") and _CACHE_REF_RE.search(query.sql):
+            raise CompilationError.from_code(
+                ERR_SQL_DIALECT_UNSUPPORTED,
+                read=query.dialect,
+                write="duckdb",
+                reason=(
+                    f"query {name!r} reads {{{{ queries.X.cache }}}}, which "
+                    "composes over cached rows in duckdb, so write it in duckdb"
+                ),
+            )
+        for dep_name in _QUERY_REF_RE.findall(query.sql):
+            dep = queries.get(dep_name)
+            if dep is not None and is_sql_query(dep) and dep.dialect != query.dialect:
+                raise CompilationError.from_code(
+                    ERR_QUERY_DIALECT_MIXED,
+                    query_name=name,
+                    dialect=query.dialect
+                    or "unset",  # type-state: silent_fallback — display label in the error, not a value used downstream
+                    dep_name=dep_name,
+                    dep_dialect=dep.dialect
+                    or "unset",  # type-state: silent_fallback — display label in the error, not a value used downstream
+                )
 
 
 def _detect_circular(dependencies: dict[str, list[str]]) -> None:

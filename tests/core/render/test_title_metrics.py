@@ -10,14 +10,14 @@ from pathlib import Path
 
 import pytest
 
+from dbt_charts.core.compile.image_assets import image_scope
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.render.image_assets import image_scope
+from dbt_charts.core.compile.resolve.style.markdown_style import title_blocks
 from dbt_charts.core.render.sizing import (
     get_theme_style,
     get_title_height,
     title_baseline_offset,
-    title_blocks,
     title_line_box,
 )
 from dbt_charts.core.render.svg_utils import render_title

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from dbt_charts.core.compile.models.markers import (
     Color,
     Inherit,
+    InheritSlot,
     Url,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -84,7 +85,7 @@ class FooterStyle(BaseModel):
         default=None,
         description="URL the footer brand phrase 'dbt charts' links to; null renders plain text.",
     )
-    font: FontStyle = Field(
+    font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
         default_factory=FontStyle,
         description="Footer text font style (size and color required).",
     )
@@ -104,6 +105,8 @@ class FooterStyle(BaseModel):
         Require both at cascade-resolve time so misconfiguration fails loudly
         rather than emitting empty or literal-None attribute values.
         """
+        if self.font.extends is not None:
+            return self  # the named font supplies size and color
         if self.font.size is None:
             raise ValueError("style.footer.font.size is required (float)")
         if self.font.color is None:
@@ -130,7 +133,7 @@ class TimestampStyle(BaseModel):
         "'UTC'), else compile rejects it: an unlabeled clock reads as local."
     )
     y: float = Field(description="Y-coordinate for top-positioned timestamp in pixels.")
-    font: FontStyle = Field(
+    font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
         default_factory=FontStyle,
         description="Timestamp font style overrides (size, color, weight, ...).",
     )
@@ -142,6 +145,8 @@ class TimestampStyle(BaseModel):
         Require both at cascade-resolve time so misconfiguration fails loudly
         rather than emitting empty or literal-None attribute values.
         """
+        if self.font.extends is not None:
+            return self  # the named font supplies size and color
         if self.font.size is None:
             raise ValueError("style.timestamp.font.size is required (float)")
         if self.font.color is None:

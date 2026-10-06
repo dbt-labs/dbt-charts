@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from dbt_charts.core.compile.models.chart.authored import TableSpanner
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 
 from ._base import _SharedChartFields
@@ -26,6 +27,9 @@ class TableChart(_SharedChartFields):
         default=None, description="Pivot column dimension fields."
     )
     values: list[str] | None = Field(default=None, description="Pivot measure fields.")
+    spanners: list[TableSpanner] | None = Field(
+        default=None, description="Authored column spanners."
+    )
     height: int | float | None = Field(
         default=None, description="Explicit chart height in pixels."
     )

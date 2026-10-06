@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.markers import Color, Merge, Strategy
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     FormatConfig,
+    NamedFont,
     SpacingValues,
 )
 from dbt_charts.core.compile.models.schema_names import PaletteName
@@ -36,22 +37,6 @@ from dbt_charts.core.compile.models.style.theme.page import (
 from dbt_charts.core.compile.models.style.theme.variables import (
     VariablesStyle,
 )
-
-
-class FormatsStyle(BaseModel):
-    """Format settings. Fixed keys, so an author's names sit in a map of their own."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    # None = no names at this cascade level; an authored `aliases: null`
-    # clears every inherited one. Names merge key-wise down the cascade.
-    aliases: dict[str, str | FormatConfig] | None = Field(
-        default=None,
-        description=(
-            "Format names: each key is a name charts, tables and KPIs can use as a "
-            "format, each value a format spec or a format with a prefix/suffix."
-        ),
-    )
 
 
 class Style(BaseModel):
@@ -131,11 +116,28 @@ class Style(BaseModel):
     ] = Field(
         description="Data-freshness chrome: visibility, placement, format, and font."
     )
-    # None = no format settings at this cascade level; an authored
-    # `formats: null` clears every inherited one.
-    formats: FormatsStyle | None = Field(
+    # Cascade-managed sentinel — None means "no aliases at this cascade level" (not empty).
+    # The default theme ships None (all built-in names are engine-predefined, not theme aliases).
+    # Board YAML patches may supply user-defined aliases (→ dict) or omit (→ None).
+    # merge_onto_base key-wise merges board-level aliases onto theme aliases so board keys win
+    # while unredefined theme keys propagate. None is intentional here — unlike other
+    # Compiled fields the theme populates, this sentinel distinguishes "no override"
+    # from "empty override" across every cascade step, not just the base.
+    formats: dict[str, str | FormatConfig] | None = Field(
         default=None,
-        description="Format settings: the board's own format names under `aliases`.",
+        description="Format alias map; None means no aliases at this cascade level.",
+    )
+    # Named-font registry, merged key-wise like ``formats`` (board keys win, other
+    # theme keys propagate). ``name: null`` removes an entry, applied in
+    # merge_onto_base, so the value type admits None. Names are expanded into
+    # slots by ``expand_named_fonts`` once the whole cascade has merged.
+    fonts: Annotated[dict[str, NamedFont | None] | None, Merge(Strategy.DEEP)] = Field(
+        default=None,
+        description=(
+            "Named fonts other font slots reference as ``font: <name>`` or "
+            "``font: {extends: <name>, ...}``. ``heading`` carries the H1–H6 "
+            "ramp in ``sizes``; ``name: null`` removes an entry."
+        ),
     )
     # Theme palette role assignments.
     # Keys (role names) stay open — no enforced enum. Values are looked up as
@@ -195,3 +197,34 @@ class Style(BaseModel):
     gap: Annotated[float | None, Merge(Strategy.OVERRIDE, nested=Strategy.CHILD)] = (
         Field(default=None, description="Per-board gap between layout items in pixels.")
     )
+
+    @model_validator(mode="after")
+    def _validate_fonts(self) -> Style:
+        for name, font in self.fonts.items() if self.fonts is not None else ():
+            if font is None:
+                continue
+            if name != "heading" and font.sizes is not None:
+                raise ValueError(
+                    f"Only the 'heading' font takes sizes (the H1–H6 ramp); "
+                    f"'{name}' sets size."
+                )
+            if name == "heading" and font.size is not None:
+                raise ValueError("The 'heading' font takes sizes (H1–H6), not size.")
+        ramp = self.heading_ramp()
+        level = self.title.level
+        if isinstance(level, int) and level > len(ramp):
+            raise ValueError(
+                f"style.title.level={level} exceeds the H-ramp (style.fonts.heading."
+                f"sizes has {len(ramp)} entries; valid range is 1..{len(ramp)})"
+            )
+        return self
+
+    def heading_ramp(self) -> list[float]:
+        """The H1–H6 sizes from ``style.fonts.heading.sizes``."""
+        heading = self.fonts.get("heading") if self.fonts is not None else None
+        if heading is None or heading.sizes is None:
+            raise ValueError(
+                "style.fonts.heading.sizes is required: board titles, markdown "
+                "headings and chart titles read the H1–H6 ramp from it."
+            )
+        return heading.sizes

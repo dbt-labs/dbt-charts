@@ -122,7 +122,7 @@ QUERY_BOARD = _ai_tool("query_board", QueryBoardArgs)
 
 DESCRIBE_BOARD = _ai_tool("describe_board", DescribeBoardArgs)
 
-LIST_SKILLS = {
+LIST_SKILLS: dict[str, Any] = {
     "name": "list_skills",
     "description": (
         "List all agent skills packaged with dct. "

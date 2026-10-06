@@ -116,21 +116,33 @@ _KPI_B: dict = {
 
 
 def test_bar_constructs(bar_style: ResolvedBarStyle) -> None:
-    c = ResolvedBarChart(panel_axes=(), id="b", chart_type="bar", style=bar_style, **_C)
+    c = ResolvedBarChart(
+        panel_axes=(), id="b", chart_type="bar", style=bar_style, **_C, field_labels={}
+    )
     assert c.chart_type == "bar"
     assert c.id == "b"
 
 
 def test_line_constructs(line_style: ResolvedLineStyle) -> None:
     c = ResolvedLineChart(
-        panel_axes=(), id="l", chart_type="line", style=line_style, **_C
+        panel_axes=(),
+        id="l",
+        chart_type="line",
+        style=line_style,
+        **_C,
+        field_labels={},
     )
     assert c.chart_type == "line"
 
 
 def test_area_constructs(area_style: ResolvedAreaStyle) -> None:
     c = ResolvedAreaChart(
-        panel_axes=(), id="a", chart_type="area", style=area_style, **_C
+        panel_axes=(),
+        id="a",
+        chart_type="area",
+        style=area_style,
+        **_C,
+        field_labels={},
     )
     assert c.chart_type == "area"
 
@@ -142,13 +154,19 @@ def test_scatter_constructs(scatter_style: ResolvedScatterStyle) -> None:
         chart_type="scatter",
         style=scatter_style,
         **_C,
+        field_labels={},
     )
     assert c.chart_type == "scatter"
 
 
 def test_heatmap_constructs(heatmap_style: ResolvedHeatmapStyle) -> None:
     c = ResolvedHeatmapChart(
-        panel_axes=(), id="h", chart_type="heatmap", style=heatmap_style, **_C
+        panel_axes=(),
+        id="h",
+        chart_type="heatmap",
+        style=heatmap_style,
+        **_C,
+        field_labels={},
     )
     assert c.chart_type == "heatmap"
 
@@ -167,6 +185,7 @@ def test_pie_constructs(pie_style: ResolvedPieStyle) -> None:
         style=pie_style,
         dark_companion_stops=(),
         **_B,
+        field_labels={},
     )
     assert c.theta == "share"
 
@@ -187,6 +206,7 @@ def test_pie_rejects_partial_attachment(pie_style: ResolvedPieStyle) -> None:
             dark_companion_stops=(),
             attached_table_width=200.0,
             **_B,
+            field_labels={},
         )
 
 
@@ -204,13 +224,20 @@ def test_table_constructs(table_style: ResolvedTableStyle) -> None:
 
 def test_point_map_constructs(point_map_style: ResolvedPointMapStyle) -> None:
     c = ResolvedPointMapChart(
-        id="pm", chart_type="point_map", style=point_map_style, collapse=False, **_B
+        id="pm",
+        chart_type="point_map",
+        style=point_map_style,
+        collapse=False,
+        **_B,
+        field_labels={},
     )
     assert c.chart_type == "point_map"
 
 
 def test_geoshape_constructs(geoshape_style: ResolvedGeoshapeStyle) -> None:
-    c = ResolvedGeoshapeChart(id="g", chart_type="geoshape", style=geoshape_style, **_B)
+    c = ResolvedGeoshapeChart(
+        id="g", chart_type="geoshape", style=geoshape_style, **_B, field_labels={}
+    )
     assert c.chart_type == "geoshape"
 
 
@@ -350,6 +377,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             {
                 "id": "b",
                 "chart_type": "bar",
+                "field_labels": {},
                 "style": {
                     "series_label": _SERIES_LABEL_D,
                     "mark": {},
@@ -369,6 +397,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             {
                 "id": "l",
                 "chart_type": "line",
+                "field_labels": {},
                 "style": {
                     "series_label": _SERIES_LABEL_D,
                     "line_mark": _LINE_MARK_D,
@@ -389,6 +418,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             {
                 "id": "a",
                 "chart_type": "area",
+                "field_labels": {},
                 "style": {
                     "series_label": _SERIES_LABEL_D,
                     "area_mark": _AREA_MARK_D,
@@ -410,6 +440,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             {
                 "id": "s",
                 "chart_type": "scatter",
+                "field_labels": {},
                 "style": {
                     "point_mark": {},
                     "single_series_fill": "#4C72B0",
@@ -426,6 +457,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             {
                 "id": "h",
                 "chart_type": "heatmap",
+                "field_labels": {},
                 "style": {
                     "color_gradient": None,
                     "rect_mark": {},
@@ -442,6 +474,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             {
                 "id": "p",
                 "chart_type": "pie",
+                "field_labels": {},
                 "resolution_width": 600.0,
                 "outer_fraction": 0.9,
                 "attached_table_gap": 12.0,
@@ -481,6 +514,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             {
                 "id": "pm",
                 "chart_type": "point_map",
+                "field_labels": {},
                 "collapse": False,
                 "style": {
                     "point_mark": {},
@@ -495,6 +529,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
             {
                 "id": "g",
                 "chart_type": "geoshape",
+                "field_labels": {},
                 "style": {
                     "tooltip_format": "",
                 },
@@ -535,7 +570,9 @@ def test_dispatch_missing_discriminator_raises() -> None:
 
 
 def test_bar_is_frozen(bar_style: ResolvedBarStyle) -> None:
-    c = ResolvedBarChart(panel_axes=(), id="b", chart_type="bar", style=bar_style, **_C)
+    c = ResolvedBarChart(
+        panel_axes=(), id="b", chart_type="bar", style=bar_style, **_C, field_labels={}
+    )
     with pytest.raises(ValidationError):
         c.id = "mutated"  # type: ignore[misc]
 
@@ -575,6 +612,7 @@ def test_bar_rejects_theta(bar_style: ResolvedBarStyle) -> None:
             theta="share",
             style=bar_style,
             **_C,
+            field_labels={},
         )  # type: ignore[call-arg]
 
 
@@ -593,6 +631,7 @@ def test_pie_rejects_x() -> None:
             x="month",
             dark_companion_stops=(),
             **_B,
+            field_labels={},
         )
 
 
@@ -615,7 +654,7 @@ def test_kpi_rejects_x() -> None:
 
 def test_pie_requires_theta() -> None:
     with pytest.raises(ValidationError):
-        ResolvedPieChart(id="p", chart_type="pie")
+        ResolvedPieChart(id="p", chart_type="pie", field_labels={})
 
 
 def test_kpi_requires_value() -> None:
@@ -640,12 +679,12 @@ def test_table_requires_style() -> None:
 
 def test_geoshape_requires_style() -> None:
     with pytest.raises(ValidationError):
-        ResolvedGeoshapeChart(id="g", chart_type="geoshape")
+        ResolvedGeoshapeChart(id="g", chart_type="geoshape", field_labels={})
 
 
 def test_point_map_requires_style() -> None:
     with pytest.raises(ValidationError):
-        ResolvedPointMapChart(id="pm", chart_type="point_map")
+        ResolvedPointMapChart(id="pm", chart_type="point_map", field_labels={})
 
 
 def test_spark_bar_requires_style() -> None:
@@ -667,6 +706,7 @@ def test_bar_has_stack_and_orientation(bar_style: ResolvedBarStyle) -> None:
         orientation="horizontal",
         style=bar_style,
         **_C,
+        field_labels={},
     )
     assert c.stack == "zero"
     assert c.orientation == "horizontal"
@@ -681,6 +721,7 @@ def test_scatter_has_size_and_shape(scatter_style: ResolvedScatterStyle) -> None
         shape="cat",
         style=scatter_style,
         **_C,
+        field_labels={},
     )
     assert c.size == "pop"
     assert c.shape == "cat"
@@ -736,7 +777,9 @@ def test_resolved_callout_style_has_tone() -> None:
 
 def test_bar_style_slice_is_family_narrowed(bar_style: ResolvedBarStyle) -> None:
     """ResolvedBarChart.style is a ResolvedBarStyle, not a full charts-style bag."""
-    c = ResolvedBarChart(panel_axes=(), id="b", chart_type="bar", style=bar_style, **_C)
+    c = ResolvedBarChart(
+        panel_axes=(), id="b", chart_type="bar", style=bar_style, **_C, field_labels={}
+    )
     assert isinstance(c.style, ResolvedBarStyle)
 
 
@@ -744,6 +787,11 @@ def test_heatmap_style_slice_is_family_narrowed(
     heatmap_style: ResolvedHeatmapStyle,
 ) -> None:
     c = ResolvedHeatmapChart(
-        panel_axes=(), id="h", chart_type="heatmap", style=heatmap_style, **_C
+        panel_axes=(),
+        id="h",
+        chart_type="heatmap",
+        style=heatmap_style,
+        **_C,
+        field_labels={},
     )
     assert isinstance(c.style, ResolvedHeatmapStyle)

@@ -1,9 +1,9 @@
-"""Tests for font.case pipeline: slug_to_text, apply_font_case, format_display_text.
+"""Tests for font.case pipeline: slug_to_text, apply_font_case, field_display_text.
 
 Written before implementation (TDD). These tests drive:
 - slug_to_text: tokenization + unit/abbreviation expansion, NO casing
 - apply_font_case: delegates to apply_case via ResolvedFontStyle.case
-- format_display_text: two-step pipeline (slug_to_text → apply_font_case)
+- field_display_text: authored field label verbatim, else slug_to_text → case
 - Cascade: child font.case overrides root none
 - Enum: 'none' is the preserve/no-op value (not 'preserve')
 """
@@ -51,6 +51,35 @@ def test_slug_to_text_kebab_case() -> None:
 
 def test_slug_to_text_single_word() -> None:
     assert slug_to_text("revenue") == "revenue"
+
+
+@pytest.mark.parametrize(
+    ("slug", "expected"),
+    [
+        ("$/MTok in / out", "$/MTok in / out"),
+        ("Cache-read $/MTok", "Cache read $/MTok"),
+        ("pgSQL_hackers", "pgSQL hackers"),
+        ("iPhone_units", "iPhone units"),
+        ("Order_Month", "Order Month"),
+    ],
+)
+def test_slug_to_text_keeps_mixed_case_tokens(slug: str, expected: str) -> None:
+    """A mixed-case token only survives a case-folding warehouse when quoted."""
+    assert slug_to_text(slug) == expected
+
+
+@pytest.mark.parametrize(
+    ("slug", "expected"),
+    [
+        ("REVENUE_USD", "revenue ($)"),
+        ("REVENUE", "revenue"),
+        ("YOY_GROWTH_PCT", "YoY growth (%)"),
+        ("Api_Id", "API ID"),
+    ],
+)
+def test_slug_to_text_folds_single_case_tokens(slug: str, expected: str) -> None:
+    """All-caps is indistinguishable from warehouse folding; tables still match."""
+    assert slug_to_text(slug) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -150,114 +179,55 @@ def test_apply_font_case_upper() -> None:
 
 
 # ---------------------------------------------------------------------------
-# format_display_text: full two-step pipeline
+# field_title / field_display_text: authored field_labels win, verbatim
 # ---------------------------------------------------------------------------
 
 
-def test_format_display_text_authored_none() -> None:
-    """Authored string + case=none passes through unchanged."""
-    from dbt_charts.core.text.case import format_display_text
-
-    font = ResolvedFontStyle(
+def _font(case: str) -> ResolvedFontStyle:
+    return ResolvedFontStyle(
         family="sans-serif",
         color="#000000",
         size=12.0,
         weight="400",
         style="normal",
         decoration="none",
-        case="none",
+        case=case,
         line_height=1.25,
         tabular_figures=False,
     )
-    assert (
-        format_display_text("Quarterly Revenue", from_slug=False, font=font)
-        == "Quarterly Revenue"
-    )
 
 
-def test_format_display_text_authored_title() -> None:
-    """Authored string + case=title applies title case."""
-    from dbt_charts.core.text.case import format_display_text
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("none", "revenue ($)"),
+        ("title", "Revenue ($)"),
+    ],
+)
+def test_field_display_text_derived_takes_font_case(case: str, expected: str) -> None:
+    from dbt_charts.core.text.case import field_display_text
 
-    font = ResolvedFontStyle(
-        family="sans-serif",
-        color="#000000",
-        size=12.0,
-        weight="400",
-        style="normal",
-        decoration="none",
-        case="title",
-        line_height=1.25,
-        tabular_figures=False,
-    )
-    assert (
-        format_display_text("quarterly revenue by region", from_slug=False, font=font)
-        == "Quarterly Revenue by Region"
-    )
+    assert field_display_text("revenue_usd", {}, _font(case)) == expected
 
 
-def test_format_display_text_slug_none() -> None:
-    """Slug + case=none: slug_to_text runs (spaces, suffixes) but no casing."""
-    from dbt_charts.core.text.case import format_display_text
+def test_field_display_text_abbreviation_survives_title_case() -> None:
+    from dbt_charts.core.text.case import field_display_text
 
-    font = ResolvedFontStyle(
-        family="sans-serif",
-        color="#000000",
-        size=12.0,
-        weight="400",
-        style="normal",
-        decoration="none",
-        case="none",
-        line_height=1.25,
-        tabular_figures=False,
-    )
-    # revenue_usd → slug_to_text → "revenue ($)" → no case change
-    assert (
-        format_display_text("revenue_usd", from_slug=True, font=font) == "revenue ($)"
-    )
+    assert field_display_text("yoy_growth_pct", {}, _font("title")) == "YoY Growth (%)"
 
 
-def test_format_display_text_slug_title() -> None:
-    """Slug + case=title: slug_to_text then title case."""
-    from dbt_charts.core.text.case import format_display_text
+def test_field_display_text_authored_label_is_verbatim() -> None:
+    from dbt_charts.core.text.case import field_display_text
 
-    font = ResolvedFontStyle(
-        family="sans-serif",
-        color="#000000",
-        size=12.0,
-        weight="400",
-        style="normal",
-        decoration="none",
-        case="title",
-        line_height=1.25,
-        tabular_figures=False,
-    )
-    # revenue_usd → slug_to_text → "revenue ($)" → title → "Revenue ($)"
-    assert (
-        format_display_text("revenue_usd", from_slug=True, font=font) == "Revenue ($)"
-    )
+    labels = {"fix-linked": "fix-linked"}
+    assert field_display_text("fix-linked", labels, _font("title")) == "fix-linked"
 
 
-def test_format_display_text_slug_title_with_abbreviation() -> None:
-    """Abbreviations survive slug_to_text + title case."""
-    from dbt_charts.core.text.case import format_display_text
+def test_field_title_skips_case_and_prefers_authored_label() -> None:
+    from dbt_charts.core.text.case import field_title
 
-    font = ResolvedFontStyle(
-        family="sans-serif",
-        color="#000000",
-        size=12.0,
-        weight="400",
-        style="normal",
-        decoration="none",
-        case="title",
-        line_height=1.25,
-        tabular_figures=False,
-    )
-    # yoy_growth_pct → "YoY growth (%)" → title → "YoY Growth (%)"
-    assert (
-        format_display_text("yoy_growth_pct", from_slug=True, font=font)
-        == "YoY Growth (%)"
-    )
+    assert field_title("order_month", {}) == "order month"
+    assert field_title("order_month", {"order_month": "Month"}) == "Month"
 
 
 def test_font_case_cascade_none_not_in_theme_resolves() -> None:

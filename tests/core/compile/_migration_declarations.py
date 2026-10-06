@@ -60,7 +60,9 @@ def validate_declarations(registry: MigrationRegistry) -> None:
                 "immediately succeeding schema"
             )
         target_schema_obj = catalog.schema_for(move.target_schema)
-        if not _schema_path_exists(target_schema_obj, move.new_path):
+        if not _schema_path_exists(
+            target_schema_obj, move.new_path, open_map_keys=True
+        ):
             raise MigrationError(
                 f"Move destination path {_format_path(move.new_path)!r} is absent from "
                 f"{move.target_schema}"

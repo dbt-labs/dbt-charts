@@ -19,8 +19,8 @@ from pydantic import BaseModel
 from d3_format import format as _d3_format
 from dbt_charts.core.compile.format import (
     check_anchored_sign,
+    column_format,
     resolve_format_parts,
-    resolve_format_parts_for_values,
     tick_min_step_for_format,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
@@ -76,7 +76,6 @@ from dbt_charts.core.text.numeral_scale import (
 )
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SUB_UNIT_FALLBACK,
-    PredefinedNumberFormat,
 )
 
 # Fields on AxisLabelStyle (base) that are optional VL passthroughs.
@@ -652,11 +651,7 @@ def build_resolved_axis(
         mirror_tick_label: ResolvedTickLabel | None = None
         if authored_mirror is not None and authored_mirror.format is not None:
             # One shared scale: the mirror paints the primary's digits.
-            mirror_format = resolve_format_parts(
-                authored_mirror.format,
-                formats,
-                no_format_default=PredefinedNumberFormat.number,
-            )
+            mirror_format = column_format("number", formats, authored_mirror.format)
             if not tick_values and mirror_format.raw in PREDEFINED_SUB_UNIT_FALLBACK:
                 mirror_tick_label = ladderless_tick_label(mirror_format, measure_values)
             elif (
@@ -669,17 +664,13 @@ def build_resolved_axis(
                     mirror_format.spec, abs(tick_values[1] - tick_values[0])
                 )
                 mirror_format = resolve_format_parts(
-                    authored_mirror.format,
+                    mirror_format,
                     formats,
-                    no_format_default=PredefinedNumberFormat.number,
                     spec=with_symbol(mirror_digits, mirror_symbol),
                 )
             else:
-                mirror_format = resolve_format_parts_for_values(
-                    authored_mirror.format,
-                    formats,
-                    tick_values,
-                    no_format_default=PredefinedNumberFormat.number,
+                mirror_format = column_format(
+                    "number", formats, authored_mirror.format, values=tick_values
                 )
             if mirror_tick_label is None:
                 mirror_tick_label = affix_tick_label(mirror_format, tick_values)
@@ -929,7 +920,7 @@ def _merge_axis_cascade(
     plus any band_position found along the way.
 
     ``base.labels.format`` on the returned axis is the *raw*, pre-resolution
-    format string (a predefined name like ``"number"``, a ``style.formats.aliases``
+    format string (a predefined name like ``"number"``, a ``style.formats``
     alias key, or a literal d3 spec) — whichever layer (theme default or an
     authored one) won the merge last. This function does not resolve it and
     tracks no provenance about which tier wrote it — see
@@ -1197,7 +1188,6 @@ def resolved_axis_style(
             resolve_format_parts(
                 base.labels.format,
                 chart_style_context.formats,
-                no_format_default=None,
             )
             if base.labels.format is not None
             else None

@@ -95,6 +95,7 @@ def _bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
         y="revenue",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -107,6 +108,7 @@ def _line(line_style: ResolvedLineStyle) -> ResolvedLineChart:
         y="value",
         style=line_style,
         **_C,
+        field_labels={},
     )
 
 
@@ -119,6 +121,7 @@ def _area(area_style: ResolvedAreaStyle) -> ResolvedAreaChart:
         y="value",
         style=area_style,
         **_C,
+        field_labels={},
     )
 
 
@@ -183,6 +186,7 @@ def _scatter(scatter_style: ResolvedScatterStyle) -> ResolvedScatterChart:
         y="y_val",
         style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -196,6 +200,7 @@ def _heatmap(heatmap_style: ResolvedHeatmapStyle) -> ResolvedHeatmapChart:
         y="row",
         style=heatmap_style.model_copy(update={"axis_x": hm_ax, "axis_y": hm_ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -213,12 +218,17 @@ def _pie(pie_style: ResolvedPieStyle) -> ResolvedPieChart:
         style=pie_style,
         dark_companion_stops=("#0e4786",),
         **_PB,
+        field_labels={},
     )
 
 
 def _geoshape(geoshape_style: ResolvedGeoshapeStyle) -> ResolvedGeoshapeChart:
     return ResolvedGeoshapeChart(
-        id="geo1", chart_type="geoshape", style=geoshape_style, **_B
+        id="geo1",
+        chart_type="geoshape",
+        style=geoshape_style,
+        **_B,
+        field_labels={},
     )
 
 
@@ -230,6 +240,7 @@ def _point_map(point_map_style: ResolvedPointMapStyle) -> ResolvedPointMapChart:
         collapse=False,
         style=point_map_style,
         **_B,
+        field_labels={},
     )
 
 
@@ -595,6 +606,7 @@ def test_point_map_size_scale_pins_domain_floor_to_zero(
         size="magnitude",
         style=point_map_style,
         **_B,
+        field_labels={},
     )
     spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), []))
     assert spec.encoding["size"]["scale"]["domainMin"] == 0
@@ -683,6 +695,7 @@ def test_line_emit_point_overlay_layers_when_point_size_set() -> None:
         # canvas overridden alongside background: it is opaque, so
         # composited-over-canvas equals itself (see ink_canvas's docstring).
         **{**_C, "background": bg, "canvas": bg},
+        field_labels={},
     )
     spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), []))
     vl = translate_to_vl(spec)
@@ -759,6 +772,7 @@ def test_line_dashes_merge_color_and_strokedash_legend(
             "resolved_channels": {"color": color_ch},
             "legend": shown_legend,
         },
+        field_labels={},
     )
     data = [
         {"month": "2025-01", "value": 1, "series": "alpha"},
@@ -826,6 +840,7 @@ def test_scatter_categorical_y_sort_stays_out_of_bar_stack_blast_radius(
         style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         panel_axes=(),
         **_C,
+        field_labels={},
     )
     data = [{"team": "Onboarding", "hours": 1.8}, {"team": "Support", "hours": 2.4}]
     spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
@@ -882,6 +897,7 @@ def test_heatmap_authored_sort_reaches_y_encoding(
         sort=ChartSort(by="val", order="desc"),
         style=heatmap_style.model_copy(update={"axis_x": hm_ax, "axis_y": hm_ay}),
         **_C,
+        field_labels={},
     )
     data = [
         {"col": "Feb", "row": "low", "val": 2},
@@ -921,6 +937,7 @@ def test_wide_heatmap_unauthored_sort_reaches_every_layer_y(
         y=["low", "zeta", "high", "alpha"],
         style=heatmap_style.model_copy(update={"axis_x": hm_ax, "axis_y": hm_ay}),
         **_C,
+        field_labels={},
     )
     data = [{"col": "Feb"}, {"col": "Jan"}]
     spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
@@ -950,6 +967,7 @@ def test_wide_heatmap_authored_sort_reaches_every_layer_y(
         sort=ChartSort(by="seq", order="desc"),
         style=heatmap_style.model_copy(update={"axis_x": hm_ax, "axis_y": hm_ay}),
         **_C,
+        field_labels={},
     )
     # Query row order, alphabetical order and sort-desc-by-seq order are all
     # different for these three values -- same discriminating shape as
@@ -1002,6 +1020,7 @@ def test_bar_stack_in_y_encoding_not_config(bar_style: ResolvedBarStyle) -> None
         stack="normalize",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     spec = BarEmitter().emit(
         bar, _DEFAULT_BOX, regroup((), [{"month": "Jan", "revenue": 100}])
@@ -1032,6 +1051,7 @@ def test_vertical_bar_suppresses_legend_when_legend_visible_false(
             "resolved_channels": {"color": ch},
             "legend": _default_legend().model_copy(update={"visible": False}),
         },
+        field_labels={},
     )
     spec = BarEmitter().emit(
         bar, _DEFAULT_BOX, regroup((), [{"month": "Jan", "cat": "a", "revenue": 5}])
@@ -1065,6 +1085,7 @@ def test_horizontal_stacked_bar_emits_stack_order(bar_style: ResolvedBarStyle) -
         orientation="horizontal",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, "resolved_channels": {"color": ch}},
+        field_labels={},
     )
     data = [
         {"team": "A", "priority": "low", "tickets": 5},
@@ -1099,6 +1120,7 @@ def test_horizontal_grouped_bar_no_stack_order(bar_style: ResolvedBarStyle) -> N
         orientation="horizontal",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, "resolved_channels": {"color": ch}},
+        field_labels={},
     )
     spec = BarEmitter().emit(
         bar, _DEFAULT_BOX, regroup((), [{"team": "A", "priority": "low", "tickets": 5}])
@@ -1140,6 +1162,7 @@ def test_vertical_stacked_bar_degenerate_stack_follows_query_order(
             "resolved_channels": {"color": ch},
             "legend": _default_legend().model_copy(update={"visible": True}),
         },
+        field_labels={},
     )
     data = [
         {"quarter": "Q1", "fruit": "mango", "revenue": 30},
@@ -1192,6 +1215,7 @@ def test_horizontal_stacked_bar_degenerate_stack_follows_query_order(
             "resolved_channels": {"color": ch},
             "legend": _default_legend().model_copy(update={"visible": True}),
         },
+        field_labels={},
     )
     data = [
         {"quarter": "Q1", "fruit": "mango", "revenue": 30},
@@ -1236,6 +1260,7 @@ def test_support_table_series_order_strip_returns_stacked_order_verbatim(
         stack="zero",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, "resolved_channels": {"color": ch}},
+        field_labels={},
     )
     data = [{"quarter": "Q1", "fruit": "mango", "revenue": 30}]
     order = _series_order_strip(
@@ -1269,6 +1294,7 @@ def test_support_table_series_order_strip_falls_back_when_chart_pins_none(
         stack="zero",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, "resolved_channels": {"color": ch}},
+        field_labels={},
     )
     # Deliberately NOT alphabetical-order-equivalent: sum-ranked descending
     # (apple=90, mango=30, cherry=10) must read differently from
@@ -1310,6 +1336,7 @@ def test_vertical_stacked_bar_degenerate_stack_honors_authored_stack_order(
             "resolved_channels": {"color": ch},
             "legend": _default_legend().model_copy(update={"visible": True}),
         },
+        field_labels={},
     )
     data = [
         {"quarter": "Q1", "fruit": "mango", "revenue": 30},
@@ -1350,6 +1377,7 @@ def test_vertical_stacked_bar_degenerate_stack_skipped_on_quantitative_x(
             "resolved_channels": {"color": ch},
             "legend": _default_legend().model_copy(update={"visible": True}),
         },
+        field_labels={},
     )
     data = [
         {"code": 1, "fruit": "mango", "revenue": 30},
@@ -1395,6 +1423,7 @@ def test_horizontal_stacked_bar_degenerate_stack_honors_authored_sort(
             "resolved_channels": {"color": ch},
             "legend": _default_legend().model_copy(update={"visible": True}),
         },
+        field_labels={},
     )
     data = [
         {"quarter": "Q1", "fruit": "mango", "revenue": 30, "tier": "C"},
@@ -1441,6 +1470,7 @@ def test_vertical_stacked_bar_degenerate_stack_with_repeated_color(
             "resolved_channels": {"color": ch},
             "legend": _default_legend().model_copy(update={"visible": True}),
         },
+        field_labels={},
     )
     data = [
         {"day": "Mon", "status": "C", "count": 5},
@@ -1481,6 +1511,7 @@ def test_vertical_stacked_bar_with_gradient_color_emits_no_order(
         orientation="vertical",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, "resolved_channels": {"color": ch}},
+        field_labels={},
     )
     spec = BarEmitter().emit(
         bar, _DEFAULT_BOX, regroup((), [{"team": "A", "score": 5, "tickets": 5}])
@@ -1518,6 +1549,7 @@ def test_bar_gradient_color_hinge_pivots_at_zero(bar_style: ResolvedBarStyle) ->
         orientation="horizontal",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **{**_C, "resolved_channels": {"color": ch}},
+        field_labels={},
     )
     data = [
         {"category": "A", "profit": 56000, "profit_ratio": 0.35},
@@ -1561,6 +1593,7 @@ def test_bar_vertical_honors_chart_sort_field(bar_style: ResolvedBarStyle) -> No
         sort=ChartSort(by="age_order", order="asc"),
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     spec = BarEmitter().emit(
         bar, _DEFAULT_BOX, regroup((), [{"age_band": "1 · <= 7", "tickets": 5}])
@@ -1600,6 +1633,7 @@ def test_area_emit_honors_baked_zero_scale(area_style: ResolvedAreaStyle) -> Non
         y="revenue",
         style=area_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     spec = AreaEmitter().emit(
         area,
@@ -1639,6 +1673,7 @@ def test_pie_emitter_donut_uses_vl_expr(pie_style: ResolvedPieStyle) -> None:
         style=pie_style.model_copy(update={"inner_radius": 0.6}),
         dark_companion_stops=("#0e4786",),
         **_PB,
+        field_labels={},
     )
     spec = PieEmitter().emit(pie, _DEFAULT_BOX, regroup((), [{"sales": 100}]))
     assert spec.mark == "layered"
@@ -1676,6 +1711,7 @@ def test_pie_emitter_solid_pie_sets_inner_radius_zero(
         style=pie_style,
         dark_companion_stops=("#0e4786",),
         **_PB,
+        field_labels={},
     )
     spec = PieEmitter().emit(pie, _DEFAULT_BOX, regroup((), [{"sales": 100}]))
     assert spec.mark == "layered"
@@ -1705,6 +1741,7 @@ def test_bar_emit_multi_measure_folds_to_one_unit_spec(
         wide_measures=("revenue", "cost"),
         style=bar_style,
         **_C,
+        field_labels={},
     )
     spec = BarEmitter().emit(
         bar, _DEFAULT_BOX, regroup((), [{"month": "Jan", "revenue": 100, "cost": 80}])
@@ -1737,6 +1774,7 @@ def test_bar_emit_multi_measure_horizontal_categorical_on_y(
         orientation="horizontal",
         style=bar_style,
         **_C,
+        field_labels={},
     )
     data = [{"category": "A", "revenue": 100, "cost": 80}]
     spec = BarEmitter().emit(bar, _DEFAULT_BOX, regroup((), data))
@@ -1776,6 +1814,7 @@ def test_bar_emit_mixed_sign_split_keeps_y_on_outer_encoding_and_per_layer_radiu
         y="value",
         style=radius_style,
         **_C,
+        field_labels={},
     )
     data = [
         {"month": "Jan", "value": 100},
@@ -1832,6 +1871,7 @@ def test_bar_emit_mixed_sign_split_declares_axis_only_on_outer_encoding(
         y="value",
         style=radius_style,
         **_C,
+        field_labels={},
     )
     data = [
         {"month": "Jan", "value": 100},
@@ -1880,6 +1920,7 @@ def test_emitter_sets_palette_in_config(bar_style: ResolvedBarStyle) -> None:
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
     spec = BarEmitter().emit(
         bar, _DEFAULT_BOX, regroup((), [{"month": "Jan", "revenue": 100}])
@@ -1921,6 +1962,7 @@ def test_heatmap_color_scheme_in_color_encoding_not_config(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
     spec = HeatmapEmitter().emit(
         hm_with_color, _DEFAULT_BOX, regroup((), [{"col": "A", "row": "1", "value": 1}])
@@ -1937,6 +1979,7 @@ def test_heatmap_color_scheme_in_color_encoding_not_config(
         y="row",
         style=blues_style.model_copy(update={"axis_x": _hm_ax, "axis_y": _hm_ay}),
         **_C,
+        field_labels={},
     )
     spec2 = HeatmapEmitter().emit(
         hm_no_color, _DEFAULT_BOX, regroup((), [{"col": "A", "row": "1"}])
@@ -1975,6 +2018,7 @@ def test_heatmap_color_gradient_domain_min_max_reaches_scale(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
     spec = HeatmapEmitter().emit(
         hm_with_color, _DEFAULT_BOX, regroup((), [{"col": "A", "row": "1", "value": 1}])
@@ -2019,6 +2063,7 @@ def test_heatmap_hinge_domain_matches_legend_endpoint_labels(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
     data = [
         {"col": "A", "row": "1", "value": 56000},
@@ -2063,6 +2108,7 @@ def test_heatmap_emits_visible_color_legend_by_default(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         layout_padding=_ZERO_PADDING,
         title_style=_DEFAULT_CHARTS.title,
+        field_labels={},
     )
     spec = HeatmapEmitter().emit(
         chart, _DEFAULT_BOX, regroup((), [{"col": "A", "row": "1", "value": 1}])
@@ -2099,6 +2145,7 @@ def test_heatmap_legend_visible_false_suppresses_color_legend(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         layout_padding=_ZERO_PADDING,
         title_style=_DEFAULT_CHARTS.title,
+        field_labels={},
     )
     spec = HeatmapEmitter().emit(
         chart, _DEFAULT_BOX, regroup((), [{"col": "A", "row": "1", "value": 1}])
@@ -2178,6 +2225,7 @@ def test_geoshape_projection_in_typed_field_not_config(
         geo_projection_type="albersUsa",
         style=geoshape_style,
         **_B,
+        field_labels={},
     )
     spec = GeoshapeEmitter().emit(geo, _DEFAULT_BOX, regroup((), []))
     assert "projection" not in spec.config
@@ -2211,6 +2259,7 @@ def test_geoshape_choropleth_bad_key_raises_chart_data_error(
         value_field="pop",
         style=geoshape_style,
         **_B,
+        field_labels={},
     )
     data = [
         {"state_name": "California", "pop": 39_500_000},
@@ -2233,6 +2282,7 @@ def test_geoshape_complex_projection_emits_params(
         geo_projection_params={"center": [-96, 38], "scale": 1200},
         style=geoshape_style,
         **_B,
+        field_labels={},
     )
     spec = GeoshapeEmitter().emit(geo, _DEFAULT_BOX, regroup((), []))
     assert spec.projection == {
@@ -2281,6 +2331,7 @@ def test_geoshape_categorical_color_field_uses_board_slot(
                 )
             },
         },
+        field_labels={},
     )
     data = [
         {"state_name": "California", "status": "Warm"},
@@ -2344,6 +2395,7 @@ def test_pie_emitter_color_uses_only_resolved_channels(
         style=pie_style,
         dark_companion_stops=("#0e4786",),
         **_PB,
+        field_labels={},
     )
     data: list[dict[str, Any]] = []  # empty → resolved_channels won't have color
     spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
@@ -2453,6 +2505,7 @@ def test_geoshape_emitter_color_uses_only_resolved_channels(
         chart_type="geoshape",
         style=geoshape_style,
         **_B,
+        field_labels={},
     )
     data: list[dict[str, Any]] = []
     spec = GeoshapeEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
@@ -2523,6 +2576,7 @@ def test_heatmap_emitter_string_series_color_is_nominal(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
     data = [{"cat": "A", "sub": "X", "category": "low"}]
     spec = HeatmapEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
@@ -2555,6 +2609,7 @@ def test_heatmap_emitter_numeric_axis_fields_are_nominal(
         y="day_of_week",
         style=heatmap_style.model_copy(update={"axis_x": _n_ax, "axis_y": _n_ay}),
         **_C,
+        field_labels={},
     )
     data = [{"hour_of_day": h, "day_of_week": "Mon"} for h in range(24)]
     spec = HeatmapEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
@@ -2593,6 +2648,7 @@ def test_point_map_emitter_series_color_is_quantitative(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
     data = [{"lat": 37.0, "lon": -122.0, "intensity": 99}]
     spec = PointMapEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
@@ -3183,6 +3239,7 @@ def test_line_x_type_temporal_for_yearmonth_axis(line_style: ResolvedLineStyle) 
         y="value",
         style=line_style.model_copy(update={"axis_x": _yearmonth_axis()}),
         **_C,
+        field_labels={},
     )
     spec = LineEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     assert spec.encoding["x"]["type"] == "temporal"
@@ -3204,6 +3261,7 @@ def test_line_x_axis_label_expr_injected_for_yearmonth(
         y="value",
         style=line_style.model_copy(update={"axis_x": _yearmonth_axis()}),
         **_C,
+        field_labels={},
     )
     spec = LineEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     ax_vl = spec.encoding["x"]["axis"]
@@ -3225,6 +3283,7 @@ def test_line_yearweek_axis_uses_day_number_labels(
             update={"axis_x": _yearweek_axis(line_style.axis_x)}
         ),
         **_C,
+        field_labels={},
     )
     spec = LineEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARWEEK_DATA))
     axis = spec.encoding["x"]["axis"]
@@ -3257,6 +3316,7 @@ def test_line_y_scale_zero_true_when_axis_scale_zero(
             }
         ),
         **_C,
+        field_labels={},
     )
     spec = LineEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     scale = spec.encoding["y"]["scale"]
@@ -3282,6 +3342,7 @@ def test_area_x_type_temporal_for_yearmonth_axis(area_style: ResolvedAreaStyle) 
         y="value",
         style=area_style.model_copy(update={"axis_x": _yearmonth_axis()}),
         **_C,
+        field_labels={},
     )
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     assert spec.encoding["x"]["type"] == "temporal"
@@ -3302,6 +3363,7 @@ def test_area_x_axis_label_expr_injected_for_yearmonth(
         y="value",
         style=area_style.model_copy(update={"axis_x": _yearmonth_axis()}),
         **_C,
+        field_labels={},
     )
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     ax_vl = spec.encoding["x"]["axis"]
@@ -3323,6 +3385,7 @@ def test_area_yearweek_axis_uses_day_number_labels(
             update={"axis_x": _yearweek_axis(area_style.axis_x)}
         ),
         **_C,
+        field_labels={},
     )
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARWEEK_DATA))
     axis = spec.encoding["x"]["axis"]
@@ -3355,6 +3418,7 @@ def test_area_y_scale_zero_true_when_axis_scale_zero(
             }
         ),
         **_C,
+        field_labels={},
     )
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     scale = spec.encoding["y"]["scale"]
@@ -3381,6 +3445,7 @@ def _bar_yearmonth(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
         y="value",
         style=bar_style.model_copy(update={"axis_x": ax_ym, "axis_y": _zero_ay()}),
         **_C,
+        field_labels={},
     )
 
 
@@ -3444,6 +3509,7 @@ def test_bar_vertical_y_ticks_injected_in_axis(bar_style: ResolvedBarStyle) -> N
         y="value",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay_ticks}),
         **_C,
+        field_labels={},
     )
     spec = BarEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     # tick_values baked at resolve() are injected into axis.values by the emitter
@@ -3571,6 +3637,9 @@ def test_binding_capability_matches_every_authored_chart_family(
     from dbt_charts.core.compile.models.chart.normalized.callout import (
         CalloutChart as NormCalloutChart,
     )
+    from dbt_charts.core.compile.models.chart.normalized.custom import (
+        CustomChart as NormCustomChart,
+    )
     from dbt_charts.core.compile.models.chart.normalized.geoshape import (
         GeoshapeChart as NormGeoshapeChart,
     )
@@ -3608,6 +3677,9 @@ def test_binding_capability_matches_every_authored_chart_family(
     from dbt_charts.core.compile.resolve.style.category_colors import (
         categorical_channel_fields,
     )
+    from dbt_charts.core.compile.template.custom_chart_env import (
+        CustomTemplateHeader,
+    )
     from dbt_charts.core.render.chart.emitters import get_emitter
 
     # tag -> minimal normalized instance, with color="cat" set whenever the
@@ -3630,6 +3702,15 @@ def test_binding_capability_matches_every_authored_chart_family(
         "callout": NormCalloutChart(id="t", type="callout", message="hi"),
         "spark_bar": NormSparkBarChart(
             id="t", type="spark_bar", x="x", y="y", color="cat"
+        ),
+        "custom": NormCustomChart(
+            id="t",
+            type="custom",
+            template_name="inline svg:",
+            template_source="<g/>",
+            template_header=CustomTemplateHeader(),
+            channels={},
+            options={},
         ),
     }
     assert set(normalized_by_tag) == set(AUTHORED_CHART_TYPE_TAGS), (
@@ -3656,6 +3737,7 @@ def test_binding_capability_matches_every_authored_chart_family(
         "geoshape": True,
         "callout": False,
         "spark_bar": False,
+        "custom": False,
     }
     assert set(expected_capable) == set(AUTHORED_CHART_TYPE_TAGS)
 
@@ -3800,6 +3882,7 @@ def test_binding_capability_matches_every_authored_chart_family(
         category_colors=(scale,),
         style=geoshape_style,
         **{**_B, "palette": palette, "resolved_channels": channel},
+        field_labels={},
     )
     geo_data = [{"region": "r1", "cat": "A"}, {"region": "r2", "cat": "B"}]
     _proof(get_emitter(geo_chart).emit(geo_chart, _DEFAULT_BOX, regroup((), geo_data)))
@@ -3849,6 +3932,7 @@ def test_support_table_series_order_strip_stacked_area_honors_stack_order(
             update={"axis_x": ax, "axis_y": ay, "stack_order": "data"}
         ),
         **{**_C, "resolved_channels": {"color": ch}},
+        field_labels={},
     )
     # First-encounter (mango, apple, cherry) differs from sum order
     # (apple, mango, cherry) and alphabetical order (apple, cherry, mango).

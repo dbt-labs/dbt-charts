@@ -512,17 +512,18 @@ def test_quick_guide_example_reports_the_real_backgrounds(
 def test_short_title_sizes_reports_the_real_validation_error(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """A ``style.title.sizes`` override with fewer than 6 entries plus a
+    """A ``style.fonts.heading.sizes`` override with fewer than 6 entries plus a
     heading must surface the engine's own "must have 6 entries" message —
     not an unrelated ``min() iterable argument is empty`` from the contrast
     check racing ahead of that validation."""
     board_yaml = """
+style:
+  fonts:
+    heading:
+      sizes: [30, 20]
 rows:
   - text: |
       ### A heading
-    style:
-      title:
-        sizes: [30, 20]
 """
     result = _render(board_yaml, tmp_path, local_project)
     assert result.board_error is not None

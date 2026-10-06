@@ -955,10 +955,10 @@ rows:
         """
         import dataclasses
 
-        from dbt_charts.core.render.sizing import (
-            _measure_title_single_line_width,
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
             title_font_family,
         )
+        from dbt_charts.core.render.sizing import _measure_title_single_line_width
 
         style = self._board(self._MULTISELECT_BOARD).resolved_style
         # A distinctive family, not the theme's: the shipped default sets the

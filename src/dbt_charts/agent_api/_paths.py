@@ -27,6 +27,8 @@ from dbt_charts.core.project import (
     Project,
     ProjectPath,
     assert_relpath,
+    board_relpath_candidates,
+    board_roots,
     posix_relpath,
 )
 from dbt_charts.core.project_roots import (
@@ -214,14 +216,18 @@ def project_config_content_diagnostics(content: str, relpath: str) -> list[Diagn
     return _project_config_diagnostics_for_data(data, relpath)
 
 
-def iter_expanded_board_files(project: Project, under: str) -> list[ProjectPath]:
+def iter_expanded_board_files(project: Project, under: str | None) -> list[ProjectPath]:
     """Board files under ``under``, sorted — the shared directory-walk filter.
+
+    ``under`` ``None`` scans every board root (see ``Project.iter_boards``);
+    ``validate_paths`` uses this for its no-argument, whole-project default.
 
     Excludes private (leading-underscore) files, ``meta.yml``/``meta.yaml``
     cascade fragments, and inspect-manifest-owned directories: none of these
     are standalone boards. Shared by ``validate_paths`` and ``describe_paths``
     so the two verbs' expansion can't drift out of sync again.
     """
+
     # WHY: dbt_charts.core.inspect.manifest_utils triggers the inspect package
     # __init__, which eagerly imports TableInspector + grain/quality/semantic
     # detectors. Keep this lazy so `dct --help` doesn't pay that startup cost.
@@ -316,17 +322,20 @@ def resolve_board_relpath(relpath: PurePosixPath, project: Project) -> ProjectPa
     """Project-relative board identity -> ProjectPath, with the boards-first retry.
 
     The relpath-native counterpart to ``resolve_board_path``: for callers that
-    already hold a project-relative board identity (Cloud's context strings)
-    rather than a real filesystem path, this is the single owner of the
-    board-relative vs root-relative reconciliation — a bare name like
-    ``looker/x.yaml`` retries under ``CHARTS_SUBDIR`` when it doesn't exist at
-    root, without producing a ``charts/charts/...`` double prefix when the
-    caller already supplies the full ``charts/looker/x.yaml``.
+    already hold a project-relative board identity (Cloud's context strings,
+    or a bare author-facing slug like ``pkg_a/overview``) rather than a real
+    filesystem path, this is the single owner of the board-relative vs
+    root-relative reconciliation. Tries *relpath* as an exact existing file
+    first (no rewrite when the caller already supplies the full
+    ``charts/looker/x.yaml`` or ``dbt_packages/pkg_a/charts/overview.yml``),
+    then retries it as a slug across every board root (``board_roots``) —
+    resolving an extensionless name, a nested slug under any root, or a
+    package-namespaced slug (``pkg_a/overview``) alike.
 
     Existence is checked via ``project.exists(...)`` so it works for all
     ``Project`` implementations (FilesystemProject, CloudManagedProject
     git-blob store, etc.) — not just the local filesystem. Paths that exist
-    at root resolve from root — non-boards paths like ``models/schema.sql``
+    at root resolve from root — non-board paths like ``models/schema.sql``
     are not rewritten under charts/. ``str`` is used only at the identity seam
     (``project.path`` / ``project.exists``); everything else is real
     ``PurePosixPath`` operations.
@@ -335,11 +344,9 @@ def resolve_board_relpath(relpath: PurePosixPath, project: Project) -> ProjectPa
     assert_relpath(relpath_str)
     if project.exists(relpath_str):
         return project.path(relpath_str)
-    if not relpath.parts or relpath.parts[0] != CHARTS_SUBDIR:
-        candidate = PurePosixPath(CHARTS_SUBDIR) / relpath
-        candidate_str = str(candidate)
-        if project.exists(candidate_str):
-            return project.path(candidate_str)
+    for candidate in board_relpath_candidates(relpath_str, board_roots(project)):
+        if project.exists(candidate):
+            return project.path(candidate)
     return project.path(relpath_str)  # caller reports not-found
 
 

@@ -53,17 +53,7 @@ Copy a dashboard with `{{ s_read_file }}` then `{{ s_write_file }}` to the new p
 - **`{{ s_skill_troubleshooting }}`** — when something breaks
 
 {{#if_tool docs}}{{ s_docs_discovery }}
-{{/if_tool}}## Metadata Requirement
-
-Fill `notes` on every named object — agents downstream rely on it for context and
-search. It never renders:
-
-- `queries.*.notes` — what the query returns and why it exists
-- `charts.*.notes` — what question the chart answers
-- `variables.*.notes` — how the variable should be used
-- Layout objects (`rows`/`cols`/`grid.items`/`tabs.items`) — section intent when useful
-
-Keep each note short and factual (one sentence).
+{{/if_tool}}## Labels and defaults
 
 A variable's `label` is inferred from its object key, and its `input: auto`, `required: false`, and `visible: true` are schema defaults — omit all four unless you are intentionally changing the inferred/default value. A chart's own caption is **not** inferred from its object key for any chart type: set `label:` on every `type: kpi` chart and `title:` on every other chart type, or it renders with no visible caption at all.
 

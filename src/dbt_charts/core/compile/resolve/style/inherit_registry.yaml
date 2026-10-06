@@ -280,6 +280,8 @@ Style.charts.tooltip.label.font:
 Style.charts.tooltip.value.font:
 - Style.charts.font
 - Style.font
+Style.footer.font:
+- Style.font
 Style.layout.details.font:
 - Style.font
 Style.layout.tabs.font:
@@ -287,6 +289,8 @@ Style.layout.tabs.font:
 Style.placeholder.overlay.font:
 - Style.font
 Style.text.font:
+- Style.font
+Style.timestamp.font:
 - Style.font
 Style.title.font:
 - Style.font

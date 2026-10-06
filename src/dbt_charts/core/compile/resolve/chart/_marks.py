@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from dbt_charts.core.compile.format import (
-    resolve_format_parts_for_values,
+    column_format,
     resolve_label_format,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -41,7 +41,6 @@ from dbt_charts.core.compile.models.style.theme import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     chart_authored_axis_format,
 )
-from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 __all__ = [
     "_apply_stroke_width_fallback",
@@ -113,12 +112,7 @@ def _measure_tooltip_format(
     ):
         fmt = primary.axis_y.labels.format
     return (
-        resolve_format_parts_for_values(
-            fmt,
-            chart_style_context.formats,
-            values,
-            no_format_default=PredefinedNumberFormat.number,
-        )
+        column_format("number", chart_style_context.formats, fmt, values=values)
         if fmt
         else None
     )

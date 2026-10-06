@@ -14,15 +14,15 @@ AuthoredBoard definition from YAML.
 | `aliases` | list[str] | Additional URLs that redirect to this board's canonical file-path URL. Each entry must be absolute (leading /). Requests to these URLs are redirected (302) to the board's real path, query string preserved. Valid on .yml, .yaml, .md, and folder index.* boards. |
 | `_schema_version` | str | The latest released dbt charts YAML schema version this file was last migrated to, written by `dct migrate` only -- never hand-author this. Informational: nothing reads it back when your board loads, and it is not a validated guarantee about the file's actual grammar (a hand-edit after migration can make it stale). YAML key: _schema_version. |
 | `text` | str | Markdown text content for text-only sections. |
-| `html_policy` | enum: "none", "safe-subset", "trusted-raw" | HTML rendering policy for the board's body text. One of: "none" (default): HTML is escaped and rendered as plain markdown; "safe-subset": reserved for a parser-checked allowlist (not yet enforced; currently renders as none); "trusted-raw": raw HTML via foreignObject. TRUSTED-CONTENT ONLY: this is NOT a security sandbox. &lt;script&gt;/event-handlers are stripped as a best-effort guard, not a guarantee. Enable only on first-party boards you fully control. |
+| `html_policy` | enum: "none", "safe-subset", "trusted-raw" | HTML rendering policy for the board's body text. Inline nested boards inherit it unless they set their own; tabs always inherit, and imported board files do not. One of: "none" (default): HTML is escaped and rendered as plain markdown; "safe-subset": reserved for a parser-checked allowlist (not yet enforced; currently renders as none); "trusted-raw": raw HTML via foreignObject. TRUSTED-CONTENT ONLY: this is NOT a security sandbox. &lt;script&gt;/event-handlers are stripped as a best-effort guard, not a guarantee. Enable only on first-party boards you fully control. |
 | `source` | str | Default source name for all queries in this board. Inheritable via meta.yml cascade. |
 | `cache` | [Cache](#cache) | Cache policy for every query in this dashboard, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts the whole dashboard out. Inheritable via the meta.yml cascade. |
 | `incremental` | str \| const: false | Default watermark column for incremental refresh: queries in this board fetch only new rows since the last run and merge them with the cached result, keyed on this column. Queries inherit this value and may override it with their own incremental: setting. Set to false on a nested board to opt out of a parent's incremental setting. |
 | `variables` | dict[str, [Variable](#variable) \| str \| [VariableRef](#variableref)] | Named inputs that parameterize queries; each renders as a control unless it sets visible: false. |
 | `queries` | dict[str, str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref)] | Named result sets the charts draw from (SQL, CSV, HTTP, and more). |
-| `charts` | dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| str \| [ChartRef](#chartref)] | Named chart definitions. When no explicit layout is present, charts render as an implicit row layout in authored order. |
-| `rows` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)]] | Vertical stack layout: list of chart names or inline chart/board definitions. |
-| `cols` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)]] | Horizontal layout: list of chart names or inline chart/board definitions. |
+| `charts` | dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| str \| [ChartRef](#chartref)] | Named chart definitions. When no explicit layout is present, charts render as an implicit row layout in authored order. |
+| `rows` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)]] | Vertical stack layout: list of chart names or inline chart/board definitions. |
+| `cols` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)]] | Horizontal layout: list of chart names or inline chart/board definitions. |
 | `grid` | [GridLayout](#gridlayout) | CSS-grid style layout with explicit row/column placement. |
 | `tabs` | [TabLayout](#tablayout) | Tabbed navigation layout where each tab contains its own layout. |
 | `card_gap` | bool | When True, adds gap between cards. Default: cards are edge-to-edge (0 gap). |
@@ -93,6 +93,7 @@ Raw SQL query: the default query type.
 | `sql` | str | The statement to run, with Jinja2 over board variables, other queries, and the filter helpers. |
 | `setup_sql` | str | Non-nestable SQL preamble executed before the main query (e.g., CREATE TEMP FUNCTION). |
 | `target` | str | dbt target name for queries against a dbt_profile source (defaults to 'dev'). |
+| `dialect` | enum: "athena", "bigquery", "clickhouse", "databricks", "duckdb", "mysql", "postgres", "presto", "redshift", "snowflake", "spark", "sqlite", "sqlserver", "trino" | Warehouse dialect the SQL is written in, translated to the source's. |
 
 <a id="httpquery"></a>
 ## HttpQuery
@@ -205,6 +206,7 @@ Authored patch for bar and histogram charts; histogram adds automatic x binning.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `field_labels` | dict[str, str] | Display text per query column, painted as written wherever the chart would otherwise derive text from that column's name: legend titles and entries, tooltip rows, axis titles. x_label/y_label and a layer's label win on their own surface. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -240,6 +242,7 @@ Authored patch for line charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `field_labels` | dict[str, str] | Display text per query column, painted as written wherever the chart would otherwise derive text from that column's name: legend titles and entries, tooltip rows, axis titles. x_label/y_label and a layer's label win on their own surface. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -274,6 +277,7 @@ Authored patch for area charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `field_labels` | dict[str, str] | Display text per query column, painted as written wherever the chart would otherwise derive text from that column's name: legend titles and entries, tooltip rows, axis titles. x_label/y_label and a layer's label win on their own surface. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -308,6 +312,7 @@ Authored patch for scatter charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `field_labels` | dict[str, str] | Display text per query column, painted as written wherever the chart would otherwise derive text from that column's name: legend titles and entries, tooltip rows, axis titles. x_label/y_label and a layer's label win on their own surface. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -344,6 +349,7 @@ Authored patch for heatmap charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `field_labels` | dict[str, str] | Display text per query column, painted as written wherever the chart would otherwise derive text from that column's name: legend titles and entries, tooltip rows, axis titles. x_label/y_label and a layer's label win on their own surface. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -378,6 +384,7 @@ Authored patch for pie and donut charts; donut defaults `style.inner_radius` to 
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `field_labels` | dict[str, str] | Display text per query column, painted as written wherever the chart would otherwise derive text from that column's name: legend titles and entries, tooltip rows, axis titles. x_label/y_label and a layer's label win on their own surface. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -444,6 +451,7 @@ Authored patch for table charts.
 | `rows` | list[str] | Fields whose distinct values form the row dimension of a pivot cross-tab. Each string is a column name from the query result. Omit for flat (non-pivot) tables. |
 | `columns` | list[str] | Fields whose distinct values become column headers in a pivot cross-tab. Multiple fields create a nested multi-dimension pivot (outer → inner). Omit for flat tables. |
 | `values` | list[str] | Measure fields that fill pivot cells. Each string is a column name from the query result. When omitted, all query columns not claimed by rows or columns are used. |
+| `spanners` | list[[TableSpanner](#tablespanner)] | Labels drawn in an extra header row above runs of adjacent columns of a flat table. Not combinable with the pivot rows/columns/values channels. |
 
 <a id="pointmapchart"></a>
 ## PointMapChart
@@ -459,6 +467,7 @@ Authored patch for point_map and bubble_map charts; the two type spellings are s
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `field_labels` | dict[str, str] | Display text per query column, painted as written wherever the chart would otherwise derive text from that column's name: legend titles and entries, tooltip rows, axis titles. x_label/y_label and a layer's label win on their own surface. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -495,6 +504,7 @@ Authored patch for map and geoshape charts; the two type spellings are synonyms.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `field_labels` | dict[str, str] | Display text per query column, painted as written wherever the chart would otherwise derive text from that column's name: legend titles and entries, tooltip rows, axis titles. x_label/y_label and a layer's label win on their own surface. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -555,6 +565,39 @@ Authored patch for spark_bar charts (compact horizontal bars).
 | `x` | str | Bar-magnitude (numeric) column name. |
 | `y` | str \| list[str] | Bar-label (category) column name(s). |
 | `style` | [SparkBarChartStyle](#sparkbarchartstyle) | Appearance overrides for this chart alone. |
+
+<a id="customchart"></a>
+## CustomChart
+Authored patch for custom charts: rows in, SVG out, drawn by a template.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | const: "custom" |  |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
+| `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
+| `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
+| `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
+| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
+| `subtitle` | str | Supporting text beneath the chart title. |
+| `template` | str | Name of a project template: `templates/&lt;name&gt;.svg.j2`. Exactly one of `template` or `svg` is required. |
+| `svg` | str | Inline Jinja SVG template source, used instead of `template`. |
+| `x` | str \| list[str] | Column(s) for the template's `x` channel; the template header declares it. |
+| `y` | str \| list[str] | Column(s) for the template's `y` channel; the template header declares it. |
+| `color` | str \| list[str] | Column(s) for the template's `color` channel; the template header declares it. |
+| `size` | str \| list[str] | Column(s) for the template's `size` channel; the template header declares it. |
+| `shape` | str \| list[str] | Column(s) for the template's `shape` channel; the template header declares it. |
+| `theta` | str \| list[str] | Column(s) for the template's `theta` channel; the template header declares it. |
+| `value` | str \| list[str] | Column(s) for the template's `value` channel; the template header declares it. |
+| `options` | dict[str, JsonValue] | Values for the options the template declares in its header. |
+| `style` | [CustomChartStyle](#customchartstyle) | Sizing overrides for this chart alone. |
 
 <a id="chartref"></a>
 ## ChartRef
@@ -639,7 +682,8 @@ Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
 | `variables` | [VariablesStyle](#variablesstyle) | Variable controls chrome style. |
 | `footer` | [FooterStyle](#footerstyle) | Page footer chrome visibility. |
 | `timestamp` | [TimestampStyle](#timestampstyle) | Data-freshness chrome: visibility, placement, format, and font. |
-| `formats` | [FormatsStyle](#formatsstyle) | Format settings: the board's own format names under `aliases`. |
+| `formats` | dict[str, str \| [FormatConfig](#formatconfig)] | Format alias map; None means no aliases at this cascade level. |
+| `fonts` | dict[str, [NamedFont](#namedfont)] | Named fonts other font slots reference as ``font: &lt;name&gt;`` or ``font: {extends: &lt;name&gt;, ...}``. ``heading`` carries the H1–H6 ramp in ``sizes``; ``name: null`` removes an entry. |
 | `palettes` | dict[str, one of: 'category-6-tonal-blue', 'category-6-tonal-blue.dark', 'category-6-tonal-blue.deep', 'category-6-tonal-blue.light', 'category-6-tonal-blue.pale', 'category-6-tonal-brown', 'category-6-tonal-brown.dark', 'category-6-tonal-brown.deep', 'category-6-tonal-brown.light', 'category-6-tonal-brown.pale', 'category-6-tonal-green', 'category-6-tonal-green.dark', 'category-6-tonal-green.deep', 'category-6-tonal-green.light', 'category-6-tonal-green.pale', 'category-6-tonal-orange', 'category-6-tonal-orange.dark', 'category-6-tonal-orange.deep', 'category-6-tonal-orange.light', 'category-6-tonal-orange.pale', 'category-6-tonal-purple', 'category-6-tonal-purple.dark', 'category-6-tonal-purple.deep', 'category-6-tonal-purple.light', 'category-6-tonal-purple.pale', 'dbt-creams', 'dbt-div-blue-red', 'dbt-div-blue-red-dark', 'dbt-div-coolwarm', 'dbt-div-coolwarm-dark', 'dbt-div-crimson-green', 'dbt-div-crimson-green-dark', 'dbt-div-orange-teal', 'dbt-div-orange-teal-dark', 'dbt-div-sunset', 'dbt-div-sunset-dark', 'dbt-grays', 'dbt-seq-amber', 'dbt-seq-amber-dark', 'dbt-seq-blue', 'dbt-seq-blue-dark', 'dbt-seq-brown', 'dbt-seq-brown-dark', 'dbt-seq-gray', 'dbt-seq-gray-dark', 'dbt-seq-green', 'dbt-seq-green-dark', 'dbt-seq-purple', 'dbt-seq-purple-dark', 'dbt-seq-rust', 'dbt-seq-rust-dark', 'dbt-seq-teal', 'dbt-seq-teal-dark', 'editorial-10', 'editorial-10.dark', 'editorial-10.deep', 'editorial-10.light', 'editorial-10.pale', 'hero-6', 'hero-6.dark', 'hero-6.deep', 'hero-6.light', 'hero-6.pale', 'info', 'negative', 'positive', 'tableau', 'tableau.dark', 'tableau.deep', 'tableau.light', 'tableau.pale', 'vivid-10', 'vivid-10.dark', 'vivid-10.deep', 'vivid-10.light', 'vivid-10.pale', 'warning'] | Theme palette role assignments: open dict mapping role name to palette file name. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge. |
 | `tones` | [KpiTonesStyle](#kpitonesstyle) | Semantic tone color palette (positive/negative/warning/info) for KPI support rows, table conditional glyphs, and spark negative_color. |
 | `roles` | dict[str, str] | Optional top-level theme role aliases: bare name → role.alias. e.g. ink: chrome.heading |
@@ -712,11 +756,11 @@ Authored overlay for BarChartStyle. Bar chart style: chart-level fields + marks 
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -831,11 +875,11 @@ Authored overlay for LineChartStyle. Line chart style: chart-level fields + mark
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -857,11 +901,11 @@ Authored overlay for AreaChartStyle. Area chart style: chart-level fields + mark
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -885,11 +929,11 @@ Authored overlay for ScatterChartStyle. Scatter chart style: chart-level fields 
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -909,11 +953,11 @@ Authored overlay for HeatmapChartStyle. Heatmap chart style.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -943,11 +987,11 @@ Authored overlay for PieChartStyle. Pie/donut chart style: geometry + total (fla
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [PieLegendStyle](#pielegendstyle) | Pie key style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Aspect ratio (width/height) of the pie chart viewport. |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -984,10 +1028,10 @@ Authored overlay for KpiChartStyle. Produced by cascade from theme YAML.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `font` | [FontStyle](#fontstyle) | KPI chart-level font overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
 | `value` | [KpiValueStyle](#kpivaluestyle) | KPI headline value slot. |
 | `label` | [KpiSlotStyle](#kpislotstyle) | KPI card label slot. |
@@ -1005,10 +1049,10 @@ Authored overlay for TableChartStyle. Table chart style overrides layered on top
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Table background color; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `font` | [FontStyle](#fontstyle) | Table chart-level font overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
 | `border` | [BorderStyle](#borderstyle) | Chart card border style. |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Table color: static text paint or gradient scale only (no categorical arm). |
@@ -1034,6 +1078,17 @@ Authored overlay for TableChartStyle. Table chart style overrides layered on top
 | `text_baseline_offset` | float | Vertical offset to align SVG text baseline with cell grid in pixels. |
 | `title_subtitle_gap` | float | Pure whitespace between the title's descent and the subtitle's ascent, in pixels, not a baseline-to-baseline distance. Combined with the title and subtitle font sizes to reproduce Vega-Lite's title-&gt;subtitle spacing at any font size, not one calibrated pair. Font size and color for the subtitle itself come from style.title.subtitle (the same source chart-family titles use), not a table-local constant. |
 
+<a id="tablespanner"></a>
+## TableSpanner
+One authored spanner: a label drawn over a run of adjacent columns.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `label` | str | Group label for the listed columns. |
+| `columns` | list[str] | Query columns the spanner covers. Must be adjacent in the query's column order and unique; a column may sit in at most one spanner. |
+
 <a id="basemapconfig"></a>
 ## BasemapConfig
 Styled geographic background layer for point_map and bubble_map charts.
@@ -1050,11 +1105,11 @@ Authored overlay for PointMapChartStyle. Point map chart style.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -1071,11 +1126,11 @@ Authored overlay for GeoshapeChartStyle. Geoshape (choropleth) chart style.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -1118,6 +1173,16 @@ Authored overlay for SparkBarChartStyle. Produced by cascade from theme YAML.
 | `border` | [CornerStyle](#cornerstyle) | Spark_bar outer corner rounding. |
 | `subtitle` | [SubtitleStyle](#subtitlestyle) | Spark_bar subtitle font-sizing constants. |
 
+<a id="customchartstyle"></a>
+## CustomChartStyle
+Sizing for a custom chart; its look comes from the board's `style:`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `aspect_ratio` | float | Chart aspect ratio (width/height). |
+| `min_height` | float | Minimum chart height in pixels. |
+| `max_height` | float | Maximum chart height in pixels. |
+
 <a id="griditem"></a>
 ## GridItem
 Grid layout item with position and span.
@@ -1126,7 +1191,7 @@ Grid layout item with position and span.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `item` | str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)] | Chart name or inline chart/board definition to place in this grid cell. |
+| `item` | str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)] | Chart name or inline chart/board definition to place in this grid cell. |
 
 **Optional**
 
@@ -1158,8 +1223,8 @@ Tab layout item.
 | `notes` | str | Optional metadata for AI search. Emitted into the SVG DOM as a data-layout-notes attribute; never painted as visible pixels. |
 | `text` | str | Markdown text content shown in this tab. |
 | `style` | [Style](#style) | Appearance overrides for this tab's content area. |
-| `rows` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)]] | Vertical stack layout for this tab's content. |
-| `cols` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart)]] | Horizontal layout for this tab's content. |
+| `rows` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)]] | Vertical stack layout for this tab's content. |
+| `cols` | list[str \| [Board](#board) \| [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart) \| dict[str, [BarChart](#barchart) \| [LineChart](#linechart) \| [AreaChart](#areachart) \| [ScatterChart](#scatterchart) \| [HeatmapChart](#heatmapchart) \| [PieChart](#piechart) \| [KpiChart](#kpichart) \| [TableChart](#tablechart) \| [PointMapChart](#pointmapchart) \| [GeoshapeChart](#geoshapechart) \| [CalloutChart](#calloutchart) \| [SparkBarChart](#sparkbarchart) \| [CustomChart](#customchart)]] | Horizontal layout for this tab's content. |
 | `grid` | [GridLayout](#gridlayout) | CSS-grid layout for this tab's content. |
 | `tabs` | [TabLayout](#tablayout) | A further set of tabs opening inside this one. |
 
@@ -1213,8 +1278,7 @@ Authored overlay for TitleStyle. Board and board titles.
 |-------|------|-------------|
 | `font` | [FontStyle](#fontstyle) | Title font style overrides. Unset fields fall back to [`style.font`](#style). |
 | `compact_weight` | str \| float | Object-title font weight on tiny cards. |
-| `sizes` | list[float] | Font sizes for the H1–H6 heading ramp, indexed by ``board.level - 1``. Board/prose titles index this ramp directly (no width input). Object titles (chart/table/spark) combine ``width_offsets`` with a fixed object-title anchor to pick a slot. |
-| `width_offsets` | [TitleWidthOffsetsStyle](#titlewidthoffsetsstyle) | Additive level offsets by card width (tiny/narrow/medium/wide). Object titles add the tier offset to a fixed anchor to pick an H slot from ``sizes``. Board/prose titles are level-only and do not consult these. |
+| `width_offsets` | [TitleWidthOffsetsStyle](#titlewidthoffsetsstyle) | Additive level offsets by card width (tiny/narrow/medium/wide). Object titles add the tier offset to a fixed anchor to pick an H slot from ``style.fonts.heading.sizes``. Board/prose titles are level-only and do not consult these. |
 | `min_height` | float | Minimum title row height in pixels. |
 | `overflow` | enum: "clip", "truncate", "wrap-two", "wrap" | Text overflow mode (clip, truncate, wrap-two, wrap). |
 | `position` | [TitlePositionStyle](#titlepositionstyle) | Vega-Lite title positioning: anchor, angle, offset, baseline. |
@@ -1229,6 +1293,7 @@ Authored overlay for TextStyle. Markdown / plain text content.
 |-------|------|-------------|
 | `font` | [FontStyle](#fontstyle) | Text font style overrides. Unset fields fall back to [`style.font`](#style). |
 | `align` | enum: "left", "center", "right" | Text alignment for the board body-text block. |
+| `preferred_width` | float | Widest a prose block asks its board to hug, in px. A shorter text asks only for its own one-line width. |
 | `paragraph` | [BlockMarginStyle](#blockmarginstyle) | Spacing above/below each paragraph block (in line-height units). |
 | `heading` | [BlockMarginStyle](#blockmarginstyle) | Spacing above/below heading blocks (H1–H6) in line-height units. |
 | `column` | [TextColumnStyle](#textcolumnstyle) | Multi-column layout for the board body-text block. |
@@ -1256,13 +1321,13 @@ Authored overlay for ChartsStyle. Registry of all chart-type styles plus shared 
 | `preferred_width` | float | Preferred chart width in pixels. |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. |
 | `background` | str | Chart canvas background; None inherits from the board background via apply_inherit. Falls back to [`style.background`](#style). |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. Unset fields fall back to [`style.title`](#style). |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). |
 | `min_height` | float | Minimum chart height in pixels. |
 | `max_height` | float | Maximum chart height in pixels. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. Unset fields fall back to [`style.font`](#style). |
 | `border` | [BorderStyle](#borderstyle) | Chart card border style. |
+| `title` | [TitleStyle](#titlestyle) | Title style for every chart's title. Unset fields fall back to [`style.title`](#style). |
 | `category_colors` | dict[str, [CategoryColorBinding](#categorycolorbinding)] | Board-wide category→color bindings, keyed by data field name. Pins a category to one swatch across every chart on the board. |
 | `tooltip` | [TooltipStyle](#tooltipstyle) | Board-wide chart tooltip style. |
 | `hover_emphasis` | [HoverEmphasisStyle](#hoveremphasisstyle) | Board-wide switch for hover emphasis on charts. |
@@ -1334,7 +1399,7 @@ Authored overlay for FooterStyle. Page footer chrome: visibility, attribution te
 | `visible` | bool | Show the footer attribution line. |
 | `text` | str | Attribution text shown in the footer. |
 | `link` | str | URL the footer brand phrase 'dbt charts' links to; null renders plain text. |
-| `font` | [FontStyle](#fontstyle) | Footer text font style (size and color required). |
+| `font` | [FontStyle](#fontstyle) | Footer text font style (size and color required). Unset fields fall back to [`style.font`](#style). |
 | `y_offset` | float | Vertical offset from bottom edge in pixels. |
 | `rule` | [FooterRule](#footerrule) | Hairline rule above footer text; null disables the rule. |
 
@@ -1349,15 +1414,37 @@ Authored overlay for TimestampStyle. Authored data-freshness chrome: visibility,
 | `align` | enum: "left", "right" | Timestamp horizontal alignment within its row. |
 | `format` | str | strftime format for the data-freshness line, including any literal label text (e.g. '%H:%M %Z on %-d %b %Y'). The value is always UTC; a format that prints a clock must disclose the zone (%Z or a literal 'UTC'), else compile rejects it: an unlabeled clock reads as local. |
 | `y` | float | Y-coordinate for top-positioned timestamp in pixels. |
-| `font` | [FontStyle](#fontstyle) | Timestamp font style overrides (size, color, weight, ...). |
+| `font` | [FontStyle](#fontstyle) | Timestamp font style overrides (size, color, weight, ...). Unset fields fall back to [`style.font`](#style). |
 
-<a id="formatsstyle"></a>
-## FormatsStyle
-Authored overlay for FormatsStyle. Format settings. Fixed keys, so an author's names sit in a map of their own.
+<a id="formatconfig"></a>
+## FormatConfig
+Format configuration for value display.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `aliases` | dict[str, str \| [FormatConfig](#formatconfig)] | Format names: each key is a name charts, tables and KPIs can use as a format, each value a format spec or a format with a prefix/suffix. |
+| `spec` | str | D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern. |
+| `prefix` | str | Text placed before the formatted value (e.g., '$'). |
+| `suffix` | str | Text placed after the formatted value (e.g., ' USD', '%'). |
+| `notation` | enum: "analytic", "narrative" | Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn). |
+| `sign_placement` | enum: "before_prefix", "after_prefix" | Where a negative sign sits against the prefix: 'before_prefix' (−€500) or 'after_prefix' (EUR −500). Unset: after_prefix when the prefix ends in a space or paints on one value only, else before_prefix. Table columns keep the sign with the digits and reject it. |
+| `repeat` | enum: "every", "anchor" | Whether the prefix/suffix paints on 'every' value of an axis, table column or support_table row, or on one 'anchor' value. Unset keeps each surface's default. Single-value slots ignore it. |
+
+<a id="namedfont"></a>
+## NamedFont
+A ``style.fonts`` registry entry: a font other slots reference by name.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `extends` | str | Name of a ``style.fonts`` entry this slot starts from; the fields set beside it override that entry. |
+| `family` | str | Font family name (e.g., 'sans-serif', 'Roboto'). |
+| `color` | str | Text color as a CSS color string. |
+| `size` | float | Font size in pixels. |
+| `weight` | str \| float | How heavy the type is drawn (e.g., 'bold', 400, 700). |
+| `style` | enum: "normal", "italic" | Upright or slanted type (normal or italic). |
+| `decoration` | enum: "none", "line-through", "underline" | Line drawn on the text (underline, line-through, or none). |
+| `case` | enum: "none", "sentence", "title", "upper", "lower", "slug", "camel" | Letter-case transform applied at render time. 'title' uses Chicago/Gruber rules and preserves tokens with internal capitals (ARR, iPhone). 'sentence' uppercases only the first character. 'none' (default) emits the string without any letter-case change. |
+| `line_height` | float | Line height as a unitless multiple of font size. Cascades through Style.font to all text roles that carry a FontStyle slot. Body prose defaults to 1.25; titles override tighter via their font patch in theme YAML. |
+| `sizes` | list[float] | The H1–H6 heading ramp (six sizes, indexed by heading level - 1). Valid only on the ``heading`` font. |
 
 <a id="kpitonesstyle"></a>
 ## KpiTonesStyle
@@ -1453,9 +1540,9 @@ Authored overlay for LegendStyle.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `direction` | enum: "horizontal", "vertical" | Legend layout direction. |
+| `direction` | enum: "horizontal", "vertical" | Legend layout direction. Omit to infer it from the edge: horizontal on top/bottom, vertical on left/right. |
 | `columns` | int | Legend entry columns. Zero keeps the renderer default; positive values set Vega-Lite legend columns. |
-| `compact_columns` | int | Entry columns for an automatic compact top-horizontal legend. |
+| `compact_columns` | int | Entry columns when a horizontal legend wraps: the automatic compact top legend, or an inferred-horizontal legend too wide for one row. |
 | `label` | [LegendLabelStyle](#legendlabelstyle) | Legend label style. |
 | `title` | [LegendTitleStyle](#legendtitlestyle) | Legend title style. |
 | `visible` | bool | Show the legend. None = legend visible; False = explicitly suppressed. |
@@ -1545,19 +1632,6 @@ Authored overlay for BandAxisStyle. Scale-type overlay for band (categorical) ax
 | `title` | [AxisTitleStyle](#axistitlestyle) | Axis title style. |
 | `scale` | [BaseScaleStyle](#basescalestyle) | Per-axis scale overrides; None means no override. |
 | `band_position` | float | Band position within the step (0–1); None uses Vega-Lite's default. |
-
-<a id="formatconfig"></a>
-## FormatConfig
-Format configuration for value display.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `spec` | str | D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern. |
-| `prefix` | str | Text placed before the formatted value (e.g., '$'). |
-| `suffix` | str | Text placed after the formatted value (e.g., ' USD', '%'). |
-| `notation` | enum: "analytic", "narrative" | Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn). |
-| `sign_placement` | enum: "before_prefix", "after_prefix" | Where a negative sign sits against the prefix: 'before_prefix' (−€500) or 'after_prefix' (EUR −500). Unset: after_prefix when the prefix ends in a space or paints on one value only, else before_prefix. Table columns keep the sign with the digits and reject it. |
-| `repeat` | enum: "every", "anchor" | Whether the prefix/suffix paints on 'every' value of an axis, table column or support_table row, or on one 'anchor' value. Unset keeps each surface's default. Single-value slots ignore it. |
 
 <a id="supporttablestyle"></a>
 ## SupportTableStyle
@@ -1683,9 +1757,9 @@ Authored overlay for PieLegendStyle.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `direction` | enum: "horizontal", "vertical" | Legend layout direction. |
+| `direction` | enum: "horizontal", "vertical" | Legend layout direction. Omit to infer it from the edge: horizontal on top/bottom, vertical on left/right. |
 | `columns` | int | Legend entry columns. Zero keeps the renderer default; positive values set Vega-Lite legend columns. |
-| `compact_columns` | int | Entry columns for an automatic compact top-horizontal legend. |
+| `compact_columns` | int | Entry columns when a horizontal legend wraps: the automatic compact top legend, or an inferred-horizontal legend too wide for one row. |
 | `label` | [LegendLabelStyle](#legendlabelstyle) | Legend label style. |
 | `title` | [LegendTitleStyle](#legendtitlestyle) | Legend title style. |
 | `visible` | bool | Show the legend. None = legend visible; False = explicitly suppressed. |
@@ -1741,6 +1815,7 @@ Text appearance. Merged as a unit.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `extends` | str | Name of a ``style.fonts`` entry this slot starts from; the fields set beside it override that entry. |
 | `family` | str | Font family name (e.g., 'sans-serif', 'Roboto'). |
 | `color` | str | Text color as a CSS color string. |
 | `size` | float | Font size in pixels. |
@@ -2184,11 +2259,11 @@ Authored overlay for HistogramChartStyle. Histogram chart style.
 | Field | Type | Description |
 |-------|------|-------------|
 | `axis_quantitative` | [QuantitativeAxisStyle](#quantitativeaxisstyle) | Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render. |
+| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `legend` | [LegendStyle](#legendstyle) | Chart legend style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `aspect_ratio` | float | Chart aspect ratio (width/height). Falls back to [`style.charts.aspect_ratio`](#chartsstyle). |
 | `min_height` | float | Minimum chart height in pixels. Falls back to [`style.charts.min_height`](#chartsstyle). |
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
@@ -2876,6 +2951,7 @@ Authored overlay for SeriesLabelFontStyle. Series-label typography with a compac
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `extends` | str | Name of a ``style.fonts`` entry this slot starts from; the fields set beside it override that entry. |
 | `family` | str | Font family name (e.g., 'sans-serif', 'Roboto'). |
 | `color` | str | Text color as a CSS color string. |
 | `size` | float | Font size in pixels. |

@@ -1,0 +1,3 @@
+kind: Features
+body: "Charts accept `field_labels:`, display text per column for legends, tooltips and axis titles. Derived labels keep mixed-case words such as `MTok` instead of lowercasing them."
+time: 2026-09-30T11:30:00.000000-07:00

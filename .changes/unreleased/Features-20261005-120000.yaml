@@ -1,0 +1,3 @@
+kind: Features
+body: A chart whose x column is a date the query turned into text (`strftime`, `to_char`, a cast to text) now warns and names the date to return instead.
+time: 2026-10-05T12:00:00.000000-07:00

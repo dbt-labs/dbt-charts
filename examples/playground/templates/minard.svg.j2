@@ -1,0 +1,60 @@
+{#---
+description: Flow map after Charles Joseph Minard's 1869 map of Napoleon's Russian campaign. The query returns three kinds of rows, told apart by a `kind` column. `troop` rows (lon, lat, survivors, direction A or R, grp) trace each army group in query order as a band whose width is proportional to survivors. `city` rows (lon, lat, name) mark places. `temp` rows (lon, temp in degrees Reaumur, name as the date) draw the temperature of the retreat beneath the map, on the same longitude scale. Band colors come from color_for(direction, "direction").
+---#}
+{% set troops = rows | selectattr("kind", "equalto", "troop") | list %}
+{% set cities = rows | selectattr("kind", "equalto", "city") | list %}
+{% set temps = rows | selectattr("kind", "equalto", "temp") | list %}
+{% if not troops %}{{ raise_error("minard needs troop rows (kind = 'troop')") }}{% endif %}
+{% set size = style.font.size %}
+{% set small = style.charts.axis.labels.font.size %}
+{% set lons = rows | map(attribute="lon") | map("float") | list %}
+{% set lon0 = (lons | min) - 0.3 %}{% set lon1 = (lons | max) + 0.3 %}
+{% set lats = (troops + cities) | map(attribute="lat") | map("float") | list %}
+{% set lat0 = (lats | min) - 0.15 %}{% set lat1 = (lats | max) + 0.15 %}
+{% set right = 64 %}
+{% set map_h = height * (0.66 if temps else 1) %}
+{% set temp_top = map_h + size * 2 %}
+{% set temp_h = height - temp_top - size %}
+{% set peak = troops | map(attribute="survivors") | map("float") | max %}
+{% set band = map_h * 0.13 %}
+{% macro x(lon) %}{{ (((lon | float) - lon0) / (lon1 - lon0) * (width - right)) | round(1) }}{% endmacro %}
+{% macro y(lat) %}{{ (map_h - ((lat | float) - lat0) / (lat1 - lat0) * map_h) | round(1) }}{% endmacro %}
+<g font-family="{{ style.font.family }}">
+{# Retreat draws after advance so it stays on top. #}
+{% for dir in ["A", "R"] %}
+  {% for t in troops %}
+    {% set nxt = troops[loop.index] if not loop.last else none %}
+    {% if t.direction == dir and nxt and nxt.grp == t.grp %}
+    <line x1="{{ x(t.lon) }}" y1="{{ y(t.lat) }}" x2="{{ x(nxt.lon) }}" y2="{{ y(nxt.lat) }}" stroke="{{ color_for(t.direction, 'direction') }}" stroke-width="{{ ([(t.survivors | float) / peak * band, 1] | max) | round(2) }}" stroke-linecap="round"><title>{{ "Advance" if t.direction == "A" else "Retreat" }}: {{ t.survivors | format(",") }} men</title></line>
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+{% set main = troops | selectattr("grp", "equalto", troops[0].grp) | list %}
+{% for t in main %}
+  {% set prev = main[loop.index0 - 1] if not loop.first else none %}
+  {% if loop.first or loop.last or prev.direction != t.direction %}
+  {% set half = (t.survivors | float) / peak * band / 2 %}
+  {% set ly = (y(t.lat) | float) + (half + small + 4 if t.direction == "R" else -half - 6) %}
+  <text x="{{ x(t.lon) }}" y="{{ ly }}" text-anchor="{{ 'end' if loop.last or prev and prev.direction != t.direction else 'start' }}" font-size="{{ small }}" font-weight="600" fill="{{ style.font.color }}" paint-order="stroke" stroke="{{ style.background }}" stroke-width="3">{{ t.survivors | format(",") }}</text>
+  {% endif %}
+{% endfor %}
+{% for c in cities %}
+  <circle cx="{{ x(c.lon) }}" cy="{{ y(c.lat) }}" r="2.2" fill="{{ style.font.color }}"/>
+  <text x="{{ (x(c.lon) | float) + 4 }}" y="{{ (y(c.lat) | float) - 4 }}" font-size="{{ small }}" font-style="italic" fill="{{ style.font.color }}" paint-order="stroke" stroke="{{ style.background }}" stroke-width="3">{{ c.name }}</text>
+{% endfor %}
+{% if temps %}
+  {% set t_lo = [temps | map(attribute="temp") | map("float") | min, -30] | min %}
+  {% macro ty(v) %}{{ (temp_top + ((v | float) / t_lo) * temp_h) | round(1) }}{% endmacro %}
+  {% for v in range(0, (t_lo | int) - 1, -10) %}
+  <line x1="0" x2="{{ width - right }}" y1="{{ ty(v) }}" y2="{{ ty(v) }}" stroke="{{ style.charts.axis.grid.color }}"/>
+  <text x="{{ width - right + 6 }}" y="{{ ty(v) }}" dy="0.35em" font-size="{{ small }}" fill="{{ style.muted }}">{{ v }}°R</text>
+  {% endfor %}
+  <polyline fill="none" stroke="{{ style.font.color }}" stroke-width="1.5" points="{% for t in temps %}{{ x(t.lon) }},{{ ty(t.temp) }} {% endfor %}"/>
+  {% for t in temps %}
+  <line x1="{{ x(t.lon) }}" x2="{{ x(t.lon) }}" y1="{{ map_h }}" y2="{{ ty(t.temp) }}" stroke="{{ style.muted }}" stroke-width="0.6" stroke-dasharray="2 2"/>
+  <circle cx="{{ x(t.lon) }}" cy="{{ ty(t.temp) }}" r="2.5" fill="{{ style.font.color }}"><title>{{ t.name }}: {{ t.temp }}° Réaumur</title></circle>
+  <text x="{{ x(t.lon) }}" y="{{ (ty(t.temp) | float) + small + 4 }}" text-anchor="middle" font-size="{{ small }}" fill="{{ style.font.color }}">{{ t.temp }}° {{ t.name }}</text>
+  {% endfor %}
+  <text x="0" y="{{ temp_top - size * 0.8 }}" font-size="{{ small }}" fill="{{ style.muted }}">Temperature on the retreat, degrees Réaumur</text>
+{% endif %}
+</g>

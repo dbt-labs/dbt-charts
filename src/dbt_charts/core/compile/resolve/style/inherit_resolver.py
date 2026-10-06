@@ -10,7 +10,7 @@ Not in scope: _build_chart_style_context, resolved_axis_style.
 from __future__ import annotations
 
 from functools import cache
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
 
@@ -20,6 +20,91 @@ from dbt_charts.core.compile.resolve.style.inherit_graph import InheritGraph
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 _ValueT = TypeVar("_ValueT")
 _type_adapter = cache(TypeAdapter)
+
+
+def defer_base_none_children(
+    base: BaseModel, patch: BaseModel, prefix: str
+) -> tuple[BaseModel, BaseModel, list[str]]:
+    """Split *patch* into a remainder and the writes into empty slots.
+
+    Returns ``(remainder, held, paths)``: *held* carries only the model-valued
+    writes whose *base* slot is None, *paths* lists them rooted at *prefix*.
+    The caller fills those slots from their inherit parents, then merges *held*.
+    """
+    values: dict[str, Any] = {}  # type-state: explicit_any — patch field values
+    held_values: dict[str, Any] = {}  # type-state: explicit_any — patch field values
+    fields_set: set[str] = set()
+    held_fields: set[str] = set()
+    paths: list[str] = []
+    base_fields = type(base).model_fields
+    for name in patch.model_fields_set:
+        patch_value = getattr(patch, name)
+        path = f"{prefix}.{name}"
+        if name not in base_fields:
+            values[name] = patch_value
+            fields_set.add(name)
+            continue
+
+        base_value = getattr(base, name)
+        if base_value is None and isinstance(patch_value, BaseModel):
+            held_values[name] = patch_value
+            held_fields.add(name)
+            paths.append(path)
+            continue
+        if isinstance(base_value, BaseModel) and isinstance(patch_value, BaseModel):
+            child_rest, child_held, child_paths = defer_base_none_children(
+                base_value, patch_value, path
+            )
+            if child_paths:
+                held_values[name] = child_held
+                held_fields.add(name)
+                paths.extend(child_paths)
+            if not child_rest.model_fields_set:
+                continue
+            patch_value = child_rest
+        values[name] = patch_value
+        fields_set.add(name)
+
+    patch_type = type(patch)
+    return (
+        patch_type.model_construct(_fields_set=fields_set, **values),
+        patch_type.model_construct(_fields_set=held_fields, **held_values),
+        paths,
+    )
+
+
+def null_paths(patch: BaseModel, prefix: str) -> list[str]:
+    """Paths *patch* explicitly sets to None, rooted at *prefix*."""
+    found: list[str] = []
+    for name in patch.model_fields_set:
+        value = getattr(patch, name)
+        path = f"{prefix}.{name}"
+        if value is None:
+            found.append(path)
+        elif isinstance(value, BaseModel):
+            found.extend(null_paths(value, path))
+    return found
+
+
+def prune_path(patch: BaseModel, path: str, prefix: str) -> BaseModel:
+    """Return *patch* without the write at *path* (rooted at *prefix*) or below it.
+
+    Children left empty by the pruning are dropped too.
+    """
+    values: dict[str, Any] = {}  # type-state: explicit_any — patch field values
+    fields_set: set[str] = set()
+    for name in patch.model_fields_set:
+        value = getattr(patch, name)
+        child_path = f"{prefix}.{name}"
+        if child_path == path:
+            continue
+        if isinstance(value, BaseModel) and path.startswith(f"{child_path}."):
+            value = prune_path(value, path, child_path)
+            if not value.model_fields_set:
+                continue
+        values[name] = value
+        fields_set.add(name)
+    return type(patch).model_construct(_fields_set=fields_set, **values)
 
 
 def _path_depth(path: str) -> int:

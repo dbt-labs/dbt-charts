@@ -92,7 +92,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -103,7 +105,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -117,7 +121,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -128,7 +134,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -140,7 +148,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -152,7 +162,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style("neon"))
         style = get_compact_style(rs)
@@ -178,7 +190,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -189,7 +203,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -200,7 +216,9 @@ class TestGetCompactStyleMapper:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -215,7 +233,9 @@ class TestCascadeOverride:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         # Use a distinctive value: not a typical theme color
         SENTINEL = "#aabbcc"
@@ -230,7 +250,9 @@ class TestCascadeOverride:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         base = get_theme_style()
         patched = model_copy_at(base, "text.code.highlight", False)
@@ -243,7 +265,9 @@ class TestCascadeOverride:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         base = get_theme_style()
         patched = model_copy_at(base, "text.code.theme", "monokai")
@@ -256,7 +280,9 @@ class TestCascadeOverride:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         SENTINEL = "#334455"
         base = get_theme_style()
@@ -270,7 +296,9 @@ class TestCascadeOverride:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         SENTINEL = "#ff7700"
         base = get_theme_style()
@@ -284,7 +312,9 @@ class TestCascadeOverride:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         dark = get_theme_style("neon")
         rs = resolve_style(dark)
@@ -340,7 +370,7 @@ class TestMdsvgContractGuard:
             get_theme_style,
         )
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.sizing import (
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
             MDSVG_STRUCTURAL_FIELDS,
             compact_style_kwargs,
         )
@@ -368,7 +398,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "700"
         base = get_theme_style()
@@ -381,7 +413,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "italic"
         base = get_theme_style()
@@ -394,7 +428,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         # resolve_style may inject emoji fonts, so check the sentinel is present
         # (not absent), not exact equality.
@@ -411,7 +447,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         base = get_theme_style()
         patched = model_copy_at(base, "text.code.font.size", 11)
@@ -423,7 +461,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "underline"
         base = get_theme_style()
@@ -436,7 +476,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "upper"
         base = get_theme_style()
@@ -452,7 +494,9 @@ class TestFontAxisCascade:
             get_theme_style,
         )
         from dbt_charts.core.compile.errors import CompilationError
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         base = get_theme_style()
         patched = model_copy_at(base, "text.code.font.case", "title")
@@ -464,7 +508,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "600"
         base = get_theme_style()
@@ -477,7 +523,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "italic"
         base = get_theme_style()
@@ -490,7 +538,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         # resolve_style may inject emoji fonts, so check the sentinel is present
         # (not absent), not exact equality.
@@ -507,7 +557,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         base = get_theme_style()
         patched = model_copy_at(base, "text.blockquote.font.size", 13)
@@ -519,7 +571,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "line-through"
         base = get_theme_style()
@@ -532,7 +586,9 @@ class TestFontAxisCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "lower"
         base = get_theme_style()
@@ -554,7 +610,9 @@ class TestBoldFontWeightCascade:
             get_theme_style,
         )
         from dbt_charts.core.compile.models.style.theme import font_weight_as_css
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         rs = resolve_style(get_theme_style())
         style = get_compact_style(rs)
@@ -564,7 +622,9 @@ class TestBoldFontWeightCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         SENTINEL = "800"
         base = get_theme_style()
@@ -580,7 +640,9 @@ class TestBoldFontWeightCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.sizing import compact_style_kwargs
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            compact_style_kwargs,
+        )
 
         base = get_theme_style()
         default_kwargs = compact_style_kwargs(resolve_style(base))

@@ -183,7 +183,8 @@ class ConditionalRule(_PredicateBase):
     def _validate_rule(self) -> ConditionalRule:
         _validate_exactly_one_predicate(self)
         _font_effective = self.font is not None and (
-            self.font.color is not None
+            self.font.extends is not None
+            or self.font.color is not None
             or self.font.weight is not None
             or self.font.style is not None
             or self.font.decoration is not None

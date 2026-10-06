@@ -11,9 +11,10 @@ from dbt_charts.core.colors import sanitize_color
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     authored_sign_placement,
+    column_format,
     decimal_pad_table_for,
-    resolve_format,
     resolve_format_parts,
+    sub_unit_spec,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -76,9 +77,7 @@ from dbt_charts.core.text.numeral_scale import (
     tier_distance,
 )
 from dbt_charts.core.text.predefined_formats import (
-    PREDEFINED_SPECS,
     PREDEFINED_SUB_UNIT_FALLBACK,
-    PredefinedNumberFormat,
     si_sub_unit_floor,
 )
 from dbt_charts.core.utils import coerce_numeric_cell
@@ -242,7 +241,12 @@ def _materialize_table_columns(
 
 
 def _si_spec_for_value(
-    raw: str | None, si_check_fmt: str, prefix: str, suffix: str, value: float
+    raw: str | None,
+    si_check_fmt: str,
+    prefix: str,
+    suffix: str,
+    value: float,
+    formats: FormatAliases | None,
 ) -> str:
     """The spec ``format_kpi_parts`` will actually paint ``value`` with, when
     ``shared_scale`` is ``None`` -- the exact condition this fallback fires
@@ -259,7 +263,7 @@ def _si_spec_for_value(
         return si_check_fmt
     floor = si_sub_unit_floor(si_check_fmt, prefix, suffix)
     if floor < abs(value) < 1.0:
-        return PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[raw]]
+        return sub_unit_spec(raw, formats)
     return si_check_fmt
 
 
@@ -270,6 +274,7 @@ def _unscaled_decimal_pad_table(
     raw: str | None,
     prefix: str,
     suffix: str,
+    formats: FormatAliases | None,
 ) -> tuple[str, ...]:
     """Decimal pad table for a column with no shared SI tier to divide by --
     every cell keeps its own per-cell significant-figures spec. Self-gates on
@@ -291,7 +296,12 @@ def _unscaled_decimal_pad_table(
     fractional digits (nothing to align).
     """
     texts = [
-        (v, _d3_fmt(_si_spec_for_value(raw, si_check_fmt, prefix, suffix, v), v))
+        (
+            v,
+            _d3_fmt(
+                _si_spec_for_value(raw, si_check_fmt, prefix, suffix, v, formats), v
+            ),
+        )
         for v in values
     ]
     if not column_shares_one_printed_unit(texts):
@@ -343,7 +353,7 @@ def _with_resolved_scale_stops(
 
     result: dict[str, ResolvedTableColumnConfig] = {}
     for name, col in columns.items():
-        _col_parts = resolve_format_parts(col.format, formats, no_format_default=None)
+        _col_parts = resolve_format_parts(col.format, formats)
         resolved_fmt = _col_parts.spec
         coerced_values = _coerced_column_values(rows, name) if rows else []
 
@@ -353,15 +363,9 @@ def _with_resolved_scale_stops(
         # eligible for the same shared-scale bake as an explicitly `~s`
         # column, matching the Problem this task targets ("the engine
         # default, or any inline ~s spec").
-        si_check_fmt = resolved_fmt or resolve_format(
-            PredefinedNumberFormat.number, formats
-        )
-        # Unformatted takes the engine default, as table.py's
-        # default_number=True call does.
-        raw_format_name = _col_parts.raw
-        if not resolved_fmt:
-            raw_format_name = PredefinedNumberFormat.number.value
-        explicit_prefix, explicit_suffix = _col_parts.prefix, _col_parts.suffix
+        _effective = column_format("number", formats, col.format)
+        si_check_fmt, raw_format_name = _effective.spec, _effective.raw
+        explicit_prefix, explicit_suffix = _effective.prefix, _effective.suffix
 
         shared_scale: ResolvedColumnSharedScale | None = None
         if allow_shared_scale and coerced_values and is_d3_si_spec(si_check_fmt):
@@ -478,6 +482,7 @@ def _with_resolved_scale_stops(
                 raw_format_name,
                 explicit_prefix,
                 explicit_suffix,
+                formats,
             )
         if col.scale is None:
             result[name] = ResolvedTableColumnConfig.model_validate(
@@ -640,12 +645,14 @@ def _resolve_table(
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=table.padding,
             legendless=True,
+            wrap_legend=False,
         ),
         **_shared_kwargs(normalized, variables, chart_local_style_context),
         chart_type="table",
         rows=normalized.rows,
         pivot_columns=normalized.columns,
         values=normalized.values,
+        spanners=normalized.spanners,
         min_height=normalized.min_height,
         max_height=normalized.max_height,
         columns=resolved_columns,

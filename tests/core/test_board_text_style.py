@@ -298,6 +298,8 @@ style:
             _LONG_BODY_TEXT
             + """\
 style:
+  frame:
+    width: 1000
   text:
     column:
       max_number: 2

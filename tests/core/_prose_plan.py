@@ -6,13 +6,13 @@ from typing import Literal
 
 from dbt_charts.core.compile.models.board.normalized import ProsePlan
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
-from dbt_charts.core.font_measure import markdown_font_faces
-from dbt_charts.core.render.column_packer import choose_grid
-from dbt_charts.core.render.sizing import (
+from dbt_charts.core.compile.resolve.style.markdown_style import (
     body_text_font_family,
     get_compact_style,
-    max_chars_to_px,
 )
+from dbt_charts.core.font_measure import markdown_font_faces
+from dbt_charts.core.render.column_packer import choose_grid
+from dbt_charts.core.render.sizing import max_chars_to_px
 
 
 def full_width_plan(

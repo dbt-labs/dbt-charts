@@ -40,6 +40,7 @@ from dbt_charts.core.compile.resolve.chart.bar import (
     _resolve_bar,
     _resolve_histogram,
 )
+from dbt_charts.core.compile.resolve.chart.custom import _resolve_custom
 from dbt_charts.core.compile.resolve.chart.geo import (
     _resolve_geoshape,
     _resolve_point_map,
@@ -53,6 +54,7 @@ from dbt_charts.core.compile.resolve.chart.simple import (
     _resolve_kpi,
     _resolve_spark_bar,
 )
+from dbt_charts.core.compile.resolve.style.fonts import expand_named_fonts
 
 __all__ = [
     "resolve",
@@ -100,6 +102,10 @@ def resolve(
     Returns:
         The matching ResolvedXxxChart instance with palette/dashes/channels populated.
     """
+    assert chart_style_context.pre_style.fonts is not None
+    normalized = expand_named_fonts(
+        normalized, chart_style_context.pre_style.fonts, f"charts.{normalized.id}"
+    )
     effective_width = (
         float(width)
         if width is not None
@@ -223,6 +229,15 @@ def resolve(
             )
         case "callout":
             return _resolve_callout(normalized, data, chart_style_context, variables)
+        case "custom":
+            return _resolve_custom(
+                normalized,
+                data,
+                chart_style_context,
+                effective_width,
+                automatic_link_candidate,
+                variables,
+            )
         case "spark_bar":
             return _resolve_spark_bar(
                 normalized,

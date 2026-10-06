@@ -1,0 +1,3 @@
+kind: Features
+body: 'Table charts accept a chart-root `spanners:` list that draws a label over a run of adjacent columns, so a shared category is written once instead of in every column label.'
+time: 2026-10-01T00:30:00.000000-07:00

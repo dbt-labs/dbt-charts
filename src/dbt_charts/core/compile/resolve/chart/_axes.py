@@ -9,9 +9,7 @@ from typing import Any, Generic, Literal, NamedTuple, TypeVar
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import (
-    resolve_format_parts,
-)
+from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.models.chart.authored import (
     CartesianLayer,
     MultiplesConfig,
@@ -43,7 +41,7 @@ from dbt_charts.core.compile.models.style.theme import (
     LegendEdge,
     _CartesianChartStyle,
 )
-from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
+from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, ChartRows
 from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
     estimate_plot_height,
     plot_height_floor_px,
@@ -68,11 +66,8 @@ from dbt_charts.core.diagnostics.codes_render import (
 )
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.numeric import aspect_ratio_height
-from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.case import field_title
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
-from dbt_charts.core.text.predefined_formats import (
-    PredefinedNumberFormat,
-)
 
 __all__ = [
     "SeriesNaming",
@@ -91,6 +86,7 @@ __all__ = [
     "cartesian_color_domain_values",
     "cartesian_series_naming",
     "cartesian_top_legend_entries",
+    "color_legend_entries",
     "estimate_cartesian_plot_height",
     "estimate_left_axis_reserve_px",
     "legend_row_fits",
@@ -189,9 +185,7 @@ def _bake_axis(
     winner = merged.labels.format
     if winner is None:
         return BakedAxis(merged, band_position, None)
-    resolved = resolve_format_parts(
-        winner, formats, no_format_default=PredefinedNumberFormat.number
-    )
+    resolved = column_format("number", formats, winner)
     if channel_type not in ("quantitative", "temporal") and resolved.has_affix:
         raise CompilationError.from_code(
             ERR_FORMAT_AFFIX_NOMINAL_AXIS_UNSUPPORTED,
@@ -695,7 +689,9 @@ def _apply_multiples_mirror(
     return ay
 
 
-def _series_display_name(field: str | None, label: str | None) -> str | None:
+def _series_display_name(
+    field: str | None, label: str | None, field_labels: Mapping[str, str]
+) -> str | None:
     """A series' own legend name: an authored label, else the field's default
     title. Mirrors ``XYTitles.y_plain``'s exact formula
     (``render/chart/emitters/_cartesian.py``) and the "Engine-derived layer
@@ -703,7 +699,7 @@ def _series_display_name(field: str | None, label: str | None) -> str | None:
     render layer will actually put in the color scale domain, so measuring
     against it here is measuring the real entry, not a guess.
     """
-    return label or (default_axis_title(field) if field else None)
+    return label or (field_title(field, field_labels) if field else None)
 
 
 def cartesian_color_domain_values(
@@ -731,6 +727,7 @@ def cartesian_top_legend_entries(
     color_domain_values: tuple[str, ...],
     *,
     has_color: bool,
+    field_labels: Mapping[str, str],
 ) -> tuple[str, ...]:
     """The real legend entries a top strip would have to name for this chart.
 
@@ -755,9 +752,11 @@ def cartesian_top_legend_entries(
     """
     layer_entries: tuple[str, ...] = ()
     if layers:
-        base_name = None if has_color else _series_display_name(y, y_label)
+        base_name = (
+            None if has_color else _series_display_name(y, y_label, field_labels)
+        )
         names = [base_name] + [
-            _series_display_name(layer.y, layer.label)
+            _series_display_name(layer.y, layer.label, field_labels)
             for layer in layers
             if layer.y is not None
         ]
@@ -882,6 +881,31 @@ def legend_wrapped_row_count(
     """
     capped = min(entry_count, symbol_limit) if symbol_limit else entry_count
     return ceil(capped / columns)
+
+
+def color_legend_entries(
+    channels: Mapping[str, ResolvedStyleChannel],
+    data: ChartRows,
+    field: str | None = None,
+) -> tuple[str, ...]:
+    """The distinct entries a categorical color legend names, empty for a gradient.
+
+    ``field`` names the column the legend is built from when it is not the
+    color channel's own (a choropleth's ``value``).
+    Numeric columns paint a gradient, so they name no entries.
+    """
+    channel = channels.get("color")
+    column = field
+    if column is None:
+        if channel is None or channel.mode != "series" or channel.quantitative_data:
+            return ()
+        column = channel.data_field
+    values = [row[column] for row in data if row.get(column) is not None]
+    if values and all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) for v in values
+    ):
+        return ()
+    return tuple(dict.fromkeys(str(v) for v in values))
 
 
 def legend_wrap_required_height_px(
@@ -1056,6 +1080,7 @@ class SeriesNaming(NamedTuple):
     top_legend: Literal["compact", "row", "off"]
     force_legend_visible: bool
     legend_position_overridden_by_width: LegendEdge | None
+    wrap_legend: bool
 
 
 _NO_RAIL_ENDPOINT_LABELS = EndpointLabelsConfig(
@@ -1076,6 +1101,7 @@ def cartesian_series_naming(
     suppress_wide_measure_series: bool,
     multiples_wide_measure_series: bool,
     top_legend_series: tuple[str, ...] | None,
+    legend_entries: tuple[str, ...],
     plot_height_estimate: float,
     left_axis_reserve_px: float,
     card_padding_px: float,
@@ -1308,10 +1334,14 @@ def cartesian_series_naming(
             )
         )
     )
+    wrap_legend = not gradient_color and not legend_row_fits(
+        legend_entries, width - left_axis_reserve_px, legend
+    )
     return SeriesNaming(
         endpoint_labels,
         suppress_legend,
         top_legend,
         author_placed_legend or wants_top_legend_shape,
         legend_position_overridden_by_width,
+        wrap_legend,
     )

@@ -6,13 +6,13 @@ import hashlib
 import html
 from dataclasses import dataclass
 
+from dbt_charts.core.compile.image_assets import rewrite_markdown_images
 from dbt_charts.core.compile.models.chart.resolved.callout import ResolvedCalloutChart
 from dbt_charts.core.compile.models.style.resolved import ResolvedCalloutStyle
 from dbt_charts.core.diagnostics.registry import build_doc_url
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.fonts import get_font_path, get_mono_font_path
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
-from dbt_charts.core.render.image_assets import rewrite_markdown_images
 from dbt_charts.core.render.svg_utils import (
     authored_kind_attr,
     border_dash_attrs,

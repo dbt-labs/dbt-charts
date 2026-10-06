@@ -111,23 +111,6 @@ writes them to `.claude/skills/` for Claude Code, and `dct init skills agents` t
 `.agents/skills/` for Codex, Cursor and Copilot. An agent's next session finds them by
 description. Outside a repository, skip it: `dct skills <name>` prints any skill in full.
 
-## 5. Other skills
-
-None is required for a typical board. Read one only if its condition matches:
-
-| Read this only if you are about to… | Skill |
-|---|---|
-| Answer an analytical question ("why did X change") | `{{ s_skill_name_analyst_runbook }}` |
-| Look at an unfamiliar schema before writing anything | `{{ s_skill_name_data_exploration }}` |
-| Choose chart types, layout, or color | `{{ s_skill_name_design_board }}` |
-| Write a narrative report rather than a board | `{{ s_skill_name_design_report }}` |
-| Reproduce a board from a screenshot or export | `{{ s_skill_name_replicate_board }}` |
-| Check the board before handing it over | `{{ s_skill_name_review }}` |
-| Fix a render or query error | `{{ s_skill_name_troubleshooting }}` |
-| Publish to dbtcharts.com | `{{ s_skill_name_cloud_setup }}` |
-
-`dct skills` lists every skill.
-
 ## Done looks like
 
 The user looking at the board: the `dct serve` URL, with the server still

@@ -1030,3 +1030,47 @@ class TestScalarSequenceItemLeafRewrite:
         original = "palette:\n  - category_dark.blue #def\n"
         result = set_board_values(original, {"palette.0": "category.blue.dark"})
         assert result == "palette:\n  - category.blue.dark #def\n"
+
+
+class TestReplacingAScalarWithAMapping:
+    """A delete followed by writes beneath the same path is a replace.
+
+    The Design panel's font chip turns `font: heading` into
+    `font: {extends: heading, ...}`: the scalar line must go before its
+    children can be written, and the self-check must not read the later
+    children as the delete having failed.
+    """
+
+    def test_a_delete_then_child_writes_replaces_the_scalar(self) -> None:
+        original = "style:\n  title:\n    font: heading\n"
+        result = set_board_values(
+            original,
+            {
+                "style.title.font": None,
+                "style.title.font.extends": "heading",
+                "style.title.font.size": 32,
+            },
+        )
+        assert yaml.safe_load(result) == {
+            "style": {"title": {"font": {"extends": "heading", "size": 32}}}
+        }
+
+    def test_deleting_a_mapping_is_still_refused(self) -> None:
+        """The replace rule is about writes beneath a deleted scalar; a delete of
+        a whole mapping stays an error."""
+        original = "style:\n  title:\n    font:\n      size: 1\n"
+        with pytest.raises(ValueError, match="already holds a nested mapping"):
+            set_board_values(original, {"style.title.font": None})
+
+
+class TestNumericListLeaves:
+    def test_a_list_of_numbers_is_written_as_one_flow_line(self) -> None:
+        original = "style:\n  fonts:\n    heading:\n      sizes: [24, 18, 14]\n"
+        result = set_board_values(
+            original, {"style.fonts.heading.sizes": [30, 18, 14.5]}
+        )
+        assert yaml.safe_load(result)["style"]["fonts"]["heading"]["sizes"] == [
+            30,
+            18,
+            14.5,
+        ]

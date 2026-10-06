@@ -580,8 +580,8 @@ def _render_text_svg(
     all the way to the board (``composite_over_canvas``, computed by the
     caller).
 
-    Renders before checking contrast: an invalid ``style.title.sizes`` (not
-    exactly 6 entries) is caught inside ``render_prose_svg`` with a clear
+    Renders before checking contrast: an invalid ``style.fonts.heading.sizes``
+    (not exactly 6 entries) is caught inside ``render_prose_svg`` with a clear
     message, and the contrast check must never run first and raise its own,
     less legible error on the same bad input.
     """
@@ -1280,6 +1280,9 @@ def render_board_svg(
     # timestamp are root-board chrome — only this root render path reads them;
     # a nested board authoring style.footer/timestamp has no effect.
     footer_style = board.style.footer
+    footer_family = footer_style.font.family
+    timestamp_family = board.style.timestamp.font.family
+    assert footer_family is not None and timestamp_family is not None
     if footer_style.visible:
         # FooterStyle._require_font_size_and_color guarantees font.size is not None.
         assert footer_style.font.size is not None
@@ -1314,15 +1317,13 @@ def render_board_svg(
         ]
         margin_lines = "\n".join(lines)
 
-    # Fonts last, and deliberately: which boards this board needs is a fact about
-    # what it just painted. The markup below is what that is read from — content
-    # items, the interactivity runtime (whose tooltip family is applied at hover
-    # time), and `font_family`, which covers both the family the HTML host applies
-    # to the page around the board and the footer and timestamp, since those two
-    # render after this point and read that same string. Only assembled in embed
-    # mode: URL mode ignores it, and every `dct serve` request would otherwise pay
-    # for a second copy of the whole board.
-    painted_markup = "".join(content_items) + str(font_family) if embed_fonts else ""
+    # Fonts last: which fonts to embed depends on everything painted, including
+    # the footer and timestamp below.
+    painted_markup = (
+        "".join(content_items) + font_family + footer_family + timestamp_family
+        if embed_fonts
+        else ""
+    )
     svg_styles = generate_svg_styles(
         emoji_mode=resolved_style.emoji_mode,
         font_face_css=board_font_face_css(
@@ -1347,7 +1348,7 @@ def render_board_svg(
     attribution_width = 0.0
     if footer_style.visible:
         attribution_svg, attribution_width = _footer_attribution_svg(
-            footer_style, str(board.style.font.family), footer_x, footer_y
+            footer_style, footer_family, footer_x, footer_y
         )
 
     timestamp_style = board.style.timestamp
@@ -1384,7 +1385,7 @@ def render_board_svg(
                 )
         timestamp_element = (
             f'<text data-role="render-timestamp" x="{format_svg_numeric(timestamp_x)}" y="{format_svg_numeric(timestamp_y)}" text-anchor="{escape_attr(timestamp_anchor)}" '
-            f'font-size="{format_svg_numeric(timestamp_font_size)}" fill="{escape_attr(timestamp_style.font.color)}" font-family="{escape_attr(board.style.font.family)}" '
+            f'font-size="{format_svg_numeric(timestamp_font_size)}" fill="{escape_attr(timestamp_style.font.color)}" font-family="{escape_attr(timestamp_family)}" '
             f'style="font-variant-numeric: tabular-nums lining-nums;">'
             f"{html.escape(display_timestamp)}</text>"
         )

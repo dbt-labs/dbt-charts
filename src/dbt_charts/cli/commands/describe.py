@@ -15,7 +15,7 @@ from dbt_charts.cli._error_format import print_diagnostics
 from dbt_charts.cli._project import with_project
 
 if TYPE_CHECKING:
-    from dbt_charts.agent_api.describe import DescribeBoardResult
+    from dbt_charts.agent_api.describe import DescribeBoardResult, TemplateDescription
 
 console = dct_console()
 
@@ -30,6 +30,46 @@ def describe_command(
     with ProjectSession.from_project(project) as project_session:
         results = project_session.describe_paths(paths)
     _emit(results, json_output=json_output)
+
+
+def _print_template(path: str, template: TemplateDescription) -> None:
+    console.print(f"\n[bold]{template.name}[/bold] [dim]({path})[/dim]")
+    if template.description:
+        console.print(template.description)
+    console.print()
+    if template.channels:
+        console.print("[bold]Channels[/bold]")
+        t: Any = Table(
+            show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0)
+        )
+        t.add_column("Name")
+        t.add_column("Required")
+        t.add_column("Description")
+        for c in template.channels:
+            need = "required" if c.required else "optional"
+            t.add_row(
+                c.name,
+                f"{need}, multiple" if c.multiple else need,
+                c.description,
+            )
+        console.print(t)
+        console.print()
+    if template.options:
+        console.print("[bold]Options[/bold]")
+        t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0))
+        t.add_column("Name")
+        t.add_column("Type")
+        t.add_column("Default")
+        t.add_column("Description")
+        for o in template.options:
+            t.add_row(
+                o.name,
+                o.type,
+                "required" if o.required else json.dumps(o.default),
+                o.description,
+            )
+        console.print(t)
+        console.print()
 
 
 def _emit(results: list[DescribeBoardResult], *, json_output: bool) -> None:
@@ -53,6 +93,10 @@ def _emit(results: list[DescribeBoardResult], *, json_output: bool) -> None:
         if r.errors:
             has_errors = True
             print_diagnostics(r.errors)
+            continue
+
+        if r.template:
+            _print_template(r.path, r.template)
             continue
 
         if r.title:
@@ -83,9 +127,12 @@ def _emit(results: list[DescribeBoardResult], *, json_output: bool) -> None:
             t.add_column("Type")
             t.add_column("Query")
             t.add_column("Encoding")
+            t.add_column("Template")
             for c in r.charts:
                 enc = ", ".join(f"{k}={v}" for k, v in c.encoding.items())
-                t.add_row(c.name, c.type, c.query, enc)
+                name = "inline" if c.inline_template else c.template
+                template = ": ".join(filter(None, [name, c.template_description]))
+                t.add_row(c.name, c.type, c.query, enc, template)
             console.print(t)
             console.print()
 

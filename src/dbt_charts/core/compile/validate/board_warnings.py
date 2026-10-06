@@ -354,12 +354,7 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
             fmt = fmt.get("spec")
         if fmt is None:
             fmt = default_format
-        if (
-            fmt is None
-            or not resolve_format_parts(
-                fmt, ctx.formats, no_format_default=None
-            ).is_house
-        ):
+        if fmt is None or not resolve_format_parts(fmt, ctx.formats).is_house:
             continue
         warnings.append(
             Diagnostic.from_code(

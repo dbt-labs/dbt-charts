@@ -22,9 +22,12 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style
+from dbt_charts.core.compile.resolve.style.markdown_style import (
+    body_text_font_family,
+    get_compact_style,
+)
 from dbt_charts.core.fonts import SOURCE_SERIF_4_FONT_FAMILY, get_face, get_fonts_dir
 from dbt_charts.core.render.boards import _render_text_svg
-from dbt_charts.core.render.sizing import body_text_font_family, get_compact_style
 from mdsvg.fonts import FontMeasurer
 
 from .._prose_plan import full_width_plan, text_nodes

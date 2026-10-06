@@ -6458,9 +6458,7 @@ def test_house_register_paints_and_measures_the_sign_after_a_spaced_prefix() -> 
         painted_label_text,
     )
 
-    fmt = resolve_format_parts(
-        FormatConfig(spec="number", prefix="EUR "), None, no_format_default=None
-    )
+    fmt = resolve_format_parts(FormatConfig(spec="number", prefix="EUR "), None)
     spec = {
         "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
         "data": {"values": [{"value": -1_200_000.0}, {"value": -0.5}]},

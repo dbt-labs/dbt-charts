@@ -30,6 +30,7 @@ Supported values (matching FontStyle.case):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal
 
 from titlecase import titlecase as _titlecase  # pyright: ignore[reportMissingTypeStubs]
@@ -192,48 +193,23 @@ def apply_font_case(text: str, font: ResolvedFontStyle) -> str:
     return apply_case(text, font.case)
 
 
-def format_display_text(
-    text: str,
-    *,
-    from_slug: bool,
-    font: ResolvedFontStyle,
+def field_title(field: str, field_labels: Mapping[str, str]) -> str:
+    """Text a surface paints for a field an author gave no surface-level label.
+
+    The chart's authored ``field_labels`` entry, verbatim; else the tokenized
+    column name (``order_month`` → ``order month``) with no case transform.
+    """
+    label = field_labels.get(field)
+    return label if label is not None else slug_to_text(field)
+
+
+def field_display_text(
+    field: str, field_labels: Mapping[str, str], font: ResolvedFontStyle
 ) -> str:
-    """Two-step render pipeline: optional slug tokenization then font case.
-
-    Args:
-        text: The raw input string — either an authored string or a slug.
-        from_slug: True when *text* is a field slug / identifier that needs
-            ``slug_to_text`` tokenization first (underscore→space, unit/abbreviation
-            expansion).  False when *text* is already human-readable authored text.
-        font: The resolved font for this slot; font.case drives the case transform.
-
-    Returns:
-        The display-ready string.
-    """
-    normalized = slug_to_text(text) if from_slug else text
-    return apply_font_case(normalized, font)
-
-
-def default_axis_title(field: str) -> str:
-    """Default title for an axis whose title an author never set.
-
-    Tokenizes the bound column name (``order_month`` → ``order month``) but
-    skips the font's case transform — a default axis title should read like
-    the column it encodes, not like a title-cased headline. That's what makes
-    it distinct from ``format_display_text``, which every OTHER slug-derived
-    label (chart title, legend title, series/tooltip labels) still goes
-    through: an author who wants title case on an axis writes ``x_label``/
-    ``y_label`` explicitly.
-
-    Args:
-        field: The bound column name (never an authored label — callers pass
-            an authored ``x_label``/``y_label`` straight through instead of
-            calling this).
-
-    Returns:
-        The tokenized, case-preserved default title text.
-    """
-    return slug_to_text(field)
+    """``field_title`` for a slot whose derived text takes its font's case
+    (legend titles, tooltip series rows). An authored label stays verbatim."""
+    label = field_labels.get(field)
+    return label if label is not None else apply_font_case(slug_to_text(field), font)
 
 
 def inferred_display_name(

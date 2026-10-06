@@ -219,7 +219,7 @@ class TestCompositeSeries:
                 rc.wide_measures,
                 rc.color,
                 data,
-                wide_measure_labels_for(rc.wide_measures),
+                wide_measure_labels_for(rc.wide_measures, rc.field_labels),
             )
         )
         assert len(expected) == 4

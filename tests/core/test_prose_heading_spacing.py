@@ -31,12 +31,12 @@ from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.style.theme import TextColumnStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style
+from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.prose import render_prose_svg
-from dbt_charts.core.render.sizing import get_compact_style
 
 from ._prose_plan import full_width_plan
 

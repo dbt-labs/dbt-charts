@@ -29,7 +29,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     AuthoredChart,
 )
 from dbt_charts.core.compile.models.config import ExecutionConfig
-from dbt_charts.core.compile.models.factories import _PatchBase
+from dbt_charts.core.compile.models.factories import FontSlotBase, _PatchBase
 from dbt_charts.core.compile.models.markers import Facet, SchemaSugar
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
@@ -745,6 +745,21 @@ def _container_list_min_items(
     return None
 
 
+def _names_a_font_slot(
+    annotation: Any,  # type-state: explicit_any — a typing annotation tree
+) -> bool:
+    """Whether the field holds a model that takes a registry font name."""
+    for model_name in _nested_model_names(annotation):
+        model = _find_in_annotation(annotation, model_name)
+        if (
+            isinstance(model, type)
+            and issubclass(model, FontSlotBase)
+            and model.accepts_name
+        ):
+            return True
+    return False
+
+
 def _build_schema_field(
     name: str, field_info: FieldInfo, annotation: Any
 ) -> SchemaField:
@@ -756,6 +771,11 @@ def _build_schema_field(
     metadata = field_info.metadata or []
     inherit = next((m for m in metadata if isinstance(m, Inherit)), None)
     inherit_slot = next((m for m in metadata if isinstance(m, InheritSlot)), None)
+    extra_union_types = _extra_union_types(annotation)
+    if "str" not in extra_union_types and _names_a_font_slot(annotation):
+        # A font slot's bare-name form is a `mode="before"` coercion
+        # (FontSlotBase) that JSON Schema cannot see.
+        extra_union_types.append("str")
     return SchemaField(
         name=name,
         description=field_info.description or "",
@@ -766,7 +786,7 @@ def _build_schema_field(
         enum_values=_extract_enum_values(annotation),
         nested_models=_nested_model_names(annotation),
         container=_get_container(annotation),
-        extra_union_types=_extra_union_types(annotation),
+        extra_union_types=extra_union_types,
         extra_union_type_patterns=_extra_union_type_patterns(annotation),
         container_mapping_models=_container_mapping_models(annotation),
         container_list_models=_container_list_models(annotation),
@@ -809,6 +829,12 @@ def _collect_models(
         # still has to survive a model_dump round-trip.
         extra = field_info.json_schema_extra
         if field_info.exclude or (isinstance(extra, dict) and extra.get("internal")):
+            continue
+        if (
+            field_name == "extends"
+            and issubclass(model_cls, FontSlotBase)
+            and not model_cls.accepts_name
+        ):
             continue
         annotation = field_info.annotation
         display_name = field_info.alias or field_name

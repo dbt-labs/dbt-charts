@@ -102,15 +102,24 @@ obviously screaming*. Hold these when touching `compile/`:
 - **Board width is two keys: `frame.width` binds, `frame.max_width` bounds.**
   `width` authored anywhere in the cascade (board, extends template,
   meta.yml; root `width:` sugar) is the board's exact width. With no
-  `width`, the board hugs its charts' `preferred_width` measurement up to
-  `max_width` — so a lone generated chart stays a small card, never a
-  full-width one. Never reintroduce a provenance split ("binds if the board's
+  `width`, the board hugs its items' preferred widths up to
+  `max_width` — a chart's `preferred_width`, a title's one-line width, prose's
+  one-line width capped at `style.text.preferred_width` — so a lone generated
+  chart stays a small card, never a full-width one. Never reintroduce a provenance split ("binds if the board's
   own file wrote it") — that design was built and deleted; the key is the
   intent. Corollaries: `rows:` slots pin an authored item/chart width (a
   percentage means a fraction of the row and never feeds the hug), and
   `chart_focus` sets the focused board's `width` to the pinned slot plus
   margins — WYSIWYG even when the slot exceeds `max_width`.
   Pinned by `tests/core/compile/test_authored_board_width.py`.
+- **Format names are the defaults.** A kind of value (`number`, `currency`,
+  `percent`, `year`, …) formats with the engine format named after it, the same
+  name on every destination. Restyling a kind means redefining that name in the
+  flat `style.formats` map, at any cascade level. A redefined name prints
+  exactly its own spec: the engine's rules for that name (trim, KPI compaction,
+  the sub-unit `_full` swap) no longer apply. Don't add a kind → format map
+  (`formats.defaults`, `format_defaults`) beside the names: it would map each
+  name to itself. Where a kind lacks a same-named format, add one.
 - **The type ladder is coupled to board geometry.** Object-title width tiers
   (`resolve/style/typography.py`) derive from the default board's 24-column grid via a single
   global reference. Changing `frame.width` / `frame.margin` in `_base.yaml` moves the

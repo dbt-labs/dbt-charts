@@ -117,7 +117,9 @@ def _layered_domain_and_aliases(
         # layer-label rule via layer_label_and_aliases. Only the domain
         # membership check above (layer.color's distinct values) reads
         # real rows and stays independent.
-        label, layer_aliases = layer_label_and_aliases(layer.label, layer.y)
+        label, layer_aliases = layer_label_and_aliases(
+            layer.label, layer.y, chart.field_labels
+        )
         if label not in domain:
             domain.append(label)
         aliases[label] = layer_aliases
@@ -188,7 +190,7 @@ def _color_field_and_domain(
         # the domain is the humanized measure list (or the dimension
         # composite when one is set).
         dimension = chart.color
-        wide_labels = wide_measure_labels_for(measures)
+        wide_labels = wide_measure_labels_for(measures, chart.field_labels)
         domain = wide_series_names(measures, dimension, rows, wide_labels)
         aliases = wide_legend_aliases(measures, dimension, rows, wide_labels)
         # No color field: the domain is the measure list, so there is no
@@ -212,7 +214,9 @@ def _color_field_and_domain(
             # means no shared scale gets built at all, so this must return
             # nothing too, not just skip layer contributions -- base_label
             # alone is not a domain the emitter ever shows.
-            base_label, base_alias_set = layer_label_and_aliases(chart.y_label, chart.y)
+            base_label, base_alias_set = layer_label_and_aliases(
+                chart.y_label, chart.y, chart.field_labels
+            )
             base_aliases = {base_label: base_alias_set}
             domain, aliases = _layered_domain_and_aliases(
                 ctx,

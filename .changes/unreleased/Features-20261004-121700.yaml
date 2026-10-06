@@ -1,0 +1,3 @@
+kind: Features
+body: 'The board authoring API can write a list of numbers at a path, such as a heading size ramp.'
+time: 2026-10-04T12:17:00.000000-07:00

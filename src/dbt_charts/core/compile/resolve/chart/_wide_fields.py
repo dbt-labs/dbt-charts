@@ -10,7 +10,7 @@ compile -> render circular dependency.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -22,11 +22,12 @@ from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FIELD_LABELS_WIDE_COLLISION,
     ERR_MULTI_Y_COLOR_CONFLICT,
     ERR_MULTI_Y_LAYERS_CONFLICT,
     ERR_WIDE_MEASURE_NAME_CONTAINS_SEPARATOR,
 )
-from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.case import field_title
 from dbt_charts.core.utils import Rows
 
 # Field that VL fold emits for the folded numeric value.
@@ -236,6 +237,27 @@ def wide_legend_aliases(
     }
 
 
+def validate_wide_measure_labels(normalized: _CartesianChartFields) -> None:
+    """Raise ``ERR-FIELD-LABELS-WIDE-COLLISION`` when authored ``field_labels``
+    leave two ``y: [...]`` measures sharing one label."""
+    if not isinstance(normalized.y, list):
+        return
+    labels, _ = resolve_wide_measure_labels(
+        tuple(normalized.y), normalized.field_labels
+    )
+    by_label: dict[str, list[str]] = {}
+    for measure, label in labels.items():
+        by_label.setdefault(label, []).append(measure)
+    for label, group in by_label.items():
+        if len(group) > 1:
+            raise CompilationError.from_code(
+                ERR_FIELD_LABELS_WIDE_COLLISION,
+                chart_id=normalized.id,
+                measures=", ".join(map(repr, group)),
+                label=label,
+            )
+
+
 def resolve_wide_measure_channels(
     normalized: _CartesianChartFields,
     channels: dict[str, ResolvedStyleChannel],
@@ -283,8 +305,9 @@ def resolve_wide_measure_channels(
             chart_id=normalized.id,
             chart_type=chart_type,
         )
+    assert isinstance(normalized.y, list)
+    validate_wide_measure_labels(normalized)
     if normalized.color is not None:
-        assert isinstance(normalized.y, list)
         for measure in normalized.y:
             if WIDE_SERIES_SEPARATOR in measure:
                 raise CompilationError.from_code(
@@ -306,10 +329,11 @@ def resolve_wide_measure_channels(
 
 
 def resolve_wide_measure_labels(
-    measures: tuple[str, ...],
+    measures: tuple[str, ...], field_labels: Mapping[str, str]
 ) -> tuple[dict[str, str], dict[str, list[str]]]:
-    """Resolve each measure's humanized label, falling colliding measures
-    back to their own raw name -- iterated to a fixed point.
+    """Resolve each measure's label (``field_title``), falling colliding measures
+    back to their own raw name -- iterated to a fixed point. An authored
+    ``field_labels`` entry never falls back.
 
     A single fallback pass is not collision-free: a raw name can itself
     equal another measure's humanized label (``orders_cnt`` humanizes to
@@ -330,7 +354,7 @@ def resolve_wide_measure_labels(
     actually shared to the distinct raw measures that shared it, for the
     render-warnings detector to report.
     """
-    labels = {measure: default_axis_title(measure) for measure in measures}
+    labels = {measure: field_title(measure, field_labels) for measure in measures}
     collision_groups: dict[str, list[str]] = {}
     while True:
         by_label: dict[str, list[str]] = {}
@@ -343,13 +367,20 @@ def resolve_wide_measure_labels(
         }
         if not colliding:
             return labels, collision_groups
+        progressed = False
         for label, group in colliding.items():
             collision_groups[label] = group
             for measure in group:
-                labels[measure] = measure
+                if measure not in field_labels and labels[measure] != measure:
+                    labels[measure] = measure
+                    progressed = True
+        if not progressed:
+            return labels, collision_groups
 
 
-def wide_measure_labels_for(measures: tuple[str, ...]) -> dict[str, str]:
+def wide_measure_labels_for(
+    measures: tuple[str, ...], field_labels: Mapping[str, str]
+) -> dict[str, str]:
     """Humanized display label for each raw wide measure name -- see
     ``resolve_wide_measure_labels`` for the fallback algorithm; this
     returns just its label half.
@@ -361,7 +392,7 @@ def wide_measure_labels_for(measures: tuple[str, ...]) -> dict[str, str]:
     raw-name fallback can't be distinguished from a measure whose raw
     name already equals its own humanized form.
     """
-    labels, _ = resolve_wide_measure_labels(measures)
+    labels, _ = resolve_wide_measure_labels(measures, field_labels)
     return labels
 
 
@@ -381,7 +412,7 @@ def bake_wide_measures_kwargs(
     Returns ``(cartesian_kwargs, wide_measures)``; the caller spreads both
     into the resolved chart constructor (``**_ck, wide_measures=wide_measures``).
     ``wide_measure_labels`` is not a resolved-chart field -- every reader
-    calls ``wide_measure_labels_for(chart.wide_measures)`` directly.
+    calls ``wide_measure_labels_for`` directly.
     """
     wide_measures = tuple(normalized_y) if isinstance(normalized_y, list) else ()
     if wide_measures:

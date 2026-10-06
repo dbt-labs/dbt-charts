@@ -118,11 +118,6 @@ skill_troubleshooting:
 # SKILL.md `dct init skills` writes. Different from the `skill_*` family
 # above, whose `dct` side is a `dct skills <name>` command.
 
-skill_name_analyst_runbook:
-  tool: "analyst-runbook"
-  dct: "analyst-runbook"
-  install: "dct-analyst-runbook"
-
 skill_name_build:
   tool: "board-build"
   dct: "board-build"
@@ -157,11 +152,6 @@ skill_name_cloud_setup:
   tool: "cloud-setup"
   dct: "cloud-setup"
   install: "dct-cloud-setup"
-
-skill_name_data_exploration:
-  tool: "data-exploration"
-  dct: "data-exploration"
-  install: "dct-data-exploration"
 
 skill_name_design_report:
   tool: "report-design"

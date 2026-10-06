@@ -217,13 +217,15 @@ def slug_to_text(slug: str) -> str:
     """Tokenize a slug/ID into human-readable text — WITHOUT letter-case transforms.
 
     Handles common data column naming conventions:
-    - snake_case and kebab-case → space-separated tokens (lowercase)
+    - snake_case and kebab-case → space-separated tokens
+    - Single-case tokens lowercase; mixed-case tokens (``MTok``) keep their
+      spelling
     - Unit suffixes: ``_usd`` → ``($)``, ``_pct`` → ``(%)``
     - Abbreviations: ``yoy`` → ``YoY``, ``arr`` → ``ARR``
 
     Letter-case (title/sentence/upper/lower) is NOT applied here — the caller
     supplies a ``font.case`` value and passes the result through
-    ``apply_font_case`` (or ``format_display_text``).
+    ``apply_font_case`` (or ``field_display_text``).
 
     Examples:
         >>> slug_to_text("revenue_usd")
@@ -251,6 +253,8 @@ def slug_to_text(slug: str) -> str:
         lower = token.lower()
         if lower in _ABBREVIATIONS:
             words.append(_ABBREVIATIONS[lower])
+        elif token != lower and token != token.upper():
+            words.append(token)
         else:
             words.append(lower)
 

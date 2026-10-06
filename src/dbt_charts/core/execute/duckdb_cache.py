@@ -150,6 +150,9 @@ def compute_cache_key(
         # with the inactive state either.
         if isinstance(query.incremental, str):
             content += f"\n__incremental:{query.incremental}"
+        # Folded only when set so existing entries keep their keys.
+        if query.dialect is not None:
+            content += f"\n__dialect:{query.dialect}"
         source_hash = compute_source_hash(query.source, board_sources=board_sources)
         if source_version:
             source_hash = compute_query_hash(f"{source_hash}:{source_version}")

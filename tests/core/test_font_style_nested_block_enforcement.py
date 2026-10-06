@@ -78,11 +78,9 @@ def test_title_style_rejects_flat_color() -> None:
         TitleStyle.model_validate({"color": "#333"})
 
 
-def test_title_style_rejects_font_string() -> None:
-    # The old `font: str` (VL font-family alias) is ambiguous with the new nested
-    # `font: FontStyle`; use `font.family` instead.
-    with pytest.raises(ValidationError):
-        TitleStyle.model_validate({"font": "Inter"})
+def test_title_style_font_string_is_a_named_font_lookup() -> None:
+    # `font: <str>` names a `style.fonts` entry; a family goes in `font.family`.
+    assert TitleStyle.model_validate({"font": "Inter"}).font.extends == "Inter"
 
 
 # =============================================================================

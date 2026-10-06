@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import cache
-from typing import Annotated, Any, ForwardRef, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, ForwardRef, Union
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 from pydantic_core import PydanticUndefinedType
 
 from dbt_charts.core.compile.models.markers import (
@@ -40,8 +40,34 @@ from dbt_charts.core.compile.models.markers import (
 _FORWARDED_MARKER_TYPES = (Inherit, InheritSlot, SkipInheritSlots, Merge, Facet)
 
 
+FontAlias = Annotated[str, Field(description="Name of a ``style.fonts`` entry.")]
+
+
 class _PatchBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class FontSlotBase(_PatchBase):
+    """Base of ``FontStyle`` and every patch synthesized from a subclass of it.
+
+    A font slot takes a registry name: a bare string is ``{extends: name}``.
+    """
+
+    # False for the root font: it accepts no name and the schema offers no
+    # ``extends`` on it.
+    accepts_name: ClassVar[bool] = True
+
+    if TYPE_CHECKING:
+        # Declared as a field by FontStyle and by every patch synthesized from it.
+        extends: FontAlias | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_bare_name(
+        cls,
+        value: Any,  # type-state: explicit_any — raw pre-validation slot value
+    ) -> Any:  # type-state: explicit_any — passes non-string input through
+        return {"extends": value} if isinstance(value, str) else value
 
 
 # Maps compiled class → its hand-written patch class, consulted before synthesis.
@@ -215,7 +241,12 @@ def build_patch_model_ext(
             ),
         )
 
-    actual_base = base_cls if base_cls is not None else _PatchBase
+    if base_cls is not None:
+        actual_base = base_cls
+    elif issubclass(compiled_cls, FontSlotBase):
+        actual_base = FontSlotBase
+    else:
+        actual_base = _PatchBase
     patch_name = f"{compiled_cls.__name__}Patch"
     patch_cls = create_model(
         patch_name,

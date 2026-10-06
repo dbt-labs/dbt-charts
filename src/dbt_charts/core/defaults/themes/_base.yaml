@@ -37,10 +37,6 @@ style:
   roles:
     ink: chrome.heading
 
-  # Format names are a board's own; the engine's names are predefined.
-  formats:
-    aliases: null
-
   opacity: 1.0
 
   frame:
@@ -49,15 +45,15 @@ style:
     # Outer edge inset only — independent of card_padding/card_gap. Hosts that
     # render the board edge-to-edge (Cloud) have no chrome of their own, so this
     # is the entire whitespace budget a viewer sees. Changing it moves the
-    # typographic width tiers with it — see docs/guides/typographic-tiers.md.
+    # typographic width tiers with it — see the tier table in
+    # compile/resolve/style/typography.py.
     margin: 36.0
     card_padding: 16.0
     card_gap: 8.0
 
   font:
-    # Chrome floor 11px. Anchored — referenced by style.title.subtitle.font.size
-    # and style.variables.font.size below. Body prose is NOT one of them; it has
-    # its own size at style.text.font.size.
+    # Chrome floor 11px. Anchored — the `subtitle` named font below reads it.
+    # Body prose is NOT one of them; it has its own size on the `body` font.
     size:   &size_body 11
     weight: '400'
     style: normal
@@ -65,9 +61,50 @@ style:
     case: none
     emoji: monochrome
     # Chrome leading. Cascades to text roles that do not declare their own.
-    # Body prose (style.text.font) and title both declare one - prose looser at
-    # 1.4 for reading, title tighter at 1.1 for display.
+    # Prose and titles declare their own leading: prose looser (1.4) for reading,
+    # titles tighter (1.1) for display.
     line_height: 1.25
+
+  # Named fonts. Slots bind by name (`font: label`, or `font: {extends: label,
+  # ...}` with overrides); themes add families here, once, instead of patching
+  # slots. A name sets only the fields written on it, so a slot bound to one
+  # still inherits everything else from its parent slot.
+  fonts:
+    # The H1–H6 ramp, indexed by heading level - 1. Only `heading` takes sizes,
+    # and it takes no `size`.
+    heading:
+      weight: 500
+      case: title
+      # Tight headline leading. Convention: larger type wants tighter line-height.
+      # At ~24px the body 1.25 multiplier reads loose between wrapped title lines;
+      # 1.1 sits in the standard display-headline range.
+      line_height: 1.1
+      sizes:
+        - 24
+        - 18
+        - 14
+        - 14
+        - 11
+        - 11
+    subtitle:
+      size: *size_body
+      weight: 400
+      case: sentence
+    # Body prose: sized and led independently of `style.font.*` (the 11-unit
+    # chrome floor). Sustained reading wants more than a label size; 14 matches
+    # the series-label and H3/H4 rungs. Root 1.25 is label leading — too tight
+    # for prose, so it is led at 1.4.
+    body:
+      size: 14
+      line_height: 1.4
+    label:
+      size: &size_label 11
+    caption:
+      size: 11
+      color: "#999999"
+    numeral: {}
+    # No size: mdsvg's code_font_scale keeps code proportional to the text it sits in.
+    code: {}
 
   border:
     width: 0.0
@@ -83,27 +120,11 @@ style:
     # embedded dashboards where H1/H2 are reserved by the outer page).
     level: auto
     font:
+      extends: heading
       size: 18
-      weight: 500
-      case: title
-      # Tight headline leading. Convention: larger type wants tighter line-height.
-      # At ~24px the body 1.25 multiplier reads loose between wrapped title lines;
-      # 1.1 sits in the standard display-headline range.
-      line_height: 1.1
     compact_weight: 600
-    # H1–H6 font-size ramp, indexed by board.level - 1.
-    # Paired with width_offsets below — chart_title_spec computes
-    # effective_level = clamp(board.level + 1 + width_offset, 1, 6)
-    # then returns sizes[effective_level - 1].
-    sizes:
-      - 24
-      - 18
-      - 14
-      - 14
-      - 11
-      - 11
     # Additive level offsets by card pixel width. Added to the base heading
-    # level before indexing the sizes ramp. The canonical tier classifier and
+    # level before indexing the heading ramp. The canonical tier classifier and
     # grid-derived boundaries live in typography.py.
     # Board headers (level=1) are intentionally larger than chart titles (level=2)
     # at medium/wide — H1 > H2 is semantically correct for a hierarchy of headings.
@@ -115,10 +136,7 @@ style:
     min_height: 24.0
     subtitle:
       overflow: wrap-two
-      font:
-        size:   *size_body
-        weight: 400
-        case: sentence
+      font: subtitle
 
   charts:
     preferred_width: 600.0
@@ -165,8 +183,7 @@ style:
           visible: true
           width: 2
       labels:
-        font:
-          size:     &size_label 11
+        font: label
         padding: 6
         overlap:                         # default: all strategies enabled; the ONE home for this setting
           tilt: true
@@ -183,12 +200,11 @@ style:
         # via Layer 5 in compile/resolve/style/axis_cascade.py.
         #
         # Default (unlabeled) title TEXT bypasses this font's `case: title`
-        # transform — see render/chart/emitters/_cartesian.py's
-        # default_axis_title use. That is independent of visibility and applies
-        # wherever a default title does render.
+        # transform (core/text/case.py's field_title), wherever a default
+        # title renders.
         visible: false
         font:
-          size: *size_label
+          extends: label
           weight: &weight_bold 600
           case: title
         padding: 10
@@ -250,7 +266,7 @@ style:
       ticks:
         width: 1.5
       labels:
-        font: {}
+        font: numeral
         # References the shared `number` name (.3~s) so quantitative axes
         # AND the value labels that inherit this format read a bounded 3-sig-fig
         # SI number (9.18, 21.5M) — not the unbounded 6-sig-fig 9.18039 a bare ~s
@@ -273,10 +289,12 @@ style:
         right: 10.0
       label:
         font:
+          extends: label
           color: '#94a3b8'
           weight: 500
       value:
         font:
+          extends: label
           color: '#f8fafc'
           weight: 600
       border:
@@ -297,19 +315,18 @@ style:
       visible: true
 
     legend:
-      direction: vertical
       columns: 0
       compact_columns: 2
       symbol_limit: 20
       label:
-        font:
-          size:  *size_label
+        font: label
         # Gap between a legend symbol and its label text (VL labelOffset).
         # Must clear wide stroke symbols (target lines in mixed bar+line
         # legends), which overflow VL's default offset of 4.
         padding: 8.0
       title:
         font:
+          extends: label
           size: 12
           weight: *weight_bold
           case: title
@@ -325,6 +342,7 @@ style:
       stroke: null
 
     table:
+      font: label
       preferred_width: 800.0
       outer_padding: 0.0
       bottom_padding: 0.0
@@ -356,20 +374,19 @@ style:
       title_row:
         height: 40.0
       more_rows:
-        font:
-          size: 11.0
+        font: label
       paginator:
         # Right-aligned chevrons + page numbers below the table. Colors come
         # from the scaffold gray ramp so the control reads as foreground text
         # rather than as a divider.
-        font:
-          size: 11.0
+        font: label
         weight_active: 600
         weight_inactive: 400
         weight_chevron: 800  # heavier than the active page so chevrons read as affordances
         item_width: 18.0  # per-item slot width (hit-rect is narrower; see render code)
       empty_state:
         font:
+          extends: label
           size: 14.0
       spark:
         padding:
@@ -429,6 +446,7 @@ style:
           width: 1
           continuous: true
         font:
+          extends: label
           # Semibold column headers. Setting weight in theme YAML keeps the
           # cascade authoritative so themes can tune without touching the
           # render layer.
@@ -577,6 +595,7 @@ style:
           offset: 6
           line_height: 14
           font:
+            extends: label
             size: 14
             weight: '500'
           # Default 2-line Jinja templates for per-slice labels when the
@@ -589,8 +608,7 @@ style:
             with_color: "{{ '{:.0%}'.format(percent) }} {{ color }}\n{{ '{:,.0f}'.format(value) }}"
             no_color: "{{ '{:.0%}'.format(percent) }}\n{{ '{:,.0f}'.format(value) }}"
       text:
-        font:
-          size:   *size_label
+        font: label
         align: center
       rule:
         stroke:
@@ -678,6 +696,7 @@ style:
       # hierarchy is carried by size + color, not weight. This cascades
       # into every slot (value, label, affix, glyph) unless overridden.
       font:
+        extends: numeral
         size: 11
         weight: 500
       value:
@@ -685,17 +704,15 @@ style:
           size: 24
       label:
         font:
-          size: 11
+          extends: label
           case: title
       affix:
-        font:
-          size: 11
+        font: label
       glyph:
         # Indicator glyphs (▲▼●) sit next to the value as markers, not
         # second headlines — drawn at body/narrow tier so a triangle's
         # visual mass doesn't compete with the digits.
-        font:
-          size: 11
+        font: label
       min_card_width: 100.0
       preferred_width: 300.0
       default_height: 48.0
@@ -737,10 +754,10 @@ style:
         visible: true
         width: 50.0
       max_bars: 10
-      font:
-        size: 11.0
+      font: label
       subtitle:
         font:
+          extends: label
           size: 10
       border:
         radius: 2.0
@@ -750,6 +767,7 @@ style:
     # bar/line/area as support_table: {...}.
     support_table:
       font:
+        extends: numeral
         size: 11
       # No divider rule by default — strip flows directly from the x-axis.
       # Themes that want a visible separator can set width > 0 and color.
@@ -834,11 +852,11 @@ style:
       total:
         value:
           font:
+            extends: numeral
             size: 18
             weight: '600'
         label:
-          font:
-            size: 11
+          font: label
 
     # Choropleth (color-encoded) map — renamed from 'map' in ADR-015.
     # geo_source is a chart-root channel (chart.geo_source), not a style field.
@@ -934,6 +952,7 @@ style:
         radius: 4.0
       title:
         font:
+          extends: label
           color: by_tone
           size: 13.0
           # Shares the theme's one bold token so a **bold** span inside a
@@ -945,24 +964,17 @@ style:
         y_offset: 0.0
       message:
         font:
+          extends: caption
           color: by_tone
           size: 11.0
         y_offset: 0.0
 
 
   text:
-    font:
-      # Body prose is sized and led independently of `style.font.*` (the 11-unit
-      # dashboard-chrome floor that subtitles and variable controls share).
-      # Sustained reading wants more than a label size; 14 matches the existing
-      # series-label and H3/H4 rungs rather than introducing a new value.
-      size:   14
-      # Root 1.25 is label leading — right for axis ticks and legend entries,
-      # too tight for prose, and tighter still while the measure is uncapped and
-      # lines run the full board. Title keeps its own 1.1 for the same reason in
-      # the other direction.
-      line_height: 1.4
+    font: body
     align: left
+    # A readable line length: the most a prose block asks a content-sized board for.
+    preferred_width: 600.0
     # Block margin values, in WHOLE line-height units.
     # paragraph_spacing = font_size × line_height × paragraph.margin_bottom
     # heading_margin_*_px = font_size × line_height × heading.margin_{top,bottom}
@@ -1002,6 +1014,7 @@ style:
       inactive_weight: '400'
       title_baseline_offset: 5.0
       font:
+        extends: label
         size: 14.0
       border:
         width: 0.0
@@ -1017,6 +1030,7 @@ style:
       text_baseline_offset: 5.0
       content_y_offset: 4.0
       font:
+        extends: label
         size: 14.0
       border:
         width: 0.0
@@ -1036,8 +1050,7 @@ style:
     label_position: inline
     container_height: 36.0
     control_gap: 8.0
-    font:
-      size:  *size_body
+    font: label
     label:
       font:
         weight: 500
@@ -1085,6 +1098,7 @@ style:
     overlay:
       text: 'add data'
       font:
+        extends: label
         size: 16
         weight: 500
 
@@ -1092,9 +1106,7 @@ style:
     visible: true
     text: "made with dbt Charts"
     link: "https://dbtcharts.com"
-    font:
-      size: 11
-      color: "#999999"
+    font: caption
     y_offset: 14
     rule:
       color: "#e5e5e5"
@@ -1106,6 +1118,4 @@ style:
     align: left
     format: "Data as of %H:%M %Z on %-d %b %Y"
     y: 14
-    font:
-      size: 11
-      color: "#999999"
+    font: caption

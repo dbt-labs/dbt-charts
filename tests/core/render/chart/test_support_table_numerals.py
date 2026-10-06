@@ -109,7 +109,7 @@ def _goal_table(fmt: str = "$,.3s"):
         entries=[
             ResolvedSupportTableSource(
                 source="goal",
-                format=resolve_format_parts(fmt, None, no_format_default=None),
+                format=resolve_format_parts(fmt, None),
                 label="Goal",
             )
         ]
@@ -1369,7 +1369,6 @@ def _house_affix_numerals_values(
                 format=resolve_format_parts(
                     FormatConfig(spec=spec, **config),
                     None,
-                    no_format_default=None,
                 ),
                 label="Goal",
             )
@@ -1437,7 +1436,6 @@ def test_repeat_every_on_a_house_format_repeats_the_native_symbol():
                 format=resolve_format_parts(
                     FormatConfig(spec="currency_whole", repeat="every"),
                     None,
-                    no_format_default=None,
                 ),
                 label="Goal",
             )

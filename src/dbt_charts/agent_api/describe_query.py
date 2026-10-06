@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.sql_guard import source_dialect
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.warehouse_check import WarehouseCheck, check_ad_hoc_query
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
@@ -32,7 +33,11 @@ class DescribeQueryArgs(BaseModel):
         None, description="Data source name to describe against."
     )
     dialect: str | None = Field(
-        None, description="SQL dialect hint for the validator (duckdb, bigquery, etc.)."
+        None,
+        description=(
+            "SQL dialect for the validator (duckdb, bigquery, etc.). "
+            "Defaults to the source's own dialect."
+        ),
     )
 
 
@@ -64,10 +69,12 @@ def describe_query(
 ) -> DescribeQueryResult:
     """Return the column schema for a SQL string, never at full-query price.
 
-    Runs validate_query first; short-circuits on error-severity diagnostics
-    (WARN-PARSE-ERROR, WARN-MISSING-JOIN-PREDICATE) without calling the
-    warehouse. Non-error diagnostics are surfaced on the result alongside the
-    column schema.
+    Runs validate_query first, in ``dialect`` or, when omitted, the source
+    type's own sqlglot dialect (a type with none, such as a file source or
+    ``dbt_profile``, lints with sqlglot's generic dialect); short-circuits on
+    error-severity diagnostics (WARN-PARSE-ERROR, WARN-MISSING-JOIN-PREDICATE)
+    without calling the warehouse. Non-error diagnostics are surfaced on the
+    result alongside the column schema.
 
     Column lookup is dispatch, never execution: a DuckDB source uses its own
     read-only DESCRIBE, and every other adapter goes through
@@ -81,7 +88,11 @@ def describe_query(
     silent fall-through to running the query in full.
     """
     try:
-        diags = validate_query(sql, dialect=dialect)
+        # Lint-first stays intact for a source-less call: its parse diagnostics
+        # beat the source-required error below.
+        cfg = adapter_registry.resolve_source_config(source) if source else None
+        source_type = cfg.get("type") if cfg else None
+        diags = validate_query(sql, dialect=dialect or source_dialect(source_type))
 
         error_diags = [d for d in diags if d.severity == "error"]
         if error_diags:
@@ -92,7 +103,7 @@ def describe_query(
                 error=error_diags[0].message,
             )
 
-        cfg = adapter_registry.resolve_source_config(source)
+        cfg = cfg or adapter_registry.resolve_source_config(source)
 
         if cfg.get("type") == "duckdb":
             # Run DESCRIBE via the registry's existing read-only DuckDBAdapter so

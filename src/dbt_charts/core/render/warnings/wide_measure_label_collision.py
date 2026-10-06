@@ -9,9 +9,10 @@ detector, calls it fresh from ``chart.wide_measures``.
 
 from __future__ import annotations
 
+from dbt_charts.core.compile.models.chart.resolved import ResolvedHeatmapChart
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    WIDE_MEASURE_FAMILIES,
     resolve_wide_measure_labels,
-    wide_measure_fields,
 )
 from dbt_charts.core.diagnostics import WARN_WIDE_MEASURE_LABEL_COLLISION, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext
@@ -23,11 +24,16 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.board_spec.charts.items():
-        measures = wide_measure_fields(chart)
+        if isinstance(chart, WIDE_MEASURE_FAMILIES):
+            measures = chart.wide_measures
+        elif isinstance(chart, ResolvedHeatmapChart) and isinstance(chart.y, list):
+            measures = tuple(chart.y)
+        else:
+            continue
         if not measures:
             continue
 
-        _, collision_groups = resolve_wide_measure_labels(measures)
+        _, collision_groups = resolve_wide_measure_labels(measures, chart.field_labels)
         for label, colliding_measures in collision_groups.items():
             warnings.append(
                 Diagnostic.from_code(

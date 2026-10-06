@@ -39,6 +39,7 @@ from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
     ProjectDirectory,
     ProjectPath,
+    board_namespace_for_root,
 )
 
 # File extensions treated as renderable board files (.yml/.yaml/.md/.markdown).
@@ -139,29 +140,40 @@ def _dir_dict(name: str, path_rel: str, url: str) -> dict[str, str]:
 
 
 def _strip_mount_prefix(url: str, mount_dir: str) -> str:
-    """Strip a single leading path component from *url* when it matches *mount_dir*.
+    """Rewrite *url*'s leading board-root prefix to its serve-router-relative form.
 
-    Used to convert project-relative URLs (``/charts/reports/``) to serve-router-
-    relative URLs (``/reports/``), where the serve router mounts the ``charts/``
-    directory at ``/`` and 404s ``/charts/*``.
+    ``mount_dir`` is a board root's own relpath (``core.project.BoardRoot.relpath``
+    — ``"charts"`` for the host, ``"dbt_packages/<pkg>/charts"`` for a package):
+    the whole prefix is replaced by ``/<namespace>`` (empty for the host root),
+    which is a strip for the host root and a rewrite for a package root — the
+    serve router mounts the host ``charts/`` directory at ``/`` and namespaces
+    a package root at ``/<pkg>/``.
 
-    Does nothing when *mount_dir* is empty or the URL does not start with the
-    expected component.
+    A directory above the root (a package's ``dbt_packages/<pkg>`` parent) has
+    no route of its own; it maps to ``/``, where the package is a virtual group.
+    Does nothing when *mount_dir* is empty or the URL is outside the root.
 
     Examples:
         _strip_mount_prefix("/charts/reports/", "charts") → "/reports/"
         _strip_mount_prefix("/charts/", "charts") → "/"
         _strip_mount_prefix("/reports/", "charts") → "/reports/"  (no-op)
         _strip_mount_prefix("/charts/reports/", "") → "/charts/reports/"  (no-op)
+        _strip_mount_prefix("/dbt_packages/pkg_a/charts/x/", "dbt_packages/pkg_a/charts") → "/pkg_a/x/"
+        _strip_mount_prefix("/dbt_packages/pkg_a/", "dbt_packages/pkg_a/charts") → "/"
     """
     if not mount_dir:
         return url
     prefix = f"/{mount_dir}"
+    namespace = board_namespace_for_root(mount_dir)
+    replacement = f"/{namespace}" if namespace else ""
     if url == prefix or url == prefix + "/":
-        return "/"
+        return replacement + "/" if replacement else "/"
     if url.startswith(prefix + "/"):
         stripped = url[len(prefix) :]
-        return stripped if stripped else "/"
+        result = replacement + stripped
+        return result if result else "/"
+    if f"{mount_dir}/".startswith(url.lstrip("/")):
+        return "/"
     return url
 
 

@@ -121,6 +121,9 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     # dbt_charts.core.render.renderer directly instead.
     "RenderError": ("dbt_charts.core.render", "RenderError"),
     "render": ("dbt_charts.core.render", "render"),
+    # dbt-core reads `plugins` off every installed `dbt_*` module; lazy so
+    # `import dbt_charts` outside a dbt run never imports dbt's plugin API.
+    "plugins": ("dbt_charts.integrations.dbt_plugin", "plugins"),
 }
 
 

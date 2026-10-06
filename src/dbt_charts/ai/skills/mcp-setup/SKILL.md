@@ -162,16 +162,3 @@ After configuration, test by asking your AI assistant:
 - "Validate this dashboard YAML file" → should invoke `validate_board`
 
 If the assistant doesn't recognize these tools, the MCP server isn't connected — check the Troubleshooting steps above.
-
-## Authoring Metadata Convention
-
-When the assistant edits dbt charts YAML through MCP tools, require `notes` metadata on:
-
-- `queries.*.notes`
-- `charts.*.notes`
-- `variables.*.notes`
-- Layout objects (`rows`/`cols`/`grid.items`/`tabs.items`) where meaningful
-
-`notes` never renders on any of these five surfaces — it improves downstream AI
-search, tooling, and context quality only (on a variable, it also reaches the
-missing-required-variables prompt).

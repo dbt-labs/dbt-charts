@@ -1,7 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.9.1.dev77",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -67,6 +66,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -116,18 +127,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -1061,6 +1060,35 @@
           "default": null,
           "description": "dbt target name for queries against a dbt_profile source (defaults to 'dev').",
           "title": "Target"
+        },
+        "dialect": {
+          "anyOf": [
+            {
+              "enum": [
+                "athena",
+                "bigquery",
+                "clickhouse",
+                "databricks",
+                "duckdb",
+                "mysql",
+                "postgres",
+                "presto",
+                "redshift",
+                "snowflake",
+                "spark",
+                "sqlite",
+                "sqlserver",
+                "trino"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Warehouse dialect the SQL is written in, translated to the source's.",
+          "title": "Dialect"
         }
       },
       "title": "AuthoredSqlQuery",
@@ -2154,6 +2182,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -2203,18 +2243,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -4880,8 +4908,22 @@
     },
     "FontStyle": {
       "additionalProperties": false,
-      "description": "Text appearance. Merged as a unit.\n\nAll fields Optional \u2014 FontStyle doubles as a patch at every level.",
+      "description": "Text appearance. Merged as a unit.\n\nAll fields Optional \u2014 FontStyle doubles as a patch at every level.\n\nA font slot also accepts a registry name (``font: label``) or\n``{extends: label, ...overrides}``; the cascade expands both before\nanything downstream reads the slot, so ``extends`` never survives it.",
       "properties": {
+        "extends": {
+          "anyOf": [
+            {
+              "description": "Name of a ``style.fonts`` entry.",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of a ``style.fonts`` entry this slot starts from; the fields set beside it override that entry.",
+          "title": "Extends"
+        },
         "family": {
           "anyOf": [
             {
@@ -5259,6 +5301,18 @@
       "additionalProperties": false,
       "description": "Geoshape (choropleth) chart style.",
       "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -5308,18 +5362,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -5544,6 +5586,18 @@
       "additionalProperties": false,
       "description": "Heatmap chart style.",
       "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -5593,18 +5647,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -5824,6 +5866,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -5873,18 +5927,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -6358,10 +6400,23 @@
       "title": "InputWidths",
       "type": "object"
     },
+    "JsonValue": {},
     "KpiChartStyle": {
       "additionalProperties": false,
       "description": "Produced by cascade from theme YAML.\n\nFour per-slot font blocks (value, label, affix, glyph) plus a parent\n``font`` that cascades into every slot and doubles as the support-row\nfont. Concrete pixel values live in ``stark.yaml``.\n\n* ``font`` \u2014 parent font; also the support row (small text under value)\n* ``value.font`` \u2014 headline number typography; size/weight from theme (authoritative)\n* ``label.font`` \u2014 card label typography\n* ``affix.font`` \u2014 currency/percent affixes\n* ``glyph.font`` \u2014 indicator glyphs (\u25b2\u25bc\u25cf)\n* ``content_padding`` \u2014 per-side inner inset for the value/label/support text block\n\nKPI uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n``color`` is likewise absent by construction \u2014 KPI has no series axis and\nno gradient-eligible channel, so it has nothing for a paint config to\nconfigure; ``font.color`` / ``value.font.color`` / ``label.font.color``\nare how a KPI's text gets painted.",
       "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -6399,18 +6454,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "font": {
           "$ref": "#/$defs/FontStyle",
@@ -6846,7 +6889,7 @@
             }
           ],
           "default": null,
-          "description": "Legend layout direction.",
+          "description": "Legend layout direction. Omit to infer it from the edge: horizontal on top/bottom, vertical on left/right.",
           "title": "Direction"
         },
         "columns": {
@@ -6872,7 +6915,7 @@
             }
           ],
           "default": null,
-          "description": "Entry columns for an automatic compact top-horizontal legend.",
+          "description": "Entry columns when a horizontal legend wraps: the automatic compact top legend, or an inferred-horizontal legend too wide for one row.",
           "title": "Compact Columns"
         },
         "label": {
@@ -7077,6 +7120,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -7126,18 +7181,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -7677,6 +7720,18 @@
       "additionalProperties": false,
       "description": "Pie/donut chart style: geometry + total (flat) + marks sub-block.\n\n``total`` stays flat at this level (compositional slot, not a VL mark).\n``inner_radius`` is on _RadialChartStyle (cascade sentinel: None = solid pie).",
       "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -7726,18 +7781,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "description": "Aspect ratio (width/height) of the pie chart viewport.",
@@ -7831,7 +7874,7 @@
             }
           ],
           "default": null,
-          "description": "Legend layout direction.",
+          "description": "Legend layout direction. Omit to infer it from the edge: horizontal on top/bottom, vertical on left/right.",
           "title": "Direction"
         },
         "columns": {
@@ -7857,7 +7900,7 @@
             }
           ],
           "default": null,
-          "description": "Entry columns for an automatic compact top-horizontal legend.",
+          "description": "Entry columns when a horizontal legend wraps: the automatic compact top legend, or an inferred-horizontal legend too wide for one row.",
           "title": "Compact Columns"
         },
         "label": {
@@ -8200,6 +8243,18 @@
       "additionalProperties": false,
       "description": "Point map chart style.",
       "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -8249,18 +8304,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -8697,6 +8740,14 @@
       "additionalProperties": false,
       "description": "Render-ready area chart.",
       "properties": {
+        "field_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authored display text per query column, painted verbatim in place of the text derived from the column name.",
+          "title": "Field Labels",
+          "type": "object"
+        },
         "id": {
           "description": "Unique chart id within the board.",
           "title": "Id",
@@ -9160,6 +9211,7 @@
         "background",
         "canvas",
         "chart_type",
+        "field_labels",
         "id",
         "layout_padding",
         "legend",
@@ -10066,6 +10118,14 @@
       "additionalProperties": false,
       "description": "Render-ready bar (and histogram) chart \u2014 all resolve-time values baked in.",
       "properties": {
+        "field_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authored display text per query column, painted verbatim in place of the text derived from the column name.",
+          "title": "Field Labels",
+          "type": "object"
+        },
         "id": {
           "description": "Unique chart id within the board.",
           "title": "Id",
@@ -10487,6 +10547,18 @@
           "title": "Measure Type",
           "type": "string"
         },
+        "span_date_format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The board's `date_short`, baked for the dates a date-span bar's tooltip prints; None unless the bar's measure is temporal."
+        },
         "wide_measures": {
           "default": [],
           "description": "Authored y: list measures, stored after resolve-time normalization.",
@@ -10585,6 +10657,7 @@
         "background",
         "canvas",
         "chart_type",
+        "field_labels",
         "id",
         "layout_padding",
         "legend",
@@ -11223,6 +11296,7 @@
                 "area": "#/$defs/ResolvedAreaChart",
                 "bar": "#/$defs/ResolvedBarChart",
                 "callout": "#/$defs/ResolvedCalloutChart",
+                "custom": "#/$defs/ResolvedCustomChart",
                 "geoshape": "#/$defs/ResolvedGeoshapeChart",
                 "heatmap": "#/$defs/ResolvedHeatmapChart",
                 "histogram": "#/$defs/ResolvedBarChart",
@@ -11245,6 +11319,9 @@
               },
               {
                 "$ref": "#/$defs/ResolvedCalloutChart"
+              },
+              {
+                "$ref": "#/$defs/ResolvedCustomChart"
               },
               {
                 "$ref": "#/$defs/ResolvedGeoshapeChart"
@@ -11755,6 +11832,13 @@
         "title": {
           "$ref": "#/$defs/TitleStyle"
         },
+        "heading_sizes": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Heading Sizes",
+          "type": "array"
+        },
         "pagination": {
           "anyOf": [
             {
@@ -11809,6 +11893,7 @@
         "font_family",
         "formats",
         "geoshape",
+        "heading_sizes",
         "heatmap",
         "histogram",
         "hover_emphasis",
@@ -11907,6 +11992,377 @@
         "mode"
       ],
       "title": "ResolvedColumnSharedScale",
+      "type": "object"
+    },
+    "ResolvedCustomChart": {
+      "additionalProperties": false,
+      "description": "Render-ready custom chart.",
+      "properties": {
+        "id": {
+          "description": "Unique chart id within the board.",
+          "title": "Id",
+          "type": "string"
+        },
+        "source_path": {
+          "default": "",
+          "description": "Absolute dotted authoring path of this chart (rows.0.cols.1), carried through resolution so render and diagnostics name it the same way without re-deriving it from the layout walk. Empty for a chart with no authored coordinates in this file.",
+          "title": "Source Path",
+          "type": "string"
+        },
+        "defined_in_other_file": {
+          "default": false,
+          "description": "Internal: True when a ChartRef pulled this definition in from another file. source_path still names a real spot in the importing file, but render withholds the authoring handle for it.",
+          "title": "Defined In Other File",
+          "type": "boolean"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "http": "#/$defs/HttpQuery",
+                  "schema": "#/$defs/SchemaQuery",
+                  "sql": "#/$defs/SqlQuery",
+                  "values": "#/$defs/ValuesQuery"
+                },
+                "propertyName": "query_type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/HttpQuery"
+                },
+                {
+                  "$ref": "#/$defs/SchemaQuery"
+                },
+                {
+                  "$ref": "#/$defs/SqlQuery"
+                },
+                {
+                  "$ref": "#/$defs/ValuesQuery"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resolved query; None for blank/placeholder charts.",
+          "title": "Query"
+        },
+        "query_name": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "String name when query is a named reference.",
+          "title": "Query Name"
+        },
+        "variable_dependencies": {
+          "description": "Variable names this chart depends on.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Variable Dependencies",
+          "type": "array"
+        },
+        "notes": {
+          "default": "",
+          "description": "Human-readable chart notes. Never rendered.",
+          "title": "Notes",
+          "type": "string"
+        },
+        "link": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "URL to navigate to on chart click.",
+          "title": "Link"
+        },
+        "conditional_formatting": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/FieldConditionalFormatting"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Conditional-formatting rules keyed by column name.",
+          "title": "Conditional Formatting"
+        },
+        "palette": {
+          "description": "Baked color-stop sequence from the style cascade.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Palette",
+          "type": "array"
+        },
+        "requested_alias_palette": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Set when this chart's palette was authored as a known WARN-PALETTE-UNSUPPORTED anti-pattern alias (e.g. RdYlGn); holds the originally-requested name for the render-stage detector.",
+          "title": "Requested Alias Palette"
+        },
+        "requested_alias_substitute": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Display name of the palette dbt charts substituted for requested_alias_palette \u2014 baked alongside it so the WARN-PALETTE-UNSUPPORTED detector never calls compile.resolve.style.palette itself.",
+          "title": "Requested Alias Substitute"
+        },
+        "category_colors": {
+          "default": [],
+          "description": "Board-wide value\u2192color scales for the categorical fields THIS chart encodes. Empty when no field it draws is bound.",
+          "items": {
+            "$ref": "#/$defs/CategoryColorScale"
+          },
+          "title": "Category Colors",
+          "type": "array"
+        },
+        "resolved_channels": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ResolvedStyleChannel"
+          },
+          "description": "Channel bindings resolved from authored encoding.",
+          "title": "Resolved Channels",
+          "type": "object"
+        },
+        "label": {
+          "default": "",
+          "description": "Chart label text. KPI overrides to str = '' (headline label). All other families default to '' (unused). Present on the base so generic chart-walking code (rendering.py) can access chart.label without isinstance guards.",
+          "title": "Label",
+          "type": "string"
+        },
+        "legend": {
+          "$ref": "#/$defs/ResolvedLegendStyle",
+          "description": "Baked board-level legend style from the style cascade."
+        },
+        "layout_padding": {
+          "$ref": "#/$defs/PaddingStyle",
+          "description": "Effective per-chart layout padding, baked in at construction time by every family resolver. Combines board.charts.padding with any chart-local style.<family>.padding override."
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Jinja-resolved chart title, raw (no title-case transform). Also backs non-VL consumers (e.g. the data-chart-title wire attribute) that have always emitted the authored text as-is.",
+          "title": "Title"
+        },
+        "subtitle": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Chart subtitle.",
+          "title": "Subtitle"
+        },
+        "background": {
+          "description": "Effective chart background: chart-local style.<family>.background when authored, otherwise the board/board background.",
+          "title": "Background",
+          "type": "string"
+        },
+        "canvas": {
+          "description": "This chart's own composited canvas: background (above) over the board's own canvas. Always opaque -- knockout strokes, halos, and undercoats read this, never background directly, which may be transparent.",
+          "title": "Canvas",
+          "type": "string"
+        },
+        "title_style": {
+          "$ref": "#/$defs/TitleStyle",
+          "description": "Effective title style \u2014 chart-local style.<family>.title merged onto the board title style. Render-time VL assembly reads title_style.font.case to case-transform `title` (VL presentation only), and title_style.overflow for title-wrap mode."
+        },
+        "chart_type": {
+          "const": "custom",
+          "description": "Discriminator key; always 'custom'.",
+          "title": "Chart Type",
+          "type": "string"
+        },
+        "template_name": {
+          "description": "Template name, or 'inline svg:'.",
+          "title": "Template Name",
+          "type": "string"
+        },
+        "template_source": {
+          "description": "Jinja SVG template source.",
+          "title": "Template Source",
+          "type": "string"
+        },
+        "channels": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "description": "Declared channel name -> column(s); unset optional is None.",
+          "title": "Channels",
+          "type": "object"
+        },
+        "options": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "description": "Validated options; color tokens resolved to hex.",
+          "title": "Options",
+          "type": "object"
+        },
+        "aspect_ratio": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Authored width-to-height ratio.",
+          "title": "Aspect Ratio"
+        },
+        "min_height": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Authored height floor.",
+          "title": "Min Height"
+        },
+        "max_height": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Authored height ceiling.",
+          "title": "Max Height"
+        },
+        "column_options": {
+          "description": "Names of the options that name query columns.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Column Options",
+          "type": "array"
+        },
+        "category_pins": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "description": "Board category color pins: column \u2192 value \u2192 hex.",
+          "title": "Category Pins",
+          "type": "object"
+        },
+        "style": {
+          "$ref": "#/$defs/ResolvedCustomStyle",
+          "description": "Custom family style slice."
+        }
+      },
+      "required": [
+        "background",
+        "canvas",
+        "category_pins",
+        "channels",
+        "chart_type",
+        "column_options",
+        "id",
+        "layout_padding",
+        "legend",
+        "options",
+        "palette",
+        "resolved_channels",
+        "style",
+        "template_name",
+        "template_source",
+        "title_style",
+        "variable_dependencies"
+      ],
+      "title": "ResolvedCustomChart",
+      "type": "object"
+    },
+    "ResolvedCustomStyle": {
+      "additionalProperties": false,
+      "description": "What a custom chart's template and title read from the style cascade.",
+      "properties": {
+        "title_font": {
+          "$ref": "#/$defs/ResolvedFontStyle",
+          "description": "Baked title font (size/weight/family/\u2026) from the width tier."
+        },
+        "tree": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "description": "The board's merged style tree as plain data \u2014 the template's `style`. `palettes.<role>` holds hex lists (a dict of aliases for a tone role) instead of palette names.",
+          "title": "Tree",
+          "type": "object"
+        }
+      },
+      "required": [
+        "title_font",
+        "tree"
+      ],
+      "title": "ResolvedCustomStyle",
       "type": "object"
     },
     "ResolvedFontStyle": {
@@ -12011,6 +12467,14 @@
       "additionalProperties": false,
       "description": "Render-ready geoshape (choropleth) or map chart.\n\nGeo descriptor fields are baked at resolve time (compile layer) so the\nrender layer needs no config reach-back (ADR-008).",
       "properties": {
+        "field_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authored display text per query column, painted verbatim in place of the text derived from the column name.",
+          "title": "Field Labels",
+          "type": "object"
+        },
         "id": {
           "description": "Unique chart id within the board.",
           "title": "Id",
@@ -12370,6 +12834,7 @@
         "background",
         "canvas",
         "chart_type",
+        "field_labels",
         "id",
         "layout_padding",
         "legend",
@@ -12386,6 +12851,18 @@
       "additionalProperties": false,
       "description": "GeoshapeChartStyle with a resolved color field.\n\nCarries a ResolvedStaticGradientColorStyle so the gradient's resolved_stops\nare preserved through pydantic serialization (board artifact round-trip).\nemitters/geo.py reads chart.style.geoshape.color.gradient from this field\nunchanged \u2014 the path is identical, now provably resolved.",
       "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -12435,18 +12912,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -12597,6 +13062,14 @@
       "additionalProperties": false,
       "description": "Render-ready heatmap chart.",
       "properties": {
+        "field_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authored display text per query column, painted verbatim in place of the text derived from the column name.",
+          "title": "Field Labels",
+          "type": "object"
+        },
         "id": {
           "description": "Unique chart id within the board.",
           "title": "Id",
@@ -13016,6 +13489,7 @@
         "background",
         "canvas",
         "chart_type",
+        "field_labels",
         "id",
         "layout_padding",
         "legend",
@@ -13703,6 +14177,7 @@
                   "area": "#/$defs/ResolvedAreaChart",
                   "bar": "#/$defs/ResolvedBarChart",
                   "callout": "#/$defs/ResolvedCalloutChart",
+                  "custom": "#/$defs/ResolvedCustomChart",
                   "geoshape": "#/$defs/ResolvedGeoshapeChart",
                   "heatmap": "#/$defs/ResolvedHeatmapChart",
                   "histogram": "#/$defs/ResolvedBarChart",
@@ -13725,6 +14200,9 @@
                 },
                 {
                   "$ref": "#/$defs/ResolvedCalloutChart"
+                },
+                {
+                  "$ref": "#/$defs/ResolvedCustomChart"
                 },
                 {
                   "$ref": "#/$defs/ResolvedGeoshapeChart"
@@ -14087,6 +14565,14 @@
       "additionalProperties": false,
       "description": "Render-ready line chart.",
       "properties": {
+        "field_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authored display text per query column, painted verbatim in place of the text derived from the column name.",
+          "title": "Field Labels",
+          "type": "object"
+        },
         "id": {
           "description": "Unique chart id within the board.",
           "title": "Id",
@@ -14531,6 +15017,7 @@
         "background",
         "canvas",
         "chart_type",
+        "field_labels",
         "id",
         "layout_padding",
         "legend",
@@ -15140,6 +15627,14 @@
       "additionalProperties": false,
       "description": "Render-ready pie or donut chart.",
       "properties": {
+        "field_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authored display text per query column, painted verbatim in place of the text derived from the column name.",
+          "title": "Field Labels",
+          "type": "object"
+        },
         "id": {
           "description": "Unique chart id within the board.",
           "title": "Id",
@@ -15536,6 +16031,7 @@
         "canvas",
         "chart_type",
         "dark_companion_stops",
+        "field_labels",
         "hybrid_heading_gap",
         "id",
         "layout_padding",
@@ -15704,6 +16200,14 @@
       "additionalProperties": false,
       "description": "Render-ready point map or bubble map.",
       "properties": {
+        "field_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authored display text per query column, painted verbatim in place of the text derived from the column name.",
+          "title": "Field Labels",
+          "type": "object"
+        },
         "id": {
           "description": "Unique chart id within the board.",
           "title": "Id",
@@ -16079,6 +16583,7 @@
         "canvas",
         "chart_type",
         "collapse",
+        "field_labels",
         "id",
         "layout_padding",
         "legend",
@@ -16859,6 +17364,14 @@
       "additionalProperties": false,
       "description": "Render-ready scatter chart.",
       "properties": {
+        "field_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authored display text per query column, painted verbatim in place of the text derived from the column name.",
+          "title": "Field Labels",
+          "type": "object"
+        },
         "id": {
           "description": "Unique chart id within the board.",
           "title": "Id",
@@ -17329,6 +17842,7 @@
         "background",
         "canvas",
         "chart_type",
+        "field_labels",
         "id",
         "layout_padding",
         "legend",
@@ -18638,6 +19152,22 @@
           "default": null,
           "description": "Pivot measure fields.",
           "title": "Values"
+        },
+        "spanners": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TableSpanner"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Authored column spanners.",
+          "title": "Spanners"
         },
         "min_height": {
           "anyOf": [
@@ -20038,6 +20568,18 @@
           "default": null,
           "description": "Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render."
         },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "legend": {
           "anyOf": [
             {
@@ -20087,18 +20629,6 @@
           "default": null,
           "description": "Chart-local background color override; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "aspect_ratio": {
           "anyOf": [
@@ -20429,6 +20959,20 @@
       "additionalProperties": false,
       "description": "Series-label typography with a compact width-tier size.",
       "properties": {
+        "extends": {
+          "anyOf": [
+            {
+              "description": "Name of a ``style.fonts`` entry.",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of a ``style.fonts`` entry this slot starts from; the fields set beside it override that entry.",
+          "title": "Extends"
+        },
         "family": {
           "anyOf": [
             {
@@ -21574,6 +22118,35 @@
           "description": "dbt target name (defaults to 'dev' if not specified).",
           "title": "Target"
         },
+        "dialect": {
+          "anyOf": [
+            {
+              "enum": [
+                "athena",
+                "bigquery",
+                "clickhouse",
+                "databricks",
+                "duckdb",
+                "mysql",
+                "postgres",
+                "presto",
+                "redshift",
+                "snowflake",
+                "spark",
+                "sqlite",
+                "sqlserver",
+                "trino"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Warehouse dialect the SQL is written in. Translated to the source's dialect when they differ.",
+          "title": "Dialect"
+        },
         "lenient_variables": {
           "default": false,
           "description": "When True, undefined Jinja variables degrade gracefully (empty string) instead of raising. Intended for the iterative chart-editor flow where not all variables are set yet.",
@@ -22058,6 +22631,18 @@
       "additionalProperties": false,
       "description": "Table chart style overrides layered on top of shared chart defaults.\n\nTable uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n\n``_ChartCardStyleMixinAllOptional`` supplies ``border``: table draws its own\ncard, so unlike the Vega-Lite families it keeps the slot. It stopped\ndeclaring its own ``border`` when that field was found to be inert on the\ntable and secretly styling markdown (now ``style.text.rule``), and inherits\nthe shared card border instead \u2014 None when unauthored.",
       "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Chart-level title style override; None inherits the theme title style."
+        },
         "preferred_width": {
           "anyOf": [
             {
@@ -22095,18 +22680,6 @@
           "default": null,
           "description": "Table background color; None inherits from theme.",
           "title": "Background"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
         },
         "font": {
           "$ref": "#/$defs/FontStyle",
@@ -22970,6 +23543,32 @@
       "title": "TableRuleStyle",
       "type": "object"
     },
+    "TableSpanner": {
+      "additionalProperties": false,
+      "description": "One authored spanner: a label drawn over a run of adjacent columns.",
+      "properties": {
+        "label": {
+          "description": "Group label for the listed columns.",
+          "title": "Label",
+          "type": "string"
+        },
+        "columns": {
+          "description": "Query columns the spanner covers. Must be adjacent in the query's column order and unique; a column may sit in at most one spanner.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Columns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "columns",
+        "label"
+      ],
+      "title": "TableSpanner",
+      "type": "object"
+    },
     "TableTitleStyle": {
       "additionalProperties": false,
       "properties": {
@@ -23222,6 +23821,11 @@
           "title": "Align",
           "type": "string"
         },
+        "preferred_width": {
+          "description": "Widest a prose block asks its board to hug, in px. A shorter text asks only for its own one-line width.",
+          "title": "Preferred Width",
+          "type": "number"
+        },
         "paragraph": {
           "$ref": "#/$defs/BlockMarginStyle",
           "description": "Spacing above/below each paragraph block (in line-height units)."
@@ -23258,6 +23862,7 @@
         "code",
         "heading",
         "paragraph",
+        "preferred_width",
         "rule"
       ],
       "title": "TextStyle",
@@ -23470,17 +24075,9 @@
           "description": "Object-title font weight on tiny cards.",
           "title": "Compact Weight"
         },
-        "sizes": {
-          "description": "Font sizes for the H1\u2013H6 heading ramp, indexed by ``board.level - 1``. Board/prose titles index this ramp directly (no width input). Object titles (chart/table/spark) combine ``width_offsets`` with a fixed object-title anchor to pick a slot.",
-          "items": {
-            "type": "number"
-          },
-          "title": "Sizes",
-          "type": "array"
-        },
         "width_offsets": {
           "$ref": "#/$defs/TitleWidthOffsetsStyle",
-          "description": "Additive level offsets by card width (tiny/narrow/medium/wide). Object titles add the tier offset to a fixed anchor to pick an H slot from ``sizes``. Board/prose titles are level-only and do not consult these."
+          "description": "Additive level offsets by card width (tiny/narrow/medium/wide). Object titles add the tier offset to a fixed anchor to pick an H slot from ``style.fonts.heading.sizes``. Board/prose titles are level-only and do not consult these."
         },
         "min_height": {
           "description": "Minimum title row height in pixels.",
@@ -23526,7 +24123,6 @@
         "min_height",
         "overflow",
         "position",
-        "sizes",
         "width_offsets"
       ],
       "title": "TitleStyle",
@@ -23564,22 +24160,6 @@
           "description": "Object-title font weight on tiny cards.",
           "title": "Compact Weight"
         },
-        "sizes": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Font sizes for the H1\u2013H6 heading ramp, indexed by ``board.level - 1``. Board/prose titles index this ramp directly (no width input). Object titles (chart/table/spark) combine ``width_offsets`` with a fixed object-title anchor to pick a slot.",
-          "title": "Sizes"
-        },
         "width_offsets": {
           "anyOf": [
             {
@@ -23590,7 +24170,7 @@
             }
           ],
           "default": null,
-          "description": "Additive level offsets by card width (tiny/narrow/medium/wide). Object titles add the tier offset to a fixed anchor to pick an H slot from ``sizes``. Board/prose titles are level-only and do not consult these."
+          "description": "Additive level offsets by card width (tiny/narrow/medium/wide). Object titles add the tier offset to a fixed anchor to pick an H slot from ``style.fonts.heading.sizes``. Board/prose titles are level-only and do not consult these."
         },
         "min_height": {
           "anyOf": [
@@ -23741,7 +24321,7 @@
     },
     "TitleWidthOffsetsStyle": {
       "additionalProperties": false,
-      "description": "Additive level offsets applied to a board/chart title's heading level, by card pixel width.\n\nAdded to the base heading level before indexing into ``style.title.sizes``.\nTier width breakpoints are constants in ``typography.py``; only the per-tier\noffset lives here so themes own the full type stack without duplicating the\n``sizes`` ramp.",
+      "description": "Additive level offsets applied to a board/chart title's heading level, by card pixel width.\n\nAdded to the base heading level before indexing into ``style.fonts.heading.sizes``.\nTier width breakpoints are constants in ``typography.py``; only the per-tier\noffset lives here so themes own the full type stack without duplicating the\nheading ramp.",
       "properties": {
         "tiny": {
           "description": "Level offset for the tiny tier (cards narrower than ~360px).",
@@ -23775,7 +24355,7 @@
     },
     "TitleWidthOffsetsStylePatch": {
       "additionalProperties": false,
-      "description": "Authored overlay for TitleWidthOffsetsStyle. Additive level offsets applied to a board/chart title's heading level, by card pixel width.\n\nAdded to the base heading level before indexing into ``style.title.sizes``.\nTier width breakpoints are constants in ``typography.py``; only the per-tier\noffset lives here so themes own the full type stack without duplicating the\n``sizes`` ramp.",
+      "description": "Authored overlay for TitleWidthOffsetsStyle. Additive level offsets applied to a board/chart title's heading level, by card pixel width.\n\nAdded to the base heading level before indexing into ``style.fonts.heading.sizes``.\nTier width breakpoints are constants in ``typography.py``; only the per-tier\noffset lives here so themes own the full type stack without duplicating the\nheading ramp.",
       "properties": {
         "tiny": {
           "anyOf": [

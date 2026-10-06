@@ -83,6 +83,10 @@ from dbt_charts.core.execute.cache_backend import (
     TruncatedReason,
 )
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
+from dbt_charts.core.execute.sql_translate import (
+    dialect_differs,
+    dialect_unsupported,
+)
 from dbt_charts.core.project import is_glob
 
 if TYPE_CHECKING:
@@ -566,6 +570,7 @@ class Executor:
         # defaults, and look up the query. is_cached shares this exact prologue
         # (via _prepare_call) so its cache-key prediction matches this path.
         query_name, query, variables = self._prepare_call(query_name, variables)
+        self._require_translated_path(query, query_name)
 
         # ────────────────────────────────────────────────────────────────
         # Step 3: Check cache (use instance default if not explicitly set).
@@ -1140,6 +1145,32 @@ class Executor:
             (query_name, outcome.written_at, query.cache, True)
         )
         return True
+
+    def _require_translated_path(self, query: AnyQuery, query_name: str) -> None:
+        """Refuse an incremental `dialect:` query that differs from the warehouse."""
+        if not (
+            is_sql_query(query)
+            and query.dialect is not None
+            and isinstance(query.incremental, str)
+        ):
+            return
+        source_config = self.adapter_registry.resolve_query_source(
+            query, board=self.board, query_name=query_name
+        )
+        try:
+            if source_config is not None and not dialect_differs(
+                query.dialect, source_config
+            ):
+                return
+            err = dialect_unsupported(
+                query.dialect,
+                "the source's warehouse",
+                "incremental refresh wraps the SQL in warehouse SQL, so write it "
+                "in the source's dialect",
+            )
+        except ExecutionError as exc:
+            err = exc
+        raise QueryError(str(err), query_name, code=err.code)
 
     def _query_dialect(self, query: SqlQuery, query_name: str) -> str | None:
         """Resolve the sqlglot dialect name for a query's source.

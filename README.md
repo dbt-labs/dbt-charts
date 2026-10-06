@@ -18,6 +18,17 @@ transformations at every layer, making it hard or impossible to audit.
 **Solution:** a clear YAML syntax for dashboards that's easy for agents to write and humans
 to audit.
 
+## Are you an AI agent?
+
+Run this, then follow what it prints:
+
+```text
+uv tool install dbt-charts && dct skills intro
+```
+
+No shell? Read <https://docs.dbtcharts.com/llms.txt> and the [MCP page](https://docs.dbtcharts.com/cli/ai-cli-and-mcp/).
+The whole reference in one fetch: <https://docs.dbtcharts.com/llms-full.txt>.
+
 Try it without installing anything at **[play.dbtcharts.com](https://play.dbtcharts.com)**,
 or start with the [docs](https://docs.dbtcharts.com/).
 
@@ -207,8 +218,7 @@ rows:
 
 ### With an agent
 
-Hand your coding agent one sentence. `dct skills intro` teaches it the tool and which
-skill to read next:
+Hand your coding agent one sentence. It runs the command in [Are you an AI agent?](#are-you-an-ai-agent) and follows what it prints:
 
 ```text
 I want to make charts of this data with dbt Charts. Run `uv tool install dbt-charts`, then `dct skills intro`, and follow what it prints.

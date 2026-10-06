@@ -321,3 +321,17 @@ class TestTimestampFontOverride:
         element_tag = match.group(0)
         assert 'font-size="17"' in element_tag
         assert 'fill="#aabbcc"' in element_tag
+
+
+class TestFooterTimestampNamedFont:
+    @pytest.mark.parametrize("name", ["label", "body", "caption"])
+    def test_family_follows_caption_only(
+        self, name: str, local_project: Callable[..., Project]
+    ) -> None:
+        yaml = _BOARD + f"style:\n  fonts:\n    {name}:\n      family: Zork\n"
+        svg = _render_svg(yaml, local_project)
+        timestamp = re.search(r'<text data-role="render-timestamp"[^>]*>', svg)
+        footer = re.search(r'<text[^>]*font-weight="600">dbt Charts', svg)
+        assert timestamp is not None and footer is not None
+        for chrome in (timestamp, footer):
+            assert ("Zork" in chrome.group(0)) == (name == "caption")

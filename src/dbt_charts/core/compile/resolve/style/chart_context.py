@@ -26,8 +26,11 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
-from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
-from dbt_charts.core.compile.resolve.style.legend_position import without_position
+from dbt_charts.core.compile.resolve.style.inherit_resolver import (
+    apply_inherit,
+    defer_base_none_children,
+)
+from dbt_charts.core.compile.resolve.style.legend_position import without_placement
 from dbt_charts.core.compile.resolve.style.palette import ink_canvas
 from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
@@ -97,36 +100,6 @@ def _family_field_patch(
     return getattr(
         family, field, None
     )  # type-state: silent_fallback — family is a per-family style union; not every member (e.g. ResolvedCalloutStyle) carries every cascade field
-
-
-def _defer_base_none_children(base: BaseModel, patch: BaseModel) -> BaseModel:
-    """Omit model-valued patch paths whose pre-inherit base is still absent.
-
-    The original patch is merged again after inheritance. Deferring only these
-    paths lets inheritance create their required compiled container first, while
-    every reachable patch path still participates in the pre-inherit cascade.
-    """
-    values: dict[str, Any] = {}
-    fields_set: set[str] = set()
-    base_fields = type(base).model_fields
-    for name in patch.model_fields_set:
-        patch_value = getattr(patch, name)
-        if name not in base_fields:
-            values[name] = patch_value
-            fields_set.add(name)
-            continue
-
-        base_value = getattr(base, name)
-        if base_value is None and isinstance(patch_value, BaseModel):
-            continue
-        if isinstance(base_value, BaseModel) and isinstance(patch_value, BaseModel):
-            patch_value = _defer_base_none_children(base_value, patch_value)
-            if not patch_value.model_fields_set:
-                continue
-        values[name] = patch_value
-        fields_set.add(name)
-
-    return type(patch).model_construct(_fields_set=fields_set, **values)
 
 
 def chart_authored_axis_format(
@@ -303,8 +276,8 @@ def build_chart_style_context(
         pre = base_charts.pre_style
         merged_charts = pre.charts
         for _key, _fam_patch in charts_family_patch.items():
-            _pre_inherit_patch = _defer_base_none_children(
-                getattr(merged_charts, _key), _fam_patch
+            _pre_inherit_patch, _, _ = defer_base_none_children(
+                getattr(merged_charts, _key), _fam_patch, f"Style.charts.{_key}"
             )
             merged_charts = merged_charts.model_copy(
                 update={
@@ -429,8 +402,8 @@ def build_chart_style_context(
         _effective = _global
         _family_patch = _family_field_patch(base_charts, chart_type, _field)
         if _field == "legend":
-            # Placement is decided per chart (`_base_kwargs`), not merged here.
-            _family_patch = without_position(_family_patch)
+            # Placement and direction are decided per chart (`_base_kwargs`).
+            _family_patch = without_placement(_family_patch)
         if _family_patch is not None:
             _effective = merge_onto_base(_effective, _family_patch)
         _local = None
@@ -439,7 +412,7 @@ def build_chart_style_context(
                 primary, _field, None
             )  # type-state: silent_fallback — primary is a per-family patch union; see the support_table precedent above
         if _field == "legend":
-            _local = without_position(_local)
+            _local = without_placement(_local)
         if _local is not None:
             _effective = merge_onto_base(_effective, _local)
         if _effective is not _global:

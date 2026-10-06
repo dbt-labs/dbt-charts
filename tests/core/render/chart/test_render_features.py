@@ -128,6 +128,7 @@ def _bar(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
 
 
@@ -152,6 +153,7 @@ def _line(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
 
 
@@ -176,6 +178,7 @@ def _line_with_binding(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
 
 
@@ -194,6 +197,7 @@ def _area(
         stack=stack,
         style=area_style,
         **_C,
+        field_labels={},
     )
 
 
@@ -248,6 +252,7 @@ def _scatter(scatter_style: ResolvedScatterStyle) -> ResolvedScatterChart:
         y="y",
         style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -265,6 +270,7 @@ def _pie(pie_style: ResolvedPieStyle) -> ResolvedPieChart:
         style=pie_style,
         dark_companion_stops=(),
         **_B,
+        field_labels={},
     )
 
 
@@ -310,6 +316,7 @@ def test_zero_baseline_does_not_apply_to_heatmap(
         y="segment",
         style=heatmap_style,
         **_C,
+        field_labels={},
     )
     assert BaselineFeature().applies_to(chart) is False
 
@@ -408,6 +415,7 @@ def _line_with_y_zero(
         y="revenue",
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -476,6 +484,7 @@ def test_zero_baseline_skips_line_with_log_scale(
         y="revenue",
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     data = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200}]
     result = BaselineFeature().apply(
@@ -705,6 +714,7 @@ def test_baseline_normalize_stacked_area_without_percent_format_emits_top_rules(
         stack="normalize",
         style=area_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     result = BaselineFeature().apply(
         _spec("area"), chart, _DEFAULT_BOX, {chart.query_name: []}
@@ -732,6 +742,7 @@ def test_baseline_percent_format_area_fires_both_zero_and_unity_rules(
         stack=None,
         style=area_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     # Data must straddle 1.0 for the unity rule to fire (mirrors V1's
     # _domain_includes_value gate); the zero rule fires independently.
@@ -794,6 +805,7 @@ def test_unity_baseline_applies_to_format_alias_line(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
     # Data reaches 1.0 so the unity rule's domain gate passes; this test isolates
     # the format-alias detection (percent_whole → axis_y.format '.0%').
@@ -1394,6 +1406,7 @@ def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        field_labels={},
     )
     data = [
         {"month": "2025-09-30", "category": "A", "v": 9.0},
@@ -1512,6 +1525,7 @@ def test_baseline_unity_rule_fires_for_format_config_percent(
         format=ResolvedFormat(spec=".0%", raw=".0%"),
         style=area_style,
         **_C,
+        field_labels={},
     )
     # Data reaches 1.0 so the unity rule's domain gate passes; this test isolates
     # FormatConfig percent detection.
@@ -1599,6 +1613,7 @@ def test_heatmap_emitter_color_ignores_chart_color_fallback() -> None:
             axis_y=_hm_ay,
         ),
         **_C,
+        field_labels={},
     )
     spec = HeatmapEmitter().emit(chart, _DEFAULT_BOX, regroup((), []))
     assert "color" not in spec.encoding, (
@@ -1681,7 +1696,7 @@ def test_click_interactivity_color_field_uses_raw_key_for_wide_measures(
 ) -> None:
     """Regression: {{ color }} on a wide chart (y: [...]) resolved to
     color_ch.data_field, which is WIDE_LABEL_FIELD -- the fold's HUMANIZED
-    measure name (default_axis_title), not the raw column name. Every
+    measure name (field_title), not the raw column name. Every
     wide-chart drill-down silently started writing display text
     ("revenue ($)") into a link variable whose downstream SQL compares
     against a real column name ("revenue_usd"), matching nothing. Mirrors
@@ -1769,6 +1784,7 @@ def test_baseline_normalize_stacked_percent_bar_dedupes_unity_rule(
         orientation="vertical",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
     result = BaselineFeature().apply(
         _spec("bar"), chart, _DEFAULT_BOX, {chart.query_name: []}
@@ -1855,6 +1871,7 @@ def _baked_bar(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
         orientation="vertical",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -1885,6 +1902,7 @@ def _baked_line(line_style: ResolvedLineStyle) -> ResolvedLineChart:
         y="value",
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -1916,6 +1934,7 @@ def _baked_area(area_style: ResolvedAreaStyle) -> ResolvedAreaChart:
         y="value",
         style=area_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -1930,6 +1949,7 @@ def _baked_bar_chart(bar_style: ResolvedBarStyle) -> ResolvedBarChart:
         orientation="vertical",
         style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
 
@@ -2265,6 +2285,7 @@ def test_dashes_with_empty_chart_local_palette_and_board_category_colors_does_no
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
     data = [
         {"month": "Jan", "revenue": 100, "region": "north"},

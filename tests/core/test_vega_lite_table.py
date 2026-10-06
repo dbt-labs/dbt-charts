@@ -64,12 +64,15 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
+        from dbt_charts.core.compile.resolve.style.board import resolve_style
         from dbt_charts.core.render.chart.table import (
             render_table_svg as render_table_svg,
         )
 
         body_family = get_theme_style().font.family.split(",")[0].strip()
-        title_family = get_theme_style().title.font.family.split(",")[0].strip()
+        title_family = (
+            resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
+        )
         raw_chart = make_chart("table", x=None, y=None, title="Revenue Table")
         data = [{"Rep": "Alice", "Revenue": 2148000}]
         board = resolve_style(get_theme_style())

@@ -3,7 +3,7 @@
 Two title roles, one H-stack
 ----------------------------
 
-``style.title.sizes`` is the canonical H1-H6 ramp. Two roles index into it:
+``style.fonts.heading.sizes`` is the canonical H1-H6 ramp. Two roles index into it:
 
   1. **Semantic headings** — board titles, prose section titles, Markdown
      headings. They index the H stack by **semantic level** (``board.level``
@@ -171,7 +171,7 @@ def chart_title_spec(
     """Return ``(font_size, font_weight, font_family)`` for an object title.
 
     Used by chart, table, and spark renderers. The title picks an H-slot
-    from ``style.title.sizes`` by outer card width tier alone - board nesting
+    from ``style.fonts.heading.sizes`` by outer card width tier alone - board nesting
     does not affect the result.
 
     Reads from the *active* resolved style passed in - not from the global
@@ -209,7 +209,7 @@ def chart_title_spec(
     Returns:
         ``(font_size_px, css_font_weight, css_font_family_string)``
     """
-    sizes = chart_style_context.title.sizes
+    sizes = chart_style_context.heading_sizes
     tier = width_tier(width)
     offset = _width_offset(width, chart_style_context)
     effective_level = max(1, min(_OBJECT_TITLE_ANCHOR_LEVEL + offset, len(sizes)))
@@ -302,7 +302,7 @@ def board_title_spec(
 
     Args:
         level: Heading level for this board title (``board.level``). Indexes
-            ``style.title.sizes`` directly: level=1 → sizes[0], etc.
+            ``style.fonts.heading.sizes`` directly: level=1 → sizes[0], etc.
         resolved_style: Optional resolved board style whose title typography
             should override global config.
 
@@ -310,11 +310,12 @@ def board_title_spec(
         ``(font_size_px, css_font_weight)``
     """
     from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
 
-    title_style = (
-        resolved_style.title if resolved_style is not None else get_theme_style().title
-    )
-    sizes = title_style.sizes
+    if resolved_style is None:
+        resolved_style = resolve_style(get_theme_style())
+    title_style = resolved_style.title
+    sizes = resolved_style.chart_defaults.heading_sizes
     effective_level = max(1, min(level, len(sizes)))
     font_size = int(sizes[effective_level - 1])
 
@@ -337,7 +338,7 @@ def board_title_markdown(
     Formats the title as an h1 heading (``# title``). Callers pass ``h1_size``
     to ``get_compact_style(h1_size=…)`` so the h1 renders at the exact pixel
     size, and ``font_weight`` to ``heading_font_weight`` so the dbt charts weight tier
-    is applied. The pixel size comes from ``style.title.sizes`` indexed by the
+    is applied. The pixel size comes from ``style.fonts.heading.sizes`` indexed by the
     semantic level — width does not enter (see ``board_title_spec``).
 
     Args:

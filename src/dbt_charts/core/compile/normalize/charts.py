@@ -24,12 +24,14 @@ from dbt_charts.core.compile.models.chart.authored import (
     SUPPORTED_AUTHORED_CHART_TYPES,
     AuthoredChart,
     CartesianLayer,
+    CustomChart as AuthoredCustomChart,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
     CalloutChart,
     Chart,
+    CustomChart,
     GeoshapeChart,
     HeatmapChart,
     KpiChart,
@@ -51,8 +53,21 @@ from dbt_charts.core.compile.normalize.queries import (
 from dbt_charts.core.compile.normalize.variables import synthetic_query_name
 from dbt_charts.core.compile.parse.parser import looks_like_sql
 from dbt_charts.core.compile.support_table import apply_measure_format_to_support_table
+from dbt_charts.core.compile.template.custom_chart_env import (
+    INLINE_TEMPLATE_NAME,
+    TEMPLATE_FILE_SUFFIX,
+    TEMPLATES_DIR,
+    CustomTemplateError,
+    available_template_names,
+    parse_template,
+    validate_fields,
+)
 from dbt_charts.core.compile.template.jinja import extract_variable_dependencies
-from dbt_charts.core.diagnostics.codes_compile import ERR_MULTIPLES_SELF_CROSSED
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_CUSTOM_FIELDS,
+    ERR_CUSTOM_TEMPLATE,
+    ERR_MULTIPLES_SELF_CROSSED,
+)
 from dbt_charts.core.text.case import apply_case, inferred_display_name
 
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
@@ -384,14 +399,15 @@ def normalize_chart(
             inner_radius = pie_style.inner_radius if pie_style is not None else None
             is_donut_shape = isinstance(inner_radius, (int, float)) and inner_radius > 0
             if is_donut_shape and theta and (total is None or total.label is None):
-                slug = inferred_display_name(theta)
-                auto_label = (
-                    slug
-                    if slug.isupper() and " " not in slug
-                    else apply_case(slug, "title")
-                )
-                if "total" not in theta.lower():
-                    auto_label = f"Total {auto_label}"
+                label = authored.field_labels.get(theta)
+                if label is None:
+                    slug = inferred_display_name(theta)
+                    label = (
+                        slug
+                        if slug.isupper() and " " not in slug
+                        else apply_case(slug, "title")
+                    )
+                auto_label = label if "total" in label.lower() else f"Total {label}"
                 from dbt_charts.core.compile.models.chart.authored import ChartTotal
 
                 if total is None:
@@ -403,6 +419,7 @@ def normalize_chart(
                 **shared,
                 type="pie",
                 theta=theta,
+                field_labels=authored.field_labels,
                 color=authored.color,
                 total=total,
                 height=authored.height,
@@ -433,6 +450,7 @@ def normalize_chart(
                 rows=authored.rows,
                 columns=authored.columns,
                 values=authored.values,
+                spanners=authored.spanners,
                 style=authored_style,
             )
         case "geoshape" | "map":
@@ -446,6 +464,7 @@ def normalize_chart(
                 lookup=authored.lookup,
                 value=authored.value,
                 projection=authored.projection,
+                field_labels=authored.field_labels,
                 height=authored.height,
                 width=authored.width,
                 aspect_ratio=(
@@ -464,6 +483,7 @@ def normalize_chart(
                 lookup=authored.lookup,
                 value=authored.value,
                 projection=authored.projection,
+                field_labels=authored.field_labels,
                 basemap=authored.basemap,
                 latitude=authored.latitude,
                 longitude=authored.longitude,
@@ -492,10 +512,87 @@ def normalize_chart(
                 sort=None,
                 style=authored_style,
             )
+        case "custom":
+            return _build_custom(chart_id, base, shared, authored, base_dir)
         case _:
             raise CompilationError(
                 f"Chart '{chart_id}' has unrecognized type {chart_type!r}"
             )
+
+
+def _build_custom(
+    chart_id: str,
+    base: dict[str, Any],  # type-state: explicit_any — spread kwargs
+    shared: dict[str, Any],  # type-state: explicit_any — spread kwargs
+    authored: AuthoredCustomChart,
+    base_dir: ProjectDirectory
+    | None,  # type-state: optional — a standalone board has no project
+) -> CustomChart:
+    """Load the template, parse its header, and validate channels and options against it."""
+    if authored.template is not None:
+        relpath = f"{TEMPLATES_DIR}/{authored.template}{TEMPLATE_FILE_SUFFIX}"
+        if base_dir is None:
+            raise CompilationError.from_code(
+                ERR_CUSTOM_TEMPLATE,
+                chart_id=chart_id,
+                reason=f"`template: {authored.template}` needs a project to read "
+                f"{relpath} from; use inline `svg:` for a standalone board",
+            )
+        template_file = base_dir.project.path(relpath)
+        if not template_file.exists():
+            names = available_template_names(base_dir.project)
+            available = (
+                f"available: {', '.join(names)}"
+                if names
+                else f"{TEMPLATES_DIR}/ has no templates"
+            )
+            raise CompilationError.from_code(
+                ERR_CUSTOM_TEMPLATE,
+                chart_id=chart_id,
+                reason=f"template file {relpath} not found in the project; {available}",
+            )
+        template_name, source = authored.template, template_file.read_text()
+    else:
+        assert authored.svg is not None  # the authored model requires one source
+        template_name, source = INLINE_TEMPLATE_NAME, authored.svg
+    try:
+        header = parse_template(source)
+    except CustomTemplateError as exc:
+        raise CompilationError.from_code(
+            ERR_CUSTOM_TEMPLATE, chart_id=chart_id, reason=f"{template_name}: {exc}"
+        ) from exc
+    try:
+        channels, options = validate_fields(
+            header,
+            {
+                "x": authored.x,
+                "y": authored.y,
+                "color": authored.color,
+                "size": authored.size,
+                "shape": authored.shape,
+                "theta": authored.theta,
+                "value": authored.value,
+            },
+            {} if authored.options is None else authored.options,
+        )
+    except CustomTemplateError as exc:
+        raise CompilationError.from_code(
+            ERR_CUSTOM_FIELDS, chart_id=chart_id, reason=str(exc)
+        ) from exc
+    style = authored.style
+    return CustomChart(
+        **base,
+        **shared,
+        type="custom",
+        template_name=template_name,
+        template_source=source,
+        template_header=header,
+        channels=channels,
+        options=options,
+        aspect_ratio=style.aspect_ratio if style is not None else None,
+        min_height=style.min_height if style is not None else None,
+        max_height=style.max_height if style is not None else None,
+    )
 
 
 def _build_cartesian(
@@ -574,6 +671,7 @@ def _build_cartesian(
         y=authored.y,
         color=authored.color,
         x_label=authored.x_label,
+        field_labels=authored.field_labels,
         y_label=authored.y_label,
         sort=authored.sort,
         multiples=authored.multiples,

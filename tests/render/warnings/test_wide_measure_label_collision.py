@@ -1,7 +1,7 @@
 """Tests for the WIDE_MEASURE_LABEL_COLLISION render-warning detector.
 
 Detection rule: fires on a wide `y: [...]` bar/area/line chart whose
-measure list contains two or more column names that `default_axis_title`
+measure list contains two or more column names that `field_title`
 humanizes to the same text. Known from `y:` alone, no data needed. The
 resolve-time fallback (colliding measures keep their raw names as
 distinct series) lives in `wide_measure_labels_for`
@@ -14,7 +14,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from dbt_charts.core.compile.models.chart.normalized import BarChart, ScatterChart
+from dbt_charts.core.compile.models.chart.normalized import (
+    BarChart,
+    HeatmapChart,
+    ScatterChart,
+)
 from dbt_charts.core.diagnostics import WARN_WIDE_MEASURE_LABEL_COLLISION, Diagnostic
 from dbt_charts.core.render.warnings import (
     WarningContext,
@@ -77,6 +81,20 @@ def test_fires_when_two_scatter_measures_humanize_identically() -> None:
     chart = ScatterChart(
         id="c1",
         type="scatter",
+        query_name="q",
+        x="month",
+        y=["churn_pct", "churn_percent"],
+    )
+    rows = [{"month": "Jan", "churn_pct": 1, "churn_percent": 2}]
+    warnings = detector.detect(_ctx(chart, rows))
+    assert len(warnings) == 1
+    assert "churn_pct" in warnings[0].message and "churn_percent" in warnings[0].message
+
+
+def test_fires_when_two_heatmap_measures_humanize_identically() -> None:
+    chart = HeatmapChart(
+        id="c1",
+        type="heatmap",
         query_name="q",
         x="month",
         y=["churn_pct", "churn_percent"],

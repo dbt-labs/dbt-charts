@@ -78,8 +78,8 @@ Merge findings from both passes into a single list:
   `type: kpi` requires 1. Aggregate with `SUM()`.
 - `warning` [visual] `charts.regions_bar`: x-axis labels overlap at rendered
   width. Rotate to -45° or shorten.
-- `warning` [structural] `queries.orders`: no `notes:` field. Add one
-  sentence stating intent.
+- `warning` [structural] `queries.orders_copy`: same SQL as `queries.orders`.
+  Delete it and point the chart at `orders`.
 - `nit` [visual] `charts.users_pie`: muted palette would reduce visual noise.
 
 **Passes run:** structural, visual

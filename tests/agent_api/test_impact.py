@@ -44,6 +44,23 @@ def test_returns_exactly_the_boards_referencing_the_column(tmp_path: Path) -> No
     assert result.indeterminate == []
 
 
+def test_includes_package_boards(tmp_path: Path) -> None:
+    """iter_boards() takes every board root by default — a pack's boards
+    are in scope for the reverse index too, reported by their real
+    dbt_packages/ relpath."""
+    project = _project(tmp_path, {"sales.yaml": {"o": "SELECT amount FROM orders"}})
+    pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+    pkg_charts.mkdir(parents=True)
+    (pkg_charts / "overview.yml").write_text(
+        _board({"o": "SELECT customer_id FROM orders"})
+    )
+
+    result = column_impact(project, column="customer_id")
+
+    hits = {(h.board, h.query) for h in result.hits}
+    assert hits == {("dbt_packages/pkg_a/charts/overview.yml", "o")}
+
+
 def test_table_narrows_a_column_shared_across_tables(tmp_path: Path) -> None:
     project = _project(
         tmp_path,

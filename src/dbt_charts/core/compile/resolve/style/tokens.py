@@ -125,6 +125,7 @@ def _resolve_one_color_token(
     from dbt_charts.core.compile.resolve.style.palette import (
         UnknownColorError,
         UnknownPaletteError,
+        _get_index,
         color as resolve_palette_color,
         color_from_theme,
     )
@@ -132,7 +133,12 @@ def _resolve_one_color_token(
     try:
         return resolve_palette_color(token)
     except (UnknownColorError, UnknownPaletteError):
-        pass
+        # A shipped palette that is not also a theme role can only mean
+        # itself, so its own error (unknown alias, bad slot) is the real cause.
+        head, dot, _ = token.partition(".")
+        bound_role = palettes is not None and head in palettes
+        if dot and not bound_role and head in _get_index():
+            raise
 
     if palettes is not None:
         return color_from_theme(

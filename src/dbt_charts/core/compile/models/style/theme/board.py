@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from dbt_charts.core.compile.models.factories import (
+    FontSlotBase,
+    build_patch_model_ext,
+    register_patch,
+)
 from dbt_charts.core.compile.models.markers import (
     Color,
     InheritSlot,
-    Merge,
     SkipInheritSlots,
-    Strategy,
 )
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
@@ -133,11 +136,61 @@ class RootFontStyle(FontStyle):
     The ``emoji`` field is only meaningful at the root — nested FontStyle instances in the
     cascade (axis label, legend, title, etc.) do not carry it. ``extra='forbid'``
     is inherited from FontStyle so nested fonts reject ``emoji:`` at construction.
+
+    The root font is the cascade floor every other font inherits from, not a role,
+    so it takes no registry name: a bare name or ``extends`` raises.
     """
+
+    accepts_name: ClassVar[bool] = False
 
     emoji: Literal["monochrome", "system-default", "disabled"] = Field(
         description="Emoji rendering mode for the dashboard font stack."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_bare_name(
+        cls,
+        value: Any,  # type-state: explicit_any — raw pre-validation slot value
+    ) -> Any:  # type-state: explicit_any — passes accepted input through
+        return reject_named_root_font(value)
+
+
+_NAMED_ROOT_FONT_ERROR = (
+    "style.font is the root font and cannot reference a named font; "
+    "set style.fonts.body to restyle the base text."
+)
+
+
+def reject_named_root_font(
+    value: Any,  # type-state: explicit_any — raw pre-validation slot value
+) -> Any:  # type-state: explicit_any — passes accepted input through
+    if isinstance(value, str) or (
+        isinstance(value, dict) and value.get("extends") is not None
+    ):
+        raise ValueError(_NAMED_ROOT_FONT_ERROR)
+    return value
+
+
+class _RootFontPatchBase(FontSlotBase):
+    accepts_name: ClassVar[bool] = False
+
+    # Authored input: any `extends` key is an attempt to name a font, even null.
+    # The compiled model sees `extends: None` on every internal round trip.
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_bare_name(
+        cls,
+        value: Any,  # type-state: explicit_any — raw pre-validation slot value
+    ) -> Any:  # type-state: explicit_any — passes accepted input through
+        if isinstance(value, dict) and "extends" in value:
+            raise ValueError(_NAMED_ROOT_FONT_ERROR)
+        return reject_named_root_font(value)
+
+
+register_patch(RootFontStyle)(
+    build_patch_model_ext(RootFontStyle, base_cls=_RootFontPatchBase)
+)
 
 
 class FrameStyle(BaseModel):
@@ -182,10 +235,10 @@ class FrameStyle(BaseModel):
 class TitleWidthOffsetsStyle(BaseModel):
     """Additive level offsets applied to a board/chart title's heading level, by card pixel width.
 
-    Added to the base heading level before indexing into ``style.title.sizes``.
+    Added to the base heading level before indexing into ``style.fonts.heading.sizes``.
     Tier width breakpoints are constants in ``typography.py``; only the per-tier
     offset lives here so themes own the full type stack without duplicating the
-    ``sizes`` ramp.
+    heading ramp.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -266,14 +319,6 @@ class TitleStyle(BaseModel):
     compact_weight: str | float = Field(
         description="Object-title font weight on tiny cards."
     )
-    sizes: Annotated[list[float], Merge(Strategy.OVERRIDE)] = Field(
-        description=(
-            "Font sizes for the H1–H6 heading ramp, indexed by ``board.level - 1``. "
-            "Board/prose titles index this ramp directly (no width input). "
-            "Object titles (chart/table/spark) combine ``width_offsets`` with a "
-            "fixed object-title anchor to pick a slot."
-        )
-    )
     # SkipInheritSlots(cascade=True): a no-op at this field's own canonical
     # position (Style.title.width_offsets), but inside an outer slot (e.g.
     # ChartsStyle.title) it gives apply_inherit a container-level link, so a
@@ -285,7 +330,7 @@ class TitleStyle(BaseModel):
             description=(
                 "Additive level offsets by card width (tiny/narrow/medium/wide). "
                 "Object titles add the tier offset to a fixed anchor to pick an H "
-                "slot from ``sizes``. Board/prose titles are level-only and do not "
+                "slot from ``style.fonts.heading.sizes``. Board/prose titles are level-only and do not "
                 "consult these."
             )
         )
@@ -334,15 +379,6 @@ class TitleStyle(BaseModel):
     @classmethod
     def _normalize_overflow(cls, value: Any) -> Any:
         return _normalize_overflow_value(value)
-
-    @model_validator(mode="after")
-    def _validate_level_within_ramp(self) -> TitleStyle:
-        if isinstance(self.level, int) and self.level > len(self.sizes):
-            raise ValueError(
-                f"style.title.level={self.level} exceeds the H-ramp "
-                f"(sizes has {len(self.sizes)} entries; valid range is 1..{len(self.sizes)})"
-            )
-        return self
 
 
 class BoxStyle(BaseModel):
@@ -453,6 +489,12 @@ class TextStyle(BaseModel):
     )
     align: Literal["left", "center", "right"] = Field(
         description="Text alignment for the board body-text block."
+    )
+    preferred_width: float = Field(
+        description=(
+            "Widest a prose block asks its board to hug, in px. A shorter text "
+            "asks only for its own one-line width."
+        )
     )
     paragraph: BlockMarginStyle = Field(
         description="Spacing above/below each paragraph block (in line-height units)."

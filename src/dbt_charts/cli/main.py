@@ -1517,7 +1517,13 @@ def query(
     ] = None,
     dialect: Annotated[
         str | None,
-        typer.Option("--dialect", help="SQL dialect for lint (duckdb, bigquery, …)"),
+        typer.Option(
+            "--dialect",
+            help=(
+                "SQL dialect for lint (duckdb, bigquery, …); "
+                "defaults to the source's dialect"
+            ),
+        ),
     ] = None,
     var: Annotated[
         list[str] | None,

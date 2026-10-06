@@ -1,11 +1,9 @@
 """Regression tests for dbt-labs/dbt-charts#35.
 
-``style.charts.title`` used to require every ``TitleStyle`` field on any
-partial override. ``ChartsStyle.title`` now carries its own
-``InheritSlot(from_path="Style.title")`` (see ``charts.py``), so
-``apply_inherit`` merges an override onto the board title as part of the
-ordinary declarative cascade; ``resolve/style/board.py`` only re-validates
-that already-merged result (``merge.to_title_style``). Per-family overrides
+``style.charts.title`` accepts a partial override: ``ChartsStyle.title``
+carries ``InheritSlot(from_path="Style.title")`` (see ``charts.py``), so
+``merge_style`` fills the empty slot from the board title before an override
+merges onto it. Per-family overrides
 (``style.charts.kpi.title``, ...) keep ``_ChartStyleBase.title``'s
 ``SkipInheritSlots()`` and stay sparse patches at this board-cascade stage —
 they reach every chart of that family at chart-resolve time instead, via

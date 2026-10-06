@@ -19,6 +19,20 @@ class TestBoardSlug:
     def test_returns_none_outside_boards(self) -> None:
         assert board_slug("models/revenue.sql") is None
 
+    def test_returns_none_for_package_board(self) -> None:
+        """Delegates to the core helper, but stays host-boards-only by its
+        own charts/-prefix gate — a package board is out of scope here."""
+        assert board_slug("dbt_packages/pkg_a/charts/overview.yml") is None
+
+    def test_index_board_keeps_its_leaf(self) -> None:
+        """board_slug is a file-identity slug -- collapsing the `index` leaf
+        would make an index board indistinguishable from its own directory
+        and corrupt move-link-rewrite scoping (see TestRewriteLinks below)."""
+        assert board_slug("charts/index.yml") == "index"
+
+    def test_nested_index_board_keeps_its_leaf(self) -> None:
+        assert board_slug("charts/reports/index.yml") == "reports/index"
+
 
 class TestScanLinks:
     def test_link_field_reference_is_exact(
@@ -148,3 +162,24 @@ class TestRewriteLinks:
         result = rewrite_links(project, "finance/rev", "growth/rev")
         assert result.exact == []
         assert result.fuzzy == []
+
+    def test_moving_an_index_board_does_not_rewrite_an_unrelated_sibling_link(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        """Regression: board_slug("charts/foo/index.yml") must be "foo/index",
+        not "foo" -- the collapsed form matched "link: foo/detail" too (the
+        lookahead after "foo" accepts the following "/"), so moving an index
+        board rewrote links to a sibling board that never moved."""
+        project = in_memory_project(
+            tmp_path,
+            {"charts/exec.yml": "charts:\n  a:\n    link: foo/detail\n"},
+        )
+        old_slug = board_slug("charts/foo/index.yml")
+        assert old_slug is not None
+        result = rewrite_links(project, old_slug, "bar/index")
+        assert result.exact == []
+        assert project.read_text("charts/exec.yml") == (
+            "charts:\n  a:\n    link: foo/detail\n"
+        )

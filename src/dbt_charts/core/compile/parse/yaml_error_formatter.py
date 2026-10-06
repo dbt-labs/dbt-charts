@@ -744,6 +744,16 @@ def _extra_field_diagnostic(
             fields=fields,
         )
 
+    if field_name == "field_labels" and parent_path[-1:] == ["table"]:
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                "A table's header text is authored per column, as "
+                "`style.columns.<col>.label:`."
+            ),
+            fields=fields,
+        )
+
     if field_name == "text" and _path_is_total_label(parent_path):
         return _ExtraFieldDiagnostic(
             message=message,
@@ -987,6 +997,7 @@ def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
 def format_validation_errors_structured(
     error: Any,
     yaml_content: str | None = None,
+    template_names: tuple[str, ...] = (),
 ) -> "list[Diagnostic]":
     """Format a Pydantic ValidationError into collapsed Diagnostic objects.
 
@@ -1005,6 +1016,8 @@ def format_validation_errors_structured(
             and (when it declares a newer ``_schema_version``) an upgrade hint
             appended to every returned diagnostic; not used for line
             resolution.
+        template_names: The project's ``templates/<name>.svg.j2`` names; an
+            unsupported chart shape with a matching template is pointed at it.
 
     Returns:
         list of Diagnostic (≤ MAX_GROUPS elements).
@@ -1037,7 +1050,9 @@ def format_validation_errors_structured(
 
         field_path_parts = [str(p) for p in loc if not str(p).startswith("function-")]
         field_path_str = ".".join(field_path_parts) if field_path_parts else ""
-        chart_type_msg = _format_chart_type_discriminator_error(err, field_path_parts)
+        chart_type_msg = _format_chart_type_discriminator_error(
+            err, field_path_parts, template_names
+        )
         if chart_type_msg is not None:
             err_msg = chart_type_msg
 
@@ -1363,6 +1378,7 @@ _NORMALIZED_UNSUPPORTED_SHAPES = frozenset(
 def _format_chart_type_discriminator_error(
     err: dict[str, Any],
     field_path: list[str],
+    template_names: tuple[str, ...],
 ) -> str | None:
     """Return clean chart-type diagnostics for chart discriminator failures."""
     if err.get("type") != "union_tag_not_found":
@@ -1392,9 +1408,22 @@ def _format_chart_type_discriminator_error(
             f"Supported chart types: {supported}."
         )
     if any(k in _NORMALIZED_UNSUPPORTED_SHAPES for k in noun_keys):
+        template = next(
+            (t for t in template_names if _normalize_shape_noun(t) in noun_keys), None
+        )
+        if template:
+            return (
+                f"Unknown chart type {invalid_type!r}. This project has a template "
+                f"for that shape: use `type: custom` with `template: {template}`. "
+                "Run `dct describe templates/` for its channels and options. "
+                f"Supported chart types: {supported}."
+            )
         return (
-            f"Unknown chart type {invalid_type!r}. dbt charts cannot draw that shape "
-            f"today. Supported chart types: {supported}."
+            f"Unknown chart type {invalid_type!r}. dbt charts has no built-in "
+            "type for that shape; draw it with `type: custom`, a sandboxed Jinja "
+            "SVG template (`template:` names templates/<name>.svg.j2, or `svg:` "
+            "carries the source inline). Run `dct docs custom` for the contract. "
+            f"Supported chart types: {supported}."
         )
 
     suggestion = suggest_similar_value(invalid_type, valid_chart_types)

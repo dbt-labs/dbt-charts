@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Any, Protocol
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import resolve_format_parts_for_values
+from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.models.primitives import (
     ColorStyle,
     StaticGradientColorStyle,
@@ -22,7 +22,6 @@ from dbt_charts.core.compile.models.style.theme import (
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
 from dbt_charts.core.compile.resolve.style.typography import width_tier
-from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 __all__ = [
     "_cartesian_style_tail",
@@ -222,11 +221,11 @@ def _cartesian_style_tail(
     ``_measure_tooltip_format`` does.
     """
     return {
-        "tooltip_format": resolve_format_parts_for_values(
-            chart_style_context.tooltip.format,
+        "tooltip_format": column_format(
+            "number",
             chart_style_context.formats,
-            tooltip_format_values,
-            no_format_default=PredefinedNumberFormat.number,
+            chart_style_context.tooltip.format,
+            values=tooltip_format_values,
         ),
         "axis_x": ax,
         "axis_y": ay,

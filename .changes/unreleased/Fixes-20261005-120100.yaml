@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'A palette list entry naming a shipped palette with an unknown alias (`dbt-grays.surface`) now reports that palette''s known aliases, where it reported the palette as an unassigned theme role.'
+time: 2026-10-05T12:00:00.000000-07:00
+custom:
+  DbtChartsIssue: "56"

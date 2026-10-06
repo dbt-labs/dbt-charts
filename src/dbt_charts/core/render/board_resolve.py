@@ -224,7 +224,9 @@ def build_resolved_board_static(board: Board) -> ResolvedBoard:
     card_padding = float(frame.card_padding)
     card_gap = float(frame.card_gap) if board.card_gap else 0.0
     layout_gap = get_board_gap(board)
-    width = float(board.layout.width or board_container_width(board))
+    width = float(
+        board.layout.width or board_container_width(board, board.variable_defaults)
+    )
     height = float(board.layout.height)
     plan_board_prose(board, board.variable_defaults, width - 2 * page_padding)
 
@@ -343,7 +345,7 @@ def build_resolved_board(
     card_padding = float(frame.card_padding)
     card_gap = float(frame.card_gap) if board.card_gap else 0.0
     layout_gap = get_board_gap(board)
-    width = float(board.layout.width or board_container_width(board))
+    width = float(board.layout.width or board_container_width(board, variables))
     height = float(board.layout.height)
 
     resolved_layout = _build_resolved_layout(

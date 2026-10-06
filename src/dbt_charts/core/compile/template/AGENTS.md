@@ -14,6 +14,9 @@ expressions, chart labels, `where:` expressions.
 - `environment.py` — `BoardTemplateEnvironment`, the one sandboxed class every
   board-text renderer must build from; also governs `registered_views/expander.py`
   (outside this package, builds its own instance, enumerated below).
+- `custom_chart_env.py` — `custom_chart_env`, header parsing, channel and option validation, and the
+  `math` namespace for `type: custom` chart templates (rendered by
+  `render/chart/custom.py`).
 - `variables.py` — board-variable resolution; renders nothing.
 
 ## Implementation philosophy
@@ -38,6 +41,7 @@ below, is caught too):
 | `resolve_jinja_template` | board `variables`, `queries` (`_QueryNamespace`, when given), `filter`, `filter_date_range` | Jinja defaults | Jinja defaults |
 | `render_parameterized` | board `variables` (wrapped in `_ParameterizedValue`, except `exclude_vars`), `queries` (verbatim from `variables["queries"]` — `render_parameterized_with_queries` wraps it in `_QueryNamespace` before delegating here), `filter`, `filter_date_range` | Jinja defaults | Jinja defaults |
 | `label_data.py`'s `prepare_label_data`/`prepare_pie_label_data` | raw per-row query values (scalar/`Decimal`/`datetime`/JSON, never callable), `index`/`is_first`/`is_last`, plus (pie, the only caller today) `percent`/`value`/`total`/`color` | Jinja defaults | Jinja defaults; `format` **overridden** by our own d3-format callable |
+| `render/chart/custom.py`'s `render_custom_svg` (`type: custom`; env from `custom_chart_env.py`, autoescape on, `StrictUndefined`) | `rows` (raw row dicts), `columns`, `channels` (declared channel -> column name or list, unset optional `None`), `options` (validated), `width`, `height`, `uid`, `style` (merged style tree as plain dicts/lists), `math` (plain dict of `sin`, `cos`, `tan`, `asin`, `acos`, `atan2`, `sqrt`, `log`, `exp`, `floor`, `ceil`, `pi`, `tau`), `text_width(text, size, weight)` → float, `color_for(value, column=None)` → hex `str`, `raise_error(message)` | Jinja defaults | Jinja defaults; `format` **overridden** by our own d3-format callable |
 | `expander.py`'s `render_template` | `path`, `queries` (dict of `ViewQueryResult`), `sql_identifier` (bound per-render) | Jinja defaults + `plan_variables`, `plan_key_variables`, `pivot_column_profiles`, `column_header_styles` (module-level, registered once at import) | Jinja defaults |
 
 `filter`/`filter_date_range` are always exactly those two names: the raising
@@ -62,8 +66,9 @@ string" rule below governs what *we* register, not the engine's own defaults.
 **May go in a context/global/filter:** a plain board variable (str/number/bool/
 date/list/dict — never a module, config object, or anything reaching
 credentials); or a helper *we* register that validates its arguments and
-returns a plain `str` (`filter`/`filter_date_range`/`format`/`sql_identifier`
-all do) or, for `expander.py`'s four view-helper globals, a plain `list`/`dict`
+returns a plain value — `str` (`filter`/`filter_date_range`/`format`/
+`sql_identifier`/`color_for`), a number (`text_width`), or `None`
+(`raise_error`, which only raises) — or, for `expander.py`'s four view-helper globals, a plain `list`/`dict`
 of scalars — no object with its own methods.
 
 **Must not:** return an object a template can keep traversing (a proxy, a

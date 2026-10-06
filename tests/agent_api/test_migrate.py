@@ -67,6 +67,37 @@ def test_migrate_paths_does_not_leak_a_warning_for_a_pending_boundary_construct(
     assert summary.notes == []
 
 
+def test_migrate_paths_with_no_explicit_paths_touches_host_boards_only(
+    tmp_path: Path,
+    in_memory_project: Callable[[Path, dict[str, str]], Project],
+) -> None:
+    """Regression: migrate's default (no explicit --paths) walk must stay
+    scoped to the host charts/ root -- _migration_paths passes
+    under=CHARTS_SUBDIR to iter_boards deliberately, since package boards are
+    read-only (write_text on a dbt_packages/ path raises). Dropping that
+    scope silently (switching to iter_boards() over every root) would send
+    every migratable package board through the same write attempt."""
+    migratable = (
+        "title: T\ndescription: p\nstyle:\n  board:\n"
+        "    width: 800\ncharts:\n  c:\n    query: q\n    type: line\n"
+    )
+    project = in_memory_project(
+        tmp_path,
+        {
+            "charts/a.yaml": migratable,
+            "dbt_packages/pkg_a/charts/b.yaml": migratable,
+        },
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        summary = migrate_paths(None, project=project, dry_run=True)
+
+    touched = {str(p) for p in summary.updated + summary.current}
+    touched.update(str(e.path) for e in summary.errors)
+    assert touched == {"charts/a.yaml"}
+
+
 def test_migrates_a_project_backed_board_without_a_filesystem_path(
     tmp_path: Path,
     in_memory_project: Callable[[Path, dict[str, str]], Project],

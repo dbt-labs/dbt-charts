@@ -102,6 +102,10 @@ Compile-stage invariants (variables board-global, one layout per board, ids from
 
 **Mechanically enforced.** `core/ruff.toml` `TID251` bans `pathlib.Path` + disk sinks at the import; `tests/core/test_no_disk_io_in_core.py` bans builtin `open()`; `tests/core/test_no_base_project_fspath_reads.py` bans base-typed reads of the moved members (ratcheting on top of the type checker). A sanctioned edge carries a reasoned `# noqa: TID251 — <why>` / `ALLOWED_OPEN` / allowlist entry — empty is the goal, and a bare noqa or unreasoned widening is review-blocking.
 
+### Board roots: `charts/` plus one per installed package
+
+A project has more than one directory that holds board files: the host `charts/` root, and a `dbt_packages/<pkg>/charts/` root per installed package that ships one (`board_roots()` / `package_board_roots()` / `BoardRoot` in `core/project.py`). `iter_boards()` walks every root; `board_slug(relpath)` / `board_relpath_candidates(slug, roots)` are the one pair of pure functions that convert between a root-relative path and its author-facing slug (`dbt_packages/pkg_a/charts/overview.yml` <-> `pkg_a/overview`) — every relpath<->slug site in `core/serve` and `agent_api` goes through these, not hand-built string arithmetic. Package roots are `is_package_relpath()`-guarded read-only: `FilesystemProject.write_text`/`delete_text` raise `ValueError` under `dbt_packages/`, the same `Project` contract other write refusals use. A package board's `charts/meta.yml` cascade (`compile/parse/meta.py` `find_meta_files`) gets the host `charts/meta.yml` prepended as its outermost layer, so a package board resolves `source:` and shared defaults against the host project the way a hand-authored board does.
+
 ### Package assets: `importlib.resources`, never `Path(__file__)`
 
 Read shipped package data via `files("dbt_charts.<pkg>").joinpath(...).read_text(encoding="utf-8")` / `.read_bytes()`; `iterdir()` for directories (no `glob`); `PackageLoader` for Jinja. Exception: `core/fonts.py` hands a real directory to foreign libs (StaticFiles, vl-convert, ReportLab/fontTools/PIL), so it resolves one via `importlib_resources.as_file()`, funneled through `get_fonts_dir()`.
@@ -284,6 +288,8 @@ Channel fields: `x`, `y`, `color`, `size`, `shape`, `theta`, `value`, `latitude`
 
 Presentation: `title`, `subtitle`, `notes`, `link`, `sort`, `orientation`, `style`
 
+Field display text: `field_labels` (cartesian, geo and pie only; maps a column to text painted verbatim wherever the chart derives text from that column; `x_label`/`y_label` and `layer.label` win on their own surface; absent on `table`, whose headers use `style.columns.<col>.label`)
+
 Mirror y-axis: `style.axis_y.mirror: true` (draws the y-scale on both left+right edges of wide cartesian charts; single-series only; distinct from the per-layer `layer.axis_y` dual-scale placement). Object form `mirror: {format: ...}` / `mirror: {expr: ...}` relabels only the mirrored edge (e.g. $ left / % right) off the same shared scale — never a second scale.
 
 Small multiples: `multiples` (cartesian-only — bar/line/area/scatter/heatmap; object `{rows?, columns?, scale}` with at least one of rows/columns — rows-only stacks vertically, columns-only side by side, both a grid; compiles to Vega-Lite `facet`; V2-only at render — the V1 path refuses it)
@@ -296,7 +302,7 @@ Cartesian overlays: `layers` on any bar/line/area/scatter chart (each typed over
 
 Data attachments: `support_table`
 
-Data attachments (family-scoped): `conditional_formatting` — only on `table` and `kpi`, the two families whose render path meaningfully honors it (full rule-output set on `table`; `background`/`font.color` on `kpi`). Structurally absent on every other family, same mechanism as `size`/`shape` below.
+Data attachments (family-scoped): `conditional_formatting` — only on `table` and `kpi`, the two families whose render path meaningfully honors it (full rule-output set on `table`; `background`/`font.color` on `kpi`). Structurally absent on every other family, same mechanism as `size`/`shape` below. `spanners` — `table` only: `[{label, columns}]` group labels over adjacent columns of a flat table; rejected with the pivot channels.
 
 #### Rejected on the authored chart surface
 

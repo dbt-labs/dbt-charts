@@ -391,6 +391,7 @@ def test_cli_describe_command_uses_project_session_with_block(tmp_path: Path) ->
             variables=[],
             layout=None,
             notes=None,
+            template=None,
         )
     ]
 
@@ -411,3 +412,64 @@ def test_cli_describe_command_uses_project_session_with_block(tmp_path: Path) ->
         "describe_command must construct exactly one ProjectSession.from_project(...)"
     )
     fake_project.describe_paths.assert_called_once()
+
+
+_TEMPLATE = """{#---
+description: Draws flows.
+channels:
+  x:
+    description: Origin column.
+  color:
+    default: null
+options:
+  label_size:
+    type: number
+    default: 11
+    description: Label font size.
+---#}
+<g/>"""
+
+
+class TestDescribeTemplates:
+    def _project(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        (tmp_path / "templates").mkdir()
+        (tmp_path / "templates" / "flow.svg.j2").write_text(_TEMPLATE)
+
+    def test_text_output_lists_channels_and_options(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(
+            app,
+            ["describe", "templates/", "--project-dir", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        out = " ".join(result.output.split())
+        assert "Draws flows." in out
+        assert "x required Origin column." in out
+        assert "color optional" in out
+        assert "label_size number 11 Label font size." in out
+
+    def test_json_output_carries_the_template_model(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "describe",
+                "templates/flow.svg.j2",
+                "--json",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["template"]["name"] == "flow"
+        assert data["template"]["channels"][0] == {
+            "name": "x",
+            "description": "Origin column.",
+            "required": True,
+            "multiple": False,
+        }
+        assert data["template"]["options"][0]["default"] == 11

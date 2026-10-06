@@ -110,12 +110,12 @@ class TestLegendMergeContract:
         assert merged.label.padding == base.label.padding
         assert merged.label.font.family == base.label.font.family
 
-    def test_direction_patch_preserves_position(self) -> None:
-        """direction override does not affect position."""
+    def test_direction_patch_is_left_to_the_engine(self) -> None:
+        """Direction is decided per chart from the edge, not merged here."""
         base = _board().legend
         merged = _merge_line({"direction": "horizontal"})
 
-        assert merged.direction == "horizontal"
+        assert merged.direction == base.direction
         assert merged.position == base.position
 
     def test_omitted_symbol_limit_inherits_family_value(self) -> None:

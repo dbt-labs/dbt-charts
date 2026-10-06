@@ -95,8 +95,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("json_format.py", "_json_default"),
         # layouts.py
         ("layouts.py", "render_details_summary"),
-        # sizing.py
-        ("sizing.py", "compact_style_kwargs"),
         # svg_utils.py
         ("svg_utils.py", "extract_svg_inner_content"),
         # terminal_charts.py

@@ -34,12 +34,22 @@ style:
   border:
     color: *color_ink
 
-  title:
-    font:
+  # Families live here, once; `_base` binds every font slot to one of these.
+  fonts:
+    heading:
       family: *font_sans
     subtitle:
+      family: *font_sans
+    body:
+      family: *font_sans
+    numeral:
+      family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
+    code:
+      family: '''Source Code Pro'', ''ui-monospace'', ''SFMono-Regular'', Menlo, Consolas, monospace'
+
+  title:
+    subtitle:
       font:
-        family: *font_sans
         color: *color_ink
 
   charts:
@@ -111,7 +121,6 @@ style:
           position: top
       text:
         font:
-          family: *font_sans
           color: *color_ink
       rule:
         stroke:
@@ -165,24 +174,14 @@ style:
       drop_line_color: dbt-grays.heading
       drop_line_width: 3.5
 
-    kpi:
-      font:
-        family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
-
     support_table:
       font:
-        family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
         color: *color_ink
       divider:
         color: *color_ink
       label:
         font:
           color: *color_ink
-
-    axis_quantitative:
-      labels:
-        font:
-          family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
 
     # Direct-label multi-series lines/areas/bars at their endpoints rather
     # than leaning on a side legend. Set here so every descendant inherits
@@ -215,7 +214,6 @@ style:
       total:
         value:
           font:
-            family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
             color: *color_ink
         label:
           font:
@@ -224,14 +222,11 @@ style:
   text:
     # Color inherits from `font.color` (InheritSlot) — no pin here so a
     # board-root style.font.color override reaches prose.
-    font:
-      family: *font_sans
-
     code:
       highlight: true
       theme: default
       font:
-        family: '''Source Code Pro'', ''ui-monospace'', ''SFMono-Regular'', Menlo, Consolas, monospace'
+        extends: code
         color: *color_ink
         # No size: code is sized as a fraction of the text it sits in (mdsvg's
         # code_font_scale), so it tracks prose and headings instead of pinning a

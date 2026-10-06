@@ -134,7 +134,7 @@ def main() -> None:
         f"{_literal_block('ScalePaletteName', scale_palette_names)}\n"
         "# Engine-predefined format names (PredefinedNumberFormat + PredefinedTimeFormat).\n"
         "# A predefined name resolves to a d3 spec or native formatter at render time;\n"
-        "# a raw d3 spec or user style.formats.aliases name is equally legal, so every field\n"
+        "# a raw d3 spec or user style.formats alias is equally legal, so every field\n"
         "# carrying this reads `FormatAlias | str` — the Literal names the shortcuts,\n"
         "# it does not close the set. Kind-agnostic slots (`format:`) take this one;\n"
         "# a slot that knows its kind takes the matching half below.\n"

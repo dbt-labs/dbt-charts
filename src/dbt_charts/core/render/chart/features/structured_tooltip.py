@@ -29,6 +29,7 @@ one bubble with no JS changes.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -56,7 +57,6 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     wide_measures_title,
 )
 from dbt_charts.core.render.chart.emitters._tooltip import (
-    SPAN_DATE_FORMAT,
     SWATCH,
     TooltipField,
     build_structured_tooltip_expr,
@@ -69,7 +69,7 @@ from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.time_unit_detect import normalize_labeled_temporal
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
-from dbt_charts.core.text.case import default_axis_title, format_display_text
+from dbt_charts.core.text.case import field_display_text, field_title
 
 _SeriesCartesianChart = ResolvedBarChart | ResolvedLineChart | ResolvedAreaChart
 _NormalizableChart = ResolvedBarChart | ResolvedAreaChart
@@ -165,7 +165,7 @@ def _cartesian_roles(
 
     header: tuple[TooltipField, ...] = ()
     if chart.x is not None:
-        x_title = chart.x_label or default_axis_title(chart.x)
+        x_title = chart.x_label or field_title(chart.x, chart.field_labels)
         # The base emitter (bar/line/area) already ran this canonicalization
         # on its OWN copy of chart.x before deciding the x encoding's type and
         # grain -- a year-shaped integer column becomes an ISO date, which VL
@@ -191,7 +191,9 @@ def _cartesian_roles(
     # datum[WIDE_LABEL_FIELD] = the measure name. Use a human title for the
     # value row and force the series row rather than probing pre-fold rows.
     if chart.wide_measures:
-        y_title = chart.y_label or wide_measures_title(chart.wide_measures)
+        y_title = chart.y_label or wide_measures_title(
+            chart.wide_measures, chart.field_labels
+        )
         values: list[TooltipField] = [
             TooltipField(
                 WIDE_VALUE_FIELD,
@@ -204,7 +206,7 @@ def _cartesian_roles(
         order = _series_order_role(base_spec, WIDE_LABEL_FIELD)
         return header, series, values, order
 
-    y_title = chart.y_label or default_axis_title(chart.y)
+    y_title = chart.y_label or field_title(chart.y, chart.field_labels)
     values = [
         TooltipField(chart.y, y_title, kind="quantitative", format=style.tooltip_format)
     ]
@@ -218,8 +220,8 @@ def _cartesian_roles(
         and color_ch.data_field
         and series_row_promoted(color_ch.data_field, data)
     ):
-        series_title = format_display_text(
-            color_ch.data_field, from_slug=True, font=style.axis_x.title.font
+        series_title = field_display_text(
+            color_ch.data_field, chart.field_labels, style.axis_x.title.font
         )
         series = (TooltipField(color_ch.data_field, series_title),)
         order = _series_order_role(base_spec, color_ch.data_field)
@@ -227,10 +229,12 @@ def _cartesian_roles(
     return header, series, values, order
 
 
-def _layer_name(layer: ResolvedLayer) -> str:
+def _layer_name(layer: ResolvedLayer, field_labels: Mapping[str, str]) -> str:
     """The name a layer goes by in the bubble: the overlay label cascade."""
     assert layer.y is not None
-    return layer.label if layer.label is not None else default_axis_title(layer.y)
+    return (
+        layer.label if layer.label is not None else field_title(layer.y, field_labels)
+    )
 
 
 def _shares_rows(layer: ResolvedLayer, chart: ResolvedBarChart) -> bool:
@@ -252,13 +256,16 @@ def _span_values(
     """
     assert chart.y is not None and chart.y_start is not None
     if chart.measure_type == "temporal":
+        assert chart.span_date_format is not None  # baked with measure_type
         end = TooltipField(
             chart.y,
             end.title,
             kind="temporal",
-            format=ResolvedFormat(spec=SPAN_DATE_FORMAT),
+            format=chart.span_date_format,
         )
-    start = replace(end, field=chart.y_start, title=default_axis_title(chart.y_start))
+    start = replace(
+        end, field=chart.y_start, title=field_title(chart.y_start, chart.field_labels)
+    )
     layers = [layer for layer in chart.layers if _shares_rows(layer, chart)]
     inner = next(
         (
@@ -269,15 +276,19 @@ def _span_values(
         None,
     )
     named = [
-        replace(end, field=layer.y, title=_layer_name(layer))
+        replace(end, field=layer.y, title=_layer_name(layer, chart.field_labels))
         for layer in layers
         if layer is not inner and layer.y is not None
     ]
     if inner is not None:
         assert inner.y is not None and inner.y_start is not None
-        inner_end = replace(end, field=inner.y, title=default_axis_title(inner.y))
+        inner_end = replace(
+            end, field=inner.y, title=field_title(inner.y, chart.field_labels)
+        )
         inner_start = replace(
-            end, field=inner.y_start, title=default_axis_title(inner.y_start)
+            end,
+            field=inner.y_start,
+            title=field_title(inner.y_start, chart.field_labels),
         )
         change, transforms = span_tooltip_rows(
             inner_end, inner_start, frozenset({inner.y, inner.y_start}), data
@@ -341,8 +352,8 @@ def _layer_series(
         )
         if not swatch:
             continue
-        title = format_display_text(
-            layer.color, from_slug=True, font=chart.style.axis_x.title.font
+        title = field_display_text(
+            layer.color, chart.field_labels, chart.style.axis_x.title.font
         )
         return (
             (TooltipField(_LAYER_SERIES_FIELD, title),),
@@ -454,10 +465,10 @@ def _pie_roles(
         header = (
             TooltipField(
                 chart.identity_field,
-                format_display_text(chart.identity_field, from_slug=True, font=font),
+                field_display_text(chart.identity_field, chart.field_labels, font),
             ),
         )
-    value_title = format_display_text(chart.theta, from_slug=True, font=font)
+    value_title = field_display_text(chart.theta, chart.field_labels, font)
     fmt = chart.style.tooltip_format
     # The share % leads on a pie; the raw slice count and the grand total are
     # context, so both render muted (low-contrast). See MUTED in _tooltip.py.
@@ -509,14 +520,14 @@ def _dot_plot_roles(
     (category,), (measure,) = categories, measures
     style = chart.style
     title = chart.x_label if measure == chart.x else chart.y_label
-    header = (TooltipField(category, default_axis_title(category)),)
-    series_title = format_display_text(
-        color_ch.data_field, from_slug=True, font=style.axis_x.title.font
+    header = (TooltipField(category, field_title(category, chart.field_labels)),)
+    series_title = field_display_text(
+        color_ch.data_field, chart.field_labels, style.axis_x.title.font
     )
     series = (TooltipField(color_ch.data_field, series_title),)
     value = TooltipField(
         measure,
-        title if title is not None else default_axis_title(measure),
+        title if title is not None else field_title(measure, chart.field_labels),
         kind="quantitative",
         format=style.tooltip_format,
     )
@@ -544,8 +555,8 @@ def _scatter_roles(
     assert isinstance(chart.y, str)  # narrowed by applies_to
     style = chart.style
     fmt = style.tooltip_format
-    x_title = chart.x_label or default_axis_title(chart.x)
-    y_title = chart.y_label or default_axis_title(chart.y)
+    x_title = chart.x_label or field_title(chart.x, chart.field_labels)
+    y_title = chart.y_label or field_title(chart.y, chart.field_labels)
     # Mirrors the scatter emitter's x gate, decided on the same raw rows: a
     # quantitative x stays a measure (canonicalizing it would misread a
     # 1900-2100 numeric column as years); anything else the emitter runs
@@ -567,8 +578,8 @@ def _scatter_roles(
 
     color_ch = chart.resolved_channels.get("color")
     if color_ch is not None and color_ch.data_field:
-        series_title = format_display_text(
-            color_ch.data_field, from_slug=True, font=style.axis_x.title.font
+        series_title = field_display_text(
+            color_ch.data_field, chart.field_labels, style.axis_x.title.font
         )
         header = (TooltipField(color_ch.data_field, series_title),)
         return "scatter_colored", header, values
@@ -588,16 +599,16 @@ def _heatmap_roles(
     assert isinstance(chart.x, str)  # narrowed by applies_to
     assert isinstance(chart.y, str)  # narrowed by applies_to
     style = chart.style
-    x_title = chart.x_label or default_axis_title(chart.x)
-    y_title = chart.y_label or default_axis_title(chart.y)
+    x_title = chart.x_label or field_title(chart.x, chart.field_labels)
+    y_title = chart.y_label or field_title(chart.y, chart.field_labels)
     header = (
         header_tooltip_field(chart.x, x_title, data),
         header_tooltip_field(chart.y, y_title, data),
     )
     color_ch = chart.resolved_channels.get("color")
     assert color_ch is not None and color_ch.data_field  # heatmap's value channel
-    value_title = format_display_text(
-        color_ch.data_field, from_slug=True, font=chart.legend.title.font
+    value_title = field_display_text(
+        color_ch.data_field, chart.field_labels, chart.legend.title.font
     )
     values = [
         TooltipField(
@@ -688,7 +699,7 @@ class StructuredTooltipFeature:
                     _shares_rows(lay, chart) for lay in chart.layers
                 ):
                     named = frozenset(
-                        _layer_name(lay)
+                        _layer_name(lay, chart.field_labels)
                         for lay in chart.layers
                         if not (
                             isinstance(lay, ResolvedBarLayer)

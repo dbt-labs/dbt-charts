@@ -607,3 +607,30 @@ def test_parenthesized_body_with_its_own_with_is_indeterminate(inner):
 )
 def test_with_keywords_that_lose_nothing_still_parse(sql, dialect):
     assert not isinstance(parse_sql_statements(sql, dialect), str)
+
+
+def test_column_refs_parse_the_queries_authored_dialect():
+    """BigQuery backticks do not parse as DuckDB; `dialect:` says which to use."""
+    sql = "SELECT customer_id FROM `p.d.orders`"
+    plain = extract_base_column_refs(_compile({"q": sql}))
+    authored = extract_base_column_refs(
+        _compile({"q": {"sql": sql, "dialect": "bigquery"}})
+    )
+    assert plain["q"].indeterminate is not None
+    assert authored["q"].indeterminate is None
+    assert "customer_id" in {column for _, column in authored["q"].columns}
+
+
+def test_setup_sql_refs_use_the_sources_dialect():
+    """`dialect:` describes `sql`; setup_sql stays in the source's own dialect."""
+    result = _compile(
+        {
+            "q": {
+                "sql": "SELECT a FROM t",
+                "dialect": "postgres",
+                "setup_sql": "CREATE OR REPLACE MACRO m(x) AS x * 2",
+            }
+        }
+    )
+    refs = extract_base_column_refs(result)
+    assert refs["q"].indeterminate is None

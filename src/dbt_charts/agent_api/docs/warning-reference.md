@@ -984,6 +984,30 @@ Column check unavailable on {adapter_type} ({mechanism} validates the query but 
 
 Fired during `dct validate --warehouse` when the adapter can validate that the query is accepted by the warehouse but cannot return a result schema, so chart channel column checks are skipped. Use a DuckDB or BigQuery source for full column verification.
 
+### WARN-DATE-AS-TEXT: A charted x column is a date the query turned into text
+
+- **Level:** warning
+- **Domain:** query
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+Query {query_name!r}: {message}
+```
+
+**Fix:** Return the date itself (with date_trunc for a grain) instead of formatting it; the axis labels dates by grain. For a month-of-year or day-of-week category, return the month or weekday name.
+
+Fires when a column some chart uses as its x is a date or timestamp wrapped in a formatting call (`strftime`, `to_char`, `to_varchar`, `format_date`, `format_timestamp`, `format_datetime`, `date_format`, SQL Server `FORMAT`) or cast to a text type. Text has no time scale, label thinning, or gaps for missing periods, so the chart draws it as categories.
+
+The warning needs evidence that the input is temporal. Functions that take only dates (`strftime`, `format_date`, `format_timestamp`, `format_datetime`, `date_format`) count on the format alone. Functions that also format numbers (`to_char`, `to_varchar`, SQL Server `FORMAT`) and casts to text count only when the value is evidently a date: a `date_trunc`/date function, a date literal, a cast to a date type, or a column named like a date (`created_at`, `order_date`, `ts`).
+
+A month or weekday name alone stays quiet (`%b`, `%A`, `Mon`, `FMDay`, `DATENAME(month, d)`, `monthname(d)`): that is a deliberate seasonality category. Any other format warns, including a month or hour number alone.
+
+When the format or the `date_trunc` unit is not a literal, the warning still fires but leaves the format and grain out of the message.
+
+The detector reads the query's own SELECT list, for columns charted as x by a chart or one of its layers. A date made text in a CTE, view, or dbt model is not seen.
+
 ### WARN-DBT-MANIFEST-MISSING: Queries use dbt macros but no manifest was found
 
 - **Level:** warning

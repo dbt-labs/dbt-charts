@@ -300,3 +300,76 @@ class TestDuckDBPath:
         )
         describe_query("SELECT 1 AS x", source="db", adapter_registry=registry)
         assert calls == [], "DuckDB sources must never reach check_ad_hoc_query"
+
+
+_TSQL_TOP = "SELECT TOP 3 name FROM sys.objects"
+
+
+class TestSourceDialect:
+    """Lint dialect defaults to the resolved source's; explicit dialect wins."""
+
+    def _valid_check(self, adapter_type: str) -> WarehouseCheck:
+        return WarehouseCheck(
+            status="valid",
+            adapter_type=adapter_type,
+            mechanism="dry-run",
+            columns_checked=True,
+            columns=[WarehouseCheckColumn(name="name", type="VARCHAR")],
+        )
+
+    def test_tsql_top_passes_lint_on_sqlserver_source(self, monkeypatch):
+        calls = _mock_check_ad_hoc_query(
+            monkeypatch, check=self._valid_check("sqlserver")
+        )
+        result = describe_query(
+            _TSQL_TOP,
+            source="wh",
+            adapter_registry=_registry_non_duckdb("sqlserver"),
+        )
+        assert result.success is True, result.error
+        assert calls == [(_TSQL_TOP, "wh")]
+
+    def test_explicit_dialect_wins_over_source(self, monkeypatch):
+        calls = _mock_check_ad_hoc_query(
+            monkeypatch, check=self._valid_check("sqlserver")
+        )
+        result = describe_query(
+            _TSQL_TOP,
+            source="wh",
+            dialect="postgres",
+            adapter_registry=_registry_non_duckdb("sqlserver"),
+        )
+        assert result.success is False
+        assert any(d.code == "WARN-PARSE-ERROR" for d in result.diagnostics)
+        assert calls == []
+
+    def test_explicit_sqlserver_alias_does_not_raise(self, monkeypatch):
+        _mock_check_ad_hoc_query(monkeypatch, check=self._valid_check("sqlserver"))
+        result = describe_query(
+            _TSQL_TOP,
+            source="wh",
+            dialect="sqlserver",
+            adapter_registry=_registry_non_duckdb("csv"),
+        )
+        assert result.success is True, result.error
+
+    def test_source_type_without_sqlglot_dialect_lints_generic(self, monkeypatch):
+        calls = _mock_check_ad_hoc_query(monkeypatch)
+        result = describe_query(
+            _TSQL_TOP,
+            source="wh",
+            adapter_registry=_registry_non_duckdb("csv"),
+        )
+        assert result.success is False
+        assert any(d.code == "WARN-PARSE-ERROR" for d in result.diagnostics)
+        assert calls == []
+
+    def test_sourceless_parse_error_reports_diagnostics_not_source_error(
+        self, monkeypatch
+    ):
+        calls = _mock_check_ad_hoc_query(monkeypatch)
+        registry = _registry_non_duckdb()
+        result = describe_query("SELECT * FROM", adapter_registry=registry)
+        assert result.success is False
+        assert any(d.code == "WARN-PARSE-ERROR" for d in result.diagnostics)
+        assert calls == []

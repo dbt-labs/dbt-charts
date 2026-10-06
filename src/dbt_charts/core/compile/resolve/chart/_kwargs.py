@@ -51,7 +51,9 @@ from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
+    decide_legend_direction,
     decide_legend_position,
+    merge_authored_direction,
     merge_authored_position,
     merge_legend,
     validate_cartesian_position,
@@ -147,6 +149,7 @@ def _base_kwargs(
     legend_position_overridden_by_width: LegendEdge | None = None,
     radial_legend: bool = False,
     legendless: bool = False,
+    wrap_legend: bool,
 ) -> dict[str, Any]:
     """Common kwargs for all _BaseResolvedChartFields subclasses.
 
@@ -187,6 +190,9 @@ def _base_kwargs(
     would raise ERR-CHART-PAINTED-NO-MARKS).
     radial_legend: True for pie and donut, whose key never overlays
     (``decide_legend_position``'s ``radial``).
+    wrap_legend: True when one horizontal row cannot hold the entries; wraps an
+    inferred-horizontal legend at compact_columns. An authored direction or
+    columns wins.
     legendless: True for families that draw no legend; the
     board's baked placement is left alone and never validated.
     legend_position_overridden_by_width: the author's own edge when the
@@ -211,7 +217,6 @@ def _base_kwargs(
         top = LegendStylePatch.model_validate(
             {
                 "visible": True,
-                "direction": "horizontal",
                 "columns": legend.compact_columns if top_legend == "compact" else 0,
             }
         )
@@ -229,8 +234,35 @@ def _base_kwargs(
         decided = decide_legend_position(
             authored_position, top_strip=top_legend != "off", radial=radial_legend
         )
+        # The top strip ignores an authored direction.
+        direction = decide_legend_direction(
+            "horizontal"
+            if top_legend != "off"
+            else merge_authored_direction(
+                chart_style_context.pre_style.charts.legend, legend_patch
+            ),
+            decided.edge,
+        )
+        authored_direction = merge_authored_direction(
+            chart_style_context.pre_style.charts.legend, legend_patch
+        )
+        wrap = (
+            wrap_legend
+            and top_legend == "off"
+            and not decided.overlay
+            and decided.edge in ("top", "bottom")
+            and authored_direction is None
+            and legend.columns == 0
+        )
         legend = merge_onto_base(
-            legend, LegendStylePatch.model_validate({"position": decided.model_dump()})
+            legend,
+            LegendStylePatch.model_validate(
+                {
+                    "position": decided.model_dump(),
+                    "direction": direction,
+                    **({"columns": legend.compact_columns} if wrap else {}),
+                }
+            ),
         )
     if suppress_legend:
         hidden = LegendStylePatch.model_validate({"visible": False})
@@ -336,7 +368,7 @@ def _resolved_chart_format(
 ) -> ResolvedFormat | None:
     if chart_format is None:
         return None
-    return resolve_format_parts(chart_format, formats, no_format_default=None)
+    return resolve_format_parts(chart_format, formats)
 
 
 def _shared_kwargs(
@@ -402,6 +434,8 @@ def preferred_chart_width(
     authored = normalized.__dict__.get("width")  # cartesian/pie/geo only
     if authored is not None:
         return float(authored)
+    if normalized.type == "custom":  # no theme family slot: board-wide width
+        return float(chart_style_context.preferred_width)
     family_base = getattr(chart_style_context, _FAMILY_SLOT[normalized.type])
     family = merge_onto_base(family_base, normalized.style)
     return float(family.preferred_width)
@@ -419,6 +453,8 @@ def default_chart_width(
     ``ChartStyleContext`` instead, since that also merges any chart-local
     override.
     """
+    if chart_type == "custom":  # no theme family slot: board-wide width
+        return float(chart_defaults.preferred_width)
     family_base = getattr(chart_defaults, _FAMILY_SLOT[chart_type])
     return float(family_base.preferred_width)
 
@@ -576,6 +612,7 @@ def _cartesian_kwargs(
         "color": normalized.color,
         "x_label": normalized.x_label,
         "y_label": normalized.y_label,
+        "field_labels": normalized.field_labels,
         "sort": normalized.sort,
         "multiples": normalized.multiples,
         "panel_axes": panel_axes,
@@ -600,4 +637,5 @@ def _geo_kwargs(
     return {
         **_shared_kwargs(normalized, variables, chart_style_context),
         "projection": normalized.projection,
+        "field_labels": normalized.field_labels,
     }

@@ -134,6 +134,7 @@ def test_v2_bar_authored_domain_emitted_in_vl_scale(bar_style) -> None:
         y="val",
         style=bar_style.model_copy(update={"axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
     spec = BarEmitter().emit(chart, _DEFAULT_BOX, regroup((), _BAND_DATA))
@@ -198,6 +199,7 @@ def test_v2_bar_authored_domain_drives_tick_span(bar_style) -> None:
         y="val",
         style=bar_style.model_copy(update={"axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
     spec = BarEmitter().emit(chart, _DEFAULT_BOX, regroup((), _BAND_DATA))
@@ -236,6 +238,7 @@ def test_v2_stacked_bar_authored_domain_wins_over_stacked_totals(bar_style) -> N
             )
         },
         **{k: v for k, v in _C.items() if k != "resolved_channels"},
+        field_labels={},
     )
 
     spec = BarEmitter().emit(chart, _DEFAULT_BOX, regroup((), _BAND_DATA))
@@ -268,6 +271,7 @@ def test_v2_area_authored_domain_emitted_in_vl_scale(area_style) -> None:
         stack=None,
         style=area_style.model_copy(update={"axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _BAND_DATA))
@@ -332,6 +336,7 @@ def test_v2_area_authored_domain_drives_tick_span(area_style) -> None:
         stack=None,
         style=area_style.model_copy(update={"axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _BAND_DATA))
@@ -405,6 +410,7 @@ def test_v2_scatter_authored_domain_emitted_in_vl_scale(scatter_style) -> None:
         y="val",
         style=scatter_style.model_copy(update={"axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
     spec = ScatterEmitter().emit(chart, _DEFAULT_BOX, regroup((), _SCATTER_BAND_DATA))
@@ -472,6 +478,7 @@ def test_v2_scatter_authored_domain_drives_tick_span(scatter_style) -> None:
         y="val",
         style=scatter_style.model_copy(update={"axis_y": ay}),
         **_C,
+        field_labels={},
     )
 
     spec = ScatterEmitter().emit(chart, _DEFAULT_BOX, regroup((), _SCATTER_BAND_DATA))

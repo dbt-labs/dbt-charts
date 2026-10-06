@@ -270,6 +270,7 @@ def render_registered_view(
         ``RenderError`` when a route matches but any step fails.
     """
     from dbt_charts.core.board import BoardRenderResult
+    from dbt_charts.core.compile.image_assets import image_scope
     from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
     from dbt_charts.core.diagnostics.execution import ExecutionError
     from dbt_charts.core.execute import Executor
@@ -278,7 +279,6 @@ def render_registered_view(
     )
     from dbt_charts.core.render import render
     from dbt_charts.core.render.errors import RenderError as RenderExecError
-    from dbt_charts.core.render.image_assets import image_scope
 
     compiled = _compile_registered_view(request_path, adapter_registry, result_cache)
     if compiled is None:

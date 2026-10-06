@@ -1,0 +1,4 @@
+title: Home
+text: |
+  Welcome to the fixture project used to test discovery of boards shipped
+  inside installed dbt packages (dbt_packages/<pkg>/charts/).

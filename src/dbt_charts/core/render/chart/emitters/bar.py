@@ -104,7 +104,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 )
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.utils import normalize_data_types
-from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.text.case import field_display_text
 from dbt_charts.core.text.category_label import category_label_text
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
@@ -458,7 +458,15 @@ def _emit_histogram(
         "type": "quantitative",
         "bin": True,
         "title": resolve_xy_titles(
-            chart.x, None, chart.x_label, None, ax, ax, box, chart.id
+            chart.x,
+            None,
+            chart.x_label,
+            None,
+            ax,
+            ax,
+            box,
+            chart.id,
+            field_labels=chart.field_labels,
         ).x_title,
         "axis": inject_axis_numeral_expr(
             axis_to_vl(ax, label_overlap="allow", label_angle=0.0),
@@ -499,9 +507,7 @@ def _emit_histogram(
     if color_ch is not None:
         color_field = color_ch.data_field
         color_title = (
-            format_display_text(
-                color_field, from_slug=True, font=chart.legend.title.font
-            )
+            field_display_text(color_field, chart.field_labels, chart.legend.title.font)
             if color_field
             else None
         )
@@ -653,7 +659,9 @@ class BarEmitter:
                         chart.wide_measures,
                         chart.color,
                         data,
-                        wide_measure_labels_for(chart.wide_measures),
+                        wide_measure_labels_for(
+                            chart.wide_measures, chart.field_labels
+                        ),
                     )
                 ),
             )
@@ -758,6 +766,7 @@ class BarEmitter:
                 # streamgraph case base_stack_center guards against.
                 base_stack_center=False,
                 multiples_scale_independent=multiples_scale_independent(chart),
+                field_labels=chart.field_labels,
             )
 
         return spec
@@ -777,7 +786,7 @@ def _emit_wide_bar(
     assert chart.wide_measures
     measures = list(chart.wide_measures)
     dimension = chart.color
-    wide_labels = wide_measure_labels_for(chart.wide_measures)
+    wide_labels = wide_measure_labels_for(chart.wide_measures, chart.field_labels)
     series = wide_series_names(measures, dimension, data, wide_labels)
     # `fold_order` (below) must always stay RAW -- it feeds
     # `_measure_paint_order`/`_label_expression`, which build Vega
@@ -989,7 +998,9 @@ def _emit_vertical(
     # derive from) — fall back to the joined, humanized measure names instead,
     # same as an authored y_label always would.
     y_label_effective = chart.y_label or (
-        wide_measures_title(chart.wide_measures) if wide is not False else None
+        wide_measures_title(chart.wide_measures, chart.field_labels)
+        if wide is not False
+        else None
     )
     titles = resolve_xy_titles(
         cat_field,
@@ -1000,6 +1011,7 @@ def _emit_vertical(
         ay,
         box,
         chart.id,
+        field_labels=chart.field_labels,
     )
     x_title, y_title = titles.x_title, titles.y_title
 
@@ -1199,9 +1211,7 @@ def _emit_vertical(
     elif color_ch is not None:
         color_field = color_ch.data_field
         color_title = (
-            format_display_text(
-                color_field, from_slug=True, font=chart.legend.title.font
-            )
+            field_display_text(color_field, chart.field_labels, chart.legend.title.font)
             if color_field
             else None
         )
@@ -1487,7 +1497,9 @@ def _emit_horizontal(
     # x_authored_field="y_label" tells the truncation recorder that the VL x
     # title came from the authored y_label key (so the squiggle lands correctly).
     y_label_effective = chart.y_label or (
-        wide_measures_title(chart.wide_measures) if wide is not False else None
+        wide_measures_title(chart.wide_measures, chart.field_labels)
+        if wide is not False
+        else None
     )
     titles = resolve_xy_titles(
         measure_field if wide is False else None,
@@ -1500,6 +1512,7 @@ def _emit_horizontal(
         chart.id,
         x_authored_field="y_label",
         y_authored_field="x_label",
+        field_labels=chart.field_labels,
     )
     x_title, y_title = titles.x_title, titles.y_title
     # The measure channel here is VL x, not y — bake the same domain-spanning
@@ -1716,8 +1729,8 @@ def _emit_horizontal(
     elif color_ch is not None:
         color_field_h = color_ch.data_field
         color_title_h = (
-            format_display_text(
-                color_field_h, from_slug=True, font=chart.legend.title.font
+            field_display_text(
+                color_field_h, chart.field_labels, chart.legend.title.font
             )
             if color_field_h
             else None

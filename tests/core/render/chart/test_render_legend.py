@@ -122,6 +122,7 @@ def _bar_with_color(
         canvas=_default_charts().ink_canvas,
         title_style=_default_charts().title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
 
 
@@ -157,6 +158,7 @@ def _pie_with_color(
         canvas=_default_charts().ink_canvas,
         title_style=_default_charts().title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
 
 

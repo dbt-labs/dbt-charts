@@ -453,8 +453,11 @@ def render_title(
     Returns:
         SVG string for the title
     """
+    from dbt_charts.core.compile.resolve.style.markdown_style import (
+        title_blocks,
+        title_renderer,
+    )
     from dbt_charts.core.render.font_selection import record_painted_faces
-    from dbt_charts.core.render.sizing import title_blocks, title_renderer
 
     # Driven through SVGRenderer rather than mdsvg's one-shot `render()` so the
     # faces this title reached can be read back off the renderer: a title carries

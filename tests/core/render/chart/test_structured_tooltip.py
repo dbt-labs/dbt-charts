@@ -817,7 +817,7 @@ def test_scatter_base_combo_stays_on_old_behavior_not_half_migrated():
 
 
 def test_combo_overlay_label_override_wins_in_tooltip():
-    """An authored layer `label:` wins over the `default_axis_title(layer.y)`
+    """An authored layer `label:` wins over the `field_title(layer.y)`
     fallback in the overlay's own tooltip row, mirroring its legend label."""
     chart = BarChart(
         id="t",
@@ -832,7 +832,7 @@ def test_combo_overlay_label_override_wins_in_tooltip():
 
 
 def test_combo_overlay_label_falls_back_to_the_column_name():
-    """No authored label: falls back to ``default_axis_title(layer.y)``, the
+    """No authored label: falls back to ``field_title(layer.y)``, the
     same engine-derived name the layer gets in the legend and on the rail —
     the column's own casing, not title case."""
     chart = BarChart(

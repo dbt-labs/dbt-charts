@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from dbt_charts.core.colors import interpolate_hcl
@@ -42,7 +43,7 @@ from dbt_charts.core.render.chart.type_inference import (
     resolve_cartesian_x_type,
 )
 from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl, legend_to_vl
-from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.case import field_title
 from dbt_charts.core.utils import is_vega_numeric_value
 
 
@@ -1345,7 +1346,7 @@ def resolve_legend_entries(
 
 
 def layer_label_and_aliases(
-    authored_label: str | None, y_field: str
+    authored_label: str | None, y_field: str, field_labels: Mapping[str, str]
 ) -> tuple[str, frozenset[str]]:
     """The legend label for a colorless overlay layer (or a colorless
     base), and its alias set: the label itself, the raw y-column, and the
@@ -1357,8 +1358,9 @@ def layer_label_and_aliases(
     (``_overlay.py``) and the render-warnings detector
     (``legend_values_unresolved.py``).
     """
-    label = authored_label or default_axis_title(y_field)
-    return label, frozenset({label, y_field, default_axis_title(y_field)})
+    default = field_title(y_field, field_labels)
+    label = authored_label or default
+    return label, frozenset({label, y_field, default})
 
 
 def apply_legend_entry_order(

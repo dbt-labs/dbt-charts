@@ -114,6 +114,7 @@ def test_wrap_site_records_truncation_via_context_var() -> None:
             ay,
             RenderBox(width=500, height=220),
             "chart1",
+            field_labels={},
         )
     # Truncation was recorded for chart1 on the authored y_label field.
     assert "chart1" in sinks
@@ -136,6 +137,7 @@ def test_wrap_site_does_not_record_when_title_fits() -> None:
             ay,
             RenderBox(width=500, height=900),
             "chart2",
+            field_labels={},
         )
     assert "chart2" not in sinks
 
@@ -266,6 +268,7 @@ def test_horizontal_bar_records_authored_field_not_vl_channel() -> None:
             "hbar",
             x_authored_field="y_label",
             y_authored_field="x_label",
+            field_labels={},
         )
     assert "hbar" in sinks
     records = sinks["hbar"]
@@ -288,7 +291,8 @@ def test_vertical_bar_records_authored_field_without_swap() -> None:
             ay,
             RenderBox(width=500, height=220),
             "vbar",
-            # defaults: x_authored_field="x_label", y_authored_field="y_label"
+            # defaults: x_authored_field="x_label", y_authored_field="y_label",
+            field_labels={},
         )
     assert "vbar" in sinks
     records = sinks["vbar"]
@@ -449,6 +453,7 @@ def test_wrap_site_records_truncation_for_a_single_over_wide_word() -> None:
             ay,
             RenderBox(width=500, height=110),
             "chart3",
+            field_labels={},
         )
     assert sinks["chart3"][0].authored_text == "commits"
 
@@ -466,5 +471,6 @@ def test_wrap_site_stays_silent_when_the_panel_budget_is_honest() -> None:
             ay,
             RenderBox(width=500, height=110, panel_rows=7),
             "chart4",
+            field_labels={},
         )
     assert "chart4" not in sinks

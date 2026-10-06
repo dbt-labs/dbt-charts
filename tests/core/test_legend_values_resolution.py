@@ -229,7 +229,7 @@ class TestAuthoredValuesSurvive:
 
     def test_wide_bar_humanized_label_carries_the_unit_suffix(self, make_chart):
         """`net_revenue`/`gross_revenue` (the sibling test above) humanize
-        identically whether `_label_expression` calls `default_axis_title`
+        identically whether `_label_expression` calls `field_title`
         or the bare `slug_to_text` it wraps -- neither has a unit suffix to
         drop. A `_usd` measure does: only this end-to-end path through the
         emitted VL `calculate` expression (not `slug_to_text`'s own unit
@@ -374,8 +374,8 @@ class TestAuthoredValuesSurvive:
     def test_single_series_base_overlay(self, make_chart):
         # No color: on the base -- exercises the `if base_label is not
         # None:` arm (a bar+line combo with no color field anywhere).
-        # base_label defaults to default_axis_title("value") == "value";
-        # the layer label defaults to default_axis_title("target").
+        # base_label defaults to field_title("value") == "value";
+        # the layer label defaults to field_title("target").
         from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
 
         rows = [
@@ -619,7 +619,7 @@ class TestWideMeasureLabelBakingKeepsRawSeriesIdentity:
     def test_alphabetical_stack_order_is_raw_derived_not_humanized_text(
         self, make_chart
     ):
-        """Regression: a site re-deriving `default_axis_title(measure)`
+        """Regression: a site re-deriving `field_title(measure)`
         got the sort order or timing wrong. The label is now baked once
         at resolve time (`_wide_fields.wide_measure_labels_for`) and every consumer
         reads it, never re-derives it -- this pins the one invariant that
@@ -667,7 +667,9 @@ class TestWideMeasureHumanizationCollisionFallsBackToRawNames:
         )
         rows = [{"month": "Jan", "churn_pct": 1, "churn_percent": 2}]
         resolved = resolve(chart, rows, chart_style_context=context)
-        assert wide_measure_labels_for(resolved.wide_measures) == {
+        assert wide_measure_labels_for(
+            resolved.wide_measures, resolved.field_labels
+        ) == {
             "churn_pct": "churn_pct",
             "churn_percent": "churn_percent",
         }
@@ -699,7 +701,9 @@ class TestWideMeasureHumanizationCollisionFallsBackToRawNames:
             }
         ]
         resolved = resolve(chart, rows, chart_style_context=context)
-        assert wide_measure_labels_for(resolved.wide_measures) == {
+        assert wide_measure_labels_for(
+            resolved.wide_measures, resolved.field_labels
+        ) == {
             "churn_pct": "churn_pct",
             "churn_percent": "churn_percent",
             "revenue_usd": "revenue ($)",
@@ -736,7 +740,7 @@ class TestWideMeasureHumanizationCollisionFallsBackToRawNames:
             }
         ]
         resolved = resolve(chart, rows, chart_style_context=context)
-        labels = wide_measure_labels_for(resolved.wide_measures)
+        labels = wide_measure_labels_for(resolved.wide_measures, resolved.field_labels)
         assert len(set(labels.values())) == 3, labels
 
 
@@ -1180,7 +1184,7 @@ class TestUnresolvedValuesDropWithoutRaising:
 
 class TestWideEndpointLabelColorMatchesMainScale:
     """Regression: a wide line/unstacked-area chart's endpoint-label rail
-    painted a series in the WRONG series' ink when default_axis_title
+    painted a series in the WRONG series' ink when field_title
     (non order-preserving -- a `_usd` suffix injects `(` before the sort
     even sees the letters) was applied BEFORE sorting in the rail, while
     the main chart's own palette assignment sorts the RAW names first, then

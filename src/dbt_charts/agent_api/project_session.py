@@ -374,6 +374,7 @@ class ProjectSession:
         sql: str,
         *,
         dialect: str | None = ...,
+        source: str | None = ...,
         suppress: set[str] | None = ...,
         return_suppressed: Literal[False] = ...,
     ) -> list[QueryDiagnostic]: ...
@@ -384,6 +385,7 @@ class ProjectSession:
         sql: str,
         *,
         dialect: str | None = ...,
+        source: str | None = ...,
         suppress: set[str] | None = ...,
         return_suppressed: Literal[True],
     ) -> tuple[list[QueryDiagnostic], list[QueryDiagnostic]]: ...
@@ -393,10 +395,16 @@ class ProjectSession:
         sql: str,
         *,
         dialect: str | None = None,
+        source: str | None = None,
         suppress: set[str] | None = None,
         return_suppressed: bool = False,
     ) -> list[QueryDiagnostic] | tuple[list[QueryDiagnostic], list[QueryDiagnostic]]:
         """Run SQL validation with relationship context for calibrated severity.
+
+        ``dialect`` wins; otherwise the project source named by ``source``
+        supplies its own sqlglot dialect. A source that is unnamed, unknown
+        here, or of a type with no sqlglot dialect (file sources,
+        ``dbt_profile``) lints with sqlglot's generic dialect.
 
         Loads relationship context from the project's super-schema cache (when
         dbt_charts_super_schema is installed) and forwards it to core, so
@@ -404,6 +412,10 @@ class ProjectSession:
 
         Stateless — requires no adapter or warehouse connection.
         """
+        from dbt_charts.core.compile.normalize.queries import dialect_for_source
+
+        if dialect is None:
+            dialect = dialect_for_source(source, self.project.sources.sources)
         if return_suppressed:
             return _core_validate_query(
                 sql,

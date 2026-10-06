@@ -34,6 +34,7 @@ import jinja2.nodes
 import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
+from sqlglot.dialects.dialect import Dialect as SqlglotDialect
 
 from dbt_charts.core.compile.config import get_execution_config
 from dbt_charts.core.diagnostics.execution import (
@@ -58,6 +59,31 @@ def sqlglot_dialect(dialect: str | None) -> str | None:
         return None
     aliases = get_execution_config().dialect_aliases
     return aliases.get(dialect, dialect)
+
+
+def require_sqlglot_dialect(dialect: str | None) -> str | None:
+    """`sqlglot_dialect`, raising ValueError for a name sqlglot has no dialect for."""
+    resolved = sqlglot_dialect(dialect)
+    if resolved is not None and resolved not in SqlglotDialect.classes:
+        raise ValueError(
+            f"Unknown SQL dialect {dialect!r}. Use a sqlglot dialect name "
+            "(duckdb, bigquery, postgres, tsql, ...) or an alias such as sqlserver."
+        )
+    return resolved
+
+
+def source_dialect(source_type: str | None) -> str | None:
+    """A source's `type` when it names a sqlglot dialect, else None.
+
+    None means "could not establish one" (csv/json/parquet file sources,
+    `dbt_profile`, ...).
+    """
+    if (
+        source_type is None
+        or sqlglot_dialect(source_type) not in SqlglotDialect.classes
+    ):
+        return None
+    return source_type
 
 
 # Top-level statements allowed by validate_select_only. exp.Select is further

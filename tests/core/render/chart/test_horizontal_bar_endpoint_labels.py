@@ -1312,7 +1312,7 @@ def test_wide_measure_rail_collision_check_measures_humanized_text(
     monkeypatch.setattr(
         bar_module,
         "wide_measure_labels_for",
-        lambda measures: {m: m for m in measures},
+        lambda measures, field_labels: {m: m for m in measures},
     )
     rc_raw = resolve(chart, data, chart_style_context=_BOARD_CTX, width=380.0)
 
@@ -1352,7 +1352,7 @@ def test_wide_measure_rail_collision_check_measures_humanized_composite_text(
     monkeypatch.setattr(
         bar_module,
         "wide_measure_labels_for",
-        lambda measures: {m: m for m in measures},
+        lambda measures, field_labels: {m: m for m in measures},
     )
     rc_raw = resolve(chart, data, chart_style_context=_BOARD_CTX, width=width)
 

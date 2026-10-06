@@ -556,6 +556,8 @@ class TestContentBoxAccounting:
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
+                card_padding=0.0,
+                variable_values={},
             )
             == 600.0
         )
@@ -567,6 +569,8 @@ class TestContentBoxAccounting:
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
+                card_padding=0.0,
+                variable_values={},
             )
             == 916.0
         )
@@ -578,6 +582,8 @@ class TestContentBoxAccounting:
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
+                card_padding=0.0,
+                variable_values={},
             )
             == 600.0
         )
@@ -608,6 +614,8 @@ class TestContentBoxAccounting:
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
+                card_padding=0.0,
+                variable_values={},
             )
             == 616.0
         )
@@ -624,6 +632,8 @@ class TestContentBoxAccounting:
                 max_content_width=1000.0,
                 gap=16.0,
                 card_gap=0.0,
+                card_padding=0.0,
+                variable_values={},
             )
             == 716.0
         )
@@ -648,6 +658,8 @@ class TestContentBoxAccounting:
             max_content_width=2000.0,
             gap=16.0,
             card_gap=0.0,
+            card_padding=0.0,
+            variable_values={},
         )
 
         assert measured == 1248.0
@@ -674,11 +686,16 @@ class TestContentBoxAccounting:
                 max_content_width=1152.0,
                 gap=16.0,
                 card_gap=0.0,
+                card_padding=0.0,
+                variable_values={},
             )
             is None
         )
 
-    def test_preferred_width_measure_drops_cols_gap_for_chart_free_item(self):
+    def test_preferred_width_measure_adds_cols_gap_for_short_text_item(self):
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            prose_max_content_width,
+        )
         from dbt_charts.core.compile.sizing import measure_preferred_layout_width
 
         result = compile(
@@ -703,20 +720,19 @@ cols:
         assert result.success, result.errors
         assert result.board is not None
 
-        # The text item is auto-width (no chart preference, no explicit width): it
-        # contributes neither a measured width nor a gap, so the intrinsic width is
-        # just the kpi's 300px preference — no gap added.
-        assert (
-            measure_preferred_layout_width(
-                result.board.layout,
-                result.board.resolved_style,
-                result.board.chart_style_context,
-                max_content_width=1000.0,
-                gap=16.0,
-                card_gap=0.0,
-            )
-            == 300.0
+        text_width = prose_max_content_width(
+            "Context", result.board.resolved_style, {}, None
         )
+        assert measure_preferred_layout_width(
+            result.board.layout,
+            result.board.resolved_style,
+            result.board.chart_style_context,
+            max_content_width=1000.0,
+            gap=16.0,
+            card_gap=0.0,
+            card_padding=0.0,
+            variable_values={},
+        ) == pytest.approx(300.0 + 16.0 + text_width)
 
     def test_preferred_width_measure_adds_nested_board_chrome(self):
         from dbt_charts.core.compile.sizing import measure_preferred_layout_width
@@ -754,6 +770,8 @@ rows:
                 max_content_width=1000.0,
                 gap=16.0,
                 card_gap=0.0,
+                card_padding=0.0,
+                variable_values={},
             )
             == 330.0
         )
@@ -1271,7 +1289,9 @@ class TestMeasureVsRenderConsistency:
 
     def test_simple_paragraph(self):
         """Test that simple paragraph gives same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = "This is a simple paragraph of text."
         width = 400.0
@@ -1286,7 +1306,9 @@ class TestMeasureVsRenderConsistency:
 
     def test_heading(self):
         """Test that headings give same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = "# Main Heading"
         width = 400.0
@@ -1301,7 +1323,9 @@ class TestMeasureVsRenderConsistency:
 
     def test_multi_level_headings(self):
         """Test that multiple heading levels give same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = """# H1 Title
 
@@ -1322,7 +1346,9 @@ class TestMeasureVsRenderConsistency:
 
     def test_bullet_list(self):
         """Test that bullet lists give same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = """- First item
 - Second item with **bold**
@@ -1340,7 +1366,9 @@ class TestMeasureVsRenderConsistency:
 
     def test_numbered_list(self):
         """Test that numbered lists give same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = """1. First item
 2. Second item
@@ -1357,7 +1385,9 @@ class TestMeasureVsRenderConsistency:
 
     def test_table(self):
         """Test that tables give same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = """| Column 1 | Column 2 | Column 3 |
 |----------|----------|----------|
@@ -1375,7 +1405,9 @@ class TestMeasureVsRenderConsistency:
 
     def test_blockquote(self):
         """Test that blockquotes give same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = """> This is a blockquote with some wisdom.
 > It spans multiple lines."""
@@ -1391,7 +1423,9 @@ class TestMeasureVsRenderConsistency:
 
     def test_code_block(self):
         """Test that code blocks give same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = """```python
 def hello():
@@ -1409,7 +1443,9 @@ def hello():
 
     def test_inline_formatting(self):
         """Test that inline formatting (bold, italic, code) gives same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = "Text with **bold**, *italic*, and `inline code` formatting."
         width = 400.0
@@ -1424,7 +1460,9 @@ def hello():
 
     def test_word_wrapping_narrow_width(self):
         """Test that word wrapping at narrow width gives same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = (
             "This is a longer paragraph that will definitely need to wrap "
@@ -1442,7 +1480,9 @@ def hello():
 
     def test_complex_document(self):
         """Test that a complex document with mixed text gives same height."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = """# Dashboard Summary
 
@@ -1477,7 +1517,9 @@ SELECT * FROM metrics WHERE date > '2024-01-01'
 
     def test_various_widths(self):
         """Test that heights match across various widths."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = "A medium length paragraph that tests different widths."
         style = get_compact_style(resolve_style(get_theme_style()))
@@ -1492,7 +1534,9 @@ SELECT * FROM metrics WHERE date > '2024-01-01'
 
     def test_empty_text(self):
         """Test that empty text gives same height (zero)."""
-        from dbt_charts.core.render.sizing import get_compact_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
 
         text = ""
         width = 400.0
@@ -4278,10 +4322,10 @@ def test_compact_style_pins_heading_sizes_from_theme() -> None:
     # scale × base_font_size (h2 = 14 × 1.6 = 22.4px), ignoring the theme's
     # title.sizes ramp. get_compact_style now wires every h*_size from
     # style.title.sizes so `##` in a `text:` block renders at the theme size.
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     style = get_compact_style()
-    sizes = get_theme_style().title.sizes
+    sizes = get_theme_style().heading_ramp()
 
     assert style.h1_size == float(sizes[0])
     assert style.h2_size == float(sizes[1])
@@ -4297,7 +4341,7 @@ def test_compact_style_h1_size_override_for_board_titles() -> None:
     # Board title rendering passes a width-resolved h1 pixel size so a single
     # h1 heading lands on the responsive target (replaces the legacy
     # base_font_size / 2.0 hack that depended on h1_scale = 2.0).
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     style = get_compact_style(h1_size=32.0)
     assert style.h1_size == 32.0
@@ -4309,10 +4353,11 @@ def test_compact_style_heading_weight_defaults_from_theme() -> None:
     # caller doesn't pass an explicit override, get_compact_style must pull
     # the weight from the theme rather than letting mdsvg fall back to
     # the OSS-default 'bold'.
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     style = get_compact_style()
-    theme_weight = get_theme_style().title.font.weight or 500
+    theme_weight = resolve_style(get_theme_style()).title.font.weight
     expected = theme_weight if isinstance(theme_weight, str) else int(theme_weight)
     assert style.heading_font_weight == expected
 
@@ -4323,7 +4368,7 @@ def test_compact_style_heading_line_height_from_theme() -> None:
     # heading-specific line_height on style.title.font which threads through
     # mdsvg's heading_line_height for any text-block heading.
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     rs = resolve_style(get_theme_style())
     style = get_compact_style(rs)
@@ -4336,7 +4381,7 @@ def test_compact_style_omits_default_text_weight() -> None:
     # Browser/SVG default text weight is normal/400. Omitting that default
     # avoids changing every markdown SVG snapshot while still letting
     # non-default text.font.weight overrides flow through.
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     style = get_compact_style()
     assert style.font_weight is None
@@ -4344,7 +4389,7 @@ def test_compact_style_omits_default_text_weight() -> None:
 
 def test_compact_style_uses_merged_text_typography() -> None:
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     base = resolve_style(get_theme_style())
     text_font = base.text.font.model_copy(
@@ -4379,7 +4424,7 @@ def test_block_margins_land_on_the_baseline_grid() -> None:
     specific multipliers keeps this true when the multipliers are retuned.
     """
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     base = resolve_style(get_theme_style())
     text_font = base.text.font.model_copy(update={"size": 16.0, "line_height": 1.25})
@@ -4404,7 +4449,7 @@ def test_block_margins_land_on_the_baseline_grid() -> None:
 def test_block_margins_scale_with_the_text_they_belong_to() -> None:
     """Doubling the line box doubles every block margin."""
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     base = resolve_style(get_theme_style())
 
@@ -4434,7 +4479,9 @@ def test_paragraph_margin_bottom_drives_paragraph_spacing() -> None:
     """
     from dbt_charts.core.compile.models.style.authored import StylePatch
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.sizing import compact_style_kwargs
+    from dbt_charts.core.compile.resolve.style.markdown_style import (
+        compact_style_kwargs,
+    )
 
     base = get_theme_style()
     patch = StylePatch.model_validate({"text": {"paragraph": {"margin_bottom": 0.73}}})
@@ -4457,7 +4504,9 @@ def test_heading_margins_driven_by_text_heading_style() -> None:
     """
     from dbt_charts.core.compile.models.style.authored import StylePatch
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.sizing import compact_style_kwargs
+    from dbt_charts.core.compile.resolve.style.markdown_style import (
+        compact_style_kwargs,
+    )
 
     base = get_theme_style()
     patch = StylePatch.model_validate(
@@ -4476,17 +4525,16 @@ def test_heading_margins_driven_by_text_heading_style() -> None:
 
 def test_compact_style_uses_merged_heading_typography() -> None:
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     base = resolve_style(get_theme_style())
     title_font = base.title.font.model_copy(update={"weight": 700, "line_height": 1.15})
-    title = base.title.model_copy(
-        update={
-            "font": title_font,
-            "sizes": [31.0, 23.0, 19.0, 17.0, 15.0, 13.0],
-        }
+    title = base.title.model_copy(update={"font": title_font})
+    chart_defaults = dataclasses.replace(
+        base.chart_defaults,
+        heading_sizes=[31.0, 23.0, 19.0, 17.0, 15.0, 13.0],
     )
-    merged = dataclasses.replace(base, title=title)
+    merged = dataclasses.replace(base, title=title, chart_defaults=chart_defaults)
 
     style = get_compact_style(merged)
 
@@ -4558,11 +4606,11 @@ def test_title_height_uses_merged_title_typography() -> None:
 def test_compact_style_renders_h2_at_theme_size() -> None:
     # End-to-end: rendering `## Heading` through the compact style must emit
     # font-size matching style.title.sizes[1], not 14 × 1.6 = 22.4.
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
     from mdsvg import render as render_markdown
 
     style = get_compact_style()
-    expected_size = float(get_theme_style().title.sizes[1])
+    expected_size = float(get_theme_style().heading_ramp()[1])
     svg = render_markdown("## Section heading", width=400, style=style)
     # mdsvg emits font-size as an attribute on the heading text element.
     expected_attr = f'font-size="{int(expected_size) if expected_size == int(expected_size) else expected_size}"'
@@ -4616,7 +4664,7 @@ def test_compact_style_top_aligns_letterboxed_images() -> None:
     # whose box height exceeds the auto-fit. Default xMidYMid centers the image
     # in the letterbox; xMidYMin top-aligns it. Top-align matches user
     # expectation for stacked/columned image grids (compare UI).
-    from dbt_charts.core.render.sizing import get_compact_style
+    from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
 
     style = get_compact_style(resolve_style(get_theme_style()))
     assert style.image_preserve_aspect_ratio == "xMidYMin meet", (

@@ -35,6 +35,8 @@ class ChartType(str, Enum):
     # Spark charts (compact inline charts)
     SPARK_BAR = "spark_bar"  # -> compact horizontal bars for profiler cards
 
+    CUSTOM = "custom"
+
 
 # Display metadata for schema_hints / LSP; one entry per ChartType member.
 CHART_TYPE_DISPLAY: dict[ChartType, dict[str, str]] = {
@@ -54,6 +56,7 @@ CHART_TYPE_DISPLAY: dict[ChartType, dict[str, str]] = {
     ChartType.POINT_MAP: {"label": "Point Map", "icon": "📍"},
     ChartType.BUBBLE_MAP: {"label": "Bubble Map", "icon": "🫧"},
     ChartType.SPARK_BAR: {"label": "Spark Bar", "icon": "📊"},
+    ChartType.CUSTOM: {"label": "Custom", "icon": "🧩"},
 }
 
 # Internal chart types that should not be shown in UI dropdowns by default.

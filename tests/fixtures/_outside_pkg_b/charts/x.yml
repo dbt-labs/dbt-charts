@@ -1,0 +1,4 @@
+title: Outside Package Board
+text: |
+  A local:-installed package's charts/ directory lives outside the project
+  root. It must never be enumerated — the symlink-escape guard excludes it.

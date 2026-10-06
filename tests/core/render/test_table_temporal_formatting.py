@@ -187,9 +187,7 @@ class TestFormatTableCellValueTemporal:
     def test_numeric_value_not_treated_as_temporal(self) -> None:
         # Integer: not temporal — formats via the theme's number spec
         # (SI here), not the date path.
-        result = format_table_cell_value(
-            1234, None, {"date_short": _DATE_SHORT_FORMAT, "number": ".3~s"}
-        )
+        result = format_table_cell_value(1234, None, {"date_short": _DATE_SHORT_FORMAT})
         assert result == "1.23 K"
 
     def test_single_digit_day_no_leading_zero(self) -> None:

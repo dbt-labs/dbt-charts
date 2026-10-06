@@ -63,6 +63,7 @@ from ._support_table import (
 from .area import ResolvedAreaChart
 from .bar import ResolvedBarChart
 from .callout import ResolvedCalloutChart
+from .custom import ResolvedCustomChart, ResolvedCustomStyle
 from .geoshape import ResolvedGeoshapeChart
 from .heatmap import ResolvedHeatmapChart
 from .kpi import ResolvedKpiChart, ResolvedKpiSupportConfig
@@ -89,7 +90,8 @@ ResolvedChart = Annotated[
     | ResolvedPointMapChart
     | ResolvedGeoshapeChart
     | ResolvedCalloutChart
-    | ResolvedSparkBarChart,
+    | ResolvedSparkBarChart
+    | ResolvedCustomChart,
     Discriminator("chart_type"),
 ]
 
@@ -109,6 +111,8 @@ __all__ = [
     "ResolvedAreaChart",
     "ResolvedBarChart",
     "ResolvedCalloutChart",
+    "ResolvedCustomChart",
+    "ResolvedCustomStyle",
     "ResolvedGeoshapeChart",
     "ResolvedHeatmapChart",
     "ResolvedKpiChart",

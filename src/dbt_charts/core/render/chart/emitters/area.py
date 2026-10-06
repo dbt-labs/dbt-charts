@@ -311,6 +311,7 @@ def _build_area_top_encoding(
         ay,
         box,
         chart.id,
+        field_labels=chart.field_labels,
     )
     x_title, y_title = titles.x_title, titles.y_title
     y_field = chart.y if isinstance(chart.y, str) else None
@@ -381,7 +382,7 @@ def _emit_multi_metric_area(
         )
     measures = list(chart.wide_measures)
     dimension = chart.color
-    wide_labels = wide_measure_labels_for(chart.wide_measures)
+    wide_labels = wide_measure_labels_for(chart.wide_measures, chart.field_labels)
     series = wide_series_names(measures, dimension, data, wide_labels)
     # Same order computation area's authored-color path uses (_area_spatial_order,
     # above), fed a long-form view of the wide data. `folded`'s own
@@ -458,9 +459,19 @@ def _emit_multi_metric_area(
     # Wide/folded y has no single measure field to title from — fall back to
     # the joined, humanized measure names, same as an authored y_label always
     # would (an authored y_label still wins outright).
-    y_label_effective = chart.y_label or wide_measures_title(chart.wide_measures)
+    y_label_effective = chart.y_label or wide_measures_title(
+        chart.wide_measures, chart.field_labels
+    )
     y_title = resolve_xy_titles(
-        None, None, None, y_label_effective, ax, ay, box, chart.id
+        None,
+        None,
+        None,
+        y_label_effective,
+        ax,
+        ay,
+        box,
+        chart.id,
+        field_labels=chart.field_labels,
     ).y_title
     y_enc = build_cartesian_y_encoding(
         wide.value_field, ay, ay_vl, y_title, style.tooltip_format
@@ -471,7 +482,15 @@ def _emit_multi_metric_area(
     top_encoding: VLDict = {}
     if chart.x:
         x_title = resolve_xy_titles(
-            chart.x, None, chart.x_label, None, ax, ay, box, chart.id
+            chart.x,
+            None,
+            chart.x_label,
+            None,
+            ax,
+            ay,
+            box,
+            chart.id,
+            field_labels=chart.field_labels,
         ).x_title
         top_encoding["x"] = build_x_enc(
             chart.x,
@@ -671,6 +690,7 @@ class AreaEmitter:
                 base_stack_normalize=chart.stack == "normalize",
                 base_stack_center=chart.stack == "center",
                 multiples_scale_independent=multiples_scale_independent(chart),
+                field_labels=chart.field_labels,
             )
 
         return spec

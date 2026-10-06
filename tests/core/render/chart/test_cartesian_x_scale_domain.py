@@ -141,6 +141,7 @@ def test_v2_bar_scale_type_temporal_applies_authored_domain(bar_style) -> None:
         y="total",
         style=bar_style.model_copy(update={"axis_x": ax}),
         **_C,
+        field_labels={},
     )
 
     spec = BarEmitter().emit(chart, _DEFAULT_BOX, regroup((), _yearly_data("total")))
@@ -167,6 +168,7 @@ def test_v2_bar_domain_without_temporal_type_raises_on_ordinal_x(bar_style) -> N
         y="total",
         style=bar_style.model_copy(update={"axis_x": ax}),
         **_C,
+        field_labels={},
     )
 
     with pytest.raises(ChartDataError) as exc_info:
@@ -197,6 +199,7 @@ def test_v2_line_scale_type_temporal_applies_authored_domain(line_style) -> None
         y="total",
         style=line_style.model_copy(update={"axis_x": ax}),
         **_C,
+        field_labels={},
     )
 
     spec = LineEmitter().emit(chart, _DEFAULT_BOX, regroup((), _yearly_data("total")))
@@ -226,6 +229,7 @@ def test_v2_line_domain_without_temporal_type_raises_on_ordinal_x(line_style) ->
         y="total",
         style=line_style.model_copy(update={"axis_x": ax}),
         **_C,
+        field_labels={},
     )
 
     with pytest.raises(ChartDataError) as exc_info:
@@ -256,6 +260,7 @@ def test_v2_area_scale_type_temporal_applies_authored_domain(area_style) -> None
         stack=None,
         style=area_style.model_copy(update={"axis_x": ax}),
         **_C,
+        field_labels={},
     )
 
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _yearly_data("total")))

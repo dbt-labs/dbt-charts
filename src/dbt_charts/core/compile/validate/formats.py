@@ -23,7 +23,7 @@ A slot that knows its own kind — ``number_format`` feeds a quantitative axis,
 ``time_format`` a temporal one — accepts only that half of the predefined
 vocabulary; the other half raises ``ERR-FORMAT-KIND-MISMATCH``. The kind is read
 off the field's ``Format`` facet rather than its name, so it travels with the
-field. User ``style.formats.aliases`` names are exempt: the engine cannot know which
+field. User ``style.formats`` aliases are exempt: the engine cannot know which
 kind a user's alias targets, so they stay legal in every slot.
 """
 
@@ -45,7 +45,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_INVALID,
     ERR_FORMAT_KIND_MISMATCH,
     ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
-    ERR_FORMAT_PREDEFINED_SHADOW,
     ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
     ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED,
 )
@@ -110,13 +109,13 @@ _AXIS_FIELDS = frozenset(
 _KIND_RULES: dict[str, tuple[frozenset[str], str]] = {
     "number": (
         PREDEFINED_NUMBER_NAMES,
-        "A raw d3 number spec (e.g. ',.0f') or your own name in "
-        "`style.formats.aliases` works here too.",
+        "A raw d3 number spec (e.g. ',.0f') or a `style.formats` alias of your "
+        "own works here too.",
     ),
     "time": (
         PREDEFINED_TIME_NAMES,
-        "A strftime spec (e.g. '%b %Y') or your own name in "
-        "`style.formats.aliases` works here too.",
+        "A strftime spec (e.g. '%b %Y') or a `style.formats` alias of your own "
+        "works here too.",
     ),
 }
 
@@ -264,7 +263,7 @@ def _validate_spec(
     axis slots (``charts.axis``/``axis_x``/``axis_y``/``axis_quantitative``)
     to catch a theme-baked default (e.g.
     ``axis_quantitative.labels.format == "number"``) whose alias no
-    longer resolves -- a board that clears ``style.formats.aliases`` to ``null`` is
+    longer resolves -- a board that clears ``style.formats`` to ``null`` is
     valid, compile()-accepted authoring (``formats`` merges key-wise;
     explicitly nulling it is the one way to drop an inherited key), but it
     is never an *authored* format string itself, so this module's own
@@ -322,7 +321,7 @@ def _validate_spec(
         aliased = formats[spec]
         aliased_spec = aliased.spec if isinstance(aliased, FormatConfig) else aliased
         if aliased_spec in ALL_PREDEFINED_NAMES:
-            parts = resolve_format_parts(value, formats, no_format_default=None)
+            parts = resolve_format_parts(value, formats)
             _validate_spec(
                 FormatConfig(
                     spec=aliased_spec,
@@ -340,7 +339,7 @@ def _validate_spec(
             return
         # The affix the painter sees: the authored one, else the alias's
         # (resolve_format_parts encodes that precedence).
-        _resolved_parts = resolve_format_parts(value, formats, no_format_default=None)
+        _resolved_parts = resolve_format_parts(value, formats)
         has_resolved_affix = _resolved_parts.has_affix
         effective_value: str | FormatConfig = value
         if has_resolved_affix:
@@ -407,12 +406,12 @@ def _validate_spec(
             # it should have written instead.
             explanation = (
                 "it is not an engine-predefined format name and not a key "
-                f"in `style.formats.aliases`. {_KIND_RULES['time'][1]}"
+                f"in `style.formats`. {_KIND_RULES['time'][1]}"
             )
         else:
             explanation = (
                 "it is not an engine-predefined format name, not a key in "
-                f"`style.formats.aliases`, and is not a valid d3-format spec ({e.reason} "
+                f"`style.formats`, and is not a valid d3-format spec ({e.reason} "
                 f"at position {e.position})."
             )
         raise CompilationError.from_code(
@@ -423,6 +422,39 @@ def _validate_spec(
             explanation=explanation,
             available=available,
         ) from e
+
+
+def _check_redefinition_kind(name: str, target: str | FormatConfig) -> None:
+    """Raise when ``style.formats.<engine name>`` is a spec of the other kind."""
+    spec = target.spec if isinstance(target, FormatConfig) else target
+    if name not in ALL_PREDEFINED_NAMES:
+        return
+    if not spec:
+        raise CompilationError.from_code(
+            ERR_FORMAT_INVALID,
+            spec=name,
+            field_path=f"style.formats.{name}",
+            kind_noun="date/time" if name in PREDEFINED_TIME_NAMES else "number",
+            explanation=(
+                "redefining an engine name needs a `spec`; an affix alone would "
+                "leave every slot that reads it with no spec."
+            ),
+            available=[],
+        )
+    kind = "time" if name in PREDEFINED_TIME_NAMES else "number"
+    names = PREDEFINED_TIME_NAMES if kind == "time" else PREDEFINED_NUMBER_NAMES
+    spec_is_time = spec in PREDEFINED_TIME_NAMES or (
+        spec not in ALL_PREDEFINED_NAMES and is_time_format(spec)
+    )
+    if spec_is_time != (kind == "time"):
+        raise CompilationError.from_code(
+            ERR_FORMAT_KIND_MISMATCH,
+            spec=spec,
+            field_path=f"style.formats.{name}",
+            kind=kind,
+            available=sorted(names - PREDEFINED_NATIVE_NAMES),
+            escape_hatch=_KIND_RULES[kind][1],
+        )
 
 
 def validate_board_format_specs(board: Board) -> None:
@@ -449,29 +481,24 @@ def _validate_board(board: Board, validated: set[int]) -> None:
     formats = board.chart_style_context.formats
     if formats is None:
         formats = {}
-    # Shadowing a predefined enum member name in style.formats.aliases is always a bug:
-    # the engine owns those names and resolve_format checks them first.
-    for alias in formats:
-        if alias in ALL_PREDEFINED_NAMES:
-            raise CompilationError.from_code(
-                ERR_FORMAT_PREDEFINED_SHADOW,
-                spec=alias,
-                field_path=f"style.formats.aliases.{alias}",
-            )
     # An alias is only useful if its target resolves; checking the keys alone
     # would let `formats: {mine: bogus}` reach the render-time raise. A preset
-    # target is judged per slot, where the alias is used.
+    # target is judged per slot, where the alias is used. An engine name
+    # redefined here must keep its kind: every slot reading it expects it.
     for alias, target in formats.items():
+        _check_redefinition_kind(alias, target)
         _validate_spec(
             target,
             {},
-            f"style.formats.aliases.{alias}",
+            f"style.formats.{alias}",
             True,
+            # Axes read an engine name by default, and Vega paints them.
+            vega_painted=alias in ALL_PREDEFINED_NAMES,
             reject_time_affix=True,
         )
     # Theme-baked axis format defaults (e.g. axis_quantitative.labels.format
     # == "number") are never *authored* format strings, so the
-    # per-chart walk below never reaches them -- but `style.formats.aliases: null`
+    # per-chart walk below never reaches them -- but `style.formats: null`
     # is valid, compile()-accepted authoring that drops an inherited alias,
     # and it leaves that default unresolvable. Both facts
     # (chart_style_context.<slot>.labels.format and the alias table) are

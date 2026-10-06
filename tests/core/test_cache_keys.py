@@ -307,6 +307,15 @@ class TestComputeCacheKey:
         inactive = SqlQuery(sql="SELECT 1", source="dw")
         assert compute_cache_key(named_false)[1] != compute_cache_key(inactive)[1]
 
+    def test_dialect_changes_the_key_only_when_set(self):
+        """The same text means different SQL in another dialect, but a query
+        with no dialect hashes exactly as before."""
+        plain = SqlQuery(sql="SELECT 1", source="dw")
+        bigquery = SqlQuery(sql="SELECT 1", source="dw", dialect="bigquery")
+        snowflake = SqlQuery(sql="SELECT 1", source="dw", dialect="snowflake")
+        assert compute_cache_key(plain)[1] == compute_query_hash("SELECT 1")
+        assert len({compute_cache_key(q)[1] for q in (plain, bigquery, snowflake)}) == 3
+
     def test_distinct_sql_distinct_key(self):
         assert compute_cache_key(
             SqlQuery(sql="SELECT 1", source="warehouse")

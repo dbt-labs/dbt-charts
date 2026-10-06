@@ -9,6 +9,7 @@ in the footer text links to style.footer.link (a subtle watermark) when set.
 import re
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.controls import controls_stylesheet
 
 from ._svg_render import render_board_to_svg
@@ -21,7 +22,7 @@ class TestSVGFooter:
         assert "dbt Charts" in svg
 
     def test_footer_text_is_right_anchored_and_uses_configured_styling(self):
-        footer = get_theme_style(get_default_theme_name()).footer
+        footer = resolve_style(get_theme_style(get_default_theme_name())).footer
         assert footer.font is not None
         assert footer.font.size is not None
         expected_size = int(footer.font.size)
@@ -40,7 +41,7 @@ class TestSVGFooter:
         svg_output = render_board_to_svg()
         footer_idx = svg_output.find("made with")
         assert footer_idx > -1
-        rule = get_theme_style(get_default_theme_name()).footer.rule
+        rule = resolve_style(get_theme_style(get_default_theme_name())).footer.rule
         assert rule is not None
         rule_pattern = rf'<line[^>]*stroke="{re.escape(rule.color)}"[^>]*/>'
         prefix = svg_output[:footer_idx]
@@ -92,7 +93,7 @@ style:
         assert "made with dbt Charts" not in svg
 
     def test_footer_hairline_rule_color_matches_theme(self):
-        footer = get_theme_style(get_default_theme_name()).footer
+        footer = resolve_style(get_theme_style(get_default_theme_name())).footer
         assert footer.rule is not None
         svg_output = render_board_to_svg()
         footer_idx = svg_output.find("made with")
@@ -103,7 +104,7 @@ style:
     # --- brand-word link -----------------------------------------------------
 
     def test_footer_brand_word_links_to_configured_url_by_default(self):
-        footer = get_theme_style(get_default_theme_name()).footer
+        footer = resolve_style(get_theme_style(get_default_theme_name())).footer
         assert footer.link
         svg = render_board_to_svg()
         # "dbt Charts" is wrapped in an anchor to the configured URL; "made with "

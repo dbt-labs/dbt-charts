@@ -289,17 +289,15 @@ def _resolve_area(
         [layer.color is None for layer in normalized.layers],
     )
     color_domain_values = cartesian_color_domain_values(dataset, normalized.color)
-    top_legend_series = (
-        cartesian_top_legend_entries(
-            normalized.y if isinstance(normalized.y, str) else None,
-            normalized.y_label,
-            normalized.layers,
-            color_domain_values=color_domain_values,
-            has_color=normalized.color is not None,
-        )
-        if normalized.layers
-        else None
+    legend_entries = cartesian_top_legend_entries(
+        normalized.y if isinstance(normalized.y, str) else None,
+        normalized.y_label,
+        normalized.layers,
+        color_domain_values=color_domain_values,
+        has_color=normalized.color is not None,
+        field_labels=normalized.field_labels,
     )
+    top_legend_series = legend_entries if normalized.layers else None
     naming = cartesian_series_naming(
         normalized,
         channels,
@@ -319,6 +317,7 @@ def _resolve_area(
         suppress_wide_measure_series=wide_measure_series,
         multiples_wide_measure_series=wide_measure_series,
         top_legend_series=top_legend_series,
+        legend_entries=legend_entries,
         plot_height_estimate=estimate_cartesian_plot_height(normalized, area, width),
         # Line and area never flip the dimension field onto Vega-Lite's
         # y-channel the way a horizontal bar does, so this reserve is never
@@ -707,6 +706,7 @@ def _resolve_area(
         layout_padding=area.padding,
         suppress_legend=naming.suppress_legend,
         top_legend=naming.top_legend,
+        wrap_legend=naming.wrap_legend,
         force_legend_visible=naming.force_legend_visible,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
     )

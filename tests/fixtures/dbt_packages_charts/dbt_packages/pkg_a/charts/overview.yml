@@ -1,0 +1,16 @@
+title: Zendesk Overview
+queries:
+  ticket_volume:
+    type: values
+    rows:
+      - {day: "Mon", tickets: 12}
+      - {day: "Tue", tickets: 18}
+      - {day: "Wed", tickets: 9}
+charts:
+  volume:
+    query: ticket_volume
+    type: bar
+    x: day
+    y: tickets
+rows:
+  - volume

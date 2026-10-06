@@ -68,7 +68,8 @@ def _series_labels(
     if chart.wide_measures:
         if chart.color is not None:
             return None
-        return "y", list(wide_measure_labels_for(chart.wide_measures).values())
+        labels = wide_measure_labels_for(chart.wide_measures, chart.field_labels)
+        return "y", list(labels.values())
     series = chart_series(chart)
     if series is None or chart_id not in ctx.chart_results:
         return None

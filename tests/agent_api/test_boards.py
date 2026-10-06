@@ -246,6 +246,39 @@ rows:
         skipped_relpaths = [f.file.relpath for f in result.skipped_files]
         assert "charts/invalid.yml" in skipped_relpaths
 
+    def test_list_boards_includes_package_boards_by_default(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Discovery is a *table* of board roots: the default lists the host
+        charts/ plus every installed package's charts/."""
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "home.yml").write_text("title: Home\ntext: hi\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: Overview\ntext: hi\n")
+
+        result = list_boards(local_project(tmp_path))
+
+        assert {b.title for b in result.boards} == {"Home", "Overview"}
+        relpaths = {b.file.relpath for b in result.boards}
+        assert relpaths == {
+            "charts/home.yml",
+            "dbt_packages/pkg_a/charts/overview.yml",
+        }
+
+    def test_list_boards_explicit_under_stays_host_only(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "home.yml").write_text("title: Home\ntext: hi\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: Overview\ntext: hi\n")
+
+        result = list_boards(local_project(tmp_path), under="charts")
+
+        assert {b.title for b in result.boards} == {"Home"}
+
 
 class TestGetBoard:
     """Tests for get_board tool."""
@@ -997,6 +1030,19 @@ rows:
         url = _view_url(board_path, {"region": "US"}, port=8765)
 
         assert url == "http://localhost:8765/sales?region=US"
+
+    def test_view_url_namespaces_a_package_board(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A package board is served at ``/<pkg>/<path>``, not at its
+        ``dbt_packages/...`` relpath, which the router resolves against the
+        host ``charts/`` and 404s."""
+        project = local_project(tmp_path)
+        board_path = project.path("dbt_packages/pkg_a/charts/overview.yml")
+
+        url = _view_url(board_path, port=8765)
+
+        assert url == "http://localhost:8765/pkg_a/overview"
 
     def test_view_url_omits_url_when_port_is_none(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

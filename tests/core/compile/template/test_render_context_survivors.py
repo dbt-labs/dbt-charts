@@ -33,7 +33,7 @@ from dbt_charts.core.compile.template.jinja import (
     _jinja_env_lenient,
     resolve_jinja_template,
 )
-from dbt_charts.core.compile.template.labels_env import _format_filter, label_jinja_env
+from dbt_charts.core.compile.template.labels_env import format_filter, label_jinja_env
 from dbt_charts.core.compile.template.parameterized import (
     make_filter_date_range_helper,
     make_filter_helper,
@@ -254,7 +254,7 @@ class TestLabelsEnvContext:
         env = label_jinja_env()
         assert _new_or_overridden(env.globals, _BASELINE_ENV.globals) == {}
         assert _new_or_overridden(env.filters, _BASELINE_ENV.filters) == {
-            "format": _format_filter
+            "format": format_filter
         }
         assert _new_or_overridden(env.tests, _BASELINE_ENV.tests) == {}
 
@@ -263,8 +263,8 @@ class TestLabelsEnvContext:
         formatting) — labels_env replaces it with a d3-format callable of
         our own. Pinned by identity, since a name-diff can't see an
         override of an existing name."""
-        assert label_jinja_env().filters["format"] is _format_filter
-        assert BoardTemplateEnvironment().filters["format"] is not _format_filter
+        assert label_jinja_env().filters["format"] is format_filter
+        assert BoardTemplateEnvironment().filters["format"] is not format_filter
 
     def test_finalize_hook_renders_none_as_empty_not_the_word_none(self) -> None:
         """The registered finalize hook is itself a context-adjacent callable
@@ -503,3 +503,80 @@ class TestSurvivorsValidateAndReturnStrings:
         assert isinstance(proxy, _QueryProxy)
         assert str(proxy) == "(SELECT 1) AS orders"
         assert {name for name in dir(proxy) if not name.startswith("_")} == {"cache"}
+
+
+class TestCustomChartContext:
+    """compile/template/custom_chart_env.py + render/chart/custom.py: the
+    ``type: custom`` template render context.
+
+    Contents are every name a chart template can reach; adding one is a
+    reviewed decision recorded here and in ``compile/template/AGENTS.md``.
+    """
+
+    def test_environment_overrides_only_format_and_adds_no_global_or_test(
+        self,
+    ) -> None:
+        from dbt_charts.core.compile.template.custom_chart_env import custom_chart_env
+
+        env = custom_chart_env()
+        assert _new_or_overridden(env.globals, _BASELINE_ENV.globals) == {}
+        assert _new_or_overridden(env.filters, _BASELINE_ENV.filters) == {
+            "format": format_filter
+        }
+        assert _new_or_overridden(env.tests, _BASELINE_ENV.tests) == {}
+        assert env.autoescape is True
+
+    def test_render_context_is_exactly_the_documented_names(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.compile import compile as compile_board
+        from dbt_charts.core.compile.config import get_theme_style
+        from dbt_charts.core.compile.resolve import resolve
+        from dbt_charts.core.compile.resolve.style.board import (
+            resolve_style_and_context,
+        )
+        from dbt_charts.core.compile.template.custom_chart_env import MATH_NAMESPACE
+        from dbt_charts.core.render.chart.custom import render_custom_svg
+
+        result = compile_board(
+            "queries:\n  q:\n    type: values\n    rows:\n      - {a: 1}\n"
+            "charts:\n  c:\n    type: custom\n    query: q\n    svg: '<g/>'\n"
+            "rows:\n  - c\n"
+        )
+        assert result.success, result.errors
+        style, context = resolve_style_and_context(get_theme_style())
+        chart = resolve(result.board.charts["c"], [{"a": 1}], context)
+        captured = _capture_render_calls(monkeypatch)
+        render_custom_svg(chart, [{"a": 1}], 100, 100, board_style=style)
+        [call] = captured
+        assert call.context_keys == {
+            "rows",
+            "columns",
+            "channels",
+            "options",
+            "width",
+            "height",
+            "uid",
+            "style",
+            "math",
+            "text_width",
+            "color_for",
+            "raise_error",
+        }
+        assert call.context["math"] is MATH_NAMESPACE
+        assert set(MATH_NAMESPACE) == {
+            "sin",
+            "cos",
+            "tan",
+            "asin",
+            "acos",
+            "atan2",
+            "sqrt",
+            "log",
+            "exp",
+            "floor",
+            "ceil",
+            "pi",
+            "tau",
+        }
+        assert call.new_or_overridden_globals == {}

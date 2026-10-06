@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from dbt_charts.core.render.errors import RenderError
-from dbt_charts.core.render.image_assets import (
+from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.image_assets import (
     image_scope,
     resolve_image_ref,
     rewrite_markdown_images,
@@ -52,34 +52,37 @@ class TestResolveImageRef:
             assert resolve_image_ref("img/a.svg", "charts").startswith(_EMBEDDED)
 
     def test_no_project_bound_raises(self) -> None:
-        with pytest.raises(RenderError, match="no project") as e:
+        with pytest.raises(CompilationError, match="no project") as e:
             resolve_image_ref("img/a.svg", "charts")
         assert e.value.code.code == "ERR-IMAGE-REF-UNRESOLVED"
 
     def test_the_scope_ends_with_its_block(self) -> None:
         with _bound({"charts/img/a.svg": _SVG}):
             resolve_image_ref("img/a.svg", "charts")
-        with pytest.raises(RenderError, match="no project"):
+        with pytest.raises(CompilationError, match="no project"):
             resolve_image_ref("img/a.svg", "charts")
 
     def test_no_location_raises(self) -> None:
-        with _bound({}), pytest.raises(RenderError, match="no project location"):
+        with _bound({}), pytest.raises(CompilationError, match="no project location"):
             resolve_image_ref("img/a.svg", None)
 
     def test_missing_file_names_the_ref(self) -> None:
-        with _bound({}), pytest.raises(RenderError, match="charts/img/missing.svg"):
+        with (
+            _bound({}),
+            pytest.raises(CompilationError, match="charts/img/missing.svg"),
+        ):
             resolve_image_ref("img/missing.svg", "charts")
 
     def test_malformed_file_raises_not_a_bare_value_error(self) -> None:
         with (
             _bound({"charts/img/broken.svg": "<not xml at all"}),
-            pytest.raises(RenderError, match="malformed image data"),
+            pytest.raises(CompilationError, match="malformed image data"),
         ):
             resolve_image_ref("img/broken.svg", "charts")
 
     def test_malformed_data_ref_is_named_by_header_and_size(self) -> None:
         uri = "data:image/png;base64," + "!" * 12_000
-        with pytest.raises(RenderError) as e:
+        with pytest.raises(CompilationError) as e:
             resolve_image_ref(uri, None)
         assert "data:image/png;base64,… (12 KB)" in e.value.message
         assert "!!!!" not in e.value.message

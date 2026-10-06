@@ -997,7 +997,7 @@ def test_wide_vertical_stack_rail_order_matches_the_emitted_bar_baseline_order(
 ) -> None:
     """The rail's stack order must match `bar.py`'s own `baseline_order`
     for a wide chart: RAW measure names sorted first, humanized after.
-    `default_axis_title` is not order-preserving (a `_usd` suffix injects
+    `field_title` is not order-preserving (a `_usd` suffix injects
     "(" before the sort sees the letters: "revenue_total" < "revenue_usd"
     raw, but "revenue ($)" < "revenue total" humanized), so sorting
     already-humanized names can land a label on the wrong band for
@@ -1051,7 +1051,7 @@ def test_wide_vertical_stack_rail_order_matches_the_emitted_bar_baseline_order(
         "alphabetical",
         y_field="__dbt_charts_wide_value__",
     )
-    wide_labels = wide_measure_labels_for(rc.wide_measures)
+    wide_labels = wide_measure_labels_for(rc.wide_measures, rc.field_labels)
     expected_rail_order = [wide_labels[m] for m in baseline_order]
 
     assert rail_order == expected_rail_order

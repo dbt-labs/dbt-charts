@@ -892,6 +892,30 @@ ERR_DBT_CALL_UNSUPPORTED = REGISTRY.register(
     )
 )
 
+ERR_SQL_DIALECT_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SQL-DIALECT-UNSUPPORTED",
+        domain="execute",
+        title="SQL cannot be translated to the warehouse dialect",
+        message_template=("Cannot translate this {read} SQL to {write}: {reason}"),
+        fix_template=(
+            "Rewrite the statement with constructs both dialects share, or remove "
+            "`dialect:` from the query and write it in the warehouse's own SQL."
+        ),
+        doc=(
+            "Fired when a query sets `dialect:` to something other than its "
+            "source's warehouse and its SQL cannot be translated safely: it "
+            "calls a function the translator does not know, uses a construct "
+            "with no equivalent in the warehouse, holds more than one "
+            "statement, or does not parse. It also covers paths that do not "
+            "translate at all (file sources, `{{ queries.X.cache }}` "
+            "references, incremental queries) when `dialect:` differs from "
+            "the warehouse."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_WAREHOUSE_QUERY_INVALID = REGISTRY.register(
     ErrorCode(
         code="ERR-WAREHOUSE-QUERY-INVALID",

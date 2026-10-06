@@ -38,9 +38,13 @@ from typing import Literal, overload
 import sqlglot
 import sqlglot.errors
 from sqlglot import exp
+from sqlglot.dialects.dialect import Dialect
+from sqlglot.dialects.postgres import Postgres
+from sqlglot.dialects.tsql import TSQL
 
-from dbt_charts.core.compile.sql_guard import as_expression
+from dbt_charts.core.compile.sql_guard import as_expression, require_sqlglot_dialect
 from dbt_charts.core.diagnostics.codes_query import (
+    WARN_DATE_AS_TEXT,
     WARN_FANOUT_RISK,
     WARN_MISSING_JOIN_PREDICATE,
     WARN_PARSE_ERROR,
@@ -58,6 +62,7 @@ _UNSUPPRESSIBLE_CODES = frozenset({WARN_PARSE_ERROR.code})
 # Literal used to give is enforced here instead.
 _QUERY_CODES = frozenset(
     {
+        WARN_DATE_AS_TEXT.code,
         WARN_FANOUT_RISK.code,
         WARN_MISSING_JOIN_PREDICATE.code,
         WARN_PARSE_ERROR.code,
@@ -89,9 +94,8 @@ _FLIP_MULTIPLICITY = {
 class QueryDiagnostic:
     """A single diagnostic finding from query validation.
 
-    ``code`` is one of the four WARN-* codes registered in
-    core/diagnostics/codes_query.py (WARN_MISSING_JOIN_PREDICATE,
-    WARN_FANOUT_RISK, WARN_PARSE_ERROR, WARN_REAGGREGATION) — every
+    ``code`` is one of the WARN-* codes registered in
+    core/diagnostics/codes_query.py — every
     construction site below sets it from one of those constants.
     """
 
@@ -971,6 +975,197 @@ def _detect_reaggregation(
 
 
 # ---------------------------------------------------------------------------
+# Date turned into text
+# ---------------------------------------------------------------------------
+
+# sqlglot wraps formatted values in coercions (strftime over a column parses as
+# TimeToStr(TsOrDsToTimestamp(col))); look through them.
+_COERCIONS = (
+    exp.Paren,
+    exp.TsOrDsToDate,
+    exp.TsOrDsToTimestamp,
+    exp.TsOrDsToDatetime,
+    exp.TsOrDsToTime,
+    exp.TimeStrToTime,
+    exp.TimeStrToDate,
+)
+
+_TRUNCS = (exp.TimestampTrunc, exp.DateTrunc, exp.TimeTrunc)
+
+_TEMPORAL_FUNCTIONS = (
+    *_TRUNCS,
+    exp.CurrentDate,
+    exp.CurrentTimestamp,
+    exp.CurrentDatetime,
+    exp.Date,
+    exp.DateAdd,
+    exp.DateSub,
+    exp.TimestampAdd,
+    exp.TimestampSub,
+    exp.DatetimeAdd,
+    exp.DatetimeSub,
+    exp.StrToDate,
+    exp.StrToTime,
+    exp.DateFromParts,
+    exp.TimestampFromParts,
+    exp.LastDay,
+)
+
+_DATE_COLUMN_NAME = re.compile(r"(^|_)(date|datetime|timestamp|ts|dt)$|_(at|on)$")
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+# sqlglot reads `date_trunc(g, d)` and `date_trunc('week', d)` alike (a Var),
+# so a unit is trusted only when it names a date part.
+_GRAINS = frozenset(
+    {
+        "microsecond",
+        "millisecond",
+        "second",
+        "minute",
+        "hour",
+        "day",
+        "week",
+        "isoweek",
+        "month",
+        "quarter",
+        "year",
+        "isoyear",
+        "decade",
+        "century",
+        "millennium",
+    }
+)
+
+# sqlglot normalizes most name formats to these codes; to_char, Spark 'LLL'
+# and .NET 'ddd' keep their own spelling ('DDD' is day of year in to_char).
+_NAME_CODES = frozenset({"%b", "%B", "%h", "%a", "%A"})
+_TO_CHAR_NAME = re.compile(r"(fm)?(mon|month|mmmm|dy|day)|l{3,4}", re.IGNORECASE)
+_QUOTED_LITERAL = re.compile(r"'((?:[^']|'')*)'")
+
+# Dialects whose to-text call also formats numbers.
+_NUMBER_FORMATTING_DIALECTS = (Postgres, TSQL)
+
+
+def _unwrap_coercions(node: exp.Expression) -> exp.Expression:
+    while isinstance(node, _COERCIONS):
+        node = node.this
+    return node
+
+
+def _is_evidently_temporal(node: exp.Expression) -> bool:
+    node = _unwrap_coercions(node)
+    if isinstance(node, _TEMPORAL_FUNCTIONS):
+        return True
+    if isinstance(node, exp.Cast):
+        return node.to.this in exp.DataType.TEMPORAL_TYPES
+    if isinstance(node, exp.Column):
+        snake = _CAMEL_BOUNDARY.sub("_", node.name).lower()
+        return _DATE_COLUMN_NAME.search(snake) is not None
+    return False
+
+
+def _is_name_only(
+    node: exp.TimeToStr | exp.ToChar, authored: str | None, is_tsql: bool
+) -> bool:
+    fmt = node.args.get("format")
+    if isinstance(fmt, exp.Literal) and fmt.name in _NAME_CODES:
+        return True
+    if authored is None:
+        return False
+    return _TO_CHAR_NAME.fullmatch(authored) is not None or (
+        is_tsql and authored == "ddd"
+    )
+
+
+def _authored_format(
+    node: exp.TimeToStr | exp.ToChar, dialect: str | None
+) -> str | None:
+    """The literal format as the dialect spells it; None when absent or computed."""
+    fmt = node.args.get("format")
+    if not isinstance(fmt, exp.Literal):
+        return None
+    if isinstance(node, exp.ToChar):
+        return fmt.name
+    probe = exp.TimeToStr(this=exp.column("x"), format=fmt.copy())
+    match = _QUOTED_LITERAL.search(probe.sql(dialect=dialect))
+    return match.group(1) if match else fmt.name
+
+
+def _replacement(
+    value: exp.Expression, alias: str, dialect: str | None
+) -> tuple[str | None, str | None]:
+    """The SQL to return instead (None when the grain is computed) and its grain."""
+    value = _unwrap_coercions(value)
+    if not isinstance(value, _TRUNCS):
+        return f"{value.sql(dialect=dialect)} AS {alias}", None
+    unit = value.args["unit"]
+    grain = "week" if isinstance(unit, exp.WeekStart) else unit.name.lower()
+    if grain not in _GRAINS:
+        return None, None
+    # The generator upper-cases the unit; house style is lower-case.
+    rendered = re.sub(
+        rf"\b{grain.upper()}\b",
+        grain,
+        value.sql(dialect=dialect, normalize_functions="lower"),
+    )
+    return f"{rendered} AS {alias}", grain
+
+
+def _detect_date_as_text(
+    select: exp.Select, x_columns: frozenset[str], dialect: str | None
+) -> list[QueryDiagnostic]:
+    """WARN-DATE-AS-TEXT over the outermost projections; rules in codes_query.py."""
+    wanted = {name.lower() for name in x_columns}
+    family = Dialect.get_or_raise(dialect)
+    takes_numbers = isinstance(family, _NUMBER_FORMATTING_DIALECTS)
+    is_tsql = isinstance(family, TSQL)
+    diags: list[QueryDiagnostic] = []
+    for projection in select.expressions:
+        alias = projection.alias_or_name
+        if alias.lower() not in wanted:
+            continue
+        inner = projection.this if isinstance(projection, exp.Alias) else projection
+        inner = _unwrap_coercions(inner)
+        if isinstance(inner, exp.TimeToStr | exp.ToChar):
+            value = inner.this
+            if (
+                isinstance(inner, exp.ToChar) or takes_numbers
+            ) and not _is_evidently_temporal(value):
+                continue
+            fmt = _authored_format(inner, dialect)
+            if _is_name_only(inner, fmt, is_tsql):
+                continue
+            what = "a date turned into text"
+            if fmt is not None:
+                what += f" ({fmt!r})"
+        else:
+            if isinstance(inner, exp.Cast | exp.TryCast):
+                is_text, value = inner.to.this in exp.DataType.TEXT_TYPES, inner.this
+            elif isinstance(inner, exp.Convert):
+                is_text = inner.this.this in exp.DataType.TEXT_TYPES
+                value = inner.expression
+            else:
+                continue
+            if not is_text or not _is_evidently_temporal(value):
+                continue
+            what = "a date cast to text"
+        replacement, grain = _replacement(value, alias, dialect)
+        message = f"{alias} is {what}. Return the date itself"
+        if replacement is not None:
+            message += f", {replacement}"
+        if grain is None:
+            message += ", and the axis labels it by its grain."
+        else:
+            message += f", and the axis labels it by {grain}."
+        diags.append(
+            QueryDiagnostic(
+                code=WARN_DATE_AS_TEXT.code, severity="warning", message=message
+            )
+        )
+    return diags
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -1028,6 +1223,7 @@ def validate_query(
     *,
     dialect: str | None = ...,
     relationship_context: RelationshipContext | None = ...,
+    x_columns: frozenset[str] = ...,
     suppress: set[str] | None = ...,
     return_suppressed: Literal[False] = ...,
 ) -> list[QueryDiagnostic]: ...
@@ -1039,6 +1235,7 @@ def validate_query(
     *,
     dialect: str | None = ...,
     relationship_context: RelationshipContext | None = ...,
+    x_columns: frozenset[str] = ...,
     suppress: set[str] | None = ...,
     return_suppressed: Literal[True],
 ) -> tuple[list[QueryDiagnostic], list[QueryDiagnostic]]: ...
@@ -1049,6 +1246,7 @@ def validate_query(
     *,
     dialect: str | None = None,
     relationship_context: RelationshipContext | None = None,
+    x_columns: frozenset[str] = frozenset(),
     suppress: set[str] | None = None,
     return_suppressed: bool = False,
 ) -> list[QueryDiagnostic] | tuple[list[QueryDiagnostic], list[QueryDiagnostic]]:
@@ -1060,6 +1258,8 @@ def validate_query(
         relationship_context: Optional relationship metadata for severity
             calibration. When provided, fanout_risk findings are refined
             using known multiplicity, fanout factor, and confidence.
+        x_columns: Output column names some chart uses as its x. Only these
+            are checked for dates turned into text; empty skips that check.
         suppress: Optional set of diagnostic codes to suppress externally
             (e.g. from YAML ``ignore`` or ``meta.yml`` lint config).
         return_suppressed: If True, return a tuple of
@@ -1085,6 +1285,7 @@ def validate_query(
         suppressed_codes.update(suppress)
 
     try:
+        dialect = require_sqlglot_dialect(dialect)
         parsed = sqlglot.parse_one(sql, read=dialect)
     except sqlglot.errors.ParseError as e:
         result = [
@@ -1104,6 +1305,7 @@ def validate_query(
     diags.extend(_detect_missing_join_predicates(parsed))
     diags.extend(_detect_fanout_risk(parsed, relationship_context))
     diags.extend(_detect_reaggregation(parsed, parsed))
+    diags.extend(_detect_date_as_text(parsed, x_columns, dialect))
 
     active, suppressed_diags = _apply_suppression(diags, suppressed_codes)
     if return_suppressed:

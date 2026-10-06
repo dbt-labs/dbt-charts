@@ -1,3 +1,0 @@
-kind: Features
-body: 'Format names move from a flat `style.formats` map to `style.formats.aliases`, so `style.formats` can hold fixed settings beside them without colliding with a name you chose. Boards in the old shape are migrated when they load, and `dct migrate` rewrites them.'
-time: 2026-10-01T18:00:00.000000-07:00

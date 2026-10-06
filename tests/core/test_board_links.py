@@ -108,6 +108,17 @@ class TestResolveHref:
         result = resolve_href("./detail?id=42", ctx)
         assert result == "/charts/zendesk/tickets/detail?id=42"
 
+    def test_serve_relative_link_on_index_board_resolves_against_own_directory(
+        self,
+    ) -> None:
+        """Regression: current_board_slug for an index board keeps its `index`
+        leaf ("reports/index", not "reports"), so a relative link on
+        charts/reports/index.yml must resolve against "reports" -- not one
+        directory too high."""
+        ctx = LinkContext(root="/charts", current_board_slug="reports/index")
+        result = resolve_href("sibling", ctx)
+        assert result == "/charts/reports/sibling"
+
     # -- Suffix stripping --
 
     def test_strip_md_suffix(self) -> None:

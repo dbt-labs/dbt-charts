@@ -46,7 +46,7 @@ rows:
 def _container(style: str, body: str) -> float:
     result = compile_board(f"title: T\n{style}{_QUERY}{body}")
     assert result.success, result.diagnostics
-    return board_container_width(result.board)
+    return board_container_width(result.board, result.board.variable_defaults)
 
 
 def test_authored_width_wider_than_content_is_honored() -> None:
@@ -68,7 +68,7 @@ def test_unauthored_width_is_still_bounded_by_the_theme() -> None:
     """No width anywhere: wide content is bounded by the theme's max_width."""
     result = compile_board(f"title: T\n{_QUERY}{_TWO_BARS}")
     assert result.success, result.diagnostics
-    assert board_container_width(result.board) == float(
+    assert board_container_width(result.board, result.board.variable_defaults) == float(
         result.board.resolved_style.frame.max_width
     )
 
@@ -101,7 +101,7 @@ def _container_under_meta(
     )
     result = compile_file(project.path("charts/board.yml").read_board())
     assert result.success, result.errors
-    return board_container_width(result.board)
+    return board_container_width(result.board, result.board.variable_defaults)
 
 
 _META_MAX = "style:\n  frame:\n    max_width: 1100\n"
@@ -167,8 +167,8 @@ def test_chart_width_pins_slot_in_bound_board() -> None:
         f"title: T\nstyle:\n  frame:\n    width: 700\n{_QUERY}{_FIXED_CHART}"
     )
     assert result.success, result.diagnostics
-    assert board_container_width(result.board) == 700.0
-    assert chart_slot_width(result.board, "c1") == 320.0
+    assert board_container_width(result.board, result.board.variable_defaults) == 700.0
+    assert chart_slot_width(result.board, "c1", result.board.variable_defaults) == 320.0
 
 
 def _percent_rows_board(style: str) -> str:
@@ -190,10 +190,12 @@ def test_percent_rows_item_width_is_half_the_row() -> None:
         result = compile_board(_percent_rows_board(style))
         assert result.success, result.diagnostics
         board = result.board
-        content = board_container_width(board) - 2 * float(
+        content = board_container_width(board, board.variable_defaults) - 2 * float(
             board.resolved_style.frame.margin
         )
-        assert chart_slot_width(board, "c1") == content / 2, style or "unbound"
+        assert chart_slot_width(board, "c1", board.variable_defaults) == content / 2, (
+            style or "unbound"
+        )
 
 
 def test_percent_rows_item_width_never_feeds_the_hug() -> None:
@@ -208,7 +210,9 @@ def test_percent_rows_item_width_never_feeds_the_hug() -> None:
         )
     )
     assert with_pct.success and without.success
-    assert board_container_width(with_pct.board) == board_container_width(without.board)
+    assert board_container_width(
+        with_pct.board, with_pct.board.variable_defaults
+    ) == board_container_width(without.board, without.board.variable_defaults)
 
 
 def _container_extending(
@@ -225,7 +229,7 @@ def _container_extending(
     )
     result = compile_file(project.path("charts/board.yml").read_board())
     assert result.success, result.errors
-    return board_container_width(result.board)
+    return board_container_width(result.board, result.board.variable_defaults)
 
 
 def test_extends_width_binds_like_the_boards_own(in_memory_project: Callable) -> None:
@@ -248,7 +252,7 @@ def test_theme_extends_width_still_caps(in_memory_project: Callable) -> None:
     )
     result = compile_file(project.path("charts/board.yml").read_board())
     assert result.success, result.errors
-    assert board_container_width(result.board) < 600.0
+    assert board_container_width(result.board, result.board.variable_defaults) < 600.0
 
 
 def test_width_pair_on_the_root_is_a_validation_error_naming_both_keys() -> None:

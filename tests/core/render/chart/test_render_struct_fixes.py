@@ -139,6 +139,7 @@ def _bar(
         canvas=_DEFAULT_CHARTS.ink_canvas,
         title_style=_DEFAULT_CHARTS.title,
         layout_padding=_ZERO_PADDING,
+        field_labels={},
     )
 
 
@@ -315,6 +316,7 @@ def test_area_fg_layer_omits_fill_when_color_channel_present(
         stack=None,
         style=area_style,
         **_C_WITH_COLOR,
+        field_labels={},
     )
     data = [
         {"date": "Jan", "value": 10, "region": "East"},
@@ -349,6 +351,7 @@ def test_area_fg_line_omits_stroke_when_color_channel_present(
         stack=None,
         style=area_style,
         **_C_WITH_COLOR,
+        field_labels={},
     )
     data = [{"date": "Jan", "value": 10, "region": "East"}]
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))

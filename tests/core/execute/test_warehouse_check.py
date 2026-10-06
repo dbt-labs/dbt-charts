@@ -1618,3 +1618,40 @@ class TestCheckAdHocQuery:
         assert result.mechanism == "DESCRIBE"
         assert result.columns_checked is True
         assert {c.name for c in result.columns} == {"a", "b"}
+
+
+def test_dialect_query_is_unchecked_not_sent_untranslated(tmp_path: Path) -> None:
+    """EXPLAIN-wrapping would send the authored dialect to the warehouse."""
+    board_yml = """\
+title: T
+source: testdb
+queries:
+  my_query:
+    sql: SELECT a FROM t
+    dialect: bigquery
+charts:
+  c:
+    query: my_query
+    type: table
+"""
+    compiled, registry = _duckdb_project(tmp_path, board_yml=board_yml)
+    result = _check(compiled, registry)
+    assert result.status == "unchecked"
+    assert result.mechanism == "dialect"
+
+
+def test_dialect_query_matching_the_source_is_still_checked(tmp_path: Path) -> None:
+    board_yml = """\
+title: T
+source: testdb
+queries:
+  my_query:
+    sql: SELECT a FROM t
+    dialect: duckdb
+charts:
+  c:
+    query: my_query
+    type: table
+"""
+    compiled, registry = _duckdb_project(tmp_path, board_yml=board_yml)
+    assert _check(compiled, registry).status != "unchecked"

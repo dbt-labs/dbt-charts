@@ -200,7 +200,9 @@ def test_a_resolved_control_lays_out_directly() -> None:
     )
 
     layout = lay_out_variables(
-        [control.spec for control in resolved], 800.0, get_theme_style().variables
+        [control.spec for control in resolved],
+        800.0,
+        resolve_style(get_theme_style()).variables,
     )
 
     assert layout.rows == 1

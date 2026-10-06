@@ -194,7 +194,7 @@ def test_fires_on_layered_field_colored_base_when_entry_matches_nothing() -> Non
 
 
 def test_layered_field_colored_base_resolves_a_layer_label_by_y_column_name() -> None:
-    """The layer's own label ("Target", default_axis_title("target")) can
+    """The layer's own label ("Target", field_title("target")) can
     be named by its raw y-column name too, same as the base_label arm's
     alias."""
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer

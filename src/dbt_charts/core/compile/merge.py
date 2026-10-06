@@ -46,12 +46,13 @@ from pydantic.fields import FieldInfo
 
 from dbt_charts.core.compile.errors import CompilationError, MergeValidationError
 from dbt_charts.core.compile.file_refs import anchor_images, resolve_ref
+from dbt_charts.core.compile.models.factories import FontSlotBase
 from dbt_charts.core.compile.models.markers import Merge, Strategy
+from dbt_charts.core.compile.models.primitives import FontStyle
 from dbt_charts.core.compile.models.style.authored import (
     PaddingStylePatch,
-    TitleStylePatch,
 )
-from dbt_charts.core.compile.models.style.theme import PaddingStyle, TitleStyle
+from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.diagnostics.codes_compile import ERR_EXTENDS_UNRESOLVED
 
 if TYPE_CHECKING:
@@ -229,6 +230,30 @@ def _child_strategy(field: FieldInfo, nested: bool) -> bool:
     return effective == Strategy.CHILD
 
 
+def _under_named_font(lower: P, upper: BaseModel) -> P:
+    """``lower`` stripped of its ``FontStyle`` fields when ``upper`` names a font.
+
+    A slot that sets ``extends`` is exactly the font it names plus its own
+    overrides, not a tweak of what a lower layer put on the slot. Fields only
+    the slot's subclass declares (``compact_size``, ``emoji``) are not part of
+    a named font and survive.
+    """
+    if not (
+        isinstance(upper, FontSlotBase)
+        and isinstance(lower, FontSlotBase)
+        and upper.extends is not None
+    ):
+        return lower
+    font_fields = FontStyle.model_fields
+    return type(lower).model_construct(
+        _fields_set=lower.model_fields_set - font_fields.keys(),
+        **{
+            name: None if name in font_fields else getattr(lower, name)
+            for name in type(lower).model_fields
+        },
+    )
+
+
 def merge_patches(lower: P, upper: P, nested: bool) -> P:
     """Binary merge of two patch models of the same type.
 
@@ -251,6 +276,7 @@ def merge_patches(lower: P, upper: P, nested: bool) -> P:
     that reflects only fields genuinely authored in this merge, so subsequent
     merges do not mistake default-None values for explicit nulls.
     """
+    lower = _under_named_font(lower, upper)
     out: dict[str, Any] = {}
     # Pre-populate with lower values so _cross_axis_layout_clear can read them.
     for name in type(upper).model_fields:
@@ -360,6 +386,19 @@ def _combine_field(
     if isinstance(lo, BaseModel) and isinstance(hi, BaseModel):
         return recurse(lo, hi)
     if isinstance(lo, dict) and isinstance(hi, dict):
+        if strat == "deep":
+            # Entries present on both sides merge as models, so a theme layer
+            # can add one field to an entry a lower layer declared.
+            return {
+                **lo,
+                **{
+                    key: recurse(lo[key], value)
+                    if isinstance(lo.get(key), BaseModel)
+                    and isinstance(value, BaseModel)
+                    else value
+                    for key, value in hi.items()
+                },
+            }
         return {**lo, **hi}
     return hi
 
@@ -384,8 +423,12 @@ def merge_onto_base(base: P, patch: BaseModel | None) -> P:
     - field omitted from patch → inherit from base.
     - set patch field is None → clear to None; terminal validation decides whether
       the compiled field is nullable.
+    - A font patch that sets ``extends`` replaces the base slot outright: a named
+      font is not a tweak of what the theme bound there.
     - Both base_val and patch_val are BaseModel → recurse via merge_onto_base.
-    - Both are dict → key-wise merge (patch keys win, base keys survive).
+    - Both are dict → key-wise merge (patch keys win, base keys survive; a
+      ``Merge(Strategy.DEEP)`` dict also merges entries present on both sides); a
+      ``key: null`` entry removes that key from the result.
     - patch_val is BaseModel, base_val is None → seed from
       ``model_dump(exclude_unset=True)`` and let terminal validation accept a
       complete child or reject an incomplete one.
@@ -404,6 +447,7 @@ def merge_onto_base(base: P, patch: BaseModel | None) -> P:
         )
     if not patch_fields_set:
         return base
+    base = _under_named_font(base, patch)
 
     result: dict[str, Any] = {}
     result_fields_set = set(base.model_fields_set)
@@ -418,13 +462,22 @@ def merge_onto_base(base: P, patch: BaseModel | None) -> P:
         if patch_val is None:
             result[field_name] = None
         elif base_val is not None:
+            marker = merge_marker(base_fields[field_name])
             result[field_name] = _combine_field(
-                base_val, patch_val, recurse=merge_onto_base
+                base_val,
+                patch_val,
+                recurse=merge_onto_base,
+                strat="deep" if marker and marker.file is Strategy.DEEP else "",
             )
         elif isinstance(patch_val, BaseModel):
             result[field_name] = patch_val.model_dump(exclude_unset=True)
         else:
             result[field_name] = patch_val
+        combined = result[field_name]
+        if isinstance(combined, dict):
+            # `key: null` deletes a base entry; it only means "remove" here,
+            # where no lower layer is left to shadow.
+            result[field_name] = {k: v for k, v in combined.items() if v is not None}
 
     validated = type(base).model_validate(result)
     values = {name: getattr(validated, name) for name in base_fields}
@@ -970,17 +1023,3 @@ def to_padding_style(padding: PaddingStyle | PaddingStylePatch) -> PaddingStyle:
             "The theme cascade must populate every side of PaddingStyle."
         )
     return PaddingStyle.model_validate(sides)
-
-
-def to_title_style(title: TitleStyle | TitleStylePatch) -> TitleStyle:
-    """Coerce a cascade-produced title value into a real ``TitleStyle``.
-
-    Same shape as ``to_padding_style`` above: ``ChartsStyle.title``'s
-    ``InheritSlot(from_path="Style.title")`` annotation leaves the field typed
-    as ``TitleStylePatch`` even after ``apply_inherit`` fills every leaf from
-    the board title, so callers re-validate through ``TitleStyle`` here — safe
-    for an already-correct ``TitleStyle`` input too, which round-trips
-    unchanged. Pydantic's own ``ValidationError`` names any leaf the cascade
-    left genuinely incomplete, rather than defaulting it.
-    """
-    return TitleStyle.model_validate(title.model_dump())

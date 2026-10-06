@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from functools import cached_property
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from posixpath import normpath
@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 
 # The conventional subtree under the project root that holds board files.
 CHARTS_SUBDIR = "charts"
+
+# The dbt-managed subtree holding installed packages. `dbt deps` is the only
+# writer; a package's own `charts/` directory is a board root (see
+# `board_roots`). dbt's `packages-install-path` override is not honored —
+# discovery assumes the default location (convention only, documented in the
+# published boards-and-packages guide).
+DBT_PACKAGES_SUBDIR = "dbt_packages"
+
 
 # The pre-rename spelling hosts still answer READS from when a project has no
 # charts/ tree. Never written, never advertised.
@@ -107,9 +115,12 @@ SKIP_SCAN_DIRS: frozenset[str] = frozenset(
         # (dbt_project.yml is a root marker), and these are full of .yml/.md
         # files that would pass the board-candidate suffix test. Direct-path
         # reads (target/manifest.json, target/super_schema.json) are
-        # unaffected: they use exists/read_text, not iteration.
+        # unaffected: they use exists/read_text, not iteration. dbt_packages
+        # itself is pruned from ordinary recursive walks (glob/grep/`iter_dir(".")`)
+        # — package boards are reached only through `board_roots`, which calls
+        # `iter_dir(DBT_PACKAGES_SUBDIR)` directly rather than walking into it.
         "target",
-        "dbt_packages",
+        DBT_PACKAGES_SUBDIR,
         "logs",
     }
 )
@@ -125,11 +136,16 @@ INDEX_CANDIDATE_NAMES: tuple[str, ...] = tuple(
     f"index{s}" for s in BOARD_CANDIDATE_SUFFIXES
 )
 
+# Jinja template suffix: `type: custom` charts read `templates/<name>.svg.j2`
+# through the project, so Cloud has to fetch these blobs into its store.
+TEMPLATE_SUFFIXES: tuple[str, ...] = (".j2",)
+
 # The closed set of file suffixes dbt charts serves from a project tree:
 #   BOARD_CANDIDATE_SUFFIXES — config + board files (.yml/.yaml) and markdown
 #                  boards (.md/.markdown); composed in so this set can never
 #                  drift behind a new board suffix.
 #   IMAGE_SUFFIXES — images embeddable from board markdown (core/utils.py).
+#   TEMPLATE_SUFFIXES — custom-chart SVG templates (see above).
 #   .csv/.json/.parquet — file sources (CsvSourceConfig etc.), whose `files:`
 #                  paths are required to carry these exact extensions
 #                  (models/source.py `_validate_files_mapping`)
@@ -139,6 +155,7 @@ INDEX_CANDIDATE_NAMES: tuple[str, ...] = tuple(
 SERVED_FILE_SUFFIXES: frozenset[str] = (
     frozenset(BOARD_CANDIDATE_SUFFIXES)
     | frozenset(IMAGE_SUFFIXES)
+    | frozenset(TEMPLATE_SUFFIXES)
     | {".csv", ".json", ".jsonl", ".parquet"}
 )
 
@@ -157,6 +174,227 @@ def is_board_candidate(relpath: str) -> bool:
     return PurePosixPath(
         relpath
     ).suffix in BOARD_CANDIDATE_SUFFIXES and not is_private_name(relpath)
+
+
+def is_package_relpath(relpath: str) -> bool:
+    """True iff relpath sits under ``dbt_packages/`` — read-only, dbt-managed."""
+    return PurePosixPath(relpath).parts[:1] == (DBT_PACKAGES_SUBDIR,)
+
+
+class BoardRoot(NamedTuple):
+    """One entry in the board-root table: a subtree that holds board files.
+
+    ``relpath`` is the project-relative directory (``"charts"`` for the host,
+    ``"dbt_packages/<pkg>/charts"`` for an installed package). ``namespace``
+    is the URL/slug prefix a board under this root carries — ``""`` for the
+    host root, the package directory name otherwise (the same namespace dbt
+    already uses for that package's models, e.g. ``ref('zendesk', ...)``).
+    """
+
+    relpath: str
+    namespace: str
+
+
+def package_board_roots(project: Project) -> list[BoardRoot]:
+    """The board root for every installed package that ships a ``charts/`` dir.
+
+    Probes ``Project.exists(DBT_PACKAGES_SUBDIR)`` first and returns early
+    when it is absent -- a Cloud host never has a ``dbt_packages/`` entry
+    (gitignored, never committed), so this keeps discovery off any path that
+    needs more than the minimal ``Project`` surface (``exists``/``iter_dir``)
+    every implementation already provides. Only once the directory is known
+    to exist does this read ``Project.iter_dir(DBT_PACKAGES_SUBDIR)`` -- one
+    directory listing, not a recursive walk — so it shares ``iter_dir``'s
+    symlink-escape exclusion (a `local:`-installed package is a symlink
+    outside the project root and is silently excluded, the same guard
+    ``FilesystemProject.iter_dir`` already applies) and its
+    dotfile/SKIP_SCAN_DIRS filtering for free. A package with no ``charts/``
+    subdirectory contributes no root.
+    """
+    if not project.exists(DBT_PACKAGES_SUBDIR):
+        return []
+    roots: list[BoardRoot] = []
+    for pkg_entry in project.iter_dir(DBT_PACKAGES_SUBDIR):
+        if not isinstance(pkg_entry, ProjectDirectory):
+            continue
+        for child in project.iter_dir(pkg_entry.relpath):
+            if isinstance(child, ProjectDirectory) and child.name == CHARTS_SUBDIR:
+                roots.append(BoardRoot(child.relpath, pkg_entry.name))
+                break
+    return roots
+
+
+def _assert_no_root_namespace_collision(
+    project: Project, roots: Sequence[BoardRoot]
+) -> None:
+    """Raise if a host ``charts/<pkg>`` entry claims a package's own namespace.
+
+    A host ``charts/zendesk/`` directory or ``charts/zendesk.{yml,md}`` file
+    alongside an installed ``zendesk`` package is the same bug class as an
+    alias colliding with a real board file — resolved the same way, as a
+    hard build-time error. Enforced HERE, inside ``board_roots`` itself,
+    rather than by one caller (``dct serve``'s ``AliasIndex.build``) alone —
+    every consumer of the root table (``iter_boards``, ``resolve_board_relpath``,
+    search, the CLI move path, ...) must reject the ambiguous state the same
+    way, not silently pick the host board.
+    """
+    package_namespaces = {root.namespace for root in roots if root.namespace}
+    if not package_namespaces:
+        return
+    for child in project.iter_dir(CHARTS_SUBDIR):
+        if isinstance(child, ProjectDirectory):
+            candidate_name = child.name
+        elif child.is_yaml or child.is_markdown:
+            candidate_name = child.stem
+        else:
+            continue
+        if candidate_name in package_namespaces:
+            raise ValueError(
+                f"Board root collision: host 'charts/{candidate_name}' and the "
+                f"installed package {candidate_name!r} both claim the "
+                f"{candidate_name!r} namespace."
+            )
+
+
+def board_roots(project: Project) -> list[BoardRoot]:
+    """The full board-root table: the host root plus every package root.
+
+    The host root is always first and always present (even when ``charts/``
+    doesn't exist yet — enumeration over a missing root simply yields
+    nothing), so it wins any ordering tie against a same-named package root.
+
+    Raises ValueError if a package namespace collides with a host
+    ``charts/<namespace>`` directory or board file (see
+    ``_assert_no_root_namespace_collision``).
+    """
+    roots = [BoardRoot(CHARTS_SUBDIR, "")] + package_board_roots(project)
+    _assert_no_root_namespace_collision(project, roots)
+    return roots
+
+
+def _split_board_root(relpath: str) -> tuple[str, tuple[str, ...]]:
+    """Split *relpath* into (namespace, tail parts) by matching a board-root shape.
+
+    Pure and lexical — the two recognized shapes (``charts/...`` and
+    ``dbt_packages/<pkg>/charts/...``) are exactly what ``board_roots`` ever
+    produces, so no project I/O is needed to recognize them. Raises
+    ValueError if *relpath* is not under either shape.
+
+    Splits on ``/`` rather than normalizing, so a malformed segment (``.``,
+    ``..``, ``//``) survives into the slug for path validation to reject
+    instead of being silently collapsed into a valid-looking one.
+    """
+    parts = tuple(relpath.split("/"))
+    if parts[:1] == (CHARTS_SUBDIR,):
+        return "", parts[1:]
+    if (
+        len(parts) >= 3
+        and parts[0] == DBT_PACKAGES_SUBDIR
+        and parts[2] == CHARTS_SUBDIR
+    ):
+        return parts[1], parts[3:]
+    raise ValueError(f"{relpath!r} is not under a board root")
+
+
+def board_namespace_for_root(root_relpath: str) -> str:
+    """The namespace a board root's own relpath carries (see ``BoardRoot``)."""
+    namespace, tail = _split_board_root(root_relpath)
+    if tail:
+        raise ValueError(f"{root_relpath!r} is not itself a board root")
+    return namespace
+
+
+def board_slug(relpath: str) -> str:
+    """Author-facing file-identity slug for a board-root-relative path (file or
+    directory).
+
+    ``charts/finance/rev.yml`` -> ``finance/rev``; a package board
+    ``dbt_packages/pkg_a/charts/overview.yml`` -> ``pkg_a/overview`` — the
+    same namespace dbt already uses for that package's models. An ``index``
+    leaf is kept (``charts/reports/index.yml`` -> ``reports/index``,
+    ``charts/index.yml`` -> ``index``): this is a *file*-identity slug, so
+    every board file must map to a distinct value — collapsing ``index``
+    would make a directory and its own index board indistinguishable, and
+    would corrupt relative-link resolution (which derives a board's
+    directory from its slug). Collapsing ``index`` into a clean URL is a
+    display concern for the URL layer alone (``alias_index._url_for_file``).
+    Works for a directory relpath too (no suffix to strip), so the same
+    function serves both board-file identity and directory-listing URLs.
+
+    Raises ValueError if relpath is not under any board root.
+    """
+    namespace, tail_parts = _split_board_root(relpath)
+    suffix = PurePosixPath(relpath).suffix
+    if suffix in BOARD_CANDIDATE_SUFFIXES and tail_parts:
+        tail_parts = (*tail_parts[:-1], PurePosixPath(tail_parts[-1]).stem)
+    parts = ((namespace,) if namespace else ()) + tail_parts
+    return "/".join(parts)
+
+
+def board_relpath_candidates(slug: str, roots: Sequence[BoardRoot]) -> list[str]:
+    """Ordered candidate relpaths for *slug* across every board root in *roots*.
+
+    Mirrors the per-suffix + bare-extension candidate ordering used for a
+    single root (a URL that already carries its own extension matches the
+    bare join), scoped per matching root: the host root (namespace ``""``)
+    matches every slug; a package root matches only when the slug's leading
+    segment equals its namespace, or the slug equals the namespace exactly
+    (the package's own index).
+    """
+    candidates: list[str] = []
+    for root in roots:
+        if root.namespace:
+            if slug == root.namespace:
+                rest = "index"
+            elif slug.startswith(f"{root.namespace}/"):
+                rest = slug[len(root.namespace) + 1 :]
+            else:
+                continue
+        else:
+            rest = slug if slug else "index"
+        base = f"{root.relpath}/{rest}"
+        candidates.extend(f"{base}{s}" for s in BOARD_CANDIDATE_SUFFIXES)
+        candidates.append(base)
+    return candidates
+
+
+def board_directory_candidates(
+    clean_path: str, roots: Sequence[BoardRoot]
+) -> list[tuple[BoardRoot, str]]:
+    """Every board root *clean_path* could resolve under, paired with the
+    path remaining inside that root ("" for the root's own directory).
+
+    The directory-URL counterpart of ``board_relpath_candidates`` (which
+    resolves a *file* URL): the host root always matches (namespace ``""``);
+    a package root matches only when the leading segment of *clean_path*
+    equals its namespace, or *clean_path* equals the namespace exactly (the
+    package's own root directory). Shared by the alias index's
+    directory-listing check and ``dct serve``'s directory router, so
+    package-name matching is written once instead of copied per caller.
+    """
+    candidates: list[tuple[BoardRoot, str]] = []
+    for root in roots:
+        if root.namespace:
+            if clean_path == root.namespace:
+                rest = ""
+            elif clean_path.startswith(f"{root.namespace}/"):
+                rest = clean_path[len(root.namespace) + 1 :]
+            else:
+                continue
+        else:
+            rest = clean_path
+        candidates.append((root, rest))
+    return candidates
+
+
+def board_root_for_relpath(
+    relpath: str, roots: Sequence[BoardRoot]
+) -> BoardRoot | None:
+    """The board root whose subtree contains *relpath*, or None."""
+    for root in roots:
+        if relpath == root.relpath or relpath.startswith(f"{root.relpath}/"):
+            return root
+    return None
 
 
 # The whole-project glob: matches every file at any depth. grep's default scope.
@@ -323,6 +561,17 @@ class ProjectPath:
         directory; they compile as cascade input, never as their own board.
         """
         return self.name in META_FILENAMES
+
+    @property
+    def is_package(self) -> bool:
+        """True if this file sits under an installed package's board root.
+
+        A package board is read-only and ships no ``source:`` of its own --
+        used by the meta.yml cascade (``compile.parse.meta.find_meta_files``)
+        to prepend the host's outermost meta layer without that module
+        needing its own runtime import of ``core.project``.
+        """
+        return is_package_relpath(self._relpath)
 
     def exists(self) -> bool:
         return self._project.exists(self._relpath)
@@ -596,18 +845,26 @@ class Project(ABC):
         return hashlib.sha256(self.read_bytes(relpath)).hexdigest()[:16]
 
     def iter_boards(
-        self, *, under: str = CHARTS_SUBDIR, recursive: bool = True
+        self, *, under: str | None = None, recursive: bool = True
     ) -> Iterator[ProjectPath]:
         """Yield ProjectPath handles for candidate board files under *under*.
 
+        *under* ``None`` (the default) scans every board root — the host
+        ``charts/`` plus every installed package's ``charts/`` (see
+        ``board_roots``). Pass an explicit *under* (typically ``CHARTS_SUBDIR``)
+        to scope the scan to one subtree, e.g. a write path that must stay
+        host-only.
+
         Applies board-suffix (BOARD_CANDIDATE_SUFFIXES) and underscore-prefix
         filters so callers only see plausible board files. Skips traversal-noise
-        dirs via ``iter_files``. Yields nothing when the subtree does not exist.
+        dirs via ``iter_files``. Yields nothing when a subtree does not exist.
         """
-        for relpath in self.iter_files(under, recursive=recursive):
-            if not is_board_candidate(relpath):
-                continue
-            yield ProjectPath(self, relpath)
+        roots = [under] if under is not None else [r.relpath for r in board_roots(self)]
+        for root in roots:
+            for relpath in self.iter_files(root, recursive=recursive):
+                if not is_board_candidate(relpath):
+                    continue
+                yield ProjectPath(self, relpath)
 
     def path(self, relpath: str) -> ProjectPath:
         """Return a ProjectPath handle for a project-relative path."""
@@ -616,6 +873,17 @@ class Project(ABC):
     def directory(self, relpath: str = ".") -> ProjectDirectory:
         """Return a ProjectDirectory handle. No argument anchors at the project root."""
         return ProjectDirectory(self, relpath)
+
+    def host_charts_directory(self) -> ProjectDirectory:
+        """The host's own ``charts/`` directory.
+
+        The outermost meta.yml cascade layer for a package board (see
+        ``compile.parse.meta.find_meta_files``): a package ships no
+        ``source:`` of its own, so the host names one for it here -- via the
+        board's own ``project`` handle, not the caller-supplied walk bound,
+        so this is correct regardless of what upper bound the caller passed.
+        """
+        return self.directory(CHARTS_SUBDIR)
 
     # cached_property (not property) on the abstract declaration: concrete
     # overrides cache expensive per-instance work (filesystem probe / DB

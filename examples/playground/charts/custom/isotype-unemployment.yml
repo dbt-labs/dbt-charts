@@ -1,0 +1,49 @@
+# Isotype chart XI from "There's work for all" (1945), redrawn with the
+# isotype_rows template in two columns. Values are read off the original chart.
+title: Unemployment in Great Britain
+notes: |
+  After chart XI of *There's work for all* (Isotype Institute, 1945). Each figure
+  is one unemployed person among a hundred trade union members (after 1926,
+  among a hundred insured workers). Shaded rows are war years. Values are read
+  off the original chart, to the nearest half figure.
+queries:
+  unemployment:
+    columns: [year, unemployed_per_100, at_war, event]
+    values:
+      - ["1853", 2, false, null]
+      - ["1858", 12, false, null]
+      - ["1860", 2, false, null]
+      - ["1862", 8, false, null]
+      - ["1865", 2, false, null]
+      - ["1868", 8, false, null]
+      - ["1872", 1, false, null]
+      - ["1879", 11, false, null]
+      - ["1882", 2, false, null]
+      - ["1886", 10, false, null]
+      - ["1890", 2, false, null]
+      - ["1893", 8, false, null]
+      - ["1900", 2, false, null]
+      - ["1908", 8, false, null]
+      - ["1916", 0.5, true, War]
+      - ["1921", 16, false, null]
+      - ["1924", 8, false, null]
+      - ["1932", 22, false, null]
+      - ["1942", 0.5, true, War]
+charts:
+  unemployment:
+    type: custom
+    template: isotype_rows
+    query: unemployment
+    style:
+      aspect_ratio: 1.4
+    y: year
+    x: unemployed_per_100
+    options:
+      highlight: at_war
+      note: event
+      symbol_color: chrome.heading
+      column_count: 2
+      group_every: 10
+      key: Each figure represents one unemployed person among a hundred
+rows:
+  - unemployment

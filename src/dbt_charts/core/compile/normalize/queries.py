@@ -7,7 +7,6 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError as PydanticValidationError
-from sqlglot.dialects.dialect import Dialect as SqlglotDialect
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory
@@ -54,7 +53,7 @@ from dbt_charts.core.compile.normalize.sql_authoring_lint import (
     has_literal_escaped_newlines,
 )
 from dbt_charts.core.compile.sql_guard import (
-    sqlglot_dialect,
+    source_dialect,
     validate_select_only,
     validate_setup_sql,
 )
@@ -135,9 +134,10 @@ def dialect_for_source(source: str | None, sources: dict[str, Any]) -> str | Non
     None means "could not establish one", and callers must treat it as "do
     not report parse findings" rather than falling back to the default
     dialect: parsing BigQuery SQL as generic SQL is how a parse warning ends
-    up firing on ~40% of real boards. The one caller that does fall back is
-    `agent_api.lookup_board_query_sql`, which reports no findings — it only
-    renders SQL text for a preview.
+    up firing on ~40% of real boards. The callers that do fall back are
+    `agent_api.lookup_board_query_sql`, which reports no findings (it only
+    renders SQL text for a preview), and `ProjectSession.validate_query`,
+    which lints an ad-hoc statement the user asked to lint.
     """
     if source is None:
         return None
@@ -152,11 +152,7 @@ def dialect_for_source(source: str | None, sources: dict[str, Any]) -> str | Non
         source_type = config.type
     else:
         return None
-    if not isinstance(source_type, str):
-        return None
-    if sqlglot_dialect(source_type) not in SqlglotDialect.classes:
-        return None
-    return source_type
+    return source_dialect(source_type) if isinstance(source_type, str) else None
 
 
 def normalize_query(
@@ -363,7 +359,9 @@ def normalize_query(
     # MutatingSqlError is fatal at compile time — wrap in CompilationError with query name.
     deps: set[str] = set()
     if is_sql_query(query):
-        dialect: str | None = dialect_for_source(query.source, sources)
+        # `dialect:` describes `sql`; setup_sql runs untranslated on the source.
+        source_dialect = dialect_for_source(query.source, sources)
+        dialect: str | None = query.dialect or source_dialect
 
         # Authoring lint: detect literal \n (backslash + n) from single-quoted YAML.
         # Must run before validate_select_only because literal \n causes parse failure
@@ -373,7 +371,7 @@ def normalize_query(
                 ERR_SQL_LITERAL_NEWLINES, query_name=name, field_label="sql"
             )
         if query.setup_sql and has_literal_escaped_newlines(
-            query.setup_sql, dialect=dialect
+            query.setup_sql, dialect=source_dialect
         ):
             raise CompilationError.from_code(
                 ERR_SQL_LITERAL_NEWLINES,
@@ -397,7 +395,7 @@ def normalize_query(
             )
         if query.setup_sql:
             setup_date_literal_match = find_date_literal_variable(
-                query.setup_sql, dialect=dialect
+                query.setup_sql, dialect=source_dialect
             )
             if setup_date_literal_match:
                 raise CompilationError.from_code(
@@ -432,7 +430,7 @@ def normalize_query(
 
         if query.setup_sql:
             try:
-                validate_setup_sql(query.setup_sql, dialect=dialect)
+                validate_setup_sql(query.setup_sql, dialect=source_dialect)
             except UnparseableSqlError:
                 logger.debug(
                     "compile-time setup_sql validation deferred to runtime: %s", name

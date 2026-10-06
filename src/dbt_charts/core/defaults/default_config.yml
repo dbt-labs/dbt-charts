@@ -155,6 +155,12 @@ chart_rendering:
     # padding (top/bottom/left/right) all derive from
     # ``style.charts.kpi.content_padding`` for a unified inset.
     minimum_title_value_gap: 14.0
+    # An unformatted headline compacts to this spec once |value| reaches the
+    # threshold (d3's first SI prefix, "k"). Below it ".2s" would round plain
+    # digits to 2 significant figures (131 -> "130"), so the value keeps its
+    # exact digits. A board's own `number` format bypasses both.
+    compact_spec: ".2~s"
+    compact_threshold: 1000.0
   spark_bar:
     title_height: 24.0
     title_baseline_y: 16.0

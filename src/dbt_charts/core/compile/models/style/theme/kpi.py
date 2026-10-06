@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _ChartStyleBaseAllOptional,
+    _TitledChartStyleBaseAllOptional,
 )
 
 
@@ -102,7 +103,7 @@ class KpiTonesStyle(BaseModel):
     )
 
 
-class KpiChartStyle(_ChartStyleBaseAllOptional):
+class KpiChartStyle(_ChartStyleBaseAllOptional, _TitledChartStyleBaseAllOptional):
     """Produced by cascade from theme YAML.
 
     Four per-slot font blocks (value, label, affix, glyph) plus a parent

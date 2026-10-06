@@ -26,12 +26,31 @@ from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
     CHARTS_SUBDIR,
     INDEX_CANDIDATE_NAMES,
-    ProjectDirectory,
+    BoardRoot,
+    board_directory_candidates,
+    board_relpath_candidates,
+    board_roots,
+    board_slug,
 )
 from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from dbt_charts.core.project import Project, ProjectPath
+
+
+def _is_under_a_board_root(relpath: str) -> bool:
+    """True iff relpath sits under the host ``charts/`` or a package root.
+
+    Pure/lexical — reuses ``board_slug``'s own root-shape recognition rather
+    than re-deriving it, so this can never drift from the enumeration seam.
+    """
+    try:
+        board_slug(relpath)
+    except ValueError:
+        return False
+    return True
 
 
 def read_aliases_from_file(board_path: ProjectPath) -> list[str]:
@@ -63,7 +82,7 @@ def read_aliases_from_file(board_path: ProjectPath) -> list[str]:
         )
 
         text = board_path.read_text()
-        in_boards = PurePosixPath(board_path.relpath).is_relative_to(CHARTS_SUBDIR)
+        in_boards = _is_under_a_board_root(board_path.relpath)
         if not is_markdown_board_content(text, in_boards=in_boards):
             return []
         try:
@@ -98,7 +117,7 @@ def read_aliases_from_file(board_path: ProjectPath) -> list[str]:
 
 
 def board_file_candidates(
-    charts: ProjectDirectory,
+    project: Project,
     clean_path: str,
 ) -> list[ProjectPath]:
     """Return the ordered candidate board-file handles for a URL path segment.
@@ -108,45 +127,57 @@ def board_file_candidates(
     collision checker (_file_url_exists) call this function so that the two
     never drift apart.
 
-    charts/ is always the scan root; /charts/* URLs return an empty list
-    (that prefix is always 404).
+    Scans every board root (host ``charts/`` plus every installed package's
+    ``charts/``, see ``board_roots``); a plain ``/charts/*`` URL always 404s
+    (that prefix is reserved).
 
     Args:
-        charts: the project's ``charts/`` directory handle.
+        project: the dbt charts project.
         clean_path: URL path with leading/trailing slashes stripped, e.g. "sales"
-                    or "reports/q1".  Empty string means the project root.
+                    or "pkg_a/overview".  Empty string means the project root.
     """
     if clean_path.startswith(f"{CHARTS_SUBDIR}/"):
         return []
-    candidates = [charts / f"{clean_path}{s}" for s in BOARD_CANDIDATE_SUFFIXES]
-    if clean_path:
-        # A URL that already carries its own extension (e.g. /sales.yml) maps to
-        # the bare join; skipped at the root, where the join would be empty.
-        candidates.append(charts / clean_path)
-    return candidates
+    return [
+        project.path(relpath)
+        for relpath in board_relpath_candidates(clean_path, board_roots(project))
+    ]
 
 
 def _url_for_file(relpath: str) -> str:
     """Return the canonical served URL for a board's project-relative path.
 
     This is the inverse of board_file_candidates: given a board's relpath
-    (under charts/), return the URL a browser would use to reach it.
-    """
-    rel = PurePosixPath(relpath).relative_to(CHARTS_SUBDIR)
-    # Strip extension
-    stem_parts = list(rel.with_suffix("").parts)
-    # For index.* files, the URL is the parent directory
-    if stem_parts and stem_parts[-1] == "index":
-        stem_parts = stem_parts[:-1]
+    (under any board root), return the URL a browser would use to reach it.
 
-    if not stem_parts:
-        return "/"
-    return "/" + "/".join(stem_parts) + "/"
+    board_slug is a *file-identity* slug -- it keeps an ``index`` leaf so
+    every board file maps to a distinct value. A URL is a display concern:
+    ``reports/index`` and ``reports`` must serve the same page, so the
+    trailing ``index`` segment is collapsed here, and only here.
+    """
+    slug = board_slug(relpath)
+    parts = slug.split("/") if slug else []
+    if parts and parts[-1] == "index":
+        parts = parts[:-1]
+    slug = "/".join(parts)
+    return f"/{slug}/" if slug else "/"
+
+
+def _directory_index_relpaths(clean_path: str, roots: Sequence[BoardRoot]) -> list[str]:
+    """Candidate index-board relpaths for *clean_path* as a directory URL,
+    across every matching board root -- root matching itself comes from
+    ``board_directory_candidates`` (shared with dct serve's directory
+    router) so package-name matching is never duplicated."""
+    relpaths: list[str] = []
+    for root, rest in board_directory_candidates(clean_path, roots):
+        base = f"{root.relpath}/{rest}" if rest else root.relpath
+        relpaths.extend(f"{base}/{name}" for name in INDEX_CANDIDATE_NAMES)
+    return relpaths
 
 
 def _file_url_exists(
     url: str,
-    charts: ProjectDirectory,
+    project: Project,
 ) -> bool:
     """Return True if the normalized URL corresponds to an existing board file.
 
@@ -163,7 +194,7 @@ def _file_url_exists(
     clean_path = url.strip("/")
 
     try:
-        for candidate in board_file_candidates(charts, clean_path):
+        for candidate in board_file_candidates(project, clean_path):
             if (
                 candidate.relpath.endswith(BOARD_CANDIDATE_SUFFIXES)
                 and candidate.exists()
@@ -173,9 +204,8 @@ def _file_url_exists(
         # index board. There is no Project.is_dir(); probing the index candidates
         # subsumes the check (a directory with no index isn't a collision target).
         if not clean_path or PurePosixPath(clean_path).suffix == "":
-            for name in INDEX_CANDIDATE_NAMES:
-                ref = f"{clean_path}/{name}" if clean_path else name
-                if (charts / ref).exists():
+            for relpath in _directory_index_relpaths(clean_path, board_roots(project)):
+                if project.exists(relpath):
                     return True
     except ValueError:
         return False
@@ -238,10 +268,10 @@ class AliasIndex:
         cls,
         project: Project,
     ) -> AliasIndex:
-        """Build the alias index by scanning all board files in the project.
+        """Build the alias index by scanning every board root in the project.
 
-        Scans the charts/ subdirectory (always). Returns an empty index when
-        charts/ does not exist.
+        Scans the host ``charts/`` plus every installed package's ``charts/``
+        (see ``board_roots``). Returns an empty index when none exist.
 
         Args:
             project: The dbt charts project.
@@ -250,13 +280,18 @@ class AliasIndex:
             A populated AliasIndex.
 
         Raises:
-            ValueError: If any alias is not absolute, collides with a real file path,
+            ValueError: If a package root's namespace collides with a host
+                        ``charts/<namespace>`` directory or board file, if any
+                        alias is not absolute, collides with a real file path,
                         or two boards claim the same alias.
         """
         from dbt_charts.core.registered_views.router import compile_route
 
-        charts = project.directory(CHARTS_SUBDIR)
-
+        # project.iter_boards() below calls board_roots(project) internally
+        # (its under=None default), which raises on a host/package namespace
+        # collision itself (see project.py's _assert_no_root_namespace_collision)
+        # -- the same check every other consumer of the root table gets, not
+        # a second one bolted onto AliasIndex.build alone.
         alias_map: dict[str, str] = {}
         patterns: list[tuple[re.Pattern[str], str]] = []
         # normalized alias URL → board relpath that claimed it (for error messages)
@@ -264,7 +299,7 @@ class AliasIndex:
         # pattern shape (captures → <*>) → (board relpath, raw alias), to reject ambiguity
         pattern_shapes: dict[str, tuple[str, str]] = {}
 
-        for pf in project.iter_boards(under=CHARTS_SUBDIR):
+        for pf in project.iter_boards():
             raw_aliases = read_aliases_from_file(pf)
             if not raw_aliases:
                 continue
@@ -284,7 +319,7 @@ class AliasIndex:
                 # An alias may not shadow a real board file. System-view routes
                 # (data/inspector) are generated, not files, so aliasing those is
                 # allowed — only real board files are forbidden.
-                if _file_url_exists(normalized, charts):
+                if _file_url_exists(normalized, project):
                     raise ValueError(
                         f"Alias collision: {raw_alias!r} in {pf.relpath} collides "
                         f"with an existing real board file. Aliases may not shadow "

@@ -184,7 +184,20 @@ class _SharedResolvedChartFields(_BaseResolvedChartFields):
     )
 
 
-class _CartesianResolvedChartFields(_SharedResolvedChartFields):
+class _FieldLabelsResolvedField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_labels: dict[str, str] = Field(
+        description=(
+            "Authored display text per query column, painted verbatim in place "
+            "of the text derived from the column name."
+        ),
+    )
+
+
+class _CartesianResolvedChartFields(
+    _SharedResolvedChartFields, _FieldLabelsResolvedField
+):
     """Cartesian families: bar, line, area, scatter, heatmap.
 
     Family-specific fields (orientation, stack, size, shape) are declared on
@@ -247,7 +260,11 @@ class _CartesianResolvedChartFields(_SharedResolvedChartFields):
     )
 
 
-class _GeoResolvedChartFields(_SharedResolvedChartFields):
+class _PieResolvedChartFields(_SharedResolvedChartFields, _FieldLabelsResolvedField):
+    """Pie/donut: the shared envelope plus field_labels."""
+
+
+class _GeoResolvedChartFields(_SharedResolvedChartFields, _FieldLabelsResolvedField):
     """Geographic families: geoshape/map, point_map/bubble_map.
 
     Only the projection hint is shared across geo families.  The heavier geo
@@ -265,6 +282,8 @@ class _GeoResolvedChartFields(_SharedResolvedChartFields):
 __all__ = [
     "_BaseResolvedChartFields",
     "_CartesianResolvedChartFields",
+    "_FieldLabelsResolvedField",
+    "_PieResolvedChartFields",
     "_GeoResolvedChartFields",
     "_SharedResolvedChartFields",
 ]

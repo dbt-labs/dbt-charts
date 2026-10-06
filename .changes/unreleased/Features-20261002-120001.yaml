@@ -1,0 +1,3 @@
+kind: Features
+body: 'Legend `direction` is inferred from `position.edge` when not authored: `top` and `bottom` legends lay out horizontally, `left` and `right` vertically. An inferred horizontal legend too wide for one row wraps at `compact_columns`. A `top` legend is now horizontal and so hides its title unless `title.visible: true`.'
+time: 2026-10-02T12:00:00.000000-07:00

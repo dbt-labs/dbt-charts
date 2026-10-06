@@ -18,14 +18,24 @@ from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
     SERVED_FILE_SUFFIXES,
+    TEMPLATE_SUFFIXES,
+    BoardRoot,
     GrepHit,
     Project,
     ProjectDirectory,
     ProjectPath,
+    board_directory_candidates,
+    board_namespace_for_root,
+    board_relpath_candidates,
+    board_root_for_relpath,
+    board_roots,
+    board_slug,
     is_absolute_any_os,
     is_board_candidate,
+    is_package_relpath,
     is_private_name,
     iter_dir_from_relpaths,
+    package_board_roots,
     posix_relpath,
 )
 from dbt_charts.core.utils import IMAGE_SUFFIXES
@@ -314,6 +324,86 @@ class TestDeleteText:
         assert outside.exists()
 
 
+class TestPackageBoardsReadOnly:
+    def test_write_text_refuses_package_relpath(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: O\n")
+        p = local_project(tmp_path)
+        with pytest.raises(ValueError, match="read-only"):
+            p.write_text("dbt_packages/pkg_a/charts/overview.yml", "title: New\n")
+        assert (pkg_charts / "overview.yml").read_text() == "title: O\n"
+
+    def test_delete_text_refuses_package_relpath(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: O\n")
+        p = local_project(tmp_path)
+        with pytest.raises(ValueError, match="read-only"):
+            p.delete_text("dbt_packages/pkg_a/charts/overview.yml")
+        assert (pkg_charts / "overview.yml").exists()
+
+    def test_write_text_still_works_for_host_charts(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir()
+        p = local_project(tmp_path)
+        p.write_text("charts/home.yml", "title: H\n")
+        assert (tmp_path / "charts" / "home.yml").read_text() == "title: H\n"
+
+    def test_write_text_refuses_a_dotdot_escape_into_a_package(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Regression: is_package_relpath only inspected the raw relpath's
+        first component, and nothing normalized ".." before that check -- so
+        "charts/../dbt_packages/pkg_a/charts/overview.yml" (first component
+        "charts") passed the guard, then resolve() collapsed the ".." back
+        onto the package file and the write succeeded. The guard must check
+        the resolved path, not the raw string."""
+        (tmp_path / "charts").mkdir()
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: O\n")
+        p = local_project(tmp_path)
+        with pytest.raises(ValueError, match="read-only"):
+            p.write_text(
+                "charts/../dbt_packages/pkg_a/charts/overview.yml", "title: New\n"
+            )
+        assert (pkg_charts / "overview.yml").read_text() == "title: O\n"
+
+    def test_delete_text_refuses_a_dotdot_escape_into_a_package(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir()
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: O\n")
+        p = local_project(tmp_path)
+        with pytest.raises(ValueError, match="read-only"):
+            p.delete_text("charts/../dbt_packages/pkg_a/charts/overview.yml")
+        assert (pkg_charts / "overview.yml").exists()
+
+
+class TestPackageChartsDirs:
+    def test_lists_absolute_paths_of_every_package_charts_dir(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        p = local_project(tmp_path)
+        assert p.package_charts_dirs() == [pkg_charts.resolve()]
+
+    def test_empty_when_no_packages_ship_charts(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        p = local_project(tmp_path)
+        assert p.package_charts_dirs() == []
+
+
 class TestDataPath:
     """data_path is FilesystemProject-specific (no base-Project equivalent)."""
 
@@ -372,6 +462,12 @@ class TestServedFileSuffixes:
     def test_image_asset_extensions_are_served(self) -> None:
         # Committed images referenced from markdown/boards are fetched as assets.
         assert set(IMAGE_SUFFIXES) <= SERVED_FILE_SUFFIXES
+
+    def test_template_suffixes_are_served(self) -> None:
+        # `type: custom` reads templates/<name>.svg.j2 through the project;
+        # Cloud never sees a template whose suffix is missing here.
+        assert set(TEMPLATE_SUFFIXES) <= SERVED_FILE_SUFFIXES
+        assert "templates/flow.svg.j2".endswith(TEMPLATE_SUFFIXES)
 
     def test_suffixes_are_lowercase_with_leading_dot(self) -> None:
         # The fetch compares name.lower().endswith(...), so the set must be
@@ -900,3 +996,333 @@ class TestIsAbsoluteAnyOs:
 
     def test_relative_path_is_not_absolute(self) -> None:
         assert is_absolute_any_os("sub/db.sqlite") is False
+
+
+class TestIsPackageRelpath:
+    def test_dbt_packages_relpath_is_package(self) -> None:
+        assert is_package_relpath("dbt_packages/pkg_a/charts/overview.yml") is True
+
+    def test_host_relpath_is_not_package(self) -> None:
+        assert is_package_relpath("charts/overview.yml") is False
+
+
+class TestBoardSlug:
+    def test_host_board(self) -> None:
+        assert board_slug("charts/home.yml") == "home"
+
+    def test_host_nested_board(self) -> None:
+        assert board_slug("charts/finance/rev.yml") == "finance/rev"
+
+    def test_a_malformed_segment_survives_into_the_slug(self) -> None:
+        """Path validation downstream rejects ``.``; collapsing it here would
+        turn a malformed path into a valid-looking slug."""
+        assert board_slug("charts/./x.yml") == "./x"
+
+    def test_host_index_board_keeps_its_leaf(self) -> None:
+        """board_slug is a file-identity slug, not a URL: the ``index`` leaf
+        stays so every board file maps to a unique slug. Collapsing ``index``
+        for display is a URL-layer concern (``alias_index._url_for_file``),
+        never this function's job -- collapsing it here broke relative-link
+        resolution, CLI move, and Cloud's access-key lookup for index boards
+        (all of which need the slug to identify the exact file)."""
+        assert board_slug("charts/index.yml") == "index"
+
+    def test_nested_index_board_keeps_its_leaf(self) -> None:
+        assert board_slug("charts/reports/index.yml") == "reports/index"
+
+    def test_package_board(self) -> None:
+        assert board_slug("dbt_packages/pkg_a/charts/overview.yml") == "pkg_a/overview"
+
+    def test_package_nested_board(self) -> None:
+        assert (
+            board_slug("dbt_packages/pkg_a/charts/reports/q1.yml") == "pkg_a/reports/q1"
+        )
+
+    def test_package_index_board_keeps_its_leaf(self) -> None:
+        assert board_slug("dbt_packages/pkg_a/charts/index.yml") == "pkg_a/index"
+
+    def test_markdown_board(self) -> None:
+        assert board_slug("charts/notes.md") == "notes"
+
+    def test_directory_relpath(self) -> None:
+        """Works for a bare directory relpath too — no suffix, no index-collapse."""
+        assert board_slug("dbt_packages/pkg_a/charts/reports") == "pkg_a/reports"
+
+    def test_package_root_directory(self) -> None:
+        assert board_slug("dbt_packages/pkg_a/charts") == "pkg_a"
+
+    def test_host_root_directory(self) -> None:
+        assert board_slug("charts") == ""
+
+    def test_relpath_outside_any_root_raises(self) -> None:
+        with pytest.raises(ValueError, match="not under a board root"):
+            board_slug("models/schema.yml")
+
+    def test_dbt_packages_without_charts_segment_raises(self) -> None:
+        with pytest.raises(ValueError, match="not under a board root"):
+            board_slug("dbt_packages/pkg_a/models/schema.yml")
+
+
+class TestBoardNamespaceForRoot:
+    def test_host_root_has_no_namespace(self) -> None:
+        assert board_namespace_for_root("charts") == ""
+
+    def test_package_root_namespace_is_package_name(self) -> None:
+        assert board_namespace_for_root("dbt_packages/pkg_a/charts") == "pkg_a"
+
+    def test_non_root_relpath_raises(self) -> None:
+        with pytest.raises(ValueError, match="not itself a board root"):
+            board_namespace_for_root("charts/home")
+
+
+class TestBoardRelpathCandidates:
+    _roots = [BoardRoot("charts", ""), BoardRoot("dbt_packages/pkg_a/charts", "pkg_a")]
+
+    def test_host_slug_only_matches_host_root(self) -> None:
+        candidates = board_relpath_candidates("home", self._roots)
+        assert "charts/home.yml" in candidates
+        assert not any(c.startswith("dbt_packages/") for c in candidates)
+
+    def test_package_slug_matches_only_that_package_root(self) -> None:
+        candidates = board_relpath_candidates("pkg_a/overview", self._roots)
+        assert "dbt_packages/pkg_a/charts/overview.yml" in candidates
+        # The host root also matches lexically — a real host `charts/pkg_a/overview.yml`
+        # would be a collision (rejected at AliasIndex.build), but candidate
+        # generation itself stays root-table-driven, not host-only.
+        assert "charts/pkg_a/overview.yml" in candidates
+
+    def test_bare_package_namespace_resolves_to_its_index(self) -> None:
+        candidates = board_relpath_candidates("pkg_a", self._roots)
+        assert "dbt_packages/pkg_a/charts/index.yml" in candidates
+
+    def test_extension_already_present_matches_bare_join(self) -> None:
+        candidates = board_relpath_candidates("sub/x.yaml", self._roots)
+        assert "charts/sub/x.yaml" in candidates
+
+    def test_unrelated_namespace_does_not_match_package_root(self) -> None:
+        candidates = board_relpath_candidates("pkg_b/overview", self._roots)
+        assert not any(c.startswith("dbt_packages/pkg_a/") for c in candidates)
+
+
+class TestBoardDirectoryCandidates:
+    """The directory-URL counterpart of board_relpath_candidates -- shared by
+    the alias index's directory-listing check and dct serve's directory
+    router, so package-name matching is written exactly once."""
+
+    _roots = [BoardRoot("charts", ""), BoardRoot("dbt_packages/pkg_a/charts", "pkg_a")]
+
+    def test_host_clean_path_matches_only_host_root(self) -> None:
+        candidates = board_directory_candidates("sales", self._roots)
+        assert (BoardRoot("charts", ""), "sales") in candidates
+        assert not any(root.namespace for root, _rest in candidates)
+
+    def test_package_namespace_prefix_matches_that_root_with_rest_stripped(
+        self,
+    ) -> None:
+        candidates = board_directory_candidates("pkg_a/reports", self._roots)
+        assert (
+            BoardRoot("dbt_packages/pkg_a/charts", "pkg_a"),
+            "reports",
+        ) in candidates
+
+    def test_bare_package_namespace_matches_its_own_root(self) -> None:
+        candidates = board_directory_candidates("pkg_a", self._roots)
+        assert (BoardRoot("dbt_packages/pkg_a/charts", "pkg_a"), "") in candidates
+
+    def test_unrelated_namespace_does_not_match_package_root(self) -> None:
+        candidates = board_directory_candidates("pkg_b/reports", self._roots)
+        assert not any(root.namespace == "pkg_a" for root, _rest in candidates)
+
+    def test_empty_clean_path_matches_only_host_root_at_its_own_relpath(self) -> None:
+        candidates = board_directory_candidates("", self._roots)
+        assert candidates == [(BoardRoot("charts", ""), "")]
+
+
+class TestBoardRootForRelpath:
+    _roots = [BoardRoot("charts", ""), BoardRoot("dbt_packages/pkg_a/charts", "pkg_a")]
+
+    def test_matches_host_root(self) -> None:
+        assert board_root_for_relpath("charts/home.yml", self._roots) == BoardRoot(
+            "charts", ""
+        )
+
+    def test_matches_package_root(self) -> None:
+        assert board_root_for_relpath(
+            "dbt_packages/pkg_a/charts/overview.yml", self._roots
+        ) == BoardRoot("dbt_packages/pkg_a/charts", "pkg_a")
+
+    def test_no_match_returns_none(self) -> None:
+        assert board_root_for_relpath("models/schema.yml", self._roots) is None
+
+
+class TestPackageBoardRoots:
+    def test_package_with_charts_dir_is_a_root(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "dbt_packages" / "pkg_a" / "charts").mkdir(parents=True)
+        (tmp_path / "dbt_packages" / "pkg_a" / "charts" / "overview.yml").write_text(
+            "title: O\n"
+        )
+        project = local_project(tmp_path)
+        assert package_board_roots(project) == [
+            BoardRoot("dbt_packages/pkg_a/charts", "pkg_a")
+        ]
+
+    def test_package_without_charts_dir_is_not_a_root(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "dbt_packages" / "pkg_c" / "models").mkdir(parents=True)
+        project = local_project(tmp_path)
+        assert package_board_roots(project) == []
+
+    def test_no_dbt_packages_dir_yields_no_roots(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(tmp_path)
+        assert package_board_roots(project) == []
+
+    def test_symlinked_package_is_excluded(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A `local:`-installed package is a symlink outside the project root —
+        excluded by the same containment guard FilesystemProject.iter_dir
+        already applies (pinned separately in test_dir_context.py)."""
+        outside = tmp_path.parent / f"{tmp_path.name}_outside_pkg_b"
+        (outside / "charts").mkdir(parents=True)
+        (outside / "charts" / "x.yml").write_text("title: X\n")
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        (project_dir / "dbt_packages").mkdir()
+        (project_dir / "dbt_packages" / "pkg_b").symlink_to(
+            outside, target_is_directory=True
+        )
+        project = local_project(project_dir)
+        assert package_board_roots(project) == []
+
+    def test_board_roots_includes_host_first_then_packages(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "dbt_packages" / "pkg_a" / "charts").mkdir(parents=True)
+        project = local_project(tmp_path)
+        assert board_roots(project) == [
+            BoardRoot("charts", ""),
+            BoardRoot("dbt_packages/pkg_a/charts", "pkg_a"),
+        ]
+
+    def test_in_memory_host_with_no_dbt_packages_stays_host_only(self) -> None:
+        """Cloud's git-blob store never has a `dbt_packages/` entry (gitignored,
+        never committed) — `iter_dir(DBT_PACKAGES_SUBDIR)` yields nothing on any
+        such host, so the board-root table degrades to host-only with no
+        Cloud-specific code. Proven on the in-memory double, not FilesystemProject."""
+        project = _InMemoryProject({"charts/a.yml": "title: A\n"})
+        assert package_board_roots(project) == []
+        assert board_roots(project) == [BoardRoot("charts", "")]
+
+    def test_reader_without_a_tree_walk_still_yields_host_boards(self) -> None:
+        """A `Project` whose `iter_dir` has no tree-walk capability (Cloud's
+        shape: `CloudManagedProject.iter_dir` requires a reader-level
+        recursive walk that not every reader implements) must still
+        enumerate host boards -- package discovery is gated behind an
+        `exists()` probe first, so a host lacking `dbt_packages/` never
+        reaches `iter_dir` at all. Regression for the AttributeError CI hit
+        when `_FakeBlobReader` (a minimal reader double with no tree walk)
+        backed `iter_boards()`."""
+
+        class _NoTreeWalkProject(_InMemoryProject):
+            def iter_dir(self, under: str) -> Iterator[ProjectPath | ProjectDirectory]:
+                raise AttributeError("this reader has no tree walk")
+
+        project = _NoTreeWalkProject({"charts/revenue.yml": "title: Revenue\n"})
+        assert [pf.relpath for pf in project.iter_boards()] == ["charts/revenue.yml"]
+
+
+class TestBoardRootsCollision:
+    """Regression: a host `charts/<pkg>` entry colliding with an installed
+    package's own namespace must raise from `board_roots()` itself -- the
+    single function every consumer (iter_boards, resolve_board_relpath,
+    search, the alias index, ...) calls to get the root table. Before this
+    fix, only `dct serve`'s own AliasIndex.build enforced the check, so
+    every other surface silently picked the host board over the package."""
+
+    def test_host_directory_collision_raises_from_board_roots(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts" / "pkg_a").mkdir(parents=True)
+        (tmp_path / "charts" / "pkg_a" / "x.yml").write_text("title: X\n")
+        (tmp_path / "dbt_packages" / "pkg_a" / "charts").mkdir(parents=True)
+        project = local_project(tmp_path)
+        with pytest.raises(ValueError, match="(?i)collision"):
+            board_roots(project)
+
+    def test_host_file_collision_raises_from_board_roots(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir(parents=True)
+        (tmp_path / "charts" / "pkg_a.yml").write_text("title: X\n")
+        (tmp_path / "dbt_packages" / "pkg_a" / "charts").mkdir(parents=True)
+        project = local_project(tmp_path)
+        with pytest.raises(ValueError, match="(?i)collision"):
+            board_roots(project)
+
+    def test_no_collision_stays_silent(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir(parents=True)
+        (tmp_path / "dbt_packages" / "pkg_a" / "charts").mkdir(parents=True)
+        project = local_project(tmp_path)
+        assert board_roots(project) == [
+            BoardRoot("charts", ""),
+            BoardRoot("dbt_packages/pkg_a/charts", "pkg_a"),
+        ]
+
+    def test_non_serve_consumer_now_raises_instead_of_silently_picking_host(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A collision must not be silently resolved by a non-serve surface
+        (e.g. resolve_board_relpath, used by validate/render/migrate/Cloud
+        generation) -- it must raise the same way `dct serve` does."""
+        from pathlib import PurePosixPath
+
+        from dbt_charts.agent_api._paths import resolve_board_relpath
+
+        (tmp_path / "charts" / "pkg_a").mkdir(parents=True)
+        (tmp_path / "charts" / "pkg_a" / "overview.yml").write_text("title: Host\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: Pkg\n")
+        project = local_project(tmp_path)
+        with pytest.raises(ValueError, match="(?i)collision"):
+            resolve_board_relpath(PurePosixPath("pkg_a/overview"), project)
+
+
+class TestIterBoardsAllRoots:
+    def test_default_scans_host_and_package_roots(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "home.yml").write_text("title: H\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: O\n")
+        pkg_models = tmp_path / "dbt_packages" / "pkg_a" / "models"
+        pkg_models.mkdir()
+        (pkg_models / "schema.yml").write_text("a: 1\n")
+        (tmp_path / "dbt_packages" / "pkg_a" / "README.md").write_text("# pkg\n")
+
+        relpaths = {pf.relpath for pf in local_project(tmp_path).iter_boards()}
+        assert relpaths == {"charts/home.yml", "dbt_packages/pkg_a/charts/overview.yml"}
+
+    def test_explicit_under_stays_scoped_to_one_root(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "home.yml").write_text("title: H\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text("title: O\n")
+
+        relpaths = {
+            pf.relpath for pf in local_project(tmp_path).iter_boards(under="charts")
+        }
+        assert relpaths == {"charts/home.yml"}

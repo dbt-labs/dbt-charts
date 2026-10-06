@@ -1024,13 +1024,12 @@ def _title_ink_and_box(svg: str, kind: str = "title") -> _InkAndBox:
     from fontTools.pens.boundsPen import BoundsPen
     from fontTools.ttLib import TTFont
 
-    from dbt_charts.core.font_measure import markdown_font_faces
-    from dbt_charts.core.render.sizing import (
+    from dbt_charts.core.compile.resolve.style.markdown_style import (
         get_compact_style,
-        get_theme_style,
-        resolve_style,
         title_font_family,
     )
+    from dbt_charts.core.font_measure import markdown_font_faces
+    from dbt_charts.core.render.sizing import get_theme_style, resolve_style
 
     group = leaf_kind_subtrees(svg, kind)
     assert len(group) == 1, f"expected exactly one {kind} group, got {len(group)}"

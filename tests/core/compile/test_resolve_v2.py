@@ -1621,6 +1621,7 @@ def test_cartesian_resolved_accepts_format_config(bar_style: ResolvedBarStyle) -
         style=bar_style,
         format=fmt,
         **_C,
+        field_labels={},
     )
     assert resolved.format == fmt, (
         f"ResolvedFormat was coerced or dropped; got {resolved.format!r}"
@@ -1645,10 +1646,11 @@ def test_cartesian_resolved_wide_measures_accepted(bar_style: ResolvedBarStyle) 
         wide_measures=("rev", "cost"),
         style=bar_style,
         **_C,
+        field_labels={},
     )
     assert resolved.wide_measures == ("rev", "cost")
     assert resolved.y == WIDE_VALUE_FIELD
-    assert wide_measure_labels_for(resolved.wide_measures) == {
+    assert wide_measure_labels_for(resolved.wide_measures, resolved.field_labels) == {
         "rev": "rev",
         "cost": "cost",
     }

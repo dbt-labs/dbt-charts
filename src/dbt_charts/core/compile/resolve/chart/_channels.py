@@ -5,11 +5,16 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Literal
 
+from dbt_charts.core.compile.models.chart.authored import BarLayer
 from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
     BarChart,
+    LineChart,
+    ScatterChart,
 )
 from dbt_charts.core.compile.models.chart.normalized._base import (
     _BaseChartFields,
+    _FieldLabelsField,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedStyleChannel,
@@ -23,6 +28,8 @@ from dbt_charts.core.compile.resolve.chart.enrich import (
     first_non_null_samples,
     is_column_discrete_for_bar_orientation,
 )
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_compile import ERR_FIELD_LABELS_FIELD_NOT_FOUND
 from dbt_charts.core.utils import is_year_shaped, vega_infers_quantitative
 
 __all__ = [
@@ -108,6 +115,8 @@ def _channels_for(
 ) -> dict[str, ResolvedStyleChannel]:
     """Resolve channel bindings from normalized chart + data column names."""
     available = set(data[0].keys()) if data else set()
+    if available and isinstance(normalized, _FieldLabelsField):
+        _validate_field_labels(normalized, available)
     # Pass style.color so normalize_chart_channels can upgrade the series channel
     # to gradient mode when color.gradient is set.
     # style is declared on every concrete chart model but not the _BaseChartFields
@@ -116,6 +125,26 @@ def _channels_for(
     style_color = getattr(style, "color", None) if style is not None else None
     channels = normalize_chart_channels(normalized, available, style_color=style_color)
     return _flag_quantitative_color(channels, data)
+
+
+def _validate_field_labels(normalized: _FieldLabelsField, available: set[str]) -> None:
+    """Raise when a ``field_labels`` key names no column the chart reads.
+
+    A layer contributes the fields it names, not its query's columns.
+    """
+    named = set(available)
+    if isinstance(normalized, (AreaChart, BarChart, LineChart, ScatterChart)):
+        for layer in normalized.layers:
+            named.update(f for f in (layer.x, layer.y, layer.color) if f is not None)
+            if isinstance(layer, BarLayer) and layer.y_start is not None:
+                named.add(layer.y_start)
+    unknown = sorted(set(normalized.field_labels) - named)
+    if unknown:
+        raise ChartDataError.from_code(
+            ERR_FIELD_LABELS_FIELD_NOT_FOUND,
+            fields=", ".join(map(repr, unknown)),
+            available=", ".join(sorted(named)),
+        )
 
 
 def _bar_orientation(

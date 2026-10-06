@@ -19,6 +19,8 @@ from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.models.style.authored import StylePatch
+from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
@@ -57,6 +59,7 @@ def _spec(
     y: str = "high",
     y_start: str | None = "low",
     style: dict[str, Any] | None = None,
+    context: ChartStyleContext = _BOARD_CTX,
     **fields: Any,
 ) -> dict[str, Any]:
     chart = TypeAdapter(Chart).validate_python(
@@ -77,7 +80,7 @@ def _spec(
         data,
         width=400,
         board_style=_BOARD_STYLE,
-        chart_style_context=_BOARD_CTX,
+        chart_style_context=context,
     )
 
 
@@ -443,6 +446,23 @@ class TestTooltips:
         assert 'utcFormat(toDate(datum["start_date"]), "%-d %b %Y")' in desc
         assert "Duration: " in desc
 
+    def test_date_span_reads_the_boards_redefined_date_short(self):
+        context = resolve_chart_style_context(
+            get_theme_style(),
+            StylePatch.model_validate({"formats": {"date_short": "%Y"}}),
+        )
+        (desc,) = _descriptions(
+            _spec(
+                _PLAN,
+                x="task",
+                y="finish_date",
+                y_start="start_date",
+                style={"orientation": "horizontal"},
+                context=context,
+            )
+        )
+        assert 'utcFormat(toDate(datum["start_date"]), "%Y")' in desc
+
     def test_layers_on_the_same_rows_share_one_block(self):
         spec = _spec(
             _RANGES,
@@ -770,5 +790,5 @@ def test_span_label_and_tooltip_place_the_sign_by_the_prefix(prefix, gain, loss)
     painted = _painted(spec)
     assert gain in painted and loss in painted, painted
     assert any(f"Change: {loss}" in t for t in painted), painted
-    resolved = resolve_format_parts(FormatConfig(**fmt), None, no_format_default=None)
+    resolved = resolve_format_parts(FormatConfig(**fmt), None)
     assert painted_span_label_text(126, 148, resolved, False) == loss

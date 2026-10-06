@@ -33,13 +33,13 @@ _SCAN_SINGLE_FILES = (DBT_CHARTS_PKG_DIR / "cli" / "_error_format.py",)
 # site means routing it through ``posix_relpath``/``.relpath`` and deleting
 # the entry, not widening this allowlist to paper over a new ad-hoc call.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("agent_api/describe.py", 203): (
+    ("agent_api/describe.py", 328): (
         "describe_board() except ValueError: resolve_board_path failed, path "
         "never became a ProjectPath — no root to relativize against via "
         "posix_relpath. Echoes the raw caller input, POSIX-normalized for "
         "display consistency, not a resolved project identity."
     ),
-    ("agent_api/describe.py", 349): (
+    ("agent_api/describe.py", 492): (
         "_describe_one_path() except ValueError: same shape as "
         "describe_board() above — resolution failed, nothing to relativize."
     ),
@@ -48,7 +48,7 @@ ALLOWED: dict[tuple[str, int], str] = {
         "raw_path never became a ProjectPath — no root to relativize "
         "against. Echoes the raw caller input, POSIX-normalized."
     ),
-    ("agent_api/validate.py", 187): (
+    ("agent_api/validate.py", 190): (
         "validate() except ValueError: same shape — resolution failed, "
         "nothing to relativize against."
     ),

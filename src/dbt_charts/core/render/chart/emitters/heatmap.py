@@ -10,6 +10,7 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     category_scale_for,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
+from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_labels_for
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_LABEL_FORMAT_AXIS_MISMATCH,
@@ -45,8 +46,8 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     measure_axis_to_vl,
     rect_mark_to_vl,
 )
-from dbt_charts.core.render.utils import normalize_data_types, slug_to_text
-from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.render.utils import normalize_data_types
+from dbt_charts.core.text.case import field_display_text
 
 
 def _write_dimension_sort(
@@ -145,13 +146,14 @@ class HeatmapEmitter:
                     ),
                 )
             layers: list[ChartSpec] = []
+            measure_labels = wide_measure_labels_for(tuple(chart.y), chart.field_labels)
             for y_field in chart.y:
                 layer_enc: dict[str, Any] = {
                     "y": {
                         "field": y_field,
                         "type": "nominal",
                     },
-                    "color": {"datum": slug_to_text(y_field)},
+                    "color": {"datum": measure_labels[y_field]},
                 }
                 # Layers share one y-position scale (no `resolve.scale.y` is
                 # ever set), so every layer needs the same sort. Where two
@@ -166,7 +168,15 @@ class HeatmapEmitter:
         encoding: dict[str, Any] = {}
         # chart.y is narrowed to str | None here: the list[str] case returned above.
         xy = resolve_xy_titles(
-            chart.x, chart.y, chart.x_label, chart.y_label, ax, ay, box, chart.id
+            chart.x,
+            chart.y,
+            chart.x_label,
+            chart.y_label,
+            ax,
+            ay,
+            box,
+            chart.id,
+            field_labels=chart.field_labels,
         )
 
         x_transformed = False
@@ -275,10 +285,8 @@ class HeatmapEmitter:
             enc = channel_to_encoding(color_ch, data)
             # Add title for aria-label quality.
             if enc.get("field"):
-                enc["title"] = format_display_text(
-                    enc["field"],
-                    from_slug=True,
-                    font=chart.legend.title.font,
+                enc["title"] = field_display_text(
+                    enc["field"], chart.field_labels, chart.legend.title.font
                 )
             # Heatmap's color channel is the whole measure, so it needs a key
             # like every other family — wire the resolved legend style through

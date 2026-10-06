@@ -407,5 +407,7 @@ rows:
                 if "width" in svg.attrib
             )
 
-        assert expected_content_width in nested_widths
+        # Prose hugs its own width, so it sits inside the content box, never wider.
+        assert nested_widths
+        assert max(nested_widths) <= expected_content_width
         assert get_theme_style().frame.max_width not in nested_widths

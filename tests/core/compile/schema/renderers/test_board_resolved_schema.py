@@ -53,9 +53,7 @@ def _regenerate_canonical_schema() -> dict[str, Any]:
         render_board_resolved_schema,
     )
 
-    # The value is arbitrary: test_board_resolved_schema_matches_regeneration
-    # drops "version" from both sides before comparing.
-    return _canonicalize_schema(render_board_resolved_schema(version="0.0.0"))
+    return _canonicalize_schema(render_board_resolved_schema())
 
 
 def test_board_resolved_schema_matches_regeneration():
@@ -63,13 +61,6 @@ def test_board_resolved_schema_matches_regeneration():
 
     Fails when a ResolvedBoard (or any type it references) changes without
     re-running `just gen-board-resolved-schema`.
-
-    ``version`` is excluded from the comparison: it is stamped from the
-    working tree's live commit distance at generation time (see
-    dbt-charts/scripts/gen_board_resolved_schema.py's ``_current_source_version``),
-    so it legitimately drifts on every later commit with no shape change at all.
-    Comparing the parsed dicts (rather than raw text) with that one key dropped
-    still fails on any real shape edit, including a hand-edit of the committed file.
     """
     assert SCHEMA_PATH.exists(), (
         f"board-resolved.schema.json not found at {SCHEMA_PATH}. "
@@ -79,24 +70,9 @@ def test_board_resolved_schema_matches_regeneration():
     committed = json.loads(SCHEMA_PATH.read_text())
     regenerated = _regenerate_canonical_schema()
 
-    assert "version" in committed and "version" in regenerated
-    del committed["version"]
-    del regenerated["version"]
-
     assert committed == regenerated, (
         "board-resolved.schema.json is stale. Re-run: just gen-board-resolved-schema"
     )
-
-
-def test_render_board_resolved_schema_stamps_caller_supplied_version():
-    """version is stamped verbatim from the caller, never looked up from
-    installed package metadata."""
-    from dbt_charts.core.compile.schema.renderers.board_resolved import (
-        render_board_resolved_schema,
-    )
-
-    schema = render_board_resolved_schema(version="0.0.0-caller-supplied-marker")
-    assert schema["version"] == "0.0.0-caller-supplied-marker"
 
 
 def test_board_resolved_schema_has_expected_metadata():
@@ -105,7 +81,7 @@ def test_board_resolved_schema_has_expected_metadata():
     assert (
         committed["$id"] == "https://dbtcharts.com/schemas/board-resolved.schema.json"
     )
-    assert isinstance(committed["version"], str) and committed["version"]
+    assert "version" not in committed
     assert "$defs" in committed
     assert committed["required"] == ["$id", "board", "styles", "version"]
     assert committed["properties"]["board"] == {"$ref": "#/$defs/ResolvedBoard"}

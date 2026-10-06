@@ -1,7 +1,7 @@
 """Regression: the color/size legend title must not read the axis title's font.
 
 bar (histogram / vertical / horizontal), line, and scatter built the color
-legend title with `format_display_text(..., font=<axis title font>)` instead
+legend title with `field_display_text(..., font=<axis title font>)` instead
 of `chart.legend.title.font` — pie, geo, and heatmap's pattern. An author
 setting `style.axis_x.title.font.case` (or, for scatter, `axis_y`) got their
 legend title silently re-cased along with the axis title.

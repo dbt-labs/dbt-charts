@@ -18,10 +18,13 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.normalized import ProsePlan
 from dbt_charts.core.compile.resolve.style.board import resolve_style
+from dbt_charts.core.compile.resolve.style.markdown_style import (
+    body_text_font_family,
+    get_compact_style,
+)
 from dbt_charts.core.font_measure import markdown_font_faces, measurer_for_face
 from dbt_charts.core.render.column_packer import span_boxes
 from dbt_charts.core.render.prose import render_prose_svg
-from dbt_charts.core.render.sizing import body_text_font_family, get_compact_style
 
 from ._prose_plan import full_width_plan, text_nodes
 
@@ -35,6 +38,7 @@ LONG = (
     "closing motion. Field events, which carried a third of pipeline a year "
     "ago, produced fewer registrations and a materially lower show rate."
 )
+FITS_A_SPAN = "Revenue grew 12%."
 SHORT = "Revenue grew 12% against a plan of 9%, carried almost entirely by renewals."
 
 WCAG_MAX_LINE_LENGTH = 80
@@ -179,16 +183,16 @@ class TestAlignmentIsRelativeToTheSpan:
     reason about a measure the renderer chose for them.
     """
 
-    def _anchor(self, width: float, align: str) -> float:
+    def _anchor(self, width: float, align: str, text: str = FITS_A_SPAN) -> float:
         resolved = resolve_style(get_theme_style("clarity"))
         text_style = resolved.text.model_copy(update={"align": align})
         svg, _ = render_prose_svg(
-            SHORT,
+            text,
             width,
             text_style,
             resolved,
             plan_for(width),
-            authored=SHORT,
+            authored=text,
             base_dir=None,
             error_collector=None,
         )
@@ -205,6 +209,11 @@ class TestAlignmentIsRelativeToTheSpan:
     def test_centered_prose_centers_on_its_span(self, width: float) -> None:
         assert self._anchor(width, "center") == pytest.approx(
             self._span_text(width) / 2, abs=2.0
+        )
+
+    def test_a_line_wider_than_a_span_centers_on_the_whole_card(self) -> None:
+        assert self._anchor(1128.0, "center", SHORT) == pytest.approx(
+            1128.0 / 2, abs=2.0
         )
 
     @pytest.mark.parametrize("width", [600.0, 900.0, 1128.0])

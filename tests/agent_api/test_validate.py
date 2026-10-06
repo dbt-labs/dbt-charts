@@ -489,6 +489,32 @@ class TestValidatePathDefaultsToProjectBoardsDir:
         assert PurePosixPath(results[0].path).name == "hello.yml"
         assert results[0].success is True
 
+    def test_validate_no_path_includes_package_boards(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """The bare, whole-project default validates every board root."""
+        from dbt_charts.agent_api.validate import validate_paths
+
+        (tmp_path / "charts").mkdir()
+        _write_board(tmp_path / "charts", _VALID_BOARD, "hello.yml")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        _write_board(pkg_charts, _VALID_BOARD, "overview.yml")
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        monkeypatch.chdir(tmp_path)
+
+        results = validate_paths(None, project=local_project(tmp_path))
+
+        paths = {r.path for r in results}
+        assert paths == {
+            "charts/hello.yml",
+            "dbt_packages/pkg_a/charts/overview.yml",
+        }
+        assert all(r.success for r in results)
+
 
 class TestValidatePathsConcatenatesArgvOrder:
     """validate_paths([a, b]) concatenates per-argv results, preserving order."""

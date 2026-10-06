@@ -7,6 +7,9 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+import sqlglot
+
 from dbt_charts.agent_api.query import lookup_board_query_sql
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
@@ -244,3 +247,120 @@ def test_preview_resolves_refs_against_the_sources_target_path(
 
     assert result.success, result.errors
     assert result.sql == "SELECT * FROM prod.orders"
+
+
+DIALECT_BOARD = """
+variables:
+  who:
+    input: text
+    default: Ann
+queries:
+  main:
+    sql: SELECT date_trunc('month', d) AS m FROM t WHERE who = {{ who }}
+    source: db
+    dialect: bigquery
+charts:
+  c:
+    type: table
+    query: main
+"""
+
+
+def _dialect_project(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject], source_type: str
+) -> FilesystemProject:
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "b.yml").write_text(DIALECT_BOARD)
+    detail = "profile: p" if source_type == "dbt_profile" else "path: x.db"
+    (tmp_path / "dbt_charts.yml").write_text(
+        f"sources:\n  db:\n    type: {source_type}\n    {detail}\n"
+    )
+    return local_project(tmp_path)
+
+
+def test_preview_translates_a_dialect_query_with_values_inlined(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    project = _dialect_project(tmp_path, local_project, "sqlite")
+    result = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)
+    assert result.success, result.errors
+    expected = sqlglot.transpile(
+        "SELECT date_trunc('month', d) AS m FROM t WHERE who = 'Ann'",
+        read="bigquery",
+        write="sqlite",
+    )[0]
+    assert result.sql == expected
+
+
+def _csv_dialect_project(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject], dialect: str
+) -> FilesystemProject:
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "b.yml").write_text(
+        DIALECT_BOARD.replace("dialect: bigquery", f"dialect: {dialect}")
+    )
+    (tmp_path / "data.csv").write_text("who\nAnn\n")
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  db:\n    type: csv\n    files:\n      t: data.csv\n"
+    )
+    return local_project(tmp_path)
+
+
+def test_preview_agrees_with_execution_on_file_sources(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """A file source runs on duckdb: its own dialect previews, another is refused."""
+    project = _csv_dialect_project(tmp_path, local_project, "duckdb")
+    ok = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)
+    assert ok.success, ok.errors
+
+    (tmp_path / "other").mkdir()
+    other = _csv_dialect_project(tmp_path / "other", local_project, "bigquery")
+    refused = lookup_board_query_sql("main", Path("charts/b.yml"), project=other)
+    assert not refused.success
+    assert any("not translated" in e for e in refused.errors), refused.errors
+
+
+def test_preview_translates_to_the_dbt_profiles_warehouse(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dbt_profile source previews translated to its target's warehouse, as
+    execution does."""
+    monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+    sql = "SELECT DATE_TRUNC(d, MONTH) AS m FROM t WHERE who = {{ who }}"
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "b.yml").write_text(
+        DIALECT_BOARD.replace(
+            "SELECT date_trunc('month', d) AS m FROM t WHERE who = {{ who }}", sql
+        )
+    )
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  db:\n    type: dbt_profile\n    profile: p\n    target: dev\n"
+    )
+    (tmp_path / "dbt_project.yml").write_text("name: p\nprofile: p\n")
+    (tmp_path / "profiles.yml").write_text(
+        "p:\n"
+        "  target: dev\n"
+        "  outputs:\n"
+        "    dev:\n"
+        "      type: postgres\n"
+        "      host: localhost\n"
+        "      user: u\n"
+        "      password: pw\n"
+        "      port: 5432\n"
+        "      dbname: d\n"
+        "      schema: s\n"
+        "      threads: 1\n"
+    )
+
+    result = lookup_board_query_sql(
+        "main", Path("charts/b.yml"), project=local_project(tmp_path)
+    )
+
+    assert result.success, result.errors
+    expected = sqlglot.transpile(
+        sql.replace("{{ who }}", "'Ann'"), read="bigquery", write="postgres"
+    )[0]
+    assert result.sql == expected

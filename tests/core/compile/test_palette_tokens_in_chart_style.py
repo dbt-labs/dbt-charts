@@ -408,3 +408,31 @@ class TestBracketRoleTokensInChartStyle:
         patch = _patch({"bar": {"background": "categry[2]"}})
         with pytest.raises(UnknownColorError):
             build_chart_style_context(board, BarChart(id="t", type="bar", style=patch))
+
+
+class TestUnknownAliasOnCatalogPalette:
+    """`dbt-grays.surface` names a shipped palette with no such alias: the
+    error must say so, not that `dbt-grays` is an unbound theme role."""
+
+    def test_unknown_alias_reports_the_palette_aliases(self) -> None:
+        from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
+        from dbt_charts.core.compile.resolve.style.tokens import (
+            _resolve_one_color_token,
+        )
+
+        with pytest.raises(
+            UnknownColorError,
+            match=r"palette 'dbt-grays' has no alias 'surface'. Known aliases",
+        ):
+            _resolve_one_color_token(
+                "dbt-grays.surface", {"category": "vivid-10"}, None
+            )
+
+    def test_a_theme_role_sharing_the_catalog_name_still_resolves(self) -> None:
+        from dbt_charts.core.compile.resolve.style.tokens import (
+            _resolve_one_color_token,
+        )
+
+        assert _resolve_one_color_token(
+            "positive.solid", {"positive": "dbt-positive"}, None
+        ).startswith("#")

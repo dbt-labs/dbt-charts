@@ -13,9 +13,7 @@ Run via: just gen-schema-artifacts
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -61,34 +59,12 @@ def _canonicalize_schema(value: Any, parent_key: str | None = None) -> Any:
     return value
 
 
-def _current_source_version() -> str:
-    """Version of the working tree this script is actually running against.
-
-    Built fresh via ``uv build`` (the same hatch-vcs machinery a release
-    build uses, configured in ``dbt-charts/pyproject.toml``) rather than read
-    from installed package metadata: an editable install's
-    ``importlib.metadata`` version is frozen at whatever point the dev venv
-    was last (re)installed, and drifts from HEAD on every later commit until
-    the next ``uv sync --reinstall-package dbt-charts``.
-    """
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        subprocess.run(
-            ["uv", "build", "--wheel", "--out-dir", tmp_dir, str(_DBT_CHARTS_DIR)],
-            check=True,
-        )
-        (wheel,) = Path(tmp_dir).glob("dbt_charts-*.whl")
-        # Wheel filename: {name}-{version}-{python_tag}-{abi_tag}-{platform_tag}.whl
-        return wheel.name.split("-")[1]
-
-
 def main() -> None:
     from dbt_charts.core.compile.schema.renderers.board_resolved import (
         render_board_resolved_schema,
     )
 
-    schema = _canonicalize_schema(
-        render_board_resolved_schema(_current_source_version())
-    )
+    schema = _canonicalize_schema(render_board_resolved_schema())
 
     SCHEMA_PATH.parent.mkdir(parents=True, exist_ok=True)
     SCHEMA_PATH.write_text(json.dumps(schema, indent=2) + "\n")

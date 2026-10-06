@@ -296,6 +296,25 @@ class _ConditionalFormattingField(BaseModel):
     ]
 
 
+class _FieldLabelsField(BaseModel):
+    """Mixin adding field_labels to the families that derive text from field names."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field_labels: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description=(
+                "Display text per query column, painted as written wherever the "
+                "chart would otherwise derive text from that column's name: "
+                "legend titles and entries, tooltip rows, axis titles. "
+                "x_label/y_label and a layer's label win on their own surface."
+            ),
+        ),
+    ]
+
+
 class _SharedChartFields(_BaseChartFields):
     """Private base for chart families that support title/subtitle (all except KPI).
 
@@ -350,7 +369,7 @@ def reject_multi_series_channel_conflicts(
         )
 
 
-class _CartesianChartFields(_SharedChartFields):
+class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
     """Private base for cartesian chart families (bar, line, area, scatter, heatmap).
 
     Holds channel fields that only make sense on charts with x/y axes.
@@ -524,7 +543,7 @@ class BasemapConfig(BaseModel):
     )
 
 
-class _GeoChartFields(_SharedChartFields):
+class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
     """Private base for geographic chart families (map/geoshape, point_map/bubble_map)."""
 
     # None = no projection specified; renderer uses default.
@@ -617,7 +636,7 @@ class _GeoChartFields(_SharedChartFields):
         return validate_projection_definition(value)
 
 
-class _RadialChartFields(_SharedChartFields):
+class _RadialChartFields(_SharedChartFields, _FieldLabelsField):
     """Private base for radial/arc chart families (pie, donut).
 
     Holds channel fields that only make sense on arc charts with angular encoding.

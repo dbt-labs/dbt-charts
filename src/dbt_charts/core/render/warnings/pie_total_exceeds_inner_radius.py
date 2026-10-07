@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.compile.resolve.chart.pie_attachment import (
     arc_disk_width,
@@ -44,7 +45,6 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
 from dbt_charts.core.diagnostics import WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS, Diagnostic
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart.emitters.pie import pie_hole_radius_px
-from dbt_charts.core.render.format_utils import format_value
 from dbt_charts.core.render.warnings.base import WarningContext
 
 

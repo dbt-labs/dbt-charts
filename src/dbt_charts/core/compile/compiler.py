@@ -78,7 +78,10 @@ from dbt_charts.core.compile.models.refs import (
     normalize_query_value,
 )
 from dbt_charts.core.compile.models.variable.authored import Variable
-from dbt_charts.core.compile.normalize.charts import RegisteredChart
+from dbt_charts.core.compile.normalize.charts import (
+    RegisteredChart,
+    display_text_fields,
+)
 from dbt_charts.core.compile.normalize.dispatch import (
     board_style_cache,
     normalize_board,
@@ -110,6 +113,7 @@ from dbt_charts.core.compile.template.jinja import (
     check_dialect_composition,
     detect_query_dependencies,
     extract_sql_variable_dependencies,
+    text_query_references,
 )
 from dbt_charts.core.compile.validate.authoring_warnings import (
     YamlValue,
@@ -124,6 +128,7 @@ from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_EMPTY_YAML_DOCUMENT,
+    ERR_TEXT_UNKNOWN_QUERY,
     ERR_UNKNOWN_QUERY,
     WARN_HTML_POLICY_CAPPED,
     WARN_SCHEMA_MIGRATED,
@@ -1808,4 +1813,20 @@ def _load_chart_ref_with_lexical_queries(
             for layer in layers
         ]
 
-    return RegisteredChart(chart_raw, file_dir)
+    text_refs: set[str] = set()
+    for text_field in display_text_fields(str(chart_raw.get("type"))):
+        text = chart_raw.get(text_field)
+        if not isinstance(text, str):
+            continue
+        for ref in sorted(text_query_references([text])):
+            if "#" not in ref and ref not in queries_section:
+                raise CompilationError.from_code(
+                    ERR_TEXT_UNKNOWN_QUERY,
+                    surface=f"Chart '{_item_name}' {text_field}",
+                    query_name=ref,
+                    defined=sorted(queries_section),
+                )
+            text_refs.add(ref)
+    return RegisteredChart(
+        chart_raw, file_dir, {ref: resolve_name(ref) for ref in sorted(text_refs)}
+    )

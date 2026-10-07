@@ -12,6 +12,7 @@ import sys
 import types
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -225,6 +226,7 @@ class TestRenderKpiFormatKindMismatchCarriesCode:
     def test_support_format_mismatch_carries_code(self) -> None:
         from dbt_charts.core.compile.models.chart.authored import KpiSupportConfig
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
         from dbt_charts.core.diagnostics.codes_render import (
             ERR_KPI_FORMAT_KIND_MISMATCH,
         )
@@ -236,7 +238,8 @@ class TestRenderKpiFormatKindMismatchCarriesCode:
             query_name="q",
             type="kpi",
             value="revenue",
-            support=KpiSupportConfig(value="renewed_on", format="percent"),
+            support=KpiSupportConfig(value="renewed_on"),
+            style=KpiChartStylePatch.model_validate({"support": {"format": "percent"}}),
         )
         data = [{"revenue": 1_500_000, "renewed_on": "2026-11-15"}]
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -400,3 +403,329 @@ class TestRenderVegaLiteUnsupportedTypeCarriesCode:
             generate_vega_lite_spec(chart, data)
 
         assert exc_info.value.code is ERR_VEGA_LITE_UNSUPPORTED_TYPE
+
+
+def _kpi_error(data: list[dict[str, int]], value: str = "n") -> ChartDataError:
+    from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    chart = KpiChart(
+        id="rev",
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+        type="kpi",
+        value=value,
+    )
+    resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+    assert isinstance(resolved, ResolvedKpiChart)
+    with pytest.raises(ChartDataError) as exc_info:
+        render_kpi_svg(
+            resolved,
+            data,
+            width=200,
+            height=140,
+            board_style=resolve_style(get_theme_style()),
+        )
+    return exc_info.value
+
+
+class TestRenderKpiDataErrorsCarryCode:
+    def test_no_rows_carries_code(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
+
+        error = _kpi_error([])
+        assert error.code is ERR_KPI_NO_DATA
+        assert error.fields == {"chart_id": "rev"}
+
+    def test_missing_value_column_carries_code(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_KPI_VALUE_COLUMN_NOT_FOUND,
+        )
+
+        error = _kpi_error([{"other": 1}])
+        assert error.code is ERR_KPI_VALUE_COLUMN_NOT_FOUND
+        assert error.fields == {"chart_id": "rev", "value_column": "n"}
+
+
+_TABLE_ROWS = [{"a": 1, "b": 2, "c": 3}]
+
+
+def _table_error(
+    data: list[dict[str, Any]] = _TABLE_ROWS, **chart_fields: Any
+) -> ChartDataError:
+    from dbt_charts.core.compile.models.chart.normalized import TableChart
+    from dbt_charts.core.compile.models.chart.resolved.table import (
+        ResolvedTableChart,
+    )
+    from dbt_charts.core.render.chart.table import render_table_svg
+
+    chart = TableChart(id="t", type="table", **chart_fields)
+    resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+    assert isinstance(resolved, ResolvedTableChart)
+    with pytest.raises(ChartDataError) as exc_info:
+        render_table_svg(
+            resolved, data, width=700, board_style=resolve_style(get_theme_style())
+        )
+    return exc_info.value
+
+
+class TestRenderTableDataErrorsCarryCode:
+    def test_swatch_not_color(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import ERR_TABLE_SWATCH_NOT_COLOR
+
+        error = _table_error(
+            [{"s": "#3164a3"}, {"s": "Mid"}],
+            style={"columns": {"s": {"swatch": True}}},
+        )
+        assert error.code is ERR_TABLE_SWATCH_NOT_COLOR
+        assert error.fields == {
+            "chart_id": "t",
+            "swatch_column": "s",
+            "row_index": 1,
+            "value": "Mid",
+        }
+
+    def test_spanner_unknown_column(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_SPANNER_UNKNOWN_COLUMN,
+        )
+
+        error = _table_error(spanners=[{"label": "X", "columns": ["a", "nope"]}])
+        assert error.code is ERR_TABLE_SPANNER_UNKNOWN_COLUMN
+        assert error.fields == {
+            "chart_id": "t",
+            "label": "X",
+            "unknown": ["nope"],
+            "columns": ["a", "b", "c"],
+        }
+
+    def test_spanner_not_adjacent(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_SPANNER_NOT_ADJACENT,
+        )
+
+        error = _table_error(spanners=[{"label": "X", "columns": ["a", "c"]}])
+        assert error.code is ERR_TABLE_SPANNER_NOT_ADJACENT
+        assert error.fields == {
+            "chart_id": "t",
+            "label": "X",
+            "spanner_columns": ["a", "c"],
+            "visible_columns": ["a", "b", "c"],
+        }
+
+    def test_transpose_row_count(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_TRANSPOSE_ROW_COUNT,
+        )
+
+        error = _table_error(_TABLE_ROWS * 2, style={"transpose": True})
+        assert error.code is ERR_TABLE_TRANSPOSE_ROW_COUNT
+        assert error.fields == {"row_count": 2}
+
+    def test_transpose_visible_unknown_column(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_TRANSPOSE_VISIBLE_UNKNOWN_COLUMN,
+        )
+
+        error = _table_error(
+            style={"transpose": True, "columns": {"ghost": {"visible": False}}}
+        )
+        assert error.code is ERR_TABLE_TRANSPOSE_VISIBLE_UNKNOWN_COLUMN
+        assert error.fields == {
+            "unaddressed": ["ghost"],
+            "available": ["a", "b", "c"],
+        }
+
+    def test_visible_unknown_column(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_VISIBLE_UNKNOWN_COLUMN,
+        )
+
+        error = _table_error(style={"columns": {"ghost": {"visible": False}}})
+        assert error.code is ERR_TABLE_VISIBLE_UNKNOWN_COLUMN
+        assert error.fields == {
+            "chart_id": "t",
+            "unaddressed": ["ghost"],
+            "addressable": ["a", "b", "c"],
+        }
+
+
+_PIVOT_ROWS = [
+    {"region": "US", "quarter": "Q1", "revenue": 100},
+    {"region": "EU", "quarter": "Q1", "revenue": 90},
+]
+
+
+def _pivot_error(
+    data: list[dict[str, Any]] = _PIVOT_ROWS, **kwargs: Any
+) -> ChartDataError:
+    from dbt_charts.core.render.chart.table import pivot_table_data
+
+    with pytest.raises(ChartDataError) as exc_info:
+        pivot_table_data(data, **kwargs)
+    return exc_info.value
+
+
+class TestPivotTableDataErrorsCarryCode:
+    @pytest.mark.parametrize(
+        ("kwargs", "channel", "field"),
+        [
+            (
+                {"rows": ["region"], "columns": ["qtr"], "values": ["revenue"]},
+                "pivot.column",
+                "qtr",
+            ),
+            (
+                {"rows": ["region"], "columns": ["quarter"], "values": ["revenu"]},
+                "pivot.value",
+                "revenu",
+            ),
+            (
+                {"rows": ["regoin"], "columns": ["quarter"], "values": ["revenue"]},
+                "pivot.row",
+                "regoin",
+            ),
+        ],
+    )
+    def test_field_not_found(
+        self, kwargs: dict[str, Any], channel: str, field: str
+    ) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_PIVOT_FIELD_NOT_FOUND,
+        )
+
+        error = _pivot_error(**kwargs)
+        assert error.code is ERR_TABLE_PIVOT_FIELD_NOT_FOUND
+        assert error.fields == {
+            "channel": channel,
+            "field": field,
+            "observed": ["quarter", "region", "revenue"],
+        }
+        assert error.to_diagnostic().path is None
+
+    def test_row_role_literal(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_PIVOT_ROW_ROLE_LITERAL,
+        )
+
+        error = _pivot_error(
+            rows=["region"],
+            columns=["quarter"],
+            values=["revenue"],
+            row_role_spec="total",
+        )
+        assert error.code is ERR_TABLE_PIVOT_ROW_ROLE_LITERAL
+        assert error.fields == {
+            "row_role": "total",
+            "observed": ["quarter", "region", "revenue"],
+        }
+
+    def test_no_measures(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import ERR_TABLE_PIVOT_NO_MEASURES
+
+        error = _pivot_error(rows=["region"], columns=["quarter"], values=[])
+        assert error.code is ERR_TABLE_PIVOT_NO_MEASURES
+        assert error.fields == {"observed": ["quarter", "region", "revenue"]}
+
+    def test_dimensions_ambiguous(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_PIVOT_DIMENSIONS_AMBIGUOUS,
+        )
+
+        error = _pivot_error(rows=[], columns=["quarter"], values=None)
+        assert error.code is ERR_TABLE_PIVOT_DIMENSIONS_AMBIGUOUS
+        assert error.fields == {}
+
+    def test_row_role_conflict(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_PIVOT_ROW_ROLE_CONFLICT,
+        )
+
+        error = _pivot_error(
+            data=[
+                {"region": "US", "quarter": "Q1", "revenue": 1, "role": "value"},
+                {"region": "US", "quarter": "Q2", "revenue": 3, "role": "summary"},
+            ],
+            rows=["region"],
+            columns=["quarter"],
+            values=["revenue"],
+            row_role_spec="role",
+        )
+        assert error.code is ERR_TABLE_PIVOT_ROW_ROLE_CONFLICT
+        assert error.fields == {
+            "row": "region='US'",
+            "stored_role": "value",
+            "this_role": "summary",
+        }
+
+    def test_duplicate_cell(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_PIVOT_DUPLICATE_CELL,
+        )
+
+        error = _pivot_error(
+            data=[*_PIVOT_ROWS, {"region": "US", "quarter": "Q1", "revenue": 999}],
+            rows=["region"],
+            columns=["quarter"],
+            values=["revenue"],
+        )
+        assert error.code is ERR_TABLE_PIVOT_DUPLICATE_CELL
+        assert error.fields == {
+            "row": "region='US'",
+            "pivot_column": "('Q1',)",
+            "measure": "revenue",
+        }
+
+
+_NEW_DATA_ERROR_CODES = (
+    "ERR-KPI-NO-DATA",
+    "ERR-KPI-VALUE-COLUMN-NOT-FOUND",
+    "ERR-TABLE-SWATCH-NOT-COLOR",
+    "ERR-TABLE-SPANNER-UNKNOWN-COLUMN",
+    "ERR-TABLE-SPANNER-NOT-ADJACENT",
+    "ERR-TABLE-TRANSPOSE-ROW-COUNT",
+    "ERR-TABLE-TRANSPOSE-VISIBLE-UNKNOWN-COLUMN",
+    "ERR-TABLE-VISIBLE-UNKNOWN-COLUMN",
+    "ERR-TABLE-PIVOT-FIELD-NOT-FOUND",
+    "ERR-TABLE-PIVOT-ROW-ROLE-LITERAL",
+    "ERR-TABLE-PIVOT-NO-MEASURES",
+    "ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS",
+    "ERR-TABLE-PIVOT-ROW-ROLE-CONFLICT",
+    "ERR-TABLE-PIVOT-DUPLICATE-CELL",
+    "ERR-TABLE-LINK-FILTER-UNKNOWN",
+    "ERR-TABLE-TEMPORAL-FORMAT-INVALID",
+)
+
+
+@pytest.mark.parametrize("code", _NEW_DATA_ERROR_CODES)
+def test_params_do_not_shadow_error_attributes(code: str) -> None:
+    """`from_code` setattrs every param onto the error, so a param named like
+    an error attribute (`column`, `field_path`, `line`, ...) would overwrite it."""
+    import string
+
+    from dbt_charts.core.diagnostics import REGISTRY
+
+    params = {
+        name
+        for _, name, _, _ in string.Formatter().parse(
+            REGISTRY.get(code).message_template
+        )
+        if name
+    }
+    reserved = {"line", "column", "field_path", "detail", "hint", "element", "format"}
+    assert not params & reserved
+
+
+class TestTableTemporalFormatCarriesCode:
+    def test_unparseable_iso_date(self) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_TEMPORAL_FORMAT_INVALID,
+        )
+        from dbt_charts.core.render.chart.table_support import format_table_cell_value
+
+        with pytest.raises(ChartDataError) as exc_info:
+            format_table_cell_value("2026-01-01T25:00:00", None)
+        assert exc_info.value.code is ERR_TABLE_TEMPORAL_FORMAT_INVALID
+        assert set(exc_info.value.fields) == {"cell", "spec", "reason"}
+        assert exc_info.value.fields["cell"] == "2026-01-01T25:00:00"

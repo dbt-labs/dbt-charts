@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import math
 from collections.abc import Sequence
@@ -131,9 +132,17 @@ def get_font_measurer(
 
 
 def get_weighted_font_measurer(
-    font_family: str | None, css_weight: str | float
+    font_family: str | None,
+    css_weight: str | float,
+    *,
+    italic: bool = False,
+    numeric: bool = False,
 ) -> FontMeasurer:
     """Return the measurer for ``font_family`` instanced at ``css_weight``.
+
+    ``italic`` measures the family's vendored italic, else its upright face (the
+    browser synthesizes an oblique of the same advances). ``numeric`` measures
+    tabular figures, as :func:`get_font_measurer` does.
 
     A variable file measured at two weights gives different advances, so a run
     painted at 600 must be measured at 600 or whatever is positioned against it
@@ -154,11 +163,14 @@ def get_weighted_font_measurer(
     frozenset — compile/ layer — without a tach cycle, so the check here is
     structural: keyword-or-numeric, not the same fixed keyword set).
     """
+    path = get_font_path(font_family, numeric=numeric)
+    if italic and font_family:
+        with contextlib.suppress(KeyError):
+            path = str(get_face(registry_family(font_family), "italic").measure_path)
     try:
         weight = int(css_weight_to_axis(css_weight))
     except ValueError:
-        return get_font_measurer(font_family)
-    path = get_font_path(font_family)
+        return _load_measurer(path)
     key = f"{path}|{weight}"
     cached = _face_measurers.get(key)
     if cached is not None:

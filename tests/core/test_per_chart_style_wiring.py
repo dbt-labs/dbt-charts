@@ -674,16 +674,23 @@ class TestKpiStyleCascade:
         assert ctx.kpi.label.font.weight == 702
 
     def test_parent_font_weight_cascades_into_affix_slot(self):
-        """kpi.font.weight must cascade into kpi.affix.font.weight."""
+        """kpi.font.weight must cascade into kpi.value.affix.font.weight."""
         compiled = self._compiled_with_kpi_weight(703)
         ctx = resolve_chart_style_context(compiled)
-        assert ctx.kpi.affix.font.weight == 703
+        assert ctx.kpi.value.affix.font.weight == 703
 
     def test_parent_font_weight_cascades_into_glyph_slot(self):
-        """kpi.font.weight must cascade into kpi.glyph.font.weight."""
+        """kpi.font.weight must cascade into kpi.value.glyph.font.weight."""
         compiled = self._compiled_with_kpi_weight(704)
         ctx = resolve_chart_style_context(compiled)
-        assert ctx.kpi.glyph.font.weight == 704
+        assert ctx.kpi.value.glyph.font.weight == 704
+
+    def test_parent_font_weight_cascades_into_support_slots(self):
+        """kpi.font.weight must cascade into kpi.support.font and its glyph."""
+        compiled = self._compiled_with_kpi_weight(705)
+        ctx = resolve_chart_style_context(compiled)
+        assert ctx.kpi.support.font.weight == 705
+        assert ctx.kpi.support.glyph.font.weight == 705
 
     def test_slot_override_wins_over_parent_cascade(self):
         """A slot-level font override takes precedence over parent cascade."""
@@ -705,7 +712,7 @@ class TestKpiStyleCascade:
             )
         )
         assert ctx.kpi.value.font.weight == 800
-        # label/affix/glyph inherit the parent weight
+        # label/support inherit the parent weight
         assert ctx.kpi.label.font.weight == 600
 
     def test_value_font_size_accessible_on_value_slot(self):
@@ -716,7 +723,7 @@ class TestKpiStyleCascade:
         assert float(ctx.kpi.value.font.size) > 0
 
     def test_kpi_value_font_size_none_asserts(self):
-        """Assert fires loudly when kpi.value.font.size is None (cascade contract)."""
+        """Render raises loudly when kpi.value.font is unresolved (cascade contract)."""
         import dataclasses
 
         from dbt_charts.core.compile.models.primitives import FontStyle
@@ -743,7 +750,5 @@ class TestKpiStyleCascade:
             }
         )
 
-        with pytest.raises(
-            AssertionError, match="theme must supply kpi.value.font.size"
-        ):
+        with pytest.raises(ValueError, match="value.font is unresolved"):
             render_kpi_svg(patched_chart, data, board_style=resolved)

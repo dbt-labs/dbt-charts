@@ -50,8 +50,8 @@ def test_render_kpi_terminal_spec_less_affix_matches_svg_finalized_format(
     KPI value paints like the SVG renderer.
     """
     from dbt_charts.core.compile.format import finalize_kpi_value_format
+    from dbt_charts.core.compile.format_value import format_value
     from dbt_charts.core.compile.models.primitives import FormatConfig
-    from dbt_charts.core.render.format_utils import format_value
 
     value_format = FormatConfig(prefix="EUR ")
     value = -41500
@@ -86,8 +86,8 @@ def test_render_kpi_terminal_money_prefix_below_one_falls_back(make_chart):
     to the same digits.
     """
     from dbt_charts.core.compile.format import finalize_kpi_value_format
+    from dbt_charts.core.compile.format_value import format_kpi_parts, format_value
     from dbt_charts.core.compile.models.primitives import FormatConfig
-    from dbt_charts.core.render.format_utils import format_kpi_parts, format_value
 
     value_format = FormatConfig(prefix="£")
     value = 0.67
@@ -337,3 +337,24 @@ def test_render_chart_item_terminal_still_isolates_bug_class_errors(make_chart):
     output = render_chart_item_terminal(chart, executor, {}, 80, 20, formats=None)
 
     assert output.startswith(f"[Error rendering {chart.id}:")
+
+
+def test_render_kpi_terminal_no_rows_carries_code(make_chart):
+    from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
+
+    chart = make_chart("kpi", value="revenue")
+    with pytest.raises(ChartDataError) as exc_info:
+        render_kpi_terminal(chart, [], "Rev", formats=None)
+    assert exc_info.value.code is ERR_KPI_NO_DATA
+    assert exc_info.value.fields == {"chart_id": chart.id}
+
+
+def test_render_kpi_terminal_multirow_carries_code(make_chart):
+    from dbt_charts.core.diagnostics.codes_render import ERR_KPI_MULTIROW
+
+    chart = make_chart("kpi", value="revenue")
+    data = [{"revenue": 1}, {"revenue": 2}]
+    with pytest.raises(ChartDataError) as exc_info:
+        render_kpi_terminal(chart, data, "Rev", formats=None)
+    assert exc_info.value.code is ERR_KPI_MULTIROW
+    assert exc_info.value.fields == {"chart_id": chart.id, "row_count": 2}

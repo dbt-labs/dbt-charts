@@ -32,6 +32,7 @@ from dbt_charts.core.execute.adapters.base import (
 from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql
 from dbt_charts.core.execute.warehouse_check import (
     WarehouseCheckColumn,
+    _strip_trailing_semicolon_for_script_join,
     check_ad_hoc_query,
     warehouse_check,
 )
@@ -1655,3 +1656,35 @@ charts:
 """
     compiled, registry = _duckdb_project(tmp_path, board_yml=board_yml)
     assert _check(compiled, registry).status != "unchecked"
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        ("SELECT 1", "SELECT 1"),
+        ("SELECT 1;", "SELECT 1"),
+        ("SELECT 1 ;\t ", "SELECT 1 "),
+        ("SELECT 1; -- note", "SELECT 1"),
+        ("SELECT 1;--note", "SELECT 1"),
+        ("SELECT 1;;", "SELECT 1"),
+        ("SELECT 1; ; -- a\n;\n-- b", "SELECT 1; ; -- a\n;\n-- b"),
+        ("SELECT 1; -- a\n; -- b", "SELECT 1"),
+        ("SELECT 1; -- a\n;\n", "SELECT 1"),
+        ("SELECT 1\n-- note", "SELECT 1\n-- note"),
+        ("SELECT 1; -- a; b\nSELECT 2", "SELECT 1; -- a; b\nSELECT 2"),
+        ("SELECT ';' ;", "SELECT ';' "),
+        ("SELECT 1; /* c */", "SELECT 1; /* c */"),
+    ],
+)
+def test_strip_trailing_semicolon_for_script_join(sql: str, expected: str) -> None:
+    assert _strip_trailing_semicolon_for_script_join(sql) == expected
+
+
+@pytest.mark.parametrize("n", [20_000, 200_000])
+def test_strip_trailing_semicolon_is_linear_on_adversarial_input(n: int) -> None:
+    import time
+
+    sql = "SELECT 1; --" + ";" * n + "\nx"
+    started = time.perf_counter()
+    assert _strip_trailing_semicolon_for_script_join(sql) == sql
+    assert time.perf_counter() - started < 1.0

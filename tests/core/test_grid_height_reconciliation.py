@@ -37,7 +37,8 @@ def _item(
 
 def _measure(layout: Layout) -> float:
     return _measure_grid_layout_height(
-        layout,
+        layout.items,
+        layout.columns,
         card_gap=0.0,
         gap=_GAP,
         available_width=_WIDTH,

@@ -33,7 +33,7 @@ Security Note:
 
 import logging
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from jinja2 import (
@@ -41,10 +41,13 @@ from jinja2 import (
     StrictUndefined,
     TemplateError,
     TemplateSyntaxError,
+    Undefined,
     UndefinedError,
     meta,
     nodes as jinja_nodes,
 )
+from jinja2.exceptions import TemplateRuntimeError
+from jinja2.utils import missing
 
 from dbt_charts.core.compile.errors import (
     CompilationError,
@@ -54,12 +57,27 @@ from dbt_charts.core.compile.errors import (
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
+from dbt_charts.core.compile.template.markdown_fence import mask_fenced_code
 from dbt_charts.core.compile.template.output_budget import (
     TemplateOutputBudgetExceeded,
     render_with_budget,
 )
-from dbt_charts.core.diagnostics.codes_compile import ERR_QUERY_DIALECT_MIXED
+from dbt_charts.core.compile.template.query_result import (
+    QueryResult,
+    QueryResults,
+    underscore_access_error,
+)
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_QUERY_DIALECT_MIXED,
+    ERR_TEXT_QUERIES_NONLITERAL,
+)
 from dbt_charts.core.diagnostics.codes_execute import ERR_SQL_DIALECT_UNSUPPORTED
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_TEXT_EMPTY_SEQUENCE,
+    ERR_TEXT_NULL_COMPARISON,
+    ERR_TEXT_TYPE_ERROR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +87,43 @@ _jinja_env = BoardTemplateEnvironment(undefined=StrictUndefined)
 
 # Lenient Jinja environment (undefined variables become empty/None)
 _jinja_env_lenient = BoardTemplateEnvironment(undefined=_LenientUndefined)
+
+
+class _BoardTextEnvironment(BoardTemplateEnvironment):
+    """Board text: an underscore name on a query result raises, never renders empty."""
+
+    def unsafe_undefined(
+        self,
+        obj: Any,  # type-state: explicit_any — any template value
+        attribute: str,
+    ) -> Undefined:
+        if not attribute.startswith("__"):
+            error = underscore_access_error(obj, attribute)
+            if error is not None:
+                raise error
+        return super().unsafe_undefined(obj, attribute)
+
+
+class _TextUndefined(_LenientUndefined):
+    """Board text: an item taken from an empty list raises instead of rendering empty.
+
+    Jinja's ``first``/``last``/``min``/``max``/``random`` return an undefined
+    whose hint ends with "sequence was empty."
+    """
+
+    def __init__(
+        self,
+        hint: str | None = None,
+        obj: Any = missing,  # type-state: explicit_any — Jinja's undefined contract
+        name: str | None = None,
+        exc: type[TemplateRuntimeError] = UndefinedError,
+    ) -> None:
+        if hint is not None and hint.endswith("sequence was empty."):
+            raise ChartDataError.from_code(ERR_TEXT_EMPTY_SEQUENCE, detail=hint)
+        super().__init__(hint, obj, name, exc)
+
+
+_jinja_env_text = _BoardTextEnvironment(undefined=_TextUndefined)
 
 # {{ queries.X }} inline ref and {{ queries.X.cache }} cache-read ref patterns.
 # Shared by dependency detection and inline substitution so the two stay in sync.
@@ -278,6 +333,94 @@ def extract_variable_dependencies(template_str: str) -> set[str]:
         return set()
 
 
+CellFormatter = Callable[[Any, str], str]  # type-state: explicit_any — DB cell values
+
+
+def extract_query_result_references(template_str: str) -> set[str]:
+    """Query names board text reads through ``queries.<name>`` / ``queries['<name>']``.
+
+    Fenced code blocks are not Jinja and are skipped. A template that does not
+    parse yields no references; rendering reports the syntax error.
+
+    Raises:
+        CompilationError: ``ERR-TEXT-QUERIES-NONLITERAL`` if ``queries`` appears
+            in any form other than a literal-name access, so the set of queries
+            a board reads is always known before it runs.
+    """
+    masked, _ = mask_fenced_code(template_str)
+    if "queries" not in masked:
+        return set()
+    try:
+        ast = Environment().parse(masked)
+    except TemplateSyntaxError:
+        return set()
+
+    names: set[str] = set()
+    literal_uses: set[int] = set()
+    for attr_access in ast.find_all(jinja_nodes.Getattr):
+        target = attr_access.node
+        if isinstance(target, jinja_nodes.Name) and target.name == "queries":
+            names.add(attr_access.attr)
+            literal_uses.add(id(target))
+    for item_access in ast.find_all(jinja_nodes.Getitem):
+        target, key = item_access.node, item_access.arg
+        if (
+            isinstance(target, jinja_nodes.Name)
+            and target.name == "queries"
+            and isinstance(key, jinja_nodes.Const)
+            and isinstance(key.value, str)
+        ):
+            names.add(key.value)
+            literal_uses.add(id(target))
+    for node in ast.find_all(jinja_nodes.Name):
+        if node.name == "queries" and id(node) not in literal_uses:
+            raise CompilationError.from_code(ERR_TEXT_QUERIES_NONLITERAL)
+    return names
+
+
+def text_query_references(texts: Iterable[str | None]) -> set[str]:
+    """Query names read by ``queries.<name>`` in any of the given display texts."""
+    names: set[str] = set()
+    for text in texts:
+        if text:
+            names |= extract_query_result_references(text)
+    return names
+
+
+def template_literal_text(template_str: str) -> str:
+    """The text a template draws regardless of data: its literal ``TemplateData``.
+
+    Both branches of an ``if``/``else`` are kept, an upper bound since data picks
+    the branch. A template that does not parse is returned as written; rendering
+    reports the error.
+    """
+    try:
+        ast = Environment().parse(template_str)
+    except TemplateSyntaxError:
+        return template_str
+    return "".join(node.data for node in ast.find_all(jinja_nodes.TemplateData))
+
+
+def text_needs_render_data(template_str: str) -> bool:
+    """Whether board text reads query results or the render-only ``format``.
+
+    Counts ``format`` passed by name (``map('format', ...)``) too. Text that does
+    not parse counts as needing data.
+    """
+    masked, _ = mask_fenced_code(template_str)
+    if "queries" not in masked and "format" not in masked:
+        return False
+    try:
+        ast = Environment().parse(masked)
+    except TemplateSyntaxError:
+        return True
+    return (
+        any(node.name == "queries" for node in ast.find_all(jinja_nodes.Name))
+        or any(node.name == "format" for node in ast.find_all(jinja_nodes.Filter))
+        or any(node.value == "format" for node in ast.find_all(jinja_nodes.Const))
+    )
+
+
 def resolve_jinja_template(
     template: str,
     variables: Mapping[str, Any] | None = None,
@@ -285,6 +428,11 @@ def resolve_jinja_template(
     strict: bool = True,
     filter_helpers: Mapping[str, Callable[..., str]]
     | None = None,  # type-state: optional — None is the ordinary case: only a caller that knows the target warehouse can bind these
+    *,
+    query_results: Mapping[str, QueryResult]
+    | None = None,  # type-state: optional — only board text reads query results
+    format_cell: CellFormatter
+    | None = None,  # type-state: optional — travels with query_results
 ) -> str:
     """Resolve a Jinja template string.
 
@@ -306,6 +454,11 @@ def resolve_jinja_template(
                 {% if %} branch is never called, a span in a {% for %} is
                 called once per iteration with that iteration's scope, and
                 {{- -}} whitespace control applies natively.
+        query_results: Board text only. The results ``queries.<name>`` reads, as
+                ``queries`` (``QueryResults``) in the context. Requires
+                ``strict=False``; never combined with ``queries=``.
+        format_cell: Required with ``query_results``; replaces the ``format``
+                filter.
 
     Returns:
         Resolved string with variables substituted
@@ -314,6 +467,10 @@ def resolve_jinja_template(
         JinjaError: If template syntax is invalid or (if strict) variable not found
         CompilationError: If filter_helpers binds a name other than
                 RESERVED_FILTER_HELPER_NAMES
+        ChartDataError: A ``query_results`` access error, or an ordering
+                comparison on a NULL value (``ERR-TEXT-NULL-COMPARISON``)
+        ValueError: If only one of ``query_results``/``format_cell`` is given, or
+                ``query_results`` is combined with ``queries`` or ``strict=True``
 
     Example:
         >>> resolve_jinja_template(
@@ -322,6 +479,13 @@ def resolve_jinja_template(
         ... )
         "SELECT * FROM users WHERE status = 'active'"
     """
+    if (query_results is None) != (format_cell is None):
+        raise ValueError("query_results and format_cell must be given together")
+    if query_results is not None and queries:
+        raise ValueError("query_results cannot be combined with queries")
+    if query_results is not None and strict:
+        raise ValueError("query_results requires strict=False: board text is lenient")
+
     if not template:
         return template
 
@@ -338,6 +502,8 @@ def resolve_jinja_template(
     # Add queries namespace for {{ queries.query_name }} resolution
     if queries:
         context["queries"] = _QueryNamespace(queries)
+    if query_results is not None:
+        context["queries"] = QueryResults(query_results)
 
     # Add helper functions. The stubs raise; a caller able to bind them — one
     # that knows the warehouse the SQL will run on — supplies real ones.
@@ -354,6 +520,9 @@ def resolve_jinja_template(
 
     # Use strict or lenient environment
     jinja_env = _jinja_env if strict else _jinja_env_lenient
+    if format_cell is not None:
+        jinja_env = _jinja_env_text.overlay()
+        jinja_env.filters = {**jinja_env.filters, "format": format_cell}
 
     try:
         jinja_template = jinja_env.from_string(template)
@@ -368,6 +537,12 @@ def resolve_jinja_template(
         raise JinjaError(f"Template syntax error: {e}", template) from e
     except TemplateError as e:
         raise JinjaError(f"Template error: {e}", template) from e
+    except TypeError as e:
+        if query_results is None:
+            raise
+        if _is_none_ordering_error(e):
+            raise ChartDataError.from_code(ERR_TEXT_NULL_COMPARISON) from e
+        raise ChartDataError.from_code(ERR_TEXT_TYPE_ERROR, detail=str(e)) from e
     except ValueError as e:
         # The filter helpers validate their own arguments (identifier, operator
         # allowlist, none=, date_range shape) and raise ValueError from inside
@@ -377,6 +552,11 @@ def resolve_jinja_template(
         raise JinjaError(str(e), template) from e
 
     return result
+
+
+def _is_none_ordering_error(error: TypeError) -> bool:
+    message = str(error)
+    return "not supported between instances of" in message and "'NoneType'" in message
 
 
 def extract_sql_variable_dependencies(sql: str, setup_sql: str | None) -> set[str]:

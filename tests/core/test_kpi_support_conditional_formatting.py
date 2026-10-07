@@ -35,8 +35,8 @@ def _render(variant: str = "stacked", change: float = 12, **overrides) -> str:
         query_name="q",
         type="kpi",
         value="total",
-        variant=variant,
-        support={"value": "change", "label": "vs prior", "format": "delta"},
+        support={"value": "change", "label": "vs prior"},
+        style={"variant": variant, "support": {"format": "delta"}},
         conditional_formatting=_RULES,
         **overrides,
     )
@@ -91,7 +91,8 @@ def test_headline_rule_on_value_column_still_colors_headline() -> None:
         query_name="q",
         type="kpi",
         value="total",
-        support={"value": "change", "format": "delta"},
+        support={"value": "change"},
+        style={"support": {"format": "delta"}},
         conditional_formatting={
             "total": {"when": [{"gt": 0, "font": {"color": _GREEN}}]},
             "change": {"when": [{"gt": 0, "font": {"color": _RED}}]},

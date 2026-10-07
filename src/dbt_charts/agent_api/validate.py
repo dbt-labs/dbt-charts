@@ -11,11 +11,13 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.agent_api._paths import resolve_board_path
+from dbt_charts.core.compile.format import missing_format_columns
 from dbt_charts.core.compile.normalize.charts import _FIELD_CHANNEL_KEYS
 from dbt_charts.core.diagnostics import (
     ERR_CHART_COLUMN_NOT_IN_RESULT,
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
+    ERR_QUERY_FORMAT_COLUMN_MISSING,
     ERR_WAREHOUSE_QUERY_INVALID,
     WARN_COLUMN_CHECK_UNAVAILABLE,
     WARN_WAREHOUSE_CHECK_UNAVAILABLE,
@@ -520,6 +522,15 @@ def _warehouse_findings(
             continue
 
         result_columns = {c.name for c in check.columns}
+        for column_name in missing_format_columns(query.formats, result_columns):
+            errors.append(
+                DbtChartsError.from_code(
+                    ERR_QUERY_FORMAT_COLUMN_MISSING,
+                    query=query_name,
+                    column=column_name,
+                    columns=", ".join(sorted(result_columns)),
+                ).to_diagnostic(file=relpath)
+            )
         for chart_name, channel_label, column_name in refs_by_query.get(query_name, []):
             if column_name not in result_columns:
                 errors.append(

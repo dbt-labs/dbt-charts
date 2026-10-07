@@ -18,12 +18,13 @@ charts:
     style:
       value:
         format: currency
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: delta_pct
       label: vs last month
-      format: percent_delta
       glyph: "▲"
-      tone: positive
 
 rows:
   - mrr_kpi

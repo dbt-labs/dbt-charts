@@ -62,6 +62,7 @@ DIALECTS: dict[str, SQLDialect] = {
     # SQL Server
     "sqlserver": _sqlserver_dialect,
     "mssql": _sqlserver_dialect,
+    "fabric": _sqlserver_dialect,
     # Databricks
     "databricks": _databricks_dialect,
     # Spark (dbt-spark's Hive/Thrift/ODBC cursors — no fetchmany, unlike dbt-databricks)

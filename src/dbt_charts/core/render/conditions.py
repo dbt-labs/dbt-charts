@@ -14,29 +14,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+from dbt_charts.core.compile.conditions import (
+    Visible,
+    coerce_bool,
+    eval_literal_condition,
+    is_drawn,
+)
+from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
+from dbt_charts.core.render.board_variables import current_board_data_provider
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
     from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
-
-
-def coerce_bool(value: Any) -> bool:
-    """Coerce value to bool; raise ValueError for unrecognized inputs."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        if value == 1:
-            return True
-        if value == 0:
-            return False
-    if isinstance(value, str):
-        lower = value.strip().lower()
-        if lower in ("true", "1", "yes"):
-            return True
-        if lower in ("false", "0", "no"):
-            return False
-    raise ValueError(f"Cannot coerce {value!r} to bool; expected true/false/1/0/yes/no")
 
 
 def eval_bool_condition(
@@ -51,9 +40,7 @@ def eval_bool_condition(
     Shared core for Variable.enabled and LayoutItem.visible; callers pass
     ``if_none`` to control the meaning of a missing (None) value.
 
-    - None: return ``if_none`` (enabled → True, visible → True).
-    - bool: return as-is.
-    - str: auto-wrap in ``{{ }}`` if needed, evaluate as Jinja, coerce to bool.
+    - None, bool, str: ``eval_literal_condition``.
     - SingleRowBoolProbe: execute the named query; expect exactly 1 row; coerce
       the named column to bool.
 
@@ -68,15 +55,8 @@ def eval_bool_condition(
         ValueError: Wrong row count, missing column, non-bool-coercible value, or
             no executor for a query-backed condition.
     """
-    if expr is None:
-        return if_none
-    if isinstance(expr, bool):
-        return expr
-    if isinstance(expr, str):
-        # Auto-wrap bare variable names / Jinja expressions (no {{ }} required).
-        jinja_expr = expr if "{{" in expr else f"{{{{ {expr} }}}}"
-        rendered = resolve_jinja_template(jinja_expr, variables=current_values)
-        return coerce_bool(rendered)
+    if not isinstance(expr, SingleRowBoolProbe):
+        return eval_literal_condition(expr, if_none, current_values)
     if executor is None:
         raise ValueError(
             f"{context} query '{expr.query}' requires an executor but none was provided"
@@ -120,3 +100,15 @@ def evaluate_visible(
         executor,
         f"{context} visible",
     )
+
+
+def item_is_drawn(visible: Visible, current_values: VariableValues) -> bool:
+    """Whether a layout item with this ``visible:`` is painted.
+
+    A query-backed probe is read through the scoped data provider; with none
+    scoped (compile time, the static skeleton) it counts as drawn.
+    """
+    provider = current_board_data_provider()
+    if isinstance(visible, SingleRowBoolProbe) and provider is not None:
+        return evaluate_visible(visible, current_values, provider)
+    return is_drawn(visible, current_values)

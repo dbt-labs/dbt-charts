@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
+from functools import cached_property
 from types import NoneType
 from typing import Literal, Protocol, TypeAlias
 
@@ -85,8 +86,10 @@ class YamlSchemaCatalog:
     ``current_schema`` is the live JSON schema generated from the Pydantic models right
     now — it is never written to disk, never sha256-checked, and may differ from the
     latest frozen snapshot when unreleased model changes are in flight.  Use it wherever
-    "what does the current grammar accept?" is the question (recognition, migration
-    target check), not "what does a specific release accept?"
+    "what does the current grammar accept?" is the question (recognition), not "what
+    does a specific release accept?"  Migration reads ``current_grammar`` /
+    ``grammar_for`` instead: they drop cross-field rules, which a style-only file can
+    never satisfy.
 
     The newest entry (``entries[0]``) is always the single ``DEV`` entry --
     named for the predicted next minor version, with ``schema_for`` resolving
@@ -96,6 +99,9 @@ class YamlSchemaCatalog:
     entries: tuple[YamlSchemaEntry, ...]
     _schemas: dict[str, JsonObject]
     current_schema: JsonObject
+    _grammars: dict[str, JsonObject] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
     @property
     def dev(self) -> YamlSchemaEntry:
@@ -117,6 +123,27 @@ class YamlSchemaCatalog:
 
     def schema_for(self, version: str) -> JsonObject:
         return self._schemas[version]
+
+    def grammar_for(self, version: str) -> JsonObject:
+        """``schema_for(version)`` without cross-field rules, for migration.
+
+        Migration reshapes keys; a style-only fragment (meta.yml, an extends
+        target) never satisfies a board's content rule, and a cross-field
+        mistake is parse's to report after migrating.
+        """
+        from dbt_charts.core.compile.schema.renderers.json_schema import grammar_only
+
+        if version not in self._grammars:
+            self._grammars[version] = grammar_only(self._schemas[version])
+        return self._grammars[version]
+
+    @cached_property
+    def current_grammar(self) -> JsonObject:
+        """``current_schema`` without cross-field rules; see ``grammar_for``."""
+        from dbt_charts.core.compile.schema.renderers.json_schema import grammar_only
+
+        grammar: JsonObject = grammar_only(self.current_schema)
+        return grammar
 
 
 def _manifest_string(value: JsonObject, key: str) -> str:
@@ -322,7 +349,7 @@ def load_yaml_schema_catalog_from(
         previous_version_key = version_key
         previous_entry_version = entry.version
 
-    current_schema = _compute_current_schema()
+    current_schema = compute_current_schema()
     schemas: dict[str, JsonObject] = {}
     predecessor: str | Literal[None] = None
     previous_date: date | Literal[None] = None
@@ -376,8 +403,9 @@ def load_yaml_schema_catalog_from(
     return YamlSchemaCatalog(tuple(reversed(entries)), schemas, current_schema)
 
 
-def _compute_current_schema() -> JsonObject:
-    """Generate the live JSON schema from the current Pydantic models."""
+def compute_current_schema() -> JsonObject:
+    """Generate the live schema from the current Pydantic models: the one a
+    release freezes, cross-field rules included."""
     from dbt_charts.core.compile.schema.introspection import introspect
     from dbt_charts.core.compile.schema.renderers.json_schema import render_yaml_schema
 

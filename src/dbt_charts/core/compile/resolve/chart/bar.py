@@ -80,7 +80,6 @@ from dbt_charts.core.compile.resolve.chart._domain import (
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
-    ChartTextVariables,
     _base_kwargs,
     _cartesian_kwargs,
     _title_font,
@@ -129,6 +128,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
@@ -629,7 +629,7 @@ def _resolve_bar(
     width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedBarChart:
     data = dataset.all_rows()
     multiples_scale = (
@@ -1203,12 +1203,13 @@ def _resolve_bar(
     _ck = _cartesian_kwargs(
         normalized,
         chart_local_style_context,
-        variables,
+        display_text,
         data,
         "bar",
         panel_axes=dataset.axes,
         category_axis_vertical=orientation == "horizontal",
         axis_y_orient=_ay_orient_for_table,
+        stacked=is_stacked,
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     return ResolvedBarChart(
@@ -1280,7 +1281,7 @@ def _resolve_histogram(
     chart_style_context: ChartStyleContext,
     width: float,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedBarChart:
     """Resolve a histogram chart through the histogram theme (not bar theme).
 
@@ -1376,10 +1377,11 @@ def _resolve_histogram(
             **_cartesian_kwargs(
                 normalized,
                 chart_local_style_context,
-                variables,
+                display_text,
                 data,
                 "histogram",
                 panel_axes=dataset.axes,
+                stacked=False,
             ),
             # Histogram uses aggregate-count on y; authored `y: [a, b]` is legal
             # at the normalize boundary but meaningless here. Strip the list so the

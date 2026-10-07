@@ -117,10 +117,10 @@ class TestRenderJsonSchemaUnionTypes:
         )
 
     def test_str_or_model_union_includes_both_branches(self) -> None:
-        # KpiSupportConfig.format: str | FormatConfig | None
+        # KpiSupportStylePatch.format: str | FormatConfig | None
         # Must include both string branch and $ref branch — not just the model ref.
         defs = render_json_schema(introspect()).get("$defs", {})
-        format_prop = defs["KpiSupportConfig"]["properties"]["format"]
+        format_prop = defs["KpiSupportStylePatch"]["properties"]["format"]
         schema_str = json.dumps(format_prop)
         assert "string" in schema_str, "str branch must appear for str | Model union"
         assert "FormatConfig" in schema_str, "model $ref branch must appear"

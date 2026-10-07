@@ -297,9 +297,9 @@ class TestIntegrationWithBoardValidation:
         import textwrap
 
         from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+        from dbt_charts.core.compile.template.query_result import QueryResult
         from dbt_charts.core.compile.validate.dispatch import validate_board
         from dbt_charts.core.registered_views.expander import render_template
-        from dbt_charts.core.registered_views.query_runner import ViewQueryResult
 
         # Simulate what happens when the expander loops over schema query rows
         # to emit variable keys in YAML — the variable planner is called after
@@ -308,7 +308,7 @@ class TestIntegrationWithBoardValidation:
             {"name": "status", "actual_type": "VARCHAR"},
             {"name": "is_active", "actual_type": "BOOLEAN"},
         ]
-        query_result = ViewQueryResult(rows=cols)
+        query_result = QueryResult("q", rows=cols)
 
         tmpl = textwrap.dedent(
             """\

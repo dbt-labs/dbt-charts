@@ -212,3 +212,68 @@ def test_a_cased_title_measures_its_image_not_an_upper_cased_path(
         "style:\n  title:\n    font:\n      case: upper\n"
     )
     assert _board_width(tmp_path, board) > 480
+
+
+def test_text_that_needs_query_data_asks_for_the_cap() -> None:
+    paragraph = _width(f"rows:\n  - text: {_LONG}\n")
+    for text in (
+        "'{{ queries.q.one.v }}'",
+        "\"{{ 3 | format('currency') }}\"",
+        "\"{{ [1, 2] | map('format', ',.0f') | join(', ') }}\"",
+    ):
+        assert _width(f"rows:\n  - text: {text}\n") == paragraph, text
+
+
+def test_chart_focus_compiles_text_that_passes_format_by_name() -> None:
+    result = compile_board(
+        f"title: T\nchart_focus: c1\n{_KPI}rows:\n  - c1\n"
+        "  - text: \"{{ [1000, 2000] | map('format', ',.0f') | join(', ') }}\"\n"
+    )
+    assert result.success, result.diagnostics
+
+
+def test_chart_focus_compiles_text_with_format_in_a_fence() -> None:
+    result = compile_board(
+        f"title: T\nchart_focus: c1\n{_KPI}rows:\n  - c1\n"
+        "  - text: |\n      ```\n      {{ 3 | format('currency') }}\n      ```\n"
+    )
+    assert result.success, result.diagnostics
+
+
+def _floor(text: str) -> float:
+    from dbt_charts.core.compile.resolve.style.markdown_style import (
+        prose_content_widths,
+    )
+
+    board = compile_board(f"title: T\n{_KPI}rows:\n  - c1\n").board
+    return prose_content_widths(text, board.resolved_style, {}, None)[0]
+
+
+def test_the_floor_of_data_text_is_its_longest_literal_word() -> None:
+    short = _floor("a {{ queries.q.one.v }} b")
+    long_word = _floor("a {{ queries.q.one.v }} Supercalifragilisticexpialidocious")
+    assert long_word > short
+
+
+def test_a_jinja_comment_does_not_raise_the_floor() -> None:
+    plain = _floor("a {{ queries.q.one.v }} b")
+    commented = _floor(
+        "a {# Supercalifragilisticexpialidocious #}{{ queries.q.one.v }} b"
+    )
+    assert commented == plain
+
+
+def test_a_string_literal_holding_a_closing_brace_pair_is_not_text() -> None:
+    plain = _floor("a {{ queries.q.one.v }} b")
+    literal = _floor(
+        'a {{ queries.q.one.v }}{{ "}}Supercalifragilisticexpialidocious" }} b'
+    )
+    assert literal == plain
+
+
+def test_raw_blocks_count_as_text() -> None:
+    plain = _floor("a {{ queries.q.one.v }} b")
+    raw = _floor(
+        "a {{ queries.q.one.v }} {% raw %}Supercalifragilisticexpialidocious{% endraw %}"
+    )
+    assert raw > plain

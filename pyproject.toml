@@ -14,18 +14,19 @@ dev = [
     "pytest-timeout>=2.2.0",  # Kill hung tests
     "filelock>=3.0",  # FileLock for xdist fixture TOCTOU guard (tests/integration/conftest.py)
     "packaging>=22",  # PEP 440 parsing (tests/core/test_packaging_metadata.py)
-    "dbt-core==1.11.8",  # Match the monorepo lock for the dbt-internal-API canaries
-    "dbt-adapters==1.22.10",  # Match the monorepo adapter API surface
+    "dbt-core==1.12.5",  # Match the monorepo lock for the dbt-internal-API canaries
+    "dbt-adapters==1.24.5",  # Match the monorepo adapter API surface
     "dbt-duckdb==1.10.0",  # Match the monorepo DuckDB adapter
-    "dbt-databricks==1.12.0",  # Databricks credential-isolation tests
+    "dbt-databricks==1.12.6",  # Databricks credential-isolation tests
     "dbt-bigquery==1.11.1",  # BigQuery profile and adapter tests
     "dbt-postgres==1.10.0",  # PostgreSQL adapter tests
-    "dbt-redshift==1.10.1",  # Redshift adapter tests
+    "dbt-redshift==1.11.1",  # Redshift adapter tests
     "dbt-snowflake==1.11.5",  # Snowflake adapter tests
     "dbt-trino==1.10.2",  # Trino adapter tests
     "dbt-athena==1.10.2",  # Athena adapter tests
     "dbt-clickhouse==1.10.3",  # ClickHouse adapter tests
-    "dbt-sqlserver==1.10.1",  # SQL Server adapter tests (1.11+ needs dbt-adapters>=1.24.1)
+    "dbt-sqlserver==1.11.0",  # SQL Server adapter tests (needs dbt-adapters>=1.24.1)
+    "dbt-fabric==1.10.0",  # Fabric adapter tests
     "google-cloud-bigquery>=3.33.0",  # BigQuery warehouse-check tests
     "markdown>=3.0",  # Markdown reference and fence tests
     "mcp>=1.0.0,<2",  # MCP server tests
@@ -70,14 +71,10 @@ classifiers = [
 ]
 
 dependencies = [
-    # typer 0.26 dropped click as a transitive dependency, reshaping the
-    # TyperGroup hierarchy that cli/main.py._RootHelpGroup subclasses. The
-    # override of list_commands/format_help in _RootHelpGroup relies on the
-    # click-derived base being present; 0.26+ removes it and breaks every
-    # `dct` command with AttributeError at startup.
-    "typer>=0.12,<0.26",
+    "typer>=0.27,<0.28",
     "pyyaml>=6.0",
     "pydantic>=2.0.0",
+    "annotated-types>=0.4.0",
     "typing_extensions>=4.5.0",
     # Backport of stdlib importlib.resources — as_file() gains directory support
     # only in 3.12+; dbt_charts targets 3.10+. Used by
@@ -181,11 +178,11 @@ snowflake = [
 ]
 
 redshift = [
-    "dbt-redshift>=1.10,<2.0",
+    "dbt-redshift>=1.11.1,<2.0",
 ]
 
 databricks = [
-    "dbt-databricks>=1.10,<2.0",
+    "dbt-databricks>=1.12.1,<1.12.7",
 ]
 
 postgresql = [
@@ -213,6 +210,10 @@ clickhouse = [
 # ODBC Driver 17 or 18, which pip cannot install.
 sqlserver = [
     "dbt-sqlserver[pyodbc]>=1.10,<2.0",
+]
+
+fabric = [
+    "dbt-fabric>=1.9,<2.0",
 ]
 
 mcp = [
@@ -530,8 +531,9 @@ forbidden_module_paths = [
 # feature gate in sql_adapter.py; google-cloud-bigquery is the optional
 # `bigquery` extra, not a runtime dep, so the AST audit needs the carve-out.
 # `databricks` (databricks-sql-connector) is imported by the lazily-loaded
-# databricks_connection_manager.py behind the databricks adapter gate; it is a
-# transitive dep of the optional `databricks` extra, not a runtime dep.
+# databricks_connection_manager.py behind the databricks adapter gate and by
+# connections.py's list_catalogs; it is a transitive dep of the optional
+# `databricks` extra, not a runtime dep.
 # `openai` is the lazy import inside ai/openai_gateway.py's OpenAIGateway. No
 # `dct` verb reaches it — the gateway exists for in-repo hosts (Cloud,
 # Playground, evals), each of which declares openai itself. (A lIe does not

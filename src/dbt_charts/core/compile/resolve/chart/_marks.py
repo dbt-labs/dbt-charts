@@ -11,9 +11,6 @@ from dbt_charts.core.compile.format import (
     column_format,
     resolve_label_format,
 )
-from dbt_charts.core.compile.models.chart.normalized import (
-    Chart,
-)
 from dbt_charts.core.compile.models.primitives import (
     FormatAliases,
     ResolvedFormat,
@@ -39,7 +36,9 @@ from dbt_charts.core.compile.models.style.theme import (
     PointMarkStyle,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
+    CartesianFamilyChart,
     chart_authored_axis_format,
+    declared_column_format,
 )
 
 __all__ = [
@@ -85,7 +84,7 @@ def _apply_stroke_width_fallback(
 
 
 def _measure_tooltip_format(
-    normalized: Chart,
+    normalized: CartesianFamilyChart,
     primary: Any,
     chart_style_context: ChartStyleContext,
     y_channel_type: str = "quantitative",
@@ -94,27 +93,32 @@ def _measure_tooltip_format(
 ) -> ResolvedFormat | None:
     """Resolve the chart-authored measure (y-axis) tooltip format, if any.
 
-    Precedence: chart_authored_axis_format (style.number_format / chart.format)
-    → the already-baked axis_y.format. Returns None when neither is set, so
+    Precedence, strongest first: the chart's own axis_y labels.format → the
+    query's declared format for the y column(s) → chart_authored_axis_format
+    (style.number_format / chart.format). Returns None when none is set, so
     callers fall back to the board default tooltip format themselves.
     ``y_channel_type`` matters for scatter, whose y can be nominal (dot plot) —
     chart_authored_axis_format returns None for non-quantitative/temporal
-    channels, so a nominal y correctly skips the measure-format fallback.
+    channels, so a nominal y takes only its own column format.
     ``values`` is every value this chart's own y measure(s) will paint,
     passed to the sub-$1 vote.
     """
-    fmt = chart_authored_axis_format(normalized, y_channel_type)
-    if (
-        fmt is None
-        and primary is not None
-        and primary.axis_y is not None
-        and primary.axis_y.labels is not None
-    ):
-        fmt = primary.axis_y.labels.format
-    return (
-        column_format("number", chart_style_context.formats, fmt, values=values)
-        if fmt
+    formats = chart_style_context.formats
+    local = None
+    if primary is not None and primary.axis_y is not None:
+        local = primary.axis_y.labels.format if primary.axis_y.labels else None
+    declared = (
+        declared_column_format(
+            normalized, normalized.y, formats, time=y_channel_type == "temporal"
+        )
+        if y_channel_type in ("quantitative", "temporal")
         else None
+    )
+    wide = chart_authored_axis_format(normalized, y_channel_type)
+    if local is None and wide is None and declared is None:
+        return None
+    return column_format(
+        "number", formats, local, board=wide, column=declared, values=values
     )
 
 

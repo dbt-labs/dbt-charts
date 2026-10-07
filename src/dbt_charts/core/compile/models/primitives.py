@@ -12,15 +12,18 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     PlainSerializer,
     SerializationInfo,
+    StringConstraints,
     field_validator,
     model_serializer,
     model_validator,
 )
 
+from dbt_charts.core.colors import CSS_COLOR_NAMES
 from dbt_charts.core.compile.models.factories import (
     FontAlias,
     FontSlotBase,
@@ -28,6 +31,7 @@ from dbt_charts.core.compile.models.factories import (
     build_patch_model_ext,
     register_as_own_patch,
     register_patch,
+    register_shorthand,
 )
 from dbt_charts.core.compile.models.markers import (
     Color,
@@ -335,6 +339,10 @@ def painted_sign_placement(fmt: ResolvedFormat, anchored: bool) -> SignPlacement
 # =============================================================================
 
 
+_SPACING_LENGTH = r"[0-9]+(?:\.[0-9]+)?(?:px)?"
+_SPACING_PATTERN = rf"{_SPACING_LENGTH}(?: {_SPACING_LENGTH}){{0,3}}"
+
+
 class SpacingValues(BaseModel):
     """Pre-parsed CSS spacing (margin/padding).
 
@@ -369,40 +377,51 @@ class SpacingValues(BaseModel):
         return self.top + self.bottom
 
     @classmethod
-    def from_css(cls, value: str | None) -> SpacingValues:
-        """Parse CSS spacing value into SpacingValues."""
-        if not value:
-            return cls()
-        nums = [float(v) for v in re.findall(r"(\d+(?:\.\d+)?)", str(value))]
-        if not nums:
-            return cls()
+    def from_css(cls, value: str) -> SpacingValues:
+        """Parse 1-4 CSS lengths (``8px 16px``); raise on anything else."""
+        if not re.fullmatch(_SPACING_PATTERN, value):
+            raise ValueError(
+                f"spacing must be 1-4 pixel lengths such as '16px' or "
+                f"'8px 16px', got {value!r}"
+            )
+        nums = [float(v) for v in re.findall(r"[0-9]+(?:\.[0-9]+)?", value)]
         if len(nums) == 1:
-            return cls(top=nums[0], right=nums[0], bottom=nums[0], left=nums[0])
+            nums *= 4
         elif len(nums) == 2:
-            return cls(top=nums[0], right=nums[1], bottom=nums[0], left=nums[1])
+            nums *= 2
         elif len(nums) == 3:
-            return cls(top=nums[0], right=nums[1], bottom=nums[2], left=nums[1])
-        return cls(top=nums[0], right=nums[1], bottom=nums[2], left=nums[3])
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_css_string(cls, v: Any) -> Any:
-        if isinstance(v, (str, int, float)):
-            # int/float treated as all-sides pixel value (e.g. padding: 12 → 12px all sides)
-            parsed = cls.from_css(str(v))
-            return {
-                "top": parsed.top,
-                "right": parsed.right,
-                "bottom": parsed.bottom,
-                "left": parsed.left,
-            }
-        return v
+            nums.append(nums[1])
+        top, right, bottom, left = nums
+        return cls(top=top, right=right, bottom=bottom, left=left)
 
 
-# SpacingValues serves as its own patch: it accepts CSS strings via its
-# @model_validator, has defaults on all fields, and should NOT be replaced by
-# an auto-generated all-Optional stripped variant in build_patch_model.
+def _parse_spacing(
+    value: Any,  # type-state: explicit_any — before-validator input, raw YAML value
+) -> Any:  # type-state: explicit_any — non-string input passes through
+    if isinstance(value, bool):
+        raise ValueError(f"spacing must be a number or a CSS string, got {value!r}")
+    if isinstance(value, (int, float)):
+        return SpacingValues(top=value, right=value, bottom=value, left=value)
+    if isinstance(value, str):
+        return SpacingValues.from_css(value)
+    return value
+
+
+# SpacingValues serves as its own patch: its string/number shorthand is declared
+# below; it has defaults on all fields, and should NOT be replaced by an
+# auto-generated all-Optional stripped variant in build_patch_model.
 register_patch(SpacingValues)(SpacingValues)
+register_shorthand(
+    SpacingValues,
+    BeforeValidator(
+        _parse_spacing,
+        json_schema_input_type=Annotated[
+            str, StringConstraints(pattern=f"^{_SPACING_PATTERN}$")
+        ]
+        | float
+        | SpacingValues,
+    ),
+)
 
 
 # =============================================================================
@@ -410,10 +429,10 @@ register_patch(SpacingValues)(SpacingValues)
 # =============================================================================
 
 
-class FontStyle(FontSlotBase):
-    """Text appearance. Merged as a unit.
+class SingleLineFontStyle(FontSlotBase):
+    """Text appearance for a slot that always paints one line.
 
-    All fields Optional — FontStyle doubles as a patch at every level.
+    All fields Optional — it doubles as a patch at every level.
 
     A font slot also accepts a registry name (``font: label``) or
     ``{extends: label, ...overrides}``; the cascade expands both before
@@ -456,6 +475,11 @@ class FontStyle(FontSlotBase):
             "'none' (default) emits the string without any letter-case change."
         ),
     )
+
+
+class FontStyle(SingleLineFontStyle):
+    """Text appearance, including leading for text that wraps. Merged as a unit."""
+
     line_height: float | None = Field(
         default=None,
         description=(
@@ -476,34 +500,6 @@ class NamedFont(FontStyle):
             "Valid only on the ``heading`` font."
         ),
     )
-
-
-_CSS_NAMED_COLORS = frozenset(
-    {
-        "black",
-        "white",
-        "red",
-        "green",
-        "blue",
-        "yellow",
-        "orange",
-        "purple",
-        "pink",
-        "gray",
-        "grey",  # codespell:ignore grey
-        "cyan",
-        "magenta",
-        "lime",
-        "maroon",
-        "navy",
-        "olive",
-        "teal",
-        "aqua",
-        "silver",
-        "fuchsia",
-        "transparent",
-    }
-)
 
 
 class ResolvedFontStyle(BaseModel):
@@ -611,6 +607,28 @@ class CornerStyle(BaseModel):
     radius: float = Field(description="Corner radius in pixels.")
 
 
+# One gr[ae]y spelling keeps both variants out of the emitted schema (codespell).
+_COLOR_KEYWORDS = "|".join(
+    sorted({re.sub("gr[ae]y", "gr[ae]y", n) for n in CSS_COLOR_NAMES} | {"transparent"})
+)
+_BORDER_COLOR = (
+    r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})"
+    r"|rgba?\([^)]*\)"
+    rf"|{_COLOR_KEYWORDS}"
+)
+# Capture groups: width, style, color. Lookaheads reject "" and a trailing space.
+_BORDER_PATTERN = (
+    r"(?=\S)(?!.*\s$)(?:([0-9]+(?:\.[0-9]+)?)px(?: |$))?"
+    r"(?:(solid|dashed|dotted)(?: |$))?"
+    rf"({_BORDER_COLOR})?"
+)
+# Line styles BorderStyle.dash_array can express.
+_BORDER_DASHES: dict[str, dict[str, list[float] | str]] = {
+    "dashed": {"dash_array": [4.0, 4.0]},
+    "dotted": {"dash_array": [1.0, 3.0], "line_cap": "round"},
+}
+
+
 @register_patch(BorderStyle)
 class BorderStylePatch(BaseModel):
     # Hand-written (not build_patch_model): carries from_css() classmethod
@@ -645,50 +663,53 @@ class BorderStylePatch(BaseModel):
     )
 
     @classmethod
-    def from_css(cls, value: str | None) -> BorderStylePatch:
-        """Parse CSS border shorthand '2px #333' → BorderStylePatch.
+    def from_css(cls, value: str) -> BorderStylePatch:
+        """Parse CSS border shorthand ``2px dashed #333``.
 
-        Supports hex (#abc, #aabbcc), rgb()/rgba(), and CSS named colors.
-        CSS stroke-style tokens (solid/dashed/dotted/etc.) are ignored — style
-        is not rendered and has been removed from the model.
-        Does NOT extract radius — set border.radius explicitly in YAML.
+        The grammar is ``[<n>px] [solid|dashed|dotted] [<color>]``, where color
+        is hex, ``rgb()``/``rgba()`` or a lowercase CSS color keyword. ``dashed``
+        and ``dotted`` set ``dash_array``. Radius is never read from the string;
+        set ``border.radius`` explicitly in YAML.
         """
-        if not value:
-            return cls()
-        border_str = str(value)
-        parsed: dict[str, float | str] = {}
-
-        w_match = re.search(r"(\d+(?:\.\d+)?)\s*px", border_str)
-        if w_match:
-            parsed["width"] = float(w_match.group(1))
-
-        hex_match = re.search(r"#[0-9a-fA-F]{3,8}\b", border_str)
-        if hex_match:
-            parsed["color"] = hex_match.group(0)
-        else:
-            rgb_match = re.search(r"rgba?\([^)]+\)", border_str)
-            if rgb_match:
-                parsed["color"] = rgb_match.group(0)
-            else:
-                for word in re.findall(r"[a-zA-Z]+", border_str):
-                    if word.lower() in _CSS_NAMED_COLORS:
-                        parsed["color"] = word.lower()
-                        break
-
+        match = re.fullmatch(_BORDER_PATTERN, value)
+        if match is None:
+            raise ValueError(
+                f"border must look like '2px dashed #333' (width in px, "
+                f"solid/dashed/dotted, hex/rgb()/CSS color keyword), got {value!r}"
+            )
+        width, line_style, color = match.groups()
+        parsed: dict[str, float | str | list[float]] = {}
+        if line_style in _BORDER_DASHES:
+            parsed.update(_BORDER_DASHES[line_style])
+        if width is not None:
+            parsed["width"] = float(width)
+        if color is not None:
+            parsed["color"] = color
         return cls.model_validate(parsed)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_css_string(cls, v: Any) -> Any:
-        if isinstance(v, str):
-            return cls.from_css(v).model_dump(exclude_unset=True)
-        return v
+
+def _parse_border(
+    value: Any,  # type-state: explicit_any — before-validator input, raw YAML value
+) -> Any:  # type-state: explicit_any — non-string input passes through
+    if isinstance(value, str):
+        return BorderStylePatch.from_css(value).model_dump(exclude_unset=True)
+    return value
 
 
 # BorderStylePatch is all-Optional and is its own patch — prevent build_patch_model
 # from synthesizing a double-suffixed BorderStylePatchPatch when BarChartStyle
 # (which inherits border: BorderStylePatch | None) is patched for authored overlays.
 register_as_own_patch(BorderStylePatch)
+register_shorthand(
+    BorderStylePatch,
+    BeforeValidator(
+        _parse_border,
+        json_schema_input_type=Annotated[
+            str, StringConstraints(pattern=f"^{_BORDER_PATTERN}$")
+        ]
+        | BorderStylePatch,
+    ),
+)
 
 
 class StrokeStyle(BaseModel):

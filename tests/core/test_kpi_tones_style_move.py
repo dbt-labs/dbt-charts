@@ -42,7 +42,7 @@ def test_style_tones_propagates_through_resolve_style() -> None:
 
 
 def test_kpi_support_row_reads_board_level_tones_override() -> None:
-    """A KPI support row with tone: positive picks up the board-level override."""
+    """A KPI support row with style.support.tone: positive picks up the board-level override."""
     patch = StylePatch.model_validate({"tones": {"positive": _OVERRIDE_POSITIVE}})
     board_style = resolve_style(get_theme_style(), patch)
     board_ctx = resolve_chart_style_context(get_theme_style(), patch)
@@ -53,12 +53,8 @@ def test_kpi_support_row_reads_board_level_tones_override() -> None:
         query_name="q",
         type="kpi",
         value="revenue",
-        support={
-            "value": "delta_pct",
-            "label": "vs LQ",
-            "glyph": "▲",
-            "tone": "positive",
-        },
+        support={"value": "delta_pct", "label": "vs LQ", "glyph": "▲"},
+        style={"support": {"tone": "positive"}},
     )
     data = [{"revenue": 1_500_000, "delta_pct": 0.124}]
     resolved = resolve(chart, data, chart_style_context=board_ctx)

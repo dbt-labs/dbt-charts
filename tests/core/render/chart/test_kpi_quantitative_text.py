@@ -3,9 +3,9 @@
 Covers the contract changes:
 
 * ``value:`` (column reference — always a column name) replaces ``metric:``
-* ``style.glyph`` (character) on the headline value; no ``value_color`` / ``glyph_color``
-* ``support: { value, label, format, glyph, tone }`` block — ``tone`` lives only
-  here, since the support row is the block it paints (headline value stays neutral)
+* ``glyph`` at chart root on the headline value; no ``value_color`` / ``glyph_color``
+* ``support: { value, label, glyph }`` block; ``style.support.{format, tone}`` live
+  in style, since the support row is the block tone paints (headline value stays neutral)
 * Editorial notation default for the headline number
 * Three-slot layout (value → label → support) with fixed structural minimum
 """
@@ -45,13 +45,22 @@ def _es():
 
 
 def _resolved_kpi(**kwargs):
-    from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
-
     data = kwargs.pop("_data", None) or [{"revenue": 1_500_000}]
-    # format was removed from KpiChart root; move to style.value.format
+    style = dict(kwargs.pop("style", None) or {})
+    if "variant" in kwargs:
+        style["variant"] = kwargs.pop("variant")
     fmt = kwargs.pop("format", None)
     if fmt is not None:
-        kwargs["style"] = KpiChartStylePatch.model_validate({"value": {"format": fmt}})
+        style["value"] = {**style.get("value", {}), "format": fmt}
+    support_style = {
+        key: kwargs.pop(f"support_{key}")
+        for key in ("tone", "format")
+        if f"support_{key}" in kwargs
+    }
+    if support_style:
+        style["support"] = {**style.get("support", {}), **support_style}
+    if style:
+        kwargs["style"] = style
     chart = KpiChart(id="t", query=_DUMMY_QUERY, query_name="q", type="kpi", **kwargs)
     resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
     return resolved, data
@@ -190,17 +199,13 @@ class TestKpiSupportBlock:
     def test_support_renders_glyph_value_and_neutral_explainer(self):
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
-        support = KpiSupportConfig(
-            value="delta_pct",
-            label="vs LQ",
-            glyph="▲",
-            tone="positive",
-            format=FormatConfig(spec=".1%"),
-        )
+        support = KpiSupportConfig(value="delta_pct", label="vs LQ", glyph="▲")
         resolved, data = _resolved_kpi(
             value="revenue",
             label="Revenue",
             support=support,
+            support_tone="positive",
+            support_format=FormatConfig(spec=".1%"),
             _data=[{"revenue": 1_500_000, "delta_pct": 0.124}],
         )
         svg = render_kpi_svg(
@@ -215,13 +220,12 @@ class TestKpiSupportBlock:
         assert "vs LQ" in svg
 
     def test_support_value_carries_tone_color(self):
-        support = KpiSupportConfig(
-            value="delta_pct", label="vs LQ", glyph="▲", tone="positive"
-        )
+        support = KpiSupportConfig(value="delta_pct", label="vs LQ", glyph="▲")
         resolved, data = _resolved_kpi(
             value="revenue",
             label="Revenue",
             support=support,
+            support_tone="positive",
             _data=[{"revenue": 1_500_000, "delta_pct": 0.124}],
         )
         es = _es()
@@ -237,13 +241,12 @@ class TestKpiSupportBlock:
         assert es.tones.positive in svg
 
     def test_support_explainer_remains_neutral_under_negative_tone(self):
-        support = KpiSupportConfig(
-            value="delta_pct", label="last month", glyph="▼", tone="negative"
-        )
+        support = KpiSupportConfig(value="delta_pct", label="last month", glyph="▼")
         resolved, data = _resolved_kpi(
             value="revenue",
             label="Revenue",
             support=support,
+            support_tone="negative",
             _data=[{"revenue": 1_500_000, "delta_pct": -0.05}],
         )
         es = _es()
@@ -270,7 +273,6 @@ class TestKpiSupportBlock:
                     "value": -0.003,
                     "label": "vs LQ",
                     "glyph": "▼",
-                    "tone": "positive",
                     "value_color": "#0066cc",
                 }
             )
@@ -290,11 +292,12 @@ class TestKpiSupportLineFlatText:
 
         from dbt_charts.core.render.board_to_dict import _kpi_text_parts
 
-        support = KpiSupportConfig(value="delta", label="vs last", format=fmt)
+        support = KpiSupportConfig(value="delta", label="vs last")
         resolved, data = _resolved_kpi(
             value="revenue",
             label="Revenue",
             support=support,
+            **({} if fmt is None else {"support_format": fmt}),
             _data=[{"revenue": 1.0, "delta": value}],
         )
         svg = render_kpi_svg(
@@ -332,19 +335,20 @@ class TestKpiSupportLineFlatText:
 class TestKpiTonePrecedence:
     def test_style_tone_rejected(self):
         """style.tone is retired — the headline value has no tone field.
-        Tone lives on the block it paints: support.tone."""
+        Tone lives on the block it paints: style.support.tone."""
         from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
         with pytest.raises(ValidationError, match="tone"):
             KpiChartStylePatch.model_validate({"tone": "warning"})
 
     def test_main_value_stays_neutral_when_support_carries_tone(self):
-        """The headline value's fill never picks up support.tone — value and
+        """The headline value's fill never picks up style.support.tone — value and
         support are disjoint tone targets."""
         resolved, data = _resolved_kpi(
             value="revenue",
             label="Revenue",
-            support=KpiSupportConfig(label="vs LQ", tone="warning"),
+            support=KpiSupportConfig(label="vs LQ"),
+            support_tone="warning",
             _data=[{"revenue": 1_500_000}],
         )
         es = _es()
@@ -539,10 +543,8 @@ class TestKpiTemporalFormat:
     the board (a theme/board-level default merged with this chart's own
     patch, indistinguishable from each other once merged), so a numeric spec
     that doesn't fit this chart's temporal value degrades to ``date_short``
-    instead of erroring the whole render. ``support.format`` is never
-    cascaded — ``ResolvedKpiChart.support`` is the authored ``KpiSupportConfig``
-    verbatim — so a mismatch there raises, the same as an equivalent mistake
-    would on a table column. A genuinely broken strftime directive raises on
+    instead of erroring the whole render. A ``style.support.format`` mismatch
+    raises, the same as an equivalent mistake would on a table column. A genuinely broken strftime directive raises on
     either slot.
     """
 
@@ -696,34 +698,26 @@ class TestKpiTemporalFormat:
         assert "2026-11-15" not in svg
 
     def test_support_date_value_honors_named_format(self):
-        support = KpiSupportConfig(
-            value="renewed_on",
-            label="renewed",
-            format="date_short",
-        )
+        support = KpiSupportConfig(value="renewed_on", label="renewed")
         resolved, data = _resolved_kpi(
             value="revenue",
             label="Revenue",
             support=support,
+            support_format="date_short",
             _data=[{"revenue": 1_500_000, "renewed_on": "2026-11-15"}],
         )
         svg = self._render(resolved, data)
         assert "15 Nov 2026" in svg
 
     def test_support_mismatched_format_raises(self):
-        # support.format is never a cascade result (ResolvedKpiChart.support
-        # is the authored KpiSupportConfig verbatim), so an explicit
-        # mismatched format there is unambiguously this chart's own
-        # authoring mistake -- it raises, unlike the value slot's fallback.
-        support = KpiSupportConfig(
-            value="renewed_on",
-            label="renewed",
-            format="percent",
-        )
+        # A mismatched style.support.format raises, unlike the value slot's
+        # fallback.
+        support = KpiSupportConfig(value="renewed_on", label="renewed")
         resolved, data = _resolved_kpi(
             value="revenue",
             label="Revenue",
             support=support,
+            support_format="percent",
             _data=[{"revenue": 1_500_000, "renewed_on": "2026-11-15"}],
         )
         with pytest.raises(ChartDataError, match="is not a date format"):
@@ -833,15 +827,13 @@ class TestKpiValidation:
 
 
 class TestKpiNewFieldsRoundTripThroughSerializers:
-    """KPI style fields (glyph.character) live under style.kpi.* not chart
-    root; tone lives only on support.tone. Verify JSON serialization routes
-    them correctly, and that yaml_format no longer lists them as standalone
-    chart root fields."""
+    """The headline glyph is a chart root field; tone lives only on
+    style.support.tone. Verify JSON serialization routes them correctly, and
+    that yaml_format lists glyph but not tone as a chart root field."""
 
     def _kpi(self):
         from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
-        # glyph moved to style.* — use KpiChartStylePatch directly
         return KpiChart(
             id="t",
             query=_DUMMY_QUERY,
@@ -849,12 +841,12 @@ class TestKpiNewFieldsRoundTripThroughSerializers:
             type="kpi",
             label="Revenue",
             value="revenue",
-            style=KpiChartStylePatch.model_validate({"glyph": {"character": "●"}}),
+            glyph="●",
+            style=KpiChartStylePatch.model_validate({"support": {"tone": "positive"}}),
             support=KpiSupportConfig(
                 value="delta_pct",
                 label="vs LQ",
                 glyph="▲",
-                tone="positive",
             ),
         )
 
@@ -865,9 +857,9 @@ class TestKpiNewFieldsRoundTripThroughSerializers:
         data = [{"revenue": 1_500_000, "delta_pct": 0.124}]
         out = build_dbt_charts_json(chart, data)
         assert out["value"] == "revenue"
-        # glyph and tone are now in style.kpi.*, not at chart root
-        assert "glyph" not in out
+        assert out["glyph"] == "●"
         assert "tone" not in out
+        assert out["style"]["support"]["tone"] == "positive"
         # value_color and glyph_color were removed — must NOT be emitted.
         assert "value_color" not in out
         assert "glyph_color" not in out
@@ -875,16 +867,13 @@ class TestKpiNewFieldsRoundTripThroughSerializers:
         assert out["support"]["value"] == "delta_pct"
         assert out["support"]["label"] == "vs LQ"
         assert out["support"]["glyph"] == "▲"
-        assert out["support"]["tone"] == "positive"
+        assert "tone" not in out["support"]
 
     def test_yaml_emit_preserves_all_kpi_fields(self):
         from dbt_charts.core.render.board_to_dict import CHART_FIELDS
 
-        # glyph/tone moved to style.kpi.* — no longer in top-level CHART_FIELDS.
-        assert "glyph" not in CHART_FIELDS, "glyph should have moved to style.kpi"
-        assert "tone" not in CHART_FIELDS, "tone should have moved to style.kpi"
-        # Remaining KPI-specific root fields stay.
-        for field in ("value", "label", "support"):
+        assert "tone" not in CHART_FIELDS, "tone should have moved to style.support"
+        for field in ("value", "label", "glyph", "support"):
             assert field in CHART_FIELDS, f"CHART_FIELDS missing {field!r}"
         # value_color and glyph_color are removed from the authoring surface.
         assert "value_color" not in CHART_FIELDS
@@ -953,21 +942,16 @@ class TestKpiValueFontSizeCascade:
         )
 
     def test_theme_glyph_font_size_reaches_rendered_svg(self):
-        """``kpi.glyph.font.size`` round-trips theme → SVG.
-        Glyph character must be set via kpi.glyph.character (moved from chart root)."""
+        """``kpi.value.glyph.font.size`` round-trips theme → SVG."""
         from dbt_charts.core.compile.resolve.style.board import resolve_style
 
         es = resolve_style(get_theme_style()).chart_defaults
         kpi = es.kpi
+        glyph_override = kpi.value.glyph.model_copy(
+            update={"font": kpi.value.glyph.font.model_copy(update={"size": 17.0})}
+        )
         kpi_override = kpi.model_copy(
-            update={
-                "glyph": kpi.glyph.model_copy(
-                    update={
-                        "character": "▲",
-                        "font": kpi.glyph.font.model_copy(update={"size": 17.0}),
-                    }
-                )
-            }
+            update={"value": kpi.value.model_copy(update={"glyph": glyph_override})}
         )
         chart = KpiChart(
             id="t",
@@ -976,6 +960,7 @@ class TestKpiValueFontSizeCascade:
             type="kpi",
             value="revenue",
             label="Revenue",
+            glyph="▲",
         )
         data = [{"revenue": 42}]
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1024,9 +1009,7 @@ class TestKpiGeometryRefinements:
         value_override = es.kpi.value.model_copy(update={"font": value_font_override})
         effective = self._override_kpi(es, value=value_override)
 
-        support = KpiSupportConfig(
-            value="delta_pct", label="vs LQ", glyph="▲", tone="positive"
-        )
+        support = KpiSupportConfig(value="delta_pct", label="vs LQ", glyph="▲")
         chart = KpiChart(
             id="t",
             query=_DUMMY_QUERY,
@@ -1054,16 +1037,22 @@ class TestKpiGeometryRefinements:
         # Layout: [value, label, support] in document order.
         assert len(texts) >= 3, "Expected value + label + support text elements"
         support_text = texts[-1]
-        family = support_text.attrib.get("font-family", "")
+        family = " ".join(
+            t.attrib.get("font-family", "")
+            for t in support_text.findall("svg:tspan", _NS)
+        )
+        assert family, "support tspans carry no font-family"
         assert "Source Serif 4" not in family, (
             f"Support row font-family contains 'Source Serif 4' — body/value "
             f"family resolution leaked the value override into support. "
             f"font-family={family!r}"
         )
-        # Sanity: the value <text> *did* receive the serif override.
-        value_family = texts[0].attrib.get("font-family", "")
+        # Sanity: the value tspan *did* receive the serif override.
+        value_family = " ".join(
+            t.attrib.get("font-family", "") for t in texts[0].findall("svg:tspan", _NS)
+        )
         assert "Source Serif 4" in value_family, (
-            f"Value <text> font-family did not pick up the serif override; "
+            f"Value tspan font-family did not pick up the serif override; "
             f"got {value_family!r} — test setup may be wrong."
         )
 
@@ -1124,7 +1113,6 @@ class TestKpiGeometryRefinements:
         from dbt_charts.core.compile.models.primitives import FormatConfig
         from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
-        # glyph moved to style.glyph.character; format to style.value.format
         chart = KpiChart(
             id="t",
             query=_DUMMY_QUERY,
@@ -1132,11 +1120,9 @@ class TestKpiGeometryRefinements:
             type="kpi",
             value="revenue",
             label="Revenue",
+            glyph="▲",
             style=KpiChartStylePatch.model_validate(
-                {
-                    "glyph": {"character": "▲"},
-                    "value": {"format": FormatConfig(spec="$,.2s")},
-                }
+                {"value": {"format": FormatConfig(spec="$,.2s")}}
             ),
         )
         data = [{"revenue": 1_500_000}]
@@ -1207,44 +1193,19 @@ class TestKpiGeometryRefinements:
 
 
 def test_kpi_label_color_no_longer_inherits_style_title_font_color():
-    """Pin the deliberate behavior change: ``style.kpi.title.font.color`` no
-    longer overrides the KPI label color.
+    """A KPI has no title slot: ``style.title`` is rejected on a KPI, and the
+    label color is authored on ``style.label.font.color``, which reads on the
+    label tspan."""
+    from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
-    Pre-cascade-rename, the KPI renderer read ``chart.style.title.font.color``
-    directly off the authored Patch and used it as the label color, falling
-    back to body color when None. After the cascade rename the resolved
-    ``title.font.color`` is always populated by the cascade — keeping
-    the legacy coupling would silently flip from body to title color across
-    the whole label corpus on any theme.
+    with pytest.raises(ValidationError, match="title"):
+        KpiChartStylePatch.model_validate({"title": {"font": {"color": "#ff00ff"}}})
 
-    The typed slot an author wants is ``style.label.font.color`` (not the
-    title slot); it reads on the label now. What stays pinned here is that the
-    *title* slot is not that slot, so a future refactor cannot re-introduce
-    the silent coupling.
-    """
-    from dbt_charts.core.compile.models.primitives import FontStyle
-    from dbt_charts.core.compile.models.style.authored import (
-        KpiChartStylePatch,
-        TitleStylePatch,
-    )
-
-    chart = KpiChart(
-        id="t",
-        query=_DUMMY_QUERY,
-        query_name="q",
-        type="kpi",
+    resolved, data = _resolved_kpi(
         value="revenue",
         label="Revenue",
-        style=KpiChartStylePatch.model_validate(
-            {
-                "title": TitleStylePatch.model_validate(
-                    {"font": FontStyle(color="#ff00ff")}
-                )
-            }
-        ),
+        style={"label": {"font": {"color": "#ff00ff"}}},
     )
-    data = [{"revenue": 1_500_000}]
-    resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
     svg = render_kpi_svg(
         resolved,
         data,
@@ -1252,12 +1213,8 @@ def test_kpi_label_color_no_longer_inherits_style_title_font_color():
         height=180,
         board_style=resolve_style(get_theme_style()),
     )
-    # The authored title color must NOT show up on the label — body color owns it.
-    assert "#ff00ff" not in svg, (
-        "KPI label color leaked from style.kpi.title.font.color — this coupling "
-        "was deliberately removed during the cascade rename. A label-specific "
-        "color is authored on style.label.font.color."
-    )
+    label_text = ET.fromstring(svg).findall("svg:text", _NS)[1]
+    assert "#ff00ff" in ET.tostring(label_text, encoding="unicode")
 
 
 # ---------------------------------------------------------------------------
@@ -1266,12 +1223,12 @@ def test_kpi_label_color_no_longer_inherits_style_title_font_color():
 
 
 def _charts_style_with_overflow(overflow):
-    """Return a ChartsStyle copy with title.overflow set to ``overflow``."""
+    """Return a ChartsStyle copy with kpi.label.overflow set to ``overflow``."""
     import dataclasses
 
     base = _es()
-    new_title = base.title.model_copy(update={"overflow": overflow})
-    return dataclasses.replace(base, title=new_title)
+    label = base.kpi.label.model_copy(update={"overflow": overflow})
+    return dataclasses.replace(base, kpi=base.kpi.model_copy(update={"label": label}))
 
 
 class TestKpiLabelSlotByOverflow:
@@ -1283,7 +1240,10 @@ class TestKpiLabelSlotByOverflow:
     """
 
     def _layout(self, overflow, label="Revenue", width=180, height=0):
-        from dbt_charts.core.render.chart.kpi import _resolve_kpi_layout
+        from dbt_charts.core.render.chart.kpi import (
+            _resolve_kpi_fonts,
+            _resolve_kpi_layout,
+        )
 
         charts_style = _charts_style_with_overflow(overflow)
         return _resolve_kpi_layout(
@@ -1291,7 +1251,7 @@ class TestKpiLabelSlotByOverflow:
             requested_width=width,
             requested_height=height,
             kpi_config=charts_style.kpi,
-            title_style=charts_style.title,
+            fonts=_resolve_kpi_fonts(charts_style.kpi),
             has_support=True,
         )
 
@@ -1352,7 +1312,10 @@ class TestKpiSupportSlotCollapse:
         width: float = 180,
         height: float = 0,
     ):
-        from dbt_charts.core.render.chart.kpi import _resolve_kpi_layout
+        from dbt_charts.core.render.chart.kpi import (
+            _resolve_kpi_fonts,
+            _resolve_kpi_layout,
+        )
 
         charts_style = _es()
         return _resolve_kpi_layout(
@@ -1360,7 +1323,7 @@ class TestKpiSupportSlotCollapse:
             requested_width=width,
             requested_height=height,
             kpi_config=charts_style.kpi,
-            title_style=charts_style.title,
+            fonts=_resolve_kpi_fonts(charts_style.kpi),
             has_support=has_support,
         )
 
@@ -1469,15 +1432,13 @@ def _render_kpi(**resolved_kwargs):
 
 
 def _support_full():
+    return KpiSupportConfig(value="delta_pct", label="vs LQ", glyph="▲")
+
+
+def _support_full_style():
     from dbt_charts.core.compile.models.primitives import FormatConfig
 
-    return KpiSupportConfig(
-        value="delta_pct",
-        label="vs LQ",
-        glyph="▲",
-        tone="positive",
-        format=FormatConfig(spec=".1%"),
-    )
+    return {"support_tone": "positive", "support_format": FormatConfig(spec=".1%")}
 
 
 _KPI_DATA = [{"revenue": 1_500_000, "delta_pct": 0.124}]
@@ -1495,6 +1456,7 @@ class TestKpiVariantInline:
             value="revenue",
             label="Revenue",
             support=_support_full(),
+            **_support_full_style(),
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
@@ -1511,6 +1473,7 @@ class TestKpiVariantInline:
             value="revenue",
             label="Revenue",
             support=_support_full(),
+            **_support_full_style(),
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
@@ -1554,7 +1517,7 @@ class TestKpiVariantInline:
         svg = _render_kpi(
             variant="inline",
             value="revenue",
-            label="Net new monthly recurring revenue, enterprise",
+            label="Net new monthly recurring revenue",
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
@@ -1616,6 +1579,7 @@ class TestKpiVariantInline:
             value="revenue",
             label="Revenue",
             support=_support_full(),
+            **_support_full_style(),
             _data=_KPI_DATA,
         )
         # The positive tone color from the default theme is non-default;
@@ -1647,6 +1611,7 @@ class TestKpiVariantCompact:
             value="revenue",
             label="Revenue",
             support=_support_full(),
+            **_support_full_style(),
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
@@ -1663,6 +1628,7 @@ class TestKpiVariantCompact:
             value="revenue",
             label="Revenue",
             support=_support_full(),
+            **_support_full_style(),
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
@@ -1702,7 +1668,8 @@ class TestKpiVariantCompact:
         svg = _render_kpi(
             variant="compact",
             value="revenue",
-            support=_support_full(),  # has value + label
+            support=_support_full(),
+            **_support_full_style(),  # has value + label
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
@@ -1772,6 +1739,7 @@ class TestKpiVariantCompact:
             value="revenue",
             label="Revenue",
             support=_support_full(),
+            **_support_full_style(),
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
@@ -1797,6 +1765,7 @@ class TestKpiVariantCompact:
             value="revenue",
             label="Revenue",
             support=_support_full(),
+            **_support_full_style(),
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
@@ -1820,20 +1789,14 @@ class TestKpiVariantDispatch:
             KpiChart as AuthoredKpiChart,
         )
 
-        # Existing boards that omit `variant:` keep rendering as stacked —
-        # the variant field defaults to 'stacked' in the authored model.
-        chart_unset = TypeAdapter(AuthoredKpiChart).validate_python(
-            {"type": "kpi", "value": "revenue", "label": "Revenue"}
-        )
-        chart_explicit = TypeAdapter(AuthoredKpiChart).validate_python(
-            {
-                "type": "kpi",
-                "value": "revenue",
-                "label": "Revenue",
-                "variant": "stacked",
-            }
-        )
-        assert chart_unset.variant == chart_explicit.variant == "stacked"
+        # Boards that omit `style.variant` resolve to stacked.
+        unset, _ = _resolved_kpi(value="revenue", label="Revenue")
+        explicit, _ = _resolved_kpi(value="revenue", label="Revenue", variant="stacked")
+        assert unset.variant == explicit.variant == "stacked"
+        with pytest.raises(ValidationError, match="variant"):
+            TypeAdapter(AuthoredKpiChart).validate_python(
+                {"type": "kpi", "value": "revenue", "variant": "stacked"}
+            )
 
     def test_all_variants_degenerate_to_bare_value(self):
         # value-only inputs render identically across variants — just the

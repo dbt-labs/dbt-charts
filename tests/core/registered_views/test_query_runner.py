@@ -17,6 +17,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile.template.query_result import (
+    QueryResult as TemplateQueryResult,
+)
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.cache_backend import (
@@ -27,7 +30,6 @@ from dbt_charts.core.execute.cache_backend import (
 from dbt_charts.core.registered_views.models import RegisteredView
 from dbt_charts.core.registered_views.query_runner import (
     RegistryQueryError,
-    ViewQueryResult,
     materialize_path_params,
     run_registry_queries,
 )
@@ -123,42 +125,6 @@ class TestMaterializePathParams:
 
 
 # ---------------------------------------------------------------------------
-# ViewQueryResult
-# ---------------------------------------------------------------------------
-
-
-class TestViewQueryResult:
-    def test_rows_returns_all_rows(self) -> None:
-        rows = [{"id": 1, "name": "foo"}, {"id": 2, "name": "bar"}]
-        r = ViewQueryResult(rows=rows)
-        assert r.rows == rows
-
-    def test_columns_returns_column_names_in_first_row_order(self) -> None:
-        rows = [{"id": 1, "name": "foo"}, {"id": 2, "name": "bar"}]
-        r = ViewQueryResult(rows=rows)
-        assert r.columns == ["id", "name"]
-
-    def test_columns_empty_when_no_rows(self) -> None:
-        r = ViewQueryResult(rows=[])
-        assert r.columns == []
-
-    def test_one_returns_single_row(self) -> None:
-        rows = [{"id": 1}]
-        r = ViewQueryResult(rows=rows)
-        assert r.one == {"id": 1}
-
-    def test_one_raises_when_zero_rows(self) -> None:
-        r = ViewQueryResult(rows=[])
-        with pytest.raises(ValueError, match="one row"):
-            _ = r.one
-
-    def test_one_raises_when_multiple_rows(self) -> None:
-        r = ViewQueryResult(rows=[{"id": 1}, {"id": 2}])
-        with pytest.raises(ValueError, match="one row"):
-            _ = r.one
-
-
-# ---------------------------------------------------------------------------
 # run_registry_queries — happy paths (mock adapter_registry)
 # ---------------------------------------------------------------------------
 
@@ -190,8 +156,9 @@ class TestRunRegistryQueriesHappyPath:
         result = run_registry_queries(view, {}, registry)
 
         assert "columns" in result
-        assert isinstance(result["columns"], ViewQueryResult)
-        assert result["columns"].rows == rows
+        assert isinstance(result["columns"], TemplateQueryResult)
+        assert [r.name for r in result["columns"].rows] == ["id", "status"]
+        assert result["columns"].rows[0].type == "BIGINT"
 
     def test_path_params_materialized_before_execution(self) -> None:
         """{{ path.X }} is replaced with literal values before normalize_query."""
@@ -211,7 +178,7 @@ class TestRunRegistryQueriesHappyPath:
         result = run_registry_queries(view, path_params, registry)
 
         assert "columns" in result
-        assert result["columns"].rows == rows
+        assert result["columns"].one.type == "BIGINT"
         # Verify the normalized query that was executed had literals, not templates
         executed_query = registry.execute.call_args[0][0]
         assert executed_query.source == "snowflake"
@@ -485,7 +452,7 @@ class TestSchemaQueryAsRegistryQuery:
 
         result = run_registry_queries(view, path_params, registry)
 
-        assert result["columns"].rows == rows
+        assert [r.name for r in result["columns"].rows] == [r["name"] for r in rows]
         # The query passed to execute must have literal source, not Jinja template
         executed_query = registry.execute.call_args[0][0]
         assert executed_query.source == "snowflake"
@@ -507,7 +474,7 @@ class TestSchemaQueryAsRegistryQuery:
         result = run_registry_queries(view, {}, registry)
 
         assert "meta" in result
-        assert result["meta"].rows == rows
+        assert result["meta"].one.name == "col1"
 
 
 # ---------------------------------------------------------------------------

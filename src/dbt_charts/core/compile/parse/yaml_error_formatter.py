@@ -647,6 +647,36 @@ def _extra_field_diagnostic(
             fields=fields,
         )
 
+    # description: was renamed to notes: at every position that authors it
+    # (board, chart, query, grid item, tab item, variable) -- the two words
+    # share no substring difflib's cutoff would catch, so the generic
+    # suggest_similar_value fallback below never fires for this rename. It is
+    # the fallback wherever NOTES_RENAMES cannot reach -- a self-nested
+    # sub-board or a union arm that never declared the field -- so it must
+    # name the replacement explicitly rather than fall through to a plain
+    # allowed-keys dump. Gated on `"notes" in allowed_keys` rather than
+    # firing unconditionally: a chart family with no notes field (e.g.
+    # CalloutChart) correctly falls through to the generic diagnostic
+    # instead of naming a replacement that doesn't exist there.
+    if field_name == "description" and "notes" in allowed_keys:
+        fields["suggestion"] = "notes"
+        # `parent_path` can carry union-tag discriminators picked up from the
+        # Pydantic error loc (`@inline`, a chart-family literal like `bar`, a
+        # query-type literal like `sql`) that were never a YAML key the
+        # author wrote -- e.g. a query-level description lands at loc
+        # `queries.q.@inline.sql.description`. `_display_path` walks the same
+        # schema tree and drops exactly those segments, so the hint names the
+        # key's real parent (`queries.q`) instead of a schema-internal path.
+        display_parent = _format_parent_path(_display_path(parent_path))
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                f"`description:` was renamed to `notes:`. Rename the key at "
+                f"{display_parent} to `notes:`. See: dct docs {docs_topic}"
+            ),
+            fields=fields,
+        )
+
     # Authored grid.gap is inert (resolve reads style.layout.grid.gap instead)
     # and declarable but unconverted: the ("grid", "gap") tail also matches the
     # live style key, so it is legal only root-anchored. Until it is declared,

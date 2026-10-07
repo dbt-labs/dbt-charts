@@ -607,6 +607,9 @@ class WrapPiece:
     separator: str = ""
     separator_width: float = 0.0
     meta: Any = None
+    # First chunk of a token directly abutting the previous piece (`(` + *title*,
+    # or *title* + `,`), so a line may not break ahead of it.
+    glued: bool = False
 
 
 def get_system_font() -> Optional[str]:
@@ -816,8 +819,18 @@ def wrap_measured_pieces(
         if lines[-1]:
             candidate_width += piece.separator_width
         if lines[-1] and current_width + candidate_width > max_width:
-            lines.append([piece])
-            current_width = piece.width
+            # Carry the glued chain to the new line. The glue is given up when
+            # the chain fills the whole line or the carried chain plus this piece
+            # would overflow: a line never exceeds max_width.
+            start = len(lines[-1]) - 1 if piece.glued else len(lines[-1])
+            while 0 < start < len(lines[-1]) and lines[-1][start].glued:
+                start -= 1
+            carried = lines[-1][start:] if 0 < start < len(lines[-1]) else []
+            if _line_width([*carried, piece]) > max_width:
+                carried = []
+            del lines[-1][len(lines[-1]) - len(carried) :]
+            lines.append([*carried, piece])
+            current_width = _line_width(lines[-1])
         else:
             lines[-1].append(piece)
             current_width += candidate_width
@@ -826,7 +839,7 @@ def wrap_measured_pieces(
 
     if avoid_runts and len(lines) >= 2 and len(lines[-1]) == 1:
         penultimate, last = lines[-2], lines[-1]
-        if len(penultimate) >= 2:
+        if len(penultimate) >= 2 and not penultimate[-1].glued:
             moved = penultimate[-1]
             candidate = [moved, *last]
             if _line_width(candidate) <= max_width:

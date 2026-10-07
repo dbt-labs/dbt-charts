@@ -29,7 +29,7 @@ _RENDER_ROOT = DBT_CHARTS_PKG_DIR / "core" / "render"
 ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
         # chart/kpi.py
-        ("chart/kpi.py", "_render_kpi_svg_core"),
+        ("chart/kpi.py", "_slot_font"),
         ("chart/kpi.py", "render_kpi_svg"),
         # chart/spark.py
         ("chart/spark.py", "_resolve_spark_color"),
@@ -47,9 +47,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # chart/table.py
         ("chart/table.py", "_render_spark_cell"),
         # chart/table_support.py
-        ("chart/table_support.py", "_validate_strftime_spec"),
-        ("chart/table_support.py", "format_temporal_value"),
-        ("chart/table_support.py", "resolve_cell_link._sub"),
         ("chart/table_support.py", "resolve_palette_stops"),
         ("chart/table_support.py", "interpolate_scale_color"),
         # chart/time_unit_detect.py
@@ -101,8 +98,10 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("terminal_charts.py", "_terminal_color_field"),
         # variables_resolve.py
         ("variables_resolve.py", "format_variable_display_value"),
+        # boards.py: a render path that resolves board text without scoping a
+        # data provider is a programming error, never author input.
+        ("boards.py", "resolve_display_text_via"),
         # conditions.py
-        ("conditions.py", "coerce_bool"),
         ("conditions.py", "eval_bool_condition"),
     }
 )

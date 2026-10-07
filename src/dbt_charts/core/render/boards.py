@@ -44,7 +44,10 @@ from dbt_charts.core.font_measure import (
     get_font_measurer,
     get_weighted_font_measurer,
 )
-from dbt_charts.core.render.board_variables import board_variables
+from dbt_charts.core.render.board_variables import (
+    board_data_provider,
+    board_variables,
+)
 from dbt_charts.core.render.chart_interactivity import (
     hover_runtime_attributes,
 )
@@ -152,70 +155,50 @@ def _footer_attribution_svg(
     return "".join(parts), footer_text_width(footer, font_family)
 
 
-def _resolve_jinja(template: str, variables: VariableValues) -> str:
-    """Resolve Jinja templates in a string (lenient mode).
+def resolve_display_text_via(
+    provider: ChartDataProvider
+    | None,  # type-state: optional — None when no query is scoped
+    text: str,
+    variables: VariableValues | None,  # type-state: optional — None means no variables
+    *,
+    resolved_style: "ResolvedStyle",
+) -> str:
+    """Resolve board ``text:`` or a board title, reading query results from *provider*."""
+    from dbt_charts.core.compile.template.display_text import resolve_display_text
+    from dbt_charts.core.compile.template.jinja import extract_query_result_references
+    from dbt_charts.core.compile.template.query_result import QueryResult
 
-    Returns the original string if no Jinja syntax is present.
-    """
-    if "{{" not in template and "{%" not in template:
-        return template
-    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
-
-    return resolve_jinja_template(template, variables, strict=False)
-
-
-_MARKDOWN_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})([^\r\n]*)$")
-
-
-def _resolve_markdown_jinja(text: str, variables: VariableValues) -> str:
-    masked, fences = _mask_markdown_fenced_code(text)
-    resolved = _resolve_jinja(masked, variables)
-    for token, fence in fences.items():
-        resolved = resolved.replace(token, fence)
-    return resolved
-
-
-def _mask_markdown_fenced_code(text: str) -> tuple[str, dict[str, str]]:
-    fences: dict[str, str] = {}
-    result: list[str] = []
-    fence_marker: str | None = None
-    fence_lines: list[str] = []
-
-    for line in text.splitlines(keepends=True):
-        if fence_marker is not None:
-            fence_lines.append(line)
-            if _is_markdown_fence_close(line, fence_marker):
-                token = f"__DCT_MARKDOWN_FENCE_{len(fences)}__"
-                fences[token] = "".join(fence_lines)
-                result.append(token)
-                fence_marker = None
-                fence_lines = []
-            continue
-
-        fence_marker = _markdown_fence_marker(line)
-        if fence_marker is not None:
-            fence_lines = [line]
-            continue
-
-        result.append(line)
-
-    if fence_marker is not None:
-        result.extend(fence_lines)
-
-    return "".join(result), fences
+    values = variables or {}  # type-state: silent_fallback — None means no variables
+    query_results: dict[str, QueryResult] = {}
+    query_names = extract_query_result_references(text)
+    if query_names:
+        if provider is None:
+            raise RuntimeError(
+                f"display text references query {sorted(query_names)[0]!r} "
+                "but no data provider is scoped"
+            )
+        query_results = {
+            name: QueryResult(name, provider.execute_query(name, values))
+            for name in sorted(query_names)
+        }
+    return resolve_display_text(
+        text, values, query_results, resolved_style.chart_defaults.formats
+    )
 
 
-def _markdown_fence_marker(line: str) -> str | None:
-    match = _MARKDOWN_FENCE_RE.match(line)
-    if match is None:
-        return None
-    return match.group(1)
+def resolve_display_text_from_provider(
+    text: str,
+    variables: VariableValues | None,  # type-state: optional — None means no variables
+    *,
+    resolved_style: "ResolvedStyle",
+) -> str:
+    """``resolve_display_text_via`` the provider scoped for this render pass, the one
+    resolution that sizing and paint share."""
+    from dbt_charts.core.render.board_variables import current_board_data_provider
 
-
-def _is_markdown_fence_close(line: str, opening_marker: str) -> bool:
-    marker_char = re.escape(opening_marker[0])
-    min_width = len(opening_marker)
-    return bool(re.match(rf"^\s*{marker_char}{{{min_width},}}\s*$", line))
+    return resolve_display_text_via(
+        current_board_data_provider(), text, variables, resolved_style=resolved_style
+    )
 
 
 def _prose_authoring_padding(
@@ -586,7 +569,9 @@ def _render_text_svg(
     from dbt_charts.core.render.board_links import get_link_context, rewrite_board_links
     from dbt_charts.core.render.contrast_warning import check_markdown_contrast
 
-    resolved = _resolve_markdown_jinja(text, variables)
+    resolved = resolve_display_text_from_provider(
+        text, variables, resolved_style=resolved_style
+    )
     resolved = rewrite_board_links(resolved, get_link_context())
     result = render_prose_svg(
         resolved,
@@ -1060,13 +1045,6 @@ def render_board_svg(
     )
 
     resolved_style = board.style  # ResolvedBoard.style is the ResolvedStyle
-    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
-
-    page_title = (
-        resolve_jinja_template(board.title, variables, strict=False)
-        if board.title
-        else "dbt Charts"
-    )
     font_family = resolved_style.font.family
     assert font_family is not None, "cascade should populate style.font.family"
     board_background = resolved_style.background
@@ -1111,68 +1089,81 @@ def render_board_svg(
 
     text_align = resolved_style.text.align
 
-    inline_header_svg = ""
-    inline_header_height = 0.0
-    title_svg = ""
-    title_height = 0.0
-    root_title_line_box: tuple[float, float] | None = None
+    with board_data_provider(executor):
+        inline_header_svg = ""
+        inline_header_height = 0.0
+        title_svg = ""
+        title_height = 0.0
+        root_title_line_box: tuple[float, float] | None = None
 
-    if _board_uses_title_inline_band(board, variables, layout_content_width):
-        inline_header_svg, inline_header_height = _render_title_variables_inline_band(
-            board,
-            variables,
-            layout_content_width,
-            card_pad,
-            executor,
-            text_align=text_align,
-            title_authored_attrs=authored_attrs("title", "title"),
-            variables_path="variables",
-            error_collector=error_collector,
-        )
-    elif board.title:
-        base_dir = board.base_dir
-        title_svg = render_title(
-            board.title,
-            prose_width,
-            text_align,
-            level=board.level,
-            resolved_style=resolved_style,
-            variable_values=variables,
-            base_dir=base_dir,
-            error_collector=error_collector,
-        )
-        title_color = resolved_style.title.font.color
-        if title_color:
-            title_svg = _paint_title_svg_fill(title_svg, str(title_color))
-        measured_title_height = get_title_height(
-            board.title,
-            prose_width,
-            _measured_variable_values(board, variables),
-            level=board.level,
-            resolved_style=resolved_style,
-            base_dir=base_dir,
-        )
-        title_height = max(measured_title_height, float(board.style.title.min_height))
-        root_title_line_box = title_line_box(
-            measured_title_height, board.level, resolved_style
-        )
+        if _board_uses_title_inline_band(board, variables, layout_content_width):
+            inline_header_svg, inline_header_height = (
+                _render_title_variables_inline_band(
+                    board,
+                    variables,
+                    layout_content_width,
+                    card_pad,
+                    executor,
+                    text_align=text_align,
+                    title_authored_attrs=authored_attrs("title", "title"),
+                    variables_path="variables",
+                    error_collector=error_collector,
+                )
+            )
+        elif board.title:
+            base_dir = board.base_dir
+            title_svg = render_title(
+                board.title,
+                prose_width,
+                text_align,
+                level=board.level,
+                resolved_style=resolved_style,
+                variable_values=variables,
+                base_dir=base_dir,
+                error_collector=error_collector,
+            )
+            title_color = resolved_style.title.font.color
+            if title_color:
+                title_svg = _paint_title_svg_fill(title_svg, str(title_color))
+            measured_title_height = get_title_height(
+                board.title,
+                prose_width,
+                _measured_variable_values(board, variables),
+                level=board.level,
+                resolved_style=resolved_style,
+                base_dir=base_dir,
+            )
+            title_height = max(
+                measured_title_height, float(board.style.title.min_height)
+            )
+            root_title_line_box = title_line_box(
+                measured_title_height, board.level, resolved_style
+            )
 
-    # Render text (markdown) if present (using shared helper)
-    text_svg = ""
-    text_height = 0.0
-    if board.text:
-        text_svg, text_height = _render_text_svg(
-            board.text,
-            variables,
-            prose_width,
-            resolved_style=resolved_style,
-            text_style=resolved_style.text,
-            base_dir=board.base_dir,
-            error_collector=error_collector,
-            plan=board.prose_plan,
-            allow_raw_html=board.html_policy == "trusted-raw",
-            path="text",
-            painted_canvas=painted_canvas,
+        # Render text (markdown) if present (using shared helper)
+        text_svg = ""
+        text_height = 0.0
+        if board.text:
+            text_svg, text_height = _render_text_svg(
+                board.text,
+                variables,
+                prose_width,
+                resolved_style=resolved_style,
+                text_style=resolved_style.text,
+                base_dir=board.base_dir,
+                error_collector=error_collector,
+                plan=board.prose_plan,
+                allow_raw_html=board.html_policy == "trusted-raw",
+                path="text",
+                painted_canvas=painted_canvas,
+            )
+
+        page_title = (
+            resolve_display_text_from_provider(
+                board.title, variables, resolved_style=resolved_style
+            )
+            if board.title
+            else "dbt Charts"
         )
 
     # Render variable controls for root-level variables only (skip when merged into title band).
@@ -1223,7 +1214,7 @@ def render_board_svg(
     # the one seam both the live render() pass and dct artifact render's
     # replay path (board_replay.py) share, so opening it here covers both
     # rather than at each caller.
-    with board_variables(variables):
+    with board_variables(variables), board_data_provider(executor):
         layout_content, actual_layout_height = _render_layout(
             board,
             executor,

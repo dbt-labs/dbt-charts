@@ -1,7 +1,8 @@
 """Layout sizing calculation module.
 
 Purpose: Calculate dimensions for layout items using static, non-data-aware
-defaults (aspect ratios, theme/config) — no query data, no executor.
+defaults (aspect ratios, theme/config). Query results are read only to
+resolve board text, from the pre-executed cache.
 
 Entry Points:
     - calculate_layout_height(layout, ...) -> float
@@ -133,9 +134,9 @@ from dbt_charts.core.compile.sizing import (
     resolve_cols_widths,
     rows_item_width,
 )
-from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 from dbt_charts.core.fonts import get_font_path
 from dbt_charts.core.numeric import aspect_ratio_height
+from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.variables_layout import WRAP_EPSILON, lay_out_variables
 from dbt_charts.core.render.variables_resolve import resolve_controls
 
@@ -211,7 +212,7 @@ def get_chart_content_height(
       - spark_bar → config-derived upper bound from max_bars/bar.height
 
     This is the static height calculator. It uses aspect ratios
-    and config defaults only — no executor, no data, no rendering.
+    and config defaults only — no rendering, except board text (see module docstring).
     Layout slot height (``LayoutItem.layout_height``) wins at render time when
     authored; the render-first pass in ``render/layout_sizing.py`` uses this
     value as a fallback when no explicit slot height is declared.
@@ -396,10 +397,14 @@ def get_markdown_text_height(
     if not text:
         return 0.0
 
-    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
     from dbt_charts.core.render.prose import render_prose_svg
 
-    resolved_content = resolve_jinja_template(text, variable_values or {}, strict=False)
+    resolved_content = resolve_display_text_from_provider(
+        text,
+        variable_values,
+        resolved_style=resolved_style,
+    )
     _, height = render_prose_svg(
         resolved_content,
         width,
@@ -432,8 +437,13 @@ def get_title_height(
         return 0.0
 
     _rs = resolved_style or resolve_style(get_theme_style())
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
+
     renderer, _ = title_renderer(_rs, level)
-    blocks = title_blocks(title, variable_values, level, _rs, base_dir, None)
+    resolved_title = resolve_display_text_from_provider(
+        title, variable_values, resolved_style=_rs
+    )
+    blocks = title_blocks(title, resolved_title, level, _rs, base_dir, None)
     return renderer.measure(blocks, width=width, padding=0.0).height
 
 
@@ -453,8 +463,13 @@ def title_baseline_offset(
     controls beside it in the title-inline band — needs the number the title
     was actually drawn with.
     """
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
+
     renderer, _ = title_renderer(resolved_style, level)
-    blocks = title_blocks(title, variable_values, level, resolved_style, base_dir, None)
+    resolved_title = resolve_display_text_from_provider(
+        title, variable_values, resolved_style=resolved_style
+    )
+    blocks = title_blocks(title, resolved_title, level, resolved_style, base_dir, None)
     return renderer.first_baseline(blocks, width)
 
 
@@ -523,7 +538,11 @@ def _measure_title_single_line_width(
     if not title:
         return 0.0
 
-    resolved = resolve_jinja_template(title, variable_values or {}, strict=False)
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
+
+    resolved = resolve_display_text_from_provider(
+        title, variable_values, resolved_style=resolved_style
+    )
     # Strip a leading `#+\s+` markdown heading prefix without eating standalone
     # `#` characters or trailing punctuation — `lstrip("# ")` would mangle
     # titles like "#1 Product" or "## Q3 ##".
@@ -908,12 +927,17 @@ def calculate_layout_height(
     Returns:
         Required height in pixels
     """
-    if not layout.items:
+    # active_layout_items needs a real dict; variable_values stays Optional for
+    # this widely-called signature.
+    drawn = active_layout_items(
+        layout, variable_values if variable_values is not None else {}
+    )
+    if not drawn:
         return min_height
 
     if layout.type == "rows":
         measured_height = _measure_rows_layout_height(
-            layout.items,
+            drawn,
             card_gap,
             gap,
             available_width,
@@ -923,7 +947,7 @@ def calculate_layout_height(
         )
     elif layout.type == "cols":
         measured_height = _measure_cols_layout_height(
-            layout.items,
+            drawn,
             card_gap,
             gap,
             available_width,
@@ -933,7 +957,8 @@ def calculate_layout_height(
         )
     elif layout.type == "grid":
         measured_height = _measure_grid_layout_height(
-            layout,
+            drawn,
+            layout.columns,
             card_gap,
             gap,
             available_width,
@@ -1120,7 +1145,8 @@ def _measure_cols_layout_height(
 
 
 def _measure_grid_layout_height(
-    layout: Layout,
+    items: list[LayoutItem],
+    layout_columns: int | None,
     card_gap: float,
     gap: float,
     available_width: float,
@@ -1140,13 +1166,13 @@ def _measure_grid_layout_height(
     instead of a per-row max under-asks for every grid whose items-per-row
     varies — which, for a grid authored tile-by-tile, is the normal case.
     """
-    columns = layout.columns if layout.columns is not None else DEFAULT_GRID_COLUMNS
+    columns = layout_columns if layout_columns is not None else DEFAULT_GRID_COLUMNS
     effective_gap = gap + card_gap
     total_gap_x = effective_gap * (columns - 1)
     col_width = (available_width - total_gap_x) / columns
 
     row_heights: dict[int, float] = {}
-    for item in layout.items:
+    for item in items:
         item_row = item.row or 0  # type-state: silent_fallback — unset row is row 0
         item_col_span, item_row_span = item_grid_span(item)
         resolved = _resolve_layout_height(item, 0.0)
@@ -1197,25 +1223,26 @@ def resolve_active_tab_index(
 def active_layout_items(
     layout: Layout, variable_values: VariableValues
 ) -> list[LayoutItem]:
-    """Items whose subtree the sizing/resolution walk should descend into.
+    """Items that are drawn: the one place a layout decides what is painted.
 
-    A tabs layout renders exactly one tab at a time; every other tree walk
+    A hidden item (``visible:`` false) takes no space and nothing of it is
+    measured or resolved. A tabs layout renders exactly one tab at a time; every other tree walk
     that recurses into nested boards (nested-board sizing, slot-height
     fixups, cols alignment, resolved-variant bookkeeping) must recurse into
     that same one item, not all of them — the other tabs are never emitted,
-    so resolving or rendering their charts is pure discarded work. Every
-    other layout type still walks all of its items.
+    so resolving or rendering their charts is pure discarded work.
     """
-    if layout.type != "tabs" or not layout.items:
-        return layout.items
-    active = resolve_active_tab_index(
-        len(layout.items),
-        layout.tab_variable,
-        layout.tab_slugs,
-        layout.default_tab,
-        variable_values,
-    )
-    return [layout.items[active]]
+    items = layout.items
+    if layout.type == "tabs" and items:
+        active = resolve_active_tab_index(
+            len(items),
+            layout.tab_variable,
+            layout.tab_slugs,
+            layout.default_tab,
+            variable_values,
+        )
+        items = [items[active]]
+    return [i for i in items if item_is_drawn(i.visible, variable_values)]
 
 
 def _measure_tabs_layout_height(
@@ -1301,11 +1328,16 @@ def calculate_layout_items(
         variable_values: Variable values to resolve Jinja against
         resolved_style: Board-resolved style for cascade-aware height calculations.
     """
-    if not layout.items:
+    # active_layout_items needs a real dict; variable_values stays Optional for
+    # this widely-called signature.
+    active_variable_values = variable_values if variable_values is not None else {}
+    drawn = active_layout_items(layout, active_variable_values)
+    if not drawn:
         return
 
     _apply_layout_dimensions(
         layout,
+        drawn,
         available_width,
         available_height,
         card_gap,
@@ -1315,10 +1347,7 @@ def calculate_layout_items(
         resolved_style=resolved_style,
     )
 
-    # active_layout_items requires a real dict — this function's own
-    # variable_values stays Optional (pre-existing, widely-called contract).
-    active_variable_values = variable_values if variable_values is not None else {}
-    for item in active_layout_items(layout, active_variable_values):
+    for item in drawn:
         _calculate_nested_board_layout(
             item,
             card_gap,
@@ -1331,6 +1360,7 @@ def calculate_layout_items(
 
 def _apply_layout_dimensions(
     layout: Layout,
+    items: list[LayoutItem],
     available_width: float,
     available_height: float,
     card_gap: float,
@@ -1343,7 +1373,7 @@ def _apply_layout_dimensions(
     """Apply the correct layout dimension calculator based on layout type."""
     if layout.type == "rows":
         _calculate_rows_dimensions(
-            layout.items,
+            items,
             available_width,
             available_height,
             card_gap,
@@ -1355,7 +1385,7 @@ def _apply_layout_dimensions(
         return
     if layout.type == "cols":
         _calculate_cols_dimensions(
-            layout.items,
+            items,
             available_width,
             available_height,
             card_gap,
@@ -1367,7 +1397,7 @@ def _apply_layout_dimensions(
         return
     if layout.type == "grid":
         _calculate_grid_dimensions(
-            layout.items,
+            items,
             available_width,
             available_height,
             (layout.columns if layout.columns is not None else DEFAULT_GRID_COLUMNS),
@@ -1391,7 +1421,7 @@ def _apply_layout_dimensions(
         )
         return
     _calculate_rows_dimensions(
-        layout.items,
+        items,
         available_width,
         available_height,
         card_gap,

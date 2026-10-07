@@ -51,6 +51,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import build_resolved_axis
+from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_NATIVE_TOOLTIP_UNSUPPORTED,
 )
@@ -97,7 +98,6 @@ def quantitative_channel_values(
 # here declares its own ``style``/``x_label``/``y_label`` field, so plan_cartesian
 # reads them straight off ``normalized`` instead of taking them as separate
 # parameters.
-_PlanChart = BarChart | LineChart | AreaChart | ScatterChart | HeatmapChart
 
 
 class _StyleTail(TypedDict):
@@ -136,7 +136,7 @@ class CartesianPlan:
 
 
 def plan_cartesian(
-    normalized: _PlanChart,
+    normalized: CartesianFamilyChart,
     data: ChartRows,
     chart_style_context: ChartStyleContext,
     chart_type: str,

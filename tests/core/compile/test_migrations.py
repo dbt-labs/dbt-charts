@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from copy import deepcopy
 from datetime import date
@@ -25,8 +26,10 @@ from dbt_charts.core.compile.migrations import (
     migrate_yaml_text,
     prepare_board_mapping,
 )
+from dbt_charts.core.compile.migrations.migrations import DROP
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
+    JsonValue,
     YamlSchemaCatalog,
     next_minor,
 )
@@ -334,10 +337,7 @@ def test_renames_a_block_valued_key_in_place_without_reformatting() -> None:
     assert result == "# preserve me\nnew:\n  nested: value\n# preserve me too\n"
 
 
-def test_rejects_non_scalar_relocation_to_a_different_parent() -> None:
-    """A move to a genuinely different parent (not a same-position rename)
-    still can't relocate a nested block without a redump, so it still fails
-    loudly instead of guessing."""
+def test_relocates_a_mapping_of_scalars_to_a_different_parent() -> None:
     catalog = synthetic_catalog(
         {
             V1: cast(
@@ -368,8 +368,53 @@ def test_rejects_non_scalar_relocation_to_a_different_parent() -> None:
         [Move(V1, V2, ("old",), ("wrapper", "new"))], catalog=catalog
     )
 
-    with pytest.raises(MigrationError, match="only scalar"):
-        migrate_yaml_text("old:\n  nested: value\n", catalog=catalog, registry=registry)
+    out = migrate_yaml_text(
+        "old:\n  nested: value\n", catalog=catalog, registry=registry
+    )
+
+    assert yaml.safe_load(out) == {"wrapper": {"new": {"nested": "value"}}}
+
+
+def test_relocation_whose_rewrite_drops_fails_loudly() -> None:
+    catalog = synthetic_catalog(
+        {
+            V1: cast(
+                JsonObject,
+                {
+                    "type": "object",
+                    "properties": {
+                        "old": {"type": "object"},
+                        "keep": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            V2: cast(
+                JsonObject,
+                {
+                    "type": "object",
+                    "properties": {
+                        "keep": {"type": "integer"},
+                        "wrapper": {
+                            "type": "object",
+                            "properties": {"new": {"type": "object"}},
+                            "additionalProperties": False,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+        }
+    )
+    registry = MigrationRegistry(
+        [Move(V1, V2, ("old",), ("wrapper", "new"), rewrite=lambda _value: DROP)],
+        catalog=catalog,
+    )
+
+    with pytest.raises(MigrationError, match="only scalars and mappings"):
+        migrate_yaml_text(
+            "old:\n  nested: value\nkeep: 1\n", catalog=catalog, registry=registry
+        )
 
 
 def test_current_recognition_schema_accepts_layout_name_shorthand() -> None:
@@ -2852,3 +2897,95 @@ def test_retired_theme_renames_dev_entry_wins_key_collisions(
         assert retired_theme_renames()["retired"] == "dev-target"
     finally:
         retired_theme_renames.cache_clear()
+
+
+def test_prepare_mapping_migrates_style_only_patch_against_real_catalog() -> None:
+    """A style-only fragment (meta.yml, extends target) has no board content,
+    so the board's cross-field rules must not block its migration."""
+    from dbt_charts.core.compile.models.board.patch import BoardPatch
+
+    with pytest.warns(SchemaMigrationWarning, match="migrated this YAML in memory"):
+        prepared = prepare_board_mapping(
+            {"style": {"title": {"sizes": [20, 16]}}}, model=BoardPatch
+        )
+    style = prepared["style"]
+    assert isinstance(style, dict)
+    assert style["fonts"] == {"heading": {"sizes": [20, 16]}}
+
+
+def _with_cross_field_rules(schema: JsonObject, live: JsonObject) -> JsonObject:
+    """A frozen ``schema`` as a future release freezes it: the live schema's
+    cross-field rules grafted onto the root and each shared ``$defs`` entry."""
+    from dbt_charts.core.compile.schema.renderers.json_schema import (
+        CROSS_FIELD_RULE,
+    )
+
+    def rules(node: object) -> list[JsonValue]:
+        assert isinstance(node, dict)
+        all_of = node.get("allOf", [])
+        assert isinstance(all_of, list)
+        return [r for r in all_of if isinstance(r, dict) and CROSS_FIELD_RULE in r]
+
+    def graft(node: dict[str, JsonValue], source: object) -> None:
+        added = rules(source)
+        if added:
+            existing = node.get("allOf", [])
+            assert isinstance(existing, list)
+            node["allOf"] = [*existing, *added]
+
+    grafted = deepcopy(schema)
+    graft(grafted, live)
+    defs, live_defs = grafted["$defs"], live["$defs"]
+    assert isinstance(defs, dict) and isinstance(live_defs, dict)
+    for name, defn in defs.items():
+        if name in live_defs and isinstance(defn, dict):
+            graft(defn, live_defs[name])
+    return grafted
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"style": {"title": {"sizes": [20, 16]}}},
+        {
+            "title": "t",
+            "style": {"title": {"sizes": [20, 16]}},
+            "queries": {"q": {"sql": "select 1"}},
+            "charts": {
+                "c": {
+                    "type": "point_map",
+                    "query": "q",
+                    "latitude": "a",
+                    "longitude": "b",
+                    "collapse": True,
+                    "size": "a",
+                }
+            },
+            "rows": ["c"],
+        },
+    ],
+    ids=["style-only", "chart-with-cross-field-mistake"],
+)
+def test_frozen_schemas_with_cross_field_rules_still_migrate(
+    mapping: JsonObject,
+) -> None:
+    from dbt_charts.core.compile.migrations.migrations import (
+        _board_migration_context,
+    )
+
+    catalog, registry = _board_migration_context()
+    future = dataclasses.replace(
+        catalog,
+        _schemas={
+            version: _with_cross_field_rules(
+                catalog.schema_for(version), catalog.current_schema
+            )
+            for version in catalog.versions
+        },
+        _grammars={},
+    )
+    with pytest.warns(SchemaMigrationWarning):
+        migrated = migrate_mapping(mapping, catalog=future, registry=registry)
+    style = migrated["style"]
+    assert isinstance(style, dict)
+    assert style["fonts"] == {"heading": {"sizes": [20, 16]}}

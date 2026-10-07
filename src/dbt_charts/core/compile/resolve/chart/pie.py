@@ -38,7 +38,6 @@ from dbt_charts.core.compile.resolve.chart._channels import (
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
-    ChartTextVariables,
     _base_kwargs,
     _bound_scales,
     _resolved_chart_format,
@@ -70,12 +69,14 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
+    declared_column_format,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
     merge_authored_position,
     merge_legend,
 )
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
@@ -90,7 +91,7 @@ def _resolve_pie(
     chart_style_context: ChartStyleContext,
     width: float,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
     title_font: ResolvedFontStyle | EllipsisType = ...,
 ) -> ResolvedPieChart:
     validate_theta_values(normalized.id, normalized.theta, data)
@@ -104,6 +105,9 @@ def _resolve_pie(
     # see resolve_format_parts_for_values's per-set contract.
     theta_values = _column_numeric_values(data, normalized.theta)
     format_vote_values = [*theta_values, sum(theta_values)] if theta_values else []
+    theta_declared = declared_column_format(
+        normalized, normalized.theta, chart_style_context.formats, time=False
+    )
     channels = _channels_for(normalized, data)
     # Pie patches are radial (_RadialChartStyle). Use _effective_palette to pick up
     # chart-local color.categorical override or the board-level palette.
@@ -188,14 +192,23 @@ def _resolve_pie(
 
     # Voted against the slice tooltip's set so the two never disagree.
     is_donut_shape = pie.inner_radius is not None and pie.inner_radius > 0
-    raw_total_format = pie.total.value.format
+    chart_total_format = (
+        primary.total.value.format
+        if primary is not None and primary.total is not None and primary.total.value
+        else None
+    )
+    board_total_format = chart_style_context.pie.total.value.format
     total_format = (
         None
-        if raw_total_format is None and not is_donut_shape
+        if chart_total_format is None
+        and board_total_format is None
+        and not is_donut_shape
         else column_format(
             "number",
             chart_style_context.formats,
-            raw_total_format,
+            chart_total_format,
+            board=board_total_format,
+            column=theta_declared,
             engine_default=lambda: PredefinedNumberFormat.integer,
             values=format_vote_values,
         )
@@ -249,7 +262,8 @@ def _resolve_pie(
     authored_edge = authored_position.edge
 
     slice_format = _resolved_chart_format(
-        normalized.format, chart_style_context.formats
+        normalized.format if normalized.format is not None else theta_declared,
+        chart_style_context.formats,
     )
 
     def plan_for(arc_mode: ArcRenderMode) -> AttachmentPlan:
@@ -331,7 +345,7 @@ def _resolve_pie(
             None,
             _EMPTY_TABLE_COLUMN_LINKS,
             (),
-            variables,
+            display_text,
             # A legend entry is read beside its own slice, not scanned down
             # a column -- an ANCHOR-mode magnitude declared once on the top
             # entry and stripped from the rest reads as data loss here, not
@@ -370,7 +384,7 @@ def _resolve_pie(
                 plan.overridden_edge if plan is not None else None
             ),
         ),
-        **_shared_kwargs(normalized, variables, chart_local_style_context),
+        **_shared_kwargs(normalized, display_text, chart_local_style_context),
         chart_type="pie",
         theta=normalized.theta,
         field_labels=normalized.field_labels,
@@ -384,7 +398,9 @@ def _resolve_pie(
             tooltip_format=column_format(
                 "number",
                 chart_style_context.formats,
-                chart_style_context.tooltip.format,
+                normalized.format,
+                board=chart_style_context.tooltip.format,
+                column=theta_declared,
                 values=format_vote_values,
             ),
             total_style=total_style,

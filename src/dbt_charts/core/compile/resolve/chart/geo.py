@@ -43,9 +43,7 @@ from dbt_charts.core.compile.resolve.chart._channels import (
     _column_numeric_values,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
-    _EMPTY_CHART_TEXT_VARIABLES,
     AutomaticLinkCandidate,
-    ChartTextVariables,
     _base_kwargs,
     _geo_kwargs,
     _title_font,
@@ -60,6 +58,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_GEO_TOOLTIP_UNSUPPORTED,
 )
@@ -236,7 +235,7 @@ def _resolve_choropleth_value_field(
 def _geoshape_kwargs(
     normalized: _GeoChartFields,
     channels: dict[str, Any],
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText,
     chart_style_context: ChartStyleContext,
 ) -> dict[str, Any]:
     """Bake all geoshape geo-descriptor fields at resolve time (ADR-008).
@@ -269,7 +268,7 @@ def _geoshape_kwargs(
     value_field = _resolve_choropleth_value_field(normalized, channels)
 
     return {
-        **_geo_kwargs(normalized, chart_style_context, variables),
+        **_geo_kwargs(normalized, chart_style_context, display_text),
         "geo_url": fields.geo_url,
         "geo_format_type": fields.geo_format_type,
         "geo_feature": fields.geo_feature,
@@ -338,7 +337,7 @@ def _resolve_geoshape(
     chart_style_context: ChartStyleContext,
     width: float,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables = _EMPTY_CHART_TEXT_VARIABLES,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedGeoshapeChart:
     _reject_geo_tooltip_affix(chart_style_context, normalized.id, "geoshape")
     chart_local_style_context = build_chart_style_context(
@@ -376,7 +375,9 @@ def _resolve_geoshape(
                 merge_legend(chart_style_context.legend, geoshape.legend),
             ),
         ),
-        **_geoshape_kwargs(normalized, channels, variables, chart_local_style_context),
+        **_geoshape_kwargs(
+            normalized, channels, display_text, chart_local_style_context
+        ),
         chart_type="geoshape",
         style=ResolvedGeoshapeStyle(
             geoshape=_with_baked_color_gradient(geoshape),
@@ -398,7 +399,7 @@ def _resolve_point_map(
     chart_style_context: ChartStyleContext,
     width: float,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedPointMapChart:
     _reject_geo_tooltip_affix(chart_style_context, normalized.id, "point_map")
     chart_local_style_context = build_chart_style_context(
@@ -471,7 +472,7 @@ def _resolve_point_map(
         proj_type = "albersUsa"
         proj_params = None
 
-    geo_kw = _geo_kwargs(normalized, chart_local_style_context, variables)
+    geo_kw = _geo_kwargs(normalized, chart_local_style_context, display_text)
     # Keep projection on the shared geo field (used by existing callers).
     geo_kw["projection"] = (
         normalized.projection if normalized.projection is not None else "albersUsa"

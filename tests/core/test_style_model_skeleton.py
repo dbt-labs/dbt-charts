@@ -604,16 +604,16 @@ def test_compiled_charts_style_has_font():
 
 
 def test_compiled_kpi_style_has_base_font():
-    """KpiStyle has a base ``font: FontStyle`` alongside ``value.font``.
+    """KpiStyle has a base ``font: SingleLineFontStyle`` alongside ``value.font``.
 
     Structural-only — does not pin family/color theme defaults (now
     intentionally set: ``kpi.font.family = 'dbt Sans Tabular'``).
     """
-    from dbt_charts.core.compile.models.primitives import FontStyle
+    from dbt_charts.core.compile.models.primitives import SingleLineFontStyle
 
     kpi = get_theme_style().charts.kpi
     assert hasattr(kpi, "font")
-    assert isinstance(kpi.font, FontStyle)
+    assert isinstance(kpi.font, SingleLineFontStyle)
 
 
 def test_compiled_spark_bar_style_has_font():

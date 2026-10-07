@@ -212,15 +212,16 @@ def test_kpi_style_unwrapped() -> None:
             "type": "kpi",
             "value": "v",
             "query": "q",
-            "style": {"glyph": {"character": "▲"}},
+            "glyph": "▲",
+            "style": {"variant": "inline"},
         },
         qr,
         sources={},
     )
     assert isinstance(compiled, KpiChart)
+    assert compiled.glyph == "▲"
     assert compiled.style is not None
-    assert compiled.style.glyph is not None
-    assert compiled.style.glyph.character == "▲"  # type: ignore[union-attr]
+    assert compiled.style.variant == "inline"
 
 
 def test_query_resolved_on_compiled() -> None:

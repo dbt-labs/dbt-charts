@@ -5,10 +5,14 @@
 ``compile/migrations/versions/v0_6_0.py``. An authored board (or theme
 patch) using the pre-move path migrates transparently.
 
-The Move resolves to the root-anchored ``style.charts.kpi.tones`` and the
-per-tab ``tabs.items.*.style.charts.kpi.tones`` (a tab's own ``style:``
-override); ``Move.sub_board_prefixes`` repeats both inside every board nested
-in a board (``rows``/``cols``/``grid.items.*.item``).
+The Move covers exactly two positions: the root-anchored
+``style.charts.kpi.tones`` and the per-tab
+``tabs.items.*.style.charts.kpi.tones`` (a tab's own ``style:`` override).
+Any ``rows``/``cols``/``grid.items.*.item`` self-nesting below the root is
+uncovered — ``_relative_field_paths`` checks its ``seen`` ancestor set on
+entry, so a self-referential model's fields are never walked a second time
+along the same path (see ``v0_6_0.py``'s module docstring for the full
+rationale and what remains uncovered).
 
 ``migrate_mapping`` (in-memory, used when compiling/loading an old board)
 relocates the whole ``tones:`` mapping regardless of its shape — ``Move``
@@ -21,6 +25,7 @@ must be moved by hand when run through ``dct migrate``.
 
 from __future__ import annotations
 
+import copy
 import warnings
 from typing import Any
 
@@ -31,6 +36,7 @@ from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
     migrate_mapping,
     migrate_yaml_text,
+    prepare_board_mapping,
 )
 from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -164,14 +170,10 @@ def test_tabs_items_style_charts_kpi_tones_migrates_to_tab_style_tones(
 def test_migrate_yaml_text_raises_for_style_charts_kpi_tones(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    """dct migrate's text-preserving rewriter cannot perform this relocation.
+    """dct migrate refuses rather than corrupting the file.
 
-    Unlike migrate_mapping, migrate_yaml_text only rewrites scalar
-    block-mapping leaves or same-position key renames (see its own
-    docstring) — a whole nested mapping moving to a different parent is out
-    of its scope by design. This must fail loud with a MigrationError
-    naming the field, not silently leave it or corrupt the file; the author
-    is told to migrate this field manually.
+    The in-memory migration leaves an empty ``style.charts.kpi`` mapping,
+    which the text writer cannot express, so its final check fails loud.
     """
     _, registry = _board_migration_context()
     yaml_text = (
@@ -188,45 +190,109 @@ def test_migrate_yaml_text_raises_for_style_charts_kpi_tones(
         "rows: [revenue_kpi]\n"
     )
 
-    with pytest.raises(MigrationError, match="style.charts.kpi.tones"):
+    with pytest.raises(MigrationError, match="diverged"):
         migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
 
 
-def _nested(depth: int) -> dict[str, Any]:
-    """A board holding *depth* boards, the innermost authoring retired tones."""
-    inner: dict[str, Any] = {
-        "rows": ["c"],
-        "style": {"charts": {"kpi": {"tones": {"positive": "#0a7"}}}},
+def test_rows_nested_style_charts_kpi_tones_is_uncovered() -> None:
+    """A single sub-board nesting (``rows.*``) is uncovered, standing alone.
+
+    ``_relative_field_paths`` checks its ``seen`` ancestor set on entry, so
+    ``AuthoredBoard`` reached a second time (through ``rows``) never yields
+    its own fields again — ``tones:`` one ``rows``/``cols``/
+    ``grid.items.*.item``/``tabs.items.*`` hop below the root is not a
+    declared Move position. With no root-level ``tones:`` in the same
+    document, ``_recognize`` matches no declared transition and
+    ``prepare_board_mapping`` returns the original silently (same path as
+    ``test_uncovered_only_board_is_returned_unmigrated_and_silent`` below).
+    """
+    raw = {
+        "rows": [
+            {
+                "rows": ["revenue_kpi"],
+                "style": {"charts": {"kpi": {"tones": {"positive": "#0a7"}}}},
+            }
+        ],
     }
-    for _ in range(depth - 1):
-        inner = {"rows": [inner]}
-    return {"rows": [inner]}
+    original = copy.deepcopy(raw)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = prepare_board_mapping(raw)
+
+    assert result == original
+    assert caught == []
 
 
-@pytest.mark.parametrize("depth", [1, 2])
-def test_nested_sub_board_style_charts_kpi_tones_migrates(
-    depth: int, catalog: YamlSchemaCatalog
-) -> None:
-    """A board nested in a board (``rows.*``, at any depth) migrates like the root."""
-    migrated = _migrate(_nested(depth), catalog)
+def test_mixed_scope_board_aborts_rather_than_half_migrating() -> None:
+    """The residual re-check stops a board being migrated only halfway.
 
-    innermost = migrated
-    for _ in range(depth):
-        innermost = innermost["rows"][0]
-    assert innermost["style"]["tones"] == {"positive": "#0a7"}
-    assert "tones" not in innermost["style"]["charts"]["kpi"]
-    AuthoredBoard.model_validate(migrated)
+    A board authoring ``tones`` at BOTH a covered scope (root) and an
+    uncovered one is the dangerous shape: the root Move applies, and without
+    the re-check the author would get a file with its root migrated and its
+    uncovered scope silently left on retired syntax. ``migrate_mapping``
+    raises ``IncompleteMigrationError`` on the residual instead, and
+    ``prepare_board_mapping`` warns and hands back the original.
+
+    This is the property the boundary docstring relies on to justify
+    shipping partial coverage, so it is pinned here. A single
+    ``rows``/``cols``/``grid`` self-nesting (``rows.*``) is already enough
+    to be the uncovered scope, since self-nesting is uncovered at every
+    depth.
+    """
+    raw = {
+        "text": "x",
+        "style": {"charts": {"kpi": {"tones": {"positive": "#0a7"}}}},
+        "rows": [
+            {
+                "rows": ["c"],
+                "style": {"charts": {"kpi": {"tones": {"positive": "#0a7"}}}},
+            }
+        ],
+    }
+    original = copy.deepcopy(raw)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = prepare_board_mapping(raw)
+
+    assert result == original, "a mixed-scope board must not be half-migrated"
+    assert any("could not finish migrating" in str(w.message) for w in caught), (
+        "the incomplete migration must warn, not pass silently"
+    )
 
 
-def test_root_and_nested_sub_board_tones_migrate_together(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    """Both scopes move, so the residual re-check has nothing left to refuse."""
-    raw = _nested(1)
-    raw["text"] = "x"
-    raw["style"] = {"charts": {"kpi": {"tones": {"positive": "#0a7"}}}}
+def test_uncovered_only_board_is_returned_unmigrated_and_silent() -> None:
+    """An uncovered-only board takes the other path — and takes it quietly.
 
-    migrated = _migrate(raw, catalog)
+    ``_recognize`` matches no declared transition, so ``UnsupportedSchemaError``
+    is raised before any move runs and ``prepare_board_mapping`` returns the
+    original with no warning. Pinned because the docstring calls this out as a
+    known rough edge: the author sees ``extra_forbidden`` on retired syntax with
+    no hint that a migration was skipped. If this ever starts warning, the
+    docstring should stop apologizing for it.
 
-    assert migrated["style"]["tones"] == {"positive": "#0a7"}
-    assert migrated["rows"][0]["style"]["tones"] == {"positive": "#0a7"}
+    A second self-nesting (``rows.*.rows.*``) is used here (rather than the
+    single nesting in the test above) just to exercise a deeper uncovered
+    shape — both are equally uncovered.
+    """
+    raw = {
+        "rows": [
+            {
+                "rows": [
+                    {
+                        "rows": ["c"],
+                        "style": {"charts": {"kpi": {"tones": {"positive": "#0a7"}}}},
+                    }
+                ],
+            }
+        ]
+    }
+    original = copy.deepcopy(raw)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = prepare_board_mapping(raw)
+
+    assert result == original
+    assert not caught, "unrecognized-schema path is silent today — see the docstring"

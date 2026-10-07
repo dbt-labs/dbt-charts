@@ -38,20 +38,20 @@ class TestDftDescribeIsRegistered:
     """dct describe must exist; dct explain must not."""
 
     def test_describe_is_registered(self) -> None:
-        import click
+        from typer.core import TyperGroup
         from typer.main import get_command
 
         click_app = get_command(app)
-        assert isinstance(click_app, click.Group)
+        assert isinstance(click_app, TyperGroup)
         commands = click_app.commands
         assert "describe" in commands, "dct describe must be registered"
 
     def test_explain_is_absent(self) -> None:
-        import click
+        from typer.core import TyperGroup
         from typer.main import get_command
 
         click_app = get_command(app)
-        assert isinstance(click_app, click.Group)
+        assert isinstance(click_app, TyperGroup)
         commands = click_app.commands
         assert "explain" not in commands, "dct explain must be removed"
 

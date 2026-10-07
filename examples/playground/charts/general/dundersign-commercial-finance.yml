@@ -326,12 +326,13 @@ charts:
     style:
       value:
         format: "$,.0f"
+      support:
+        format: +.1%
+        tone: negative
     support:
       value: bookings_growth_pct
       label: vs prior 90 days
-      format: "+.1%"
       glyph: "▼"
-      tone: negative
 
   kpi_active_subs:
     type: kpi
@@ -341,12 +342,13 @@ charts:
     style:
       value:
         format: ",.0f"
+      support:
+        format: +.1%
+        tone: positive
     support:
       value: active_subs_growth_pct
       label: vs 90 days ago
-      format: "+.1%"
       glyph: "▲"
-      tone: positive
 
   # ── Hero: stacked column ───────────────────────────────────────────────
   # Endpoint labels (segment names on the rightmost column) ink live via

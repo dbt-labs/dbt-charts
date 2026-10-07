@@ -12,6 +12,7 @@ import pytest
 
 from dbt_charts.core.dialects import get_dialect
 from dbt_charts.core.dialects.base import SQLDialect
+from dbt_charts.core.inspect.bulk_schema import bulk_schema_scope
 
 
 class _BareDialect(SQLDialect):
@@ -59,6 +60,33 @@ def test_snowflake_qualifies_database_when_given() -> None:
     )
     # Embedded double-quotes are doubled (Snowflake identifier escaping).
     assert '"a""b".' in dialect.bulk_schema_sql('a"b')
+
+
+def test_databricks_qualifies_catalog_with_full_types() -> None:
+    sql = get_dialect("databricks").bulk_schema_sql("main")
+    assert "FROM `main`.information_schema.columns" in sql
+    assert "full_data_type AS data_type" in sql
+    assert "ordinal_position" in sql
+
+
+def test_databricks_without_catalog_is_unqualified() -> None:
+    sql = get_dialect("databricks").bulk_schema_sql()
+    assert "FROM information_schema.columns" in sql
+
+
+@pytest.mark.parametrize("catalog", ["hive_metastore", "HIVE_METASTORE"])
+def test_databricks_hive_metastore_has_no_bulk_form(catalog: str) -> None:
+    with pytest.raises(NotImplementedError):
+        get_dialect("databricks").bulk_schema_sql(catalog)
+
+
+def test_spark_has_no_bulk_form() -> None:
+    with pytest.raises(NotImplementedError):
+        get_dialect("spark").bulk_schema_sql("main")
+
+
+def test_databricks_scope_is_the_catalog() -> None:
+    assert bulk_schema_scope("databricks", {"catalog": "main"}) == "main"
 
 
 def test_clickhouse_reads_system_columns() -> None:

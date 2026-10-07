@@ -21,6 +21,8 @@ from dbt_charts.core.compile.resolve import (
     AutomaticLinkCandidate,
     resolve,
 )
+from dbt_charts.core.compile.template.display_text import DisplayTextInputs
+from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.execute.cache_backend import CacheRows
 from dbt_charts.core.execute.executor import Executor
 
@@ -115,6 +117,21 @@ def collect_layer_datasets(
     return _LayerRows(shared, own_queries, executor, variables)
 
 
+def collect_display_text_inputs(
+    chart: Chart,
+    executor: Executor,
+    variables: VariableValues,
+) -> DisplayTextInputs:
+    """The variables and query results a chart's display text reads."""
+    return DisplayTextInputs(
+        variables,
+        {
+            name: QueryResult(name, executor.execute_query(key, variables))
+            for name, key in chart.text_queries.items()
+        },
+    )
+
+
 def resolve_chart_with_runtime_inputs(
     chart: Chart,
     data: list[dict[str, Any]],
@@ -149,6 +166,6 @@ def resolve_chart_with_runtime_inputs(
         automatic_link_candidate=automatic_link_candidate,
         table_column_links=table_column_links,
         table_column_rows=table_column_rows,
-        variables=variables,
         pie_title_font=pie_title_font,
+        display_text=collect_display_text_inputs(chart, executor, variables),
     )

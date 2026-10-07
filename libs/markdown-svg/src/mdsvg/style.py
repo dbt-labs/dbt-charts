@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any, Literal, Optional
+
+from .css import CSS_BREAKING_CHARS_RE
 
 # Code block overflow options
 CodeBlockOverflow = Literal["wrap", "show", "hide", "ellipsis"]
@@ -275,6 +277,17 @@ class Style:
     italic_char_width_ratio: float = 0.447  # 0.48 * (1 - 0.068)
     # Text alignment
     text_align: TextAlign = "left"  # Horizontal alignment: "left", "center", "right"
+
+    def __post_init__(self) -> None:
+        # Font families are escaped by the renderer instead of rejected.
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if (
+                isinstance(value, str)
+                and not f.name.endswith("font_family")
+                and CSS_BREAKING_CHARS_RE.search(value)
+            ):
+                raise ValueError(f"Style.{f.name} is not valid CSS: {value!r}")
 
     def with_updates(self, **kwargs: Any) -> Style:
         """

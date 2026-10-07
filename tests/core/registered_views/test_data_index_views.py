@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
+from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.registered_views.expander import expand_registered_view
 from dbt_charts.core.registered_views.loader import load_builtin_registry
 from dbt_charts.core.registered_views.models import RegisteredView
-from dbt_charts.core.registered_views.query_runner import ViewQueryResult
 from dbt_charts.core.registered_views.router import RouteRouter
 
 
@@ -29,12 +29,12 @@ def _data_views() -> list[RegisteredView]:
     return [v for v in load_builtin_registry() if v.name.startswith("data_")]
 
 
-def _col_rows(*cols: tuple[str, str]) -> ViewQueryResult:
-    return ViewQueryResult(rows=[{"name": n, "actual_type": t} for n, t in cols])
+def _col_rows(*cols: tuple[str, str]) -> QueryResult:
+    return QueryResult("q", rows=[{"name": n, "actual_type": t} for n, t in cols])
 
 
-def _schema_rows(*names: str) -> ViewQueryResult:
-    return ViewQueryResult(rows=[{"name": n} for n in names])
+def _schema_rows(*names: str) -> QueryResult:
+    return QueryResult("q", rows=[{"name": n} for n in names])
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ class TestTableIndexTemplate:
         assert match is not None
         return match
 
-    def _col_results(self) -> dict[str, ViewQueryResult]:
+    def _col_results(self) -> dict[str, QueryResult]:
         return {
             "columns": _col_rows(
                 ("order_id", "BIGINT"),
@@ -411,7 +411,7 @@ class TestTableIndexTemplate:
         from dbt_charts.core.compile.validate.dispatch import validate_board
 
         match = self._match()
-        empty_results = {"columns": ViewQueryResult(rows=[])}
+        empty_results = {"columns": QueryResult("q", rows=[])}
         board = expand_registered_view(match, query_results=empty_results)
         errors = validate_board(board)
         assert errors == [], f"Validation errors on empty columns result: {errors}"

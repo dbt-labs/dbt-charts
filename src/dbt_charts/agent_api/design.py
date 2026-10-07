@@ -33,6 +33,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTablePerSeries,
     ChartSupportTableSource,
 )
+from dbt_charts.core.compile.models.factories import PATCH_SHORTHAND
 from dbt_charts.core.compile.models.markers import Channel, FontFamily, Format
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.query.authored import (
@@ -245,13 +246,14 @@ _CONTENT_FIELDS = ("title", "text")
 # STRUCTURE — the schema's own scalar spellings.
 _NUMERIC_TYPES = frozenset({"int", "float"})
 _SCALAR_TYPES = _NUMERIC_TYPES | {"str", "bool"}
+_SCALAR_SHORTHAND = frozenset({"str", "int", "float"})
 
 # Every wide-capable family folds its measures onto one mark family, which spends
 # the layer stack (and the mark fill) on the measures themselves — so a
 # list-valued `y` and any of these siblings cannot both be authored.
 #
 # The rule is one rule; where it *fires* is not. Bar and area raise from
-# `reject_multi_series_channel_conflicts` at parse time, line and scatter from
+# their `__constraints__` at parse time, line and scatter from
 # `resolve_wide_measure_channels` (`resolve/chart/_wide_fields.py`) at resolve.
 # The save endpoint re-parses and nothing more, so the resolve-time half is the
 # worse one: the panel's edit passes the gate, is written to git, and the chart
@@ -348,16 +350,16 @@ _VALUE_CONFLICTS = {
     ),
 }
 
-# The families whose validator is stricter than their own declared type.
-# `SparkBarChart.y` is typed `str | list[str]` and `_validate_single_series`
-# refuses every list but a one-element one: a spark bar is one row of bars
-# against one value column, so there is no second encoding for a second measure.
+# The families that refuse a multi-value `y`.
+# `SparkBarChart.y` accepts a list of exactly one column: a spark bar is one row
+# of bars against one value column, so there is no second encoding for a second
+# measure.
 #
 # `HeatmapChart.y` is the other, and the only one with no validator behind it at
-# all. `reject_multi_series_channel_conflicts` states the rule every wide family
+# all. Bar and area declare the multi-metric layers rule every wide family
 # obeys — the fold spends the mark fill on the measures — and a heatmap's color
-# *is* its measure, so there is nothing left to spend. Heatmap neither calls that
-# validator nor refuses from its own resolver, so `y: [region, revenue]` renders
+# *is* its measure, so there is nothing left to spend. Heatmap neither declares
+# that rule nor refuses from its own resolver, so `y: [region, revenue]` renders
 # clean: a y band stacking two columns' values against each other, and a cell
 # color that has stopped encoding magnitude. Neither gate can see a chart that
 # is merely wrong, so this one is pinned by an explicit test.
@@ -371,11 +373,12 @@ _NEVER_A_LIST = {
 }
 
 # The pivot's arity rule, and the only one that spans three fields.
-# `render/chart/table.py` raises `ERR-INTERNAL` — "declare at least one of
-# `rows` or `values`" — for a table that sets `columns:` and neither of the
-# pair: with both omitted the row and measure dimensions are ambiguous. The
-# board parses, so the save endpoint's re-parse waves it through and the panel
-# is left showing a chart that no longer renders.
+# `render/chart/table.py` raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` —
+# "declare at least one of `rows` or `values`" — for a table that sets
+# `columns:` and neither of the pair: with both omitted the row and measure
+# dimensions are ambiguous. The board parses, so the save endpoint's re-parse
+# waves it through and the panel is left showing a chart that no longer
+# renders.
 #
 # `{model: (pair, gated)}`. Two panel interactions reach the raise and each maps
 # to one half of the rule: setting `columns` on a table that declares neither of
@@ -527,7 +530,7 @@ class DesignProperty(BaseModel):
     )
     required: bool = Field(description="Whether the authored schema demands a value.")
     description: str = Field(default="", description="Field help from the schema.")
-    enum_values: tuple[str | bool, ...] | None = Field(
+    enum_values: tuple[str | bool | int, ...] | None = Field(
         default=None,
         description=(
             "Values on offer: what the schema declares, plus — on a field the "
@@ -691,6 +694,10 @@ def _widget_for(field: SchemaField) -> Widget | None:
     # a model arm the IR does not report as nested, so a text box showed an
     # authored object as empty and one keystroke replaced it with a string.
     arms = _arms(field.type_repr)
+    if "str" in field.extra_union_type_patterns:
+        # A pattern-constrained string is parse-time sugar, not free text: a
+        # text box would take what the pattern rejects (`gap: "x"`).
+        arms.discard("str")
     list_arms = {arm for arm in arms if arm.startswith("list[")}
     if list_arms:
         # Strings only, not every scalar: the control submits text and the
@@ -785,8 +792,15 @@ def _drills_into(field: SchemaField) -> str | None:
     """
     if field.container is not None or len(field.nested_models) != 1:
         return None
-    arms = {arm.strip() for arm in field.type_repr.split("|")} - {"None"}
-    return field.nested_models[0] if arms == {field.nested_models[0]} else None
+    model = field.nested_models[0]
+    # A model that parses a string or number shorthand still holds one shape:
+    # the parser turns the sugar into the model before the panel reads it.
+    sugar = (
+        _SCALAR_SHORTHAND
+        if model in {cls.__name__ for cls in PATCH_SHORTHAND}
+        else set()
+    )
+    return model if _arms(field.type_repr) - sugar == {model} else None
 
 
 def _suppressed(

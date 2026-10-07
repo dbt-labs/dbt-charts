@@ -4,7 +4,10 @@ Databricks uses:
 - :param1, :param2 for named parameter placeholders
 """
 
+from typing import Any
+
 from dbt_charts.core.dialects.base import SQLDialect
+from dbt_charts.core.dialects.identifier import sql_identifier
 
 
 class DatabricksDialect(SQLDialect):
@@ -41,6 +44,33 @@ class DatabricksDialect(SQLDialect):
         """
         return f":param{index}"
 
+    def namespace_probe_sql(
+        self,
+        creds: dict[str, Any],  # type-state: explicit_any — raw source_config
+    ) -> str | None:
+        catalog = creds.get("catalog")
+        if catalog is None:
+            return None
+        return f"USE CATALOG {sql_identifier(catalog, 'databricks')}"
+
+    def bulk_schema_sql(self, scope: str = "") -> str:
+        """Whole-catalog columns from Unity Catalog's per-catalog information_schema.
+
+        ``hive_metastore`` has no information_schema. Plain ``data_type`` drops
+        parameters (``DECIMAL`` for ``decimal(10,2)``).
+        """
+        if scope.lower() == "hive_metastore":
+            raise NotImplementedError(
+                "bulk_schema_sql is not available for the 'hive_metastore' catalog"
+            )
+        catalog = f"{sql_identifier(scope, 'databricks')}." if scope else ""
+        return (
+            "SELECT table_schema, table_name, column_name, full_data_type AS data_type "
+            f"FROM {catalog}information_schema.columns "
+            "WHERE table_schema <> 'information_schema' "
+            "ORDER BY table_schema, table_name, ordinal_position"
+        )
+
 
 class SparkDialect(DatabricksDialect):
     """Spark dialect — same SQL grammar as Databricks, but the PySpark cursors
@@ -52,3 +82,10 @@ class SparkDialect(DatabricksDialect):
 
     name = "spark"
     cursor_supports_driver_limit = False
+    bulk_schema_sql = SQLDialect.bulk_schema_sql
+
+    def namespace_probe_sql(
+        self,
+        creds: dict[str, Any],  # type-state: explicit_any — raw source_config
+    ) -> str | None:
+        return None

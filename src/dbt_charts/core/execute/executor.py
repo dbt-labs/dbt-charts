@@ -54,6 +54,7 @@ CACHE_REF_JINJA_RE: re.Pattern[str] = re.compile(
 
 logger = logging.getLogger(__name__)
 
+from dbt_charts.core.compile.format import missing_format_columns
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     VariableValues,
@@ -71,7 +72,10 @@ from dbt_charts.core.compile.template.variables import (
     parse_variable_json_strings,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.codes_execute import ERR_FILE_SOURCE_NOT_FOUND
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_FILE_SOURCE_NOT_FOUND,
+    ERR_QUERY_FORMAT_COLUMN_MISSING,
+)
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
@@ -536,7 +540,7 @@ class Executor:
         variables: VariableValues | None = None,
         use_cache: bool | None = None,
         force_refresh: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]]:  # type-state: explicit_any — DB rows
         """Execute a query and return results.
 
         Stage: EXECUTE (Main Entry Point)
@@ -558,7 +562,9 @@ class Executor:
             List of dictionaries with query results (each dict is a row)
 
         Raises:
-            ExecutionError: If query not found or execution fails
+            ExecutionError: If query not found or execution fails, or if the
+                query's ``formats:`` names a column the rows do not carry
+                (a zero-row result carries no columns and passes)
             CachedQueryFailure: If a cached failure exists within TTL
 
         Example:
@@ -566,6 +572,27 @@ class Executor:
             >>> for row in data:
             ...     print(f"{row['date']}: {row['amount']}")
         """
+        rows = self._execute_rows(query_name, variables, use_cache, force_refresh)
+        name = query_name.removeprefix("queries.")
+        query = self._get_query(name)
+        if rows:
+            for column in missing_format_columns(query.formats, rows[0]):
+                raise QueryError.from_code(
+                    ERR_QUERY_FORMAT_COLUMN_MISSING,
+                    query=name,
+                    column=column,
+                    columns=", ".join(sorted(rows[0])),
+                )
+        return rows
+
+    def _execute_rows(
+        self,
+        query_name: str,
+        variables: VariableValues | None = None,
+        use_cache: bool | None = None,
+        force_refresh: bool = False,
+    ) -> list[dict[str, Any]]:  # type-state: explicit_any — DB rows
+        """Run (or recall from cache) a query's rows; ``execute_query`` checks them."""
         # Step 1: strip the "queries." prefix, merge variables with board
         # defaults, and look up the query. is_cached shares this exact prologue
         # (via _prepare_call) so its cache-key prediction matches this path.
@@ -1648,10 +1675,16 @@ class Executor:
         (whose failures the parallel prefetch records) deliberately lacks.
         """
         from dbt_charts.core.diagnostics.base import DbtChartsError
+        from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
         from dbt_charts.core.diagnostics.execution import ExecutionError
 
         if isinstance(exception, DbtChartsError) and not isinstance(
             exception, ExecutionError
+        ):
+            return
+        # Says nothing about the query: it was stopped, not answered.
+        if isinstance(exception, DbtChartsError) and (
+            exception.code is ERR_QUERY_INTERRUPTED
         ):
             return
         try:

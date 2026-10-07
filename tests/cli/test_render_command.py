@@ -862,7 +862,7 @@ class TestDftRenderFormatChoice:
         assert result.exit_code == 0
         combined = result.output + result.stderr
         assert (
-            "[svg|html|png|pdf|thumbnail|terminal|json|text|text-data|yaml|data]"
+            "<svg|html|png|pdf|thumbnail|terminal|json|text|text-data|yaml|data>"
             in combined
         )
 

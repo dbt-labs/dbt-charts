@@ -22,6 +22,151 @@ from __future__ import annotations
 
 from dbt_charts.core.diagnostics.registry import REGISTRY, ErrorCode, WarningCode
 
+ERR_TEXT_QUERY_ROW_COUNT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-QUERY-ROW-COUNT",
+        domain="render",
+        title="Text read .one from a query without exactly one row",
+        message_template=(
+            "Query {query_name!r} returned {row_count} rows; .one needs exactly 1. "
+            "Use .rows for multi-row results."
+        ),
+        doc=(
+            "Fired when text reads `queries.<name>.one` and the query "
+            "returned zero rows or more than one. Limit the query to one row or "
+            "iterate `queries.<name>.rows`."
+        ),
+        summary="Fired when text reads `.one` from a query that did not return exactly one row.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_QUERY_INDEX = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-QUERY-INDEX",
+        domain="render",
+        title="Text indexed past the end of a query's rows or columns",
+        message_template="Query {query_name!r} has no {noun} {index} ({extent}).",
+        doc=(
+            "Fired when text reads `queries.<name>.rows[i]` or "
+            "`.columns[i]` with an index the result does not have, such as "
+            "`rows[0]` on a query that returned no rows. Guard with "
+            "`{% if queries.<name>.rows %}` or fix the query."
+        ),
+        summary="Fired when text indexes a query's `.rows` or `.columns` past the end.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_EMPTY_SEQUENCE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-EMPTY-SEQUENCE",
+        domain="render",
+        title="Text took an item from an empty list",
+        message_template="{detail} Guard with `{{% if ... %}}` or fix the query.",
+        doc=(
+            "Fired when text (board text and titles, chart text) applies `first`, `last`, `min`, `max` or "
+            "`random` to an empty list, such as the rows of a query that "
+            "returned none. The text would otherwise render empty."
+        ),
+        summary="Fired when text takes an item from an empty list.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_QUERY_UNKNOWN_COLUMN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-QUERY-UNKNOWN-COLUMN",
+        domain="render",
+        title="Text read a column the query does not return",
+        message_template=(
+            "Query {query_name!r} has no column {column!r}. Available: {available}."
+        ),
+        doc=(
+            "Fired when text reads a column from a query row that the "
+            "query does not return. Check the column name against the query's "
+            "`select` list."
+        ),
+        summary="Fired when text reads a column the query did not return.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_QUERY_ACCESS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-QUERY-ACCESS",
+        domain="render",
+        title="Text accessed a query result incorrectly",
+        message_template="Query {query_name!r} {access}. Use {use}.",
+        doc=(
+            "Fired when text reads an attribute other than `.one`, "
+            "`.rows` or `.columns` from `queries.<name>`, prints a result or row "
+            "directly, reads an underscore column as `row._col` instead of "
+            "`row['_col']`, or names a query the text does not reference."
+        ),
+        summary="Fired when text misuses a query result instead of reading `.one`, `.rows` or `.columns`.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_FORMAT_USAGE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-FORMAT-USAGE",
+        domain="render",
+        title="Text format filter used incorrectly",
+        message_template=(
+            "Text `format` takes one dbt Charts format spec (preset, alias, "
+            "d3 or strftime), as in `value | format('currency')`. Printf-style "
+            "`'...' | format(x)` is not supported. Got: {detail}."
+        ),
+        doc=(
+            "Fired when `format` in text is called without a spec, with a "
+            "spec that is not a preset, alias, d3 or strftime spec, with extra "
+            "arguments, or on a value that is not a number or date. It is not "
+            "Jinja's printf-style `format`."
+        ),
+        summary="Fired when text calls `format` with anything but one valid spec on a number or date.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_NULL_COMPARISON = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-NULL-COMPARISON",
+        domain="render",
+        title="Text compared a NULL value",
+        message_template=(
+            "Ordering comparison on a NULL value in text; guard with 'is none'."
+        ),
+        doc=(
+            "Fired when text orders a NULL value (a query cell or a "
+            "variable) with `<`, `>`, `<=` or `>=`. Guard the comparison with "
+            "`x is none`."
+        ),
+        summary="Fired when text orders a NULL value against another value.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_TYPE_ERROR = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-TYPE-ERROR",
+        domain="render",
+        title="Text applied an operator to a value of the wrong type",
+        message_template=(
+            "Text applied an operator to a value of the wrong type: {detail}. "
+            "Guard NULL cells with 'is none' and convert strings before arithmetic."
+        ),
+        doc=(
+            "Fired when text, such as board `text:` or `title:` or a chart's title, "
+            "adds, subtracts or compares query values of incompatible types, for "
+            "example arithmetic on a NULL or string cell."
+        ),
+        summary="Fired when text applies an operator to a value of the wrong type.",
+        docs_topic="board",
+    )
+)
+
 ERR_KPI_MULTIROW = REGISTRY.register(
     ErrorCode(
         code="ERR-KPI-MULTIROW",
@@ -52,12 +197,11 @@ ERR_KPI_FORMAT_KIND_MISMATCH = REGISTRY.register(
             "use date_short."
         ),
         doc=(
-            "Fired when a KPI's support.format is a number format (not "
+            "Fired when a KPI's style.support.format is a number format (not "
             "date_short, time_short, or a style.formats alias resolving to "
             "a strftime spec) and support.value is a date/datetime column. "
-            "support.format is always authored for that one chart, unlike "
-            "the headline value's format, which can be a board-wide cascade "
-            "default -- so a mismatch here is never ambiguous."
+            "Unlike the headline value's format, which falls back to "
+            "date_short, a support format mismatch always fails."
         ),
         summary="Fired when a KPI support format doesn't match a temporal value.",
         docs_topic="charts",
@@ -2535,21 +2679,21 @@ WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED = REGISTRY.register(
         domain="render",
         title="KPI inline variant fell back to stacked",
         message_template=(
-            "Chart {chart_id!r}: variant: {authored_text!r} did not fit the "
+            "Chart {chart_id!r}: style.variant: {authored_text!r} did not fit the "
             "card at the available width: value, label, and support fell "
             "back to the stacked arrangement instead of painting past the "
             "card edge."
         ),
         fix_template=(
             "Widen the card, shorten the label or support text, or author "
-            "variant: stacked directly."
+            "style.variant: stacked directly."
         ),
         doc=(
             "Fires when an inline KPI's assembled value + label + support "
             "run does not fit the card at its available width. The renderer "
             "falls back to the stacked arrangement for that card rather than "
             "paint past the card edge, so the card's actual layout no longer "
-            "matches the authored variant: inline."
+            "matches the authored style.variant: inline."
         ),
         docs_topic="charts",
     )
@@ -2582,6 +2726,32 @@ WARN_KPI_ALIGN_OVERFLOW = REGISTRY.register(
             "234,567,890. The renderer keeps the run at the left edge instead, "
             "where overflow spills right and reads as visibly truncated, and "
             "reports that the authored align did not take effect."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_SUPPORT_TABLE_CELL_OVERFLOW = REGISTRY.register(
+    WarningCode(
+        code="WARN-SUPPORT-TABLE-CELL-OVERFLOW",
+        domain="render",
+        title="Support table cells are wider than their band",
+        message_template=(
+            "Chart {chart_id!r}: support_table cells ({detail}) are wider than "
+            "the space between neighboring categories, so adjacent values run "
+            "together."
+        ),
+        fix_template=(
+            "Widen the chart, show fewer categories, or shorten the values with "
+            "a more compact format."
+        ),
+        doc=(
+            "Fires when the widest formatted cell in a support_table row, plus "
+            "the row's horizontal padding, is wider than one category band. "
+            "Every cell is drawn at its own band, so neighbors collide and read "
+            "as one number (6.7, 19.2, 20.4 becoming 6.719.220.4). The render "
+            "is unchanged by this warning. It is skipped when the strip is "
+            "already thinned to the axis's label periods."
         ),
         docs_topic="charts",
     )
@@ -2950,6 +3120,317 @@ ERR_TABLE_FORMAT_KIND_MISMATCH = REGISTRY.register(
     )
 )
 
+ERR_KPI_NO_DATA = REGISTRY.register(
+    ErrorCode(
+        code="ERR-KPI-NO-DATA",
+        domain="render",
+        title="KPI query returned no rows",
+        message_template=(
+            "KPI chart {chart_id!r} has no data: its query returned 0 rows."
+        ),
+        doc=(
+            "Fired when a KPI chart's query returns zero rows. A KPI displays "
+            "exactly one value, so an empty result has nothing to show. Make "
+            "the query return one row, for example an aggregate without a "
+            "GROUP BY."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_KPI_VALUE_COLUMN_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-KPI-VALUE-COLUMN-NOT-FOUND",
+        domain="render",
+        title="KPI value names a column not in the query result",
+        message_template=(
+            "KPI chart {chart_id!r}: value column {value_column!r} not found in the "
+            "query result. Channels are always column references; constant "
+            "values come from the query. For a string status value, add "
+            "`rows: [{{status: {value_column!r}}}]` to the query and set `value: "
+            "status`. For a numeric literal, add `rows: [{{count: <value>}}]` "
+            "and set `value: count`."
+        ),
+        doc=(
+            "Fired when a KPI's `value` (or a support value) names a column "
+            "that is not in the query result row. Chart channels are column "
+            "references, never literals, so a constant must come from the "
+            "query itself."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_SWATCH_NOT_COLOR = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-SWATCH-NOT-COLOR",
+        domain="render",
+        title="a swatch column holds a value that is not a color",
+        message_template=(
+            "table {chart_id!r}: column {swatch_column!r} declares swatch: true but "
+            "row {row_index} value {value!r} is not a CSS color. Swatch cells "
+            "must be hex (e.g. '#3164a3') or 'transparent'. Either point "
+            "swatch: true at a different column, or fix the data."
+        ),
+        doc=(
+            "Fired when a table column declared `swatch: true` has a cell that "
+            "is empty or not a CSS color. The author either pointed `swatch` at "
+            "the wrong column or the query carries the wrong content; rendering "
+            "it as text would hide the mistake."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_SPANNER_UNKNOWN_COLUMN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-SPANNER-UNKNOWN-COLUMN",
+        domain="render",
+        title="a table spanner names a column not in the query result",
+        message_template=(
+            "table {chart_id!r}: spanner {label!r} names {unknown}, which are "
+            "not query columns (columns: {columns})."
+        ),
+        doc=(
+            "Fired when a table `spanners:` entry lists a column that the query "
+            "does not return; usually a typo or a column renamed in the query."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_SPANNER_NOT_ADJACENT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-SPANNER-NOT-ADJACENT",
+        domain="render",
+        title="a table spanner's columns are not adjacent",
+        message_template=(
+            "table {chart_id!r}: spanner {label!r} columns {spanner_columns} "
+            "are not adjacent among the visible columns {visible_columns}. "
+            "Reorder the query's SELECT; spanners never reorder columns."
+        ),
+        doc=(
+            "Fired when the columns of a table spanner are not next to each "
+            "other in the visible column order. Column order belongs to the "
+            "query, so a spanner never reorders anything; reorder the SELECT "
+            "or hide the columns between them."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_TRANSPOSE_ROW_COUNT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-TRANSPOSE-ROW-COUNT",
+        domain="render",
+        title="a transposed table needs exactly one row",
+        message_template=(
+            "style.table.transpose requires exactly one data row; got "
+            "{row_count}. Remove transpose: true or change the query."
+        ),
+        doc=(
+            "Fired when `style.table.transpose` is set and the query returns "
+            "zero or several rows. Transposing turns the single result row "
+            "into a column of label and value pairs."
+        ),
+        summary="Fired when a transposed table's query does not return exactly one row.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_TRANSPOSE_VISIBLE_UNKNOWN_COLUMN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-TRANSPOSE-VISIBLE-UNKNOWN-COLUMN",
+        domain="render",
+        title="a transposed table hides a column the query does not return",
+        message_template=(
+            "style.table.transpose: style.columns sets `visible:` on "
+            "{unaddressed}, which match no query column. The transposable "
+            "columns are {available}. Check for a typo."
+        ),
+        doc=(
+            "Fired when a transposed table's `style.columns` sets `visible:` "
+            "on a name that is not a query column. Hiding it would silently do "
+            "nothing."
+        ),
+        summary="Fired when a transposed table hides a name that is not a query column.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_VISIBLE_UNKNOWN_COLUMN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-VISIBLE-UNKNOWN-COLUMN",
+        domain="render",
+        title="a table hides a column that is not rendered",
+        message_template=(
+            "table {chart_id!r}: style.columns sets `visible:` on "
+            "{unaddressed}, which match no rendered column. This table's "
+            "addressable columns are {addressable}. Check for a typo, or key "
+            "the entry by the name the rendered column actually carries (a "
+            "pivot's measure name, or a bare pivoted value)."
+        ),
+        doc=(
+            "Fired when a table's `style.columns` sets `visible: false` on a "
+            "name that is not a rendered column, so the entry could never take "
+            "effect. Under a pivot the rendered names are the pivot's measure "
+            "names or bare pivoted values."
+        ),
+        summary="Fired when a table hides a name that is not a rendered column.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_PIVOT_FIELD_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-PIVOT-FIELD-NOT-FOUND",
+        domain="render",
+        title="a pivot field is not a column of the query result",
+        message_template=(
+            "{channel} {field!r} not in data rows; observed keys: {observed}"
+        ),
+        doc=(
+            "Fired when a table pivot's `columns`, `values`, or `rows` names a "
+            "field that the query does not return. `channel` says which "
+            "channel: pivot.column, pivot.value, or pivot.row."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_PIVOT_ROW_ROLE_LITERAL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-PIVOT-ROW-ROLE-LITERAL",
+        domain="render",
+        title="a pivot row.role is a role name, not a column",
+        message_template=(
+            "pivot.row_role {row_role!r} is a literal role, not a query "
+            "column; under a pivot row.role must name the query column that "
+            "carries the per-row role. Observed keys: {observed}"
+        ),
+        doc=(
+            "Fired when a pivoted table's `row.role` is a literal role such as "
+            "`total` instead of the name of the column that carries each "
+            "row's role. A literal would give every row the same role and "
+            "silently drop the reshape."
+        ),
+        summary="Fired when a pivoted table's row role is a literal instead of a column name.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_PIVOT_NO_MEASURES = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-PIVOT-NO-MEASURES",
+        domain="render",
+        title="a pivot has no measure columns",
+        message_template=(
+            "pivot: no measure columns; `values` resolved to empty. Declare at "
+            "least one measure field. Observed keys: {observed}"
+        ),
+        doc=(
+            "Fired when a table pivot ends up with no measure to place in the "
+            "cells, for example an explicit `values: []`."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_PIVOT_DIMENSIONS_AMBIGUOUS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS",
+        domain="render",
+        title="a pivot declares neither rows nor values",
+        message_template=(
+            "pivot: declare at least one of `rows` or `values`; with both "
+            "omitted the row and measure dimensions are ambiguous."
+        ),
+        doc=(
+            "Fired when a table pivot gives only `columns`. The remaining "
+            "fields cannot be split into row dimensions and measures without "
+            "guessing, so one of `rows` or `values` is required."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_PIVOT_ROW_ROLE_CONFLICT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-PIVOT-ROW-ROLE-CONFLICT",
+        domain="render",
+        title="pivoted rows merge with conflicting roles",
+        message_template=(
+            "pivot_table_data: conflicting row roles for row ({row}): "
+            "{stored_role!r} vs {this_role!r}. A merged pivot row must resolve "
+            "to a single role."
+        ),
+        doc=(
+            "Fired when query rows that pivot into the same wide row resolve "
+            "to different `row.role` values. Keeping the first would hide the "
+            "disagreement."
+        ),
+        summary="Fired when rows that pivot into one wide row disagree on their row role.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_PIVOT_DUPLICATE_CELL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-PIVOT-DUPLICATE-CELL",
+        domain="render",
+        title="a pivot cell receives more than one value",
+        message_template=(
+            "pivot_table_data: duplicate value for row ({row}) and column "
+            "{pivot_column}, measure {measure!r}; move the extra field onto rows "
+            "or columns."
+        ),
+        doc=(
+            "Fired when more than one query row maps to the same pivot cell "
+            "(same row key, column key, and measure). The pivot never "
+            "aggregates, so the query must return one row per cell or the "
+            "extra field must move onto `rows` or `columns`."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_TEMPORAL_FORMAT_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-TEMPORAL-FORMAT-INVALID",
+        domain="render",
+        title="a table cell's date or time could not be formatted",
+        message_template=(
+            "table cell {cell!r} could not be formatted with spec {spec!r}: {reason}"
+        ),
+        doc=(
+            "Fired when a table cell holds a date or time that cannot be "
+            "parsed (for example an out-of-range hour in an "
+            "ISO timestamp), or when the column's resolved date/time format "
+            "spec is itself invalid."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_LINK_FILTER_UNKNOWN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-LINK-FILTER-UNKNOWN",
+        domain="render",
+        title="a table link template uses an unknown filter",
+        message_template=(
+            "Unknown link template filter: {filter_name!r}. Only 'urlencode' "
+            "is supported."
+        ),
+        doc=(
+            "Fired when a table column's `link:` template pipes a value "
+            "through a filter other than `urlencode`, e.g. "
+            "`{{ id | shout }}`."
+        ),
+        summary="Fired when a table link template uses a filter other than urlencode.",
+        docs_topic="charts",
+    )
+)
+
 ERR_IMAGE_REF_UNRESOLVED = REGISTRY.register(
     ErrorCode(
         code="ERR-IMAGE-REF-UNRESOLVED",
@@ -3048,6 +3529,20 @@ ERR_CSS_COLOR_INVALID_AT_RENDER = REGISTRY.register(
             "or angle bracket to open a second declaration, so the value "
             "itself must be proven to be nothing but a color before it "
             "reaches the attribute."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_ENGINE_REFUSED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ENGINE-REFUSED",
+        domain="render",
+        title="the render engine cannot draw this chart yet",
+        message_template="The render engine cannot draw this chart yet: {message}",
+        doc=(
+            "Fired when the Rust render engine meets a chart shape it does not "
+            "model yet. It names an engine gap, not a mistake in the board."
         ),
         docs_topic="charts",
     )

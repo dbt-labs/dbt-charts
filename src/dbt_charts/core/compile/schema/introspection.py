@@ -13,10 +13,12 @@ import dataclasses
 import functools
 import types
 import typing
+from collections.abc import Iterable
 from enum import Enum
 from typing import Annotated, Any, ForwardRef, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, StringConstraints, Tag, ValidationError
+from annotated_types import Ge, GroupedMetadata, Gt, Le, Lt, MaxLen, MinLen
+from pydantic import BaseModel, Field, StringConstraints, Tag, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined, PydanticUndefinedType
 
@@ -29,6 +31,10 @@ from dbt_charts.core.compile.models.chart.authored import (
     AuthoredChart,
 )
 from dbt_charts.core.compile.models.config import ExecutionConfig
+from dbt_charts.core.compile.models.constraints import (
+    Constraint,
+    declared_constraints,
+)
 from dbt_charts.core.compile.models.factories import FontSlotBase, _PatchBase
 from dbt_charts.core.compile.models.markers import Facet, SchemaSugar
 from dbt_charts.core.compile.models.query.authored import (
@@ -67,7 +73,7 @@ class SchemaField:
     default_repr: (
         str | None
     )  # human-readable default for display (None = no meaningful default)
-    enum_values: list[str | bool] | None
+    enum_values: list[str | int | bool] | None
     nested_models: list[str]  # class names of nested AuthorableModels (empty = none)
     container: str | None = None  # "list" or "dict" if the model is in a container
     extra_union_types: list[str] = dataclasses.field(
@@ -82,13 +88,18 @@ class SchemaField:
     # arm beside a non-container arm in the same union — the mirror of
     # container_mapping_models for a list rather than a dict sibling.
     container_list_models: list[str] = dataclasses.field(default_factory=list)
-    # minItems for the container_list_models array shape, from a Field(min_length=...)
-    # on the list[...] sibling arm (e.g. ChartSupportTableOrList's bare-list shorthand).
-    container_list_min_items: int | None = None
     # Per-position type_repr strings for a FIXED-length tuple field (e.g.
     # tuple[int, float] -> ("int", "float")); None for every other shape,
     # including a variadic tuple[X, ...] (which is list-shaped, not fixed).
     tuple_item_reprs: tuple[str, ...] | None = None
+    # Value constraints Pydantic enforces, keyed by annotated_types attribute name
+    # (gt, ge, lt, le, min_length, max_length) or "pattern".
+    constraints: dict[str, int | float | str] = dataclasses.field(default_factory=dict)
+    # min_length/max_length declared on one union arm, keyed by that arm's kind
+    # ("str", "list", "dict", ...), so they bind only values of that kind.
+    arm_length_constraints: dict[str, dict[str, int]] = dataclasses.field(
+        default_factory=dict
+    )
     is_extra_key: bool = (
         False  # True for synthetic '<name>' fields from __pydantic_extra__
     )
@@ -128,6 +139,9 @@ class AuthorableModel:
     # single-key object, and only a form that writes the whole thing will do.
     # Synthetic union entries have no class to ask, and default to False.
     empty_is_valid: bool = False
+    constraints: tuple[Constraint, ...] = ()
+    # False when the model keeps unknown keys (extra="allow" or "ignore").
+    closed: bool = True
 
 
 @dataclasses.dataclass
@@ -262,8 +276,9 @@ def _is_authored_model(cls: Any) -> bool:
     Includes authored.* models, primitives, _PatchBase subclasses, compiled
     style models from style/theme/, models.refs (VariableRef/QueryRef/ChartRef —
     the cross-file ref pointer models, authored wherever a "@ref" union arm
-    admits one), and *Patch models from models.cache (CachePatch is the authored
-    overlay for the cache block — same role as *StylePatch, different module).
+    admits one), models.source (source configs and their nested blocks),
+    vega_lite.contracts, and *Patch models
+    from models.cache (CachePatch is the authored overlay for the cache block).
     """
     if not (isinstance(cls, type) and issubclass(cls, BaseModel)):
         return False
@@ -276,11 +291,15 @@ def _is_authored_model(cls: Any) -> bool:
         or module.endswith("style.theme")
         or ".style.theme." in module
         or module.endswith(".models.refs")
+        or module.endswith(".models.source")
+        or module.endswith(".vega_lite.contracts")
         or (module.endswith(".models.cache") and cls.__name__.endswith("Patch"))
     )
 
 
-def _extract_enum_values(annotation: Any) -> list[str | bool] | None:
+def _extract_enum_values(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names
+) -> list[str | int | bool] | None:  # type-state: optional — None: not an enum
     """Return enum values if annotation is an Enum or Literal, else None.
 
     Values are returned as their native Python types (str, int, bool, etc.) so
@@ -292,7 +311,7 @@ def _extract_enum_values(annotation: Any) -> list[str | bool] | None:
 
     # Literal["foo", "bar", ...] or Literal[True]
     if origin is Literal:
-        return [a for a in args if isinstance(a, (str, bool))]
+        return [a for a in args if isinstance(a, (str, int, bool))]
 
     # str Enum subclass
     if isinstance(annotation, type) and issubclass(annotation, Enum):
@@ -419,6 +438,9 @@ def _type_repr(annotation: Any) -> str:
         if len(args) == 2:
             return f"dict[{_type_repr(args[0])}, {_type_repr(args[1])}]"
         return "dict"
+
+    if origin in (set, frozenset):
+        return f"{origin.__name__}[{_type_repr(args[0])}]"
 
     if origin is tuple:
         if not args:
@@ -691,59 +713,149 @@ def _container_list_models(
     return list(dict.fromkeys(result))
 
 
-def _min_len_constraint(
-    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names/_extra_union_types
-) -> int | None:
-    """Return a `Field(min_length=...)` constraint's value, if annotation carries one.
+_NUMERIC_BOUNDS = frozenset({"gt", "ge", "lt", "le"})
+# The (private) class Field(pattern=) and StringConstraints put a pattern on.
+_PATTERN_METADATA = type(Field(pattern="x").metadata[0])
 
-    `Annotated[X, Field(min_length=N)]` stores the FieldInfo itself in
-    `__metadata__`, unprocessed — pydantic only expands it into an
-    annotated_types marker (`MinLen`) when building the runtime CoreSchema,
-    which introspection never does. `FieldInfo.metadata` is where that
-    unexpanded constraint list lives, so this reads it directly instead.
+
+def _json_number(
+    bound: object,  # type-state: object_annotation — annotated_types bounds are any comparable
+) -> int | float:
+    """A numeric bound as JSON Schema can state it; dates and the like cannot."""
+    if not isinstance(bound, (int, float)):
+        raise TypeError(f"bound {bound!r} is not a number JSON Schema can state")
+    return bound
+
+
+def _value_constraints(
+    metadata: Iterable[Any],  # type-state: explicit_any — arbitrary metadata
+) -> dict[str, int | float | str]:
+    """Constraints in annotation metadata, keyed like `SchemaField.constraints`.
+
+    `Annotated[X, Field(...)]` keeps the FieldInfo unexpanded in `__metadata__`,
+    and `StringConstraints` groups its markers, so both are opened up.
     """
-    if not hasattr(annotation, "__metadata__"):
-        return None
-    for meta in annotation.__metadata__:
+    found: dict[str, int | float | str] = {}
+    for meta in metadata:
         if isinstance(meta, FieldInfo):
-            for sub in meta.metadata:
-                # Duck-typed on purpose: annotated_types markers (MinLen here) are
-                # the only objects FieldInfo.metadata ever carries with a
-                # min_length attribute; anything else falls through correctly.
-                min_length = getattr(
-                    sub, "min_length", None
-                )  # type-state: silent_fallback — duck-typed, see comment above
-                if isinstance(min_length, int):
-                    return min_length
-    return None
+            found |= _value_constraints(meta.metadata)
+        elif isinstance(meta, GroupedMetadata):
+            found |= _value_constraints(meta)
+        elif isinstance(meta, Gt):
+            found["gt"] = _json_number(meta.gt)
+        elif isinstance(meta, Ge):
+            found["ge"] = _json_number(meta.ge)
+        elif isinstance(meta, Lt):
+            found["lt"] = _json_number(meta.lt)
+        elif isinstance(meta, Le):
+            found["le"] = _json_number(meta.le)
+        elif isinstance(meta, MinLen):
+            found["min_length"] = meta.min_length
+        elif isinstance(meta, MaxLen):
+            found["max_length"] = meta.max_length
+        elif isinstance(meta, _PATTERN_METADATA) and "pattern" in vars(meta):
+            found["pattern"] = vars(meta)["pattern"]
+    return found
 
 
-def _container_list_min_items(
-    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _container_list_models
-) -> int | None:
-    """`minItems` for the list[...] sibling arm _container_list_models finds.
+def _field_constraints(
+    name: str,
+    field_info: FieldInfo,
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names
+) -> dict[str, int | float | str]:
+    """Field-level constraints plus a bound on the sole numeric union arm.
 
-    Mirrors the same traversal, capturing the arm's `annotated_types.MinLen`
-    before `_unwrap_annotated` drops it (a bare validator marker, invisible
-    to `json_schema_input_type`'s own lookup) — e.g. `ChartSupportTableOrList`
-    (chart/authored/_support_table.py) wraps `list[ChartSupportTableEntry]` in
-    `MinLen(1)` to mirror `ChartSupportTable.entries`'s own
-    `Field(min_length=1)`, so the bare-list shorthand's derived schema rejects
-    an empty list the same way the object form does.
+    Numeric keywords ignore non-numbers, so hoisting leaves the other arms free.
     """
-    raw = annotation
-    annotation = _unwrap_annotated(annotation)
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin is list and args:
-        return _min_len_constraint(raw)
-    if origin is dict and len(args) == 2:
-        return None
-    for arg in args:
-        found = _container_list_min_items(arg)
-        if found is not None:
-            return found
-    return None
+    found = _value_constraints(field_info.metadata)
+    if get_origin(annotation) not in (Union, types.UnionType):
+        return found
+    numeric_arms = [
+        arm for arm in get_args(annotation) if _unwrap_annotated(arm) in (int, float)
+    ]
+    for arm in numeric_arms:
+        if not hasattr(arm, "__metadata__"):
+            continue
+        bounds = {
+            key: value
+            for key, value in _value_constraints(arm.__metadata__).items()
+            if key in _NUMERIC_BOUNDS
+        }
+        if bounds and len(numeric_arms) > 1:
+            raise TypeError(
+                f"field {name!r}: a numeric bound on one of several numeric union "
+                "arms cannot be stated in JSON Schema; bound every numeric arm "
+                "through Field(...) instead"
+            )
+        found |= bounds
+    return found
+
+
+_SIZED_ARM_KINDS: dict[type, str] = {
+    str: "str",
+    list: "list",
+    tuple: "tuple",
+    set: "set",
+    frozenset: "frozenset",
+    dict: "dict",
+}
+
+
+def _authored_arms(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names
+) -> list[Any]:  # type-state: explicit_any — the arms are typing constructs too
+    """The union arms an author can write, each with its own metadata kept.
+
+    A `json_schema_input_type` widening is walked in place of the type it
+    widens, the same substitution `_unwrap_annotated` makes.
+    """
+    bare = _unwrap_annotated(annotation)
+    if hasattr(annotation, "__metadata__") and bare is not annotation.__origin__:
+        return _authored_arms(bare)
+    if get_origin(bare) in (Union, types.UnionType):
+        return [arm for arg in get_args(bare) for arm in _authored_arms(arg)]
+    return [annotation]
+
+
+def _arm_length_constraints(
+    name: str,
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names
+) -> dict[str, dict[str, int]]:
+    """Length bounds on individual union arms, keyed by the arm's kind.
+
+    A length keyword binds only its own JSON type, so an arm's bound can sit on
+    the field as long as no sibling arm maps to the same keyword unbounded. An
+    unwidened single-arm field's bounds are field-level and live in
+    `constraints`.
+    """
+    arms = _authored_arms(annotation)
+    if arms == [annotation]:
+        return {}
+    found: dict[str, dict[str, int]] = {}
+    kinds: list[str] = []
+    for arm in arms:
+        bare = _unwrap_annotated(arm)
+        kind = _SIZED_ARM_KINDS.get(get_origin(bare) or bare)
+        if kind is None:
+            continue
+        kinds.append(kind)
+        if not hasattr(arm, "__metadata__"):
+            continue
+        lengths = {
+            key: value
+            for key, value in _value_constraints(arm.__metadata__).items()
+            if key in ("min_length", "max_length") and isinstance(value, int)
+        }
+        if lengths:
+            found[kind] = lengths
+    for kind in found:
+        if kinds.count(kind) > 1:
+            raise TypeError(
+                f"field {name!r}: a length bound on one of several {kind} union "
+                "arms cannot be stated in JSON Schema; bound them all through "
+                "Field(...) instead"
+            )
+    return found
 
 
 def _names_a_font_slot(
@@ -791,8 +903,9 @@ def _build_schema_field(
         extra_union_type_patterns=_extra_union_type_patterns(annotation),
         container_mapping_models=_container_mapping_models(annotation),
         container_list_models=_container_list_models(annotation),
-        container_list_min_items=_container_list_min_items(annotation),
         tuple_item_reprs=_tuple_item_reprs(annotation),
+        constraints=_field_constraints(name, field_info, annotation),
+        arm_length_constraints=_arm_length_constraints(name, annotation),
         inherit_from=(inherit.from_path,) if inherit is not None else (),
         inherit_slot=inherit_slot.from_path if inherit_slot is not None else None,
         inherit_slot_exclude=(
@@ -826,8 +939,8 @@ def _collect_models(
     for field_name, field_info in model_cls.model_fields.items():
         # Two ways to say "not authorable, keep it out of the reference":
         # `exclude=True` for fields that also must not serialize, and
-        # `json_schema_extra={"internal": True}` for derived fields whose value
-        # still has to survive a model_dump round-trip.
+        # `json_schema_extra={"internal": True}` for fields that must still parse
+        # and dump: derived values, and unsupported fields the executor rejects.
         extra = field_info.json_schema_extra
         if field_info.exclude or (isinstance(extra, dict) and extra.get("internal")):
             continue
@@ -875,6 +988,8 @@ def _collect_models(
         fields=fields,
         generated=issubclass(model_cls, _PatchBase),
         empty_is_valid=_empty_is_valid(model_cls),
+        constraints=declared_constraints(model_cls),
+        closed=model_cls.model_config.get("extra") == "forbid",
     )
 
     # An alias name (e.g. "AuthoredChart") has no single class

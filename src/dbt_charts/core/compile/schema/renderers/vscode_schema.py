@@ -1,9 +1,9 @@
 """VS Code JSON Schema renderer — decorates the strict dbt charts YAML schema.
 
 Calls render_yaml_schema(ir) for the IR-driven core, then adds the IDE-specific
-extras that have no Pydantic counterpart (fileMatch, layout anyOf constraint,
-LayoutItem definition). The theme enum is part of the base schema itself
-(render_yaml_schema injects it), not an IDE-only extra.
+extras that have no Pydantic counterpart (fileMatch, LayoutItem definition).
+The theme enum is part of the base schema itself (render_yaml_schema injects
+it), not an IDE-only extra.
 
 Entry point: render_vscode_schema(schema) -> dict
 """
@@ -118,15 +118,6 @@ def _decorate_for_vscode(base: dict[str, Any]) -> dict[str, Any]:
         "charts/**/*.yaml",
         "*.board.yml",
     ]
-    schema["anyOf"] = [
-        {"required": ["rows"]},
-        {"required": ["cols"]},
-        {"required": ["grid"]},
-        {"required": ["tabs"]},
-        {"required": ["charts"]},
-        {"required": ["content"]},
-    ]
-
     # charts/variables/queries need no override here — render_yaml_schema's IR
     # now derives the ref/string arms itself (schema/introspection.py reads
     # json_schema_input_type off the QueryOrRef/ChartOrRef/VariableOrRef

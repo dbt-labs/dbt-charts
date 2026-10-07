@@ -77,16 +77,7 @@ class TestWriteToolsUseBackingStoreNotHost:
         assert read_back["content"] == "title: Out Store\n"
 
 
-class TestPathScopedVerbsRefuseNonFilesystemProject:
-    """Verbs that resolve a path against the raw fspath (describe_board) must
-    refuse a non-filesystem project rather than probe the host — including
-    leaking the server cwd through a not-found hint.
-
-    query_board and validate-by-path are NOT in this class: they resolve paths
-    through `project.path_for_fspath(...)` (the backing store), so they work on
-    non-filesystem projects — see TestReadToolsUseBackingStoreNotDisk and
-    TestValidateByPathOnNonFilesystemProject respectively."""
-
+class TestValidateByYamlContentOnNonFilesystemProject:
     def test_validate_by_yaml_content_still_works(
         self, cloud_context: DbtChartsAIContext
     ) -> None:
@@ -97,12 +88,6 @@ class TestPathScopedVerbsRefuseNonFilesystemProject:
             context=cloud_context,
         )
         assert isinstance(result, dict)
-
-    def test_describe_board_refuses(self, cloud_context: DbtChartsAIContext) -> None:
-        result = dispatch_tool_call(
-            "describe_board", {"path": "charts/report.yml"}, context=cloud_context
-        )
-        assert result["success"] is False
 
 
 class TestValidateByPathOnNonFilesystemProject:
@@ -175,6 +160,29 @@ class TestValidateByPathOnNonFilesystemProject:
 
 
 class TestReadToolsUseBackingStoreNotDisk:
+    def test_describe_board_reads_backing_store(
+        self, cloud_context: DbtChartsAIContext
+    ) -> None:
+        result = dispatch_tool_call(
+            "describe_board", {"path": "charts/report.yml"}, context=cloud_context
+        )
+        assert result["success"] is True
+        assert result["path"] == "charts/report.yml"
+
+    def test_describe_board_ignores_host_files(
+        self,
+        cloud_context: DbtChartsAIContext,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (tmp_path / "secret.yml").write_text("title: Secret\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        result = dispatch_tool_call(
+            "describe_board", {"path": "secret.yml"}, context=cloud_context
+        )
+        assert result["success"] is False
+        assert str(tmp_path) not in str(result)
+
     def test_read_file_reads_from_backing_store(
         self, cloud_context: DbtChartsAIContext
     ) -> None:

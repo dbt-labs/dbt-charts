@@ -355,3 +355,14 @@ def baked_format(style, raw=None):
 
     spec = style.labels.format
     return None if spec is None else ResolvedFormat(spec=spec, raw=raw)
+
+
+@pytest.fixture
+def no_spog_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep dbt-databricks' SPOG discovery probe off the network."""
+    from dbt.adapters.databricks.spog import probe
+
+    def offline_probe(_host: str) -> probe.HostMetadata:
+        return probe.HostMetadata(host_type=None)
+
+    monkeypatch.setattr(probe, "probe_host", offline_probe)

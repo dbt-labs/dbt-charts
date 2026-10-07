@@ -11,10 +11,10 @@ from dbt_charts.core.compile.format import (
     finalize_kpi_value_format,
     resolve_format_parts,
 )
+from dbt_charts.core.compile.format_value import format_kpi_parts, format_value
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-from dbt_charts.core.render.format_utils import format_kpi_parts, format_value
 
 from .._svg_render import render_board_to_svg
 

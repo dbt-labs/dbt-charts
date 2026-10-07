@@ -1,11 +1,12 @@
-"""Tests for the KPI glyph/tone migration: chart root → style namespace.
+"""Tests for the KPI glyph/tone grammar: content at chart root, tone in style.
 
 Covers:
-* Rejection of glyph: / tone: at chart root with did-you-mean hints.
-* style.glyph.character compiles through the cascade and renders correctly.
-* style.tone is retired entirely — tone lives only on support.tone (the
-  block it paints); style.tone is rejected at both the chart root and the
-  style namespace.
+* Rejection of tone: at chart root with a did-you-mean hint; glyph: is a root
+  field.
+* The root glyph compiles through the cascade and renders correctly.
+* style.tone is retired entirely — tone lives only on style.support.tone (the
+  block it paints); it is rejected at the chart root, the style namespace, and
+  the support block.
 """
 
 from __future__ import annotations
@@ -51,49 +52,39 @@ def _chart_style_context():
 
 
 class TestChartRootRejection:
-    def test_glyph_at_chart_root_rejected_with_hint(self):
-        """glyph: at KPI chart root must be rejected; author must use style.glyph.character."""
-        with pytest.raises(ValidationError, match="style.glyph"):
-            AuthoredKpiChart(type="kpi", value="revenue", glyph="▲")
+    def test_glyph_at_chart_root_accepted(self):
+        """glyph: is the headline glyph's content, so it lives at the chart root."""
+        chart = AuthoredKpiChart(type="kpi", value="revenue", glyph="▲")
+        assert chart.glyph == "▲"
 
     def test_tone_at_chart_root_rejected_with_hint(self):
-        """tone: at KPI chart root must be rejected; author must use support.tone —
+        """tone: at KPI chart root must be rejected; author must use style.support.tone —
         tone lives on the block it paints (the support row), not the headline."""
-        with pytest.raises(ValidationError, match="support.tone"):
+        with pytest.raises(ValidationError, match="style.support.tone"):
             AuthoredKpiChart(type="kpi", value="revenue", tone="positive")
 
-    def test_tone_rejection_message_example_requires_value_field(self):
-        """The rejection message's example must include value: so the shown
-        support block is valid (KpiSupportConfig._require_non_empty rejects
-        bare tone without value/label/glyph).
+    def test_tone_rejection_message_recommended_shape_validates(self):
+        """The exact shape recommended in the rejection message is valid.
 
-        This test will fail if the message reverts to the old bare
-        'support:\\n  tone: positive\\n' example — that shape is rejected by
-        _require_non_empty and would mislead authors.
+        style.support.tone needs no support content block, so authors who
+        follow the hint will not hit a second validation error.
         """
         with pytest.raises(ValidationError) as exc_info:
             AuthoredKpiChart(type="kpi", value="revenue", tone="positive")
-        assert "value: <delta_column>" in str(exc_info.value)
+        assert "style:\n    support:\n      tone: positive" in str(exc_info.value)
+        chart = AuthoredKpiChart(
+            type="kpi",
+            value="revenue",
+            style=KpiChartStylePatch.model_validate({"support": {"tone": "positive"}}),
+        )
+        assert chart.style is not None
+        assert chart.style.support is not None
+        assert chart.style.support.tone == "positive"
 
-    def test_tone_rejection_message_recommended_support_shape_validates(self):
-        """The exact support shape recommended in the rejection message is valid.
-
-        support.tone alongside value: is accepted by KpiSupportConfig — authors
-        who follow the hint will not hit a second validation error.
-        """
-        # Must not raise
-        config = KpiSupportConfig(value="delta_col", tone="positive")
-        assert config.value == "delta_col"
-        assert config.tone == "positive"
-
-    def test_bare_tone_without_value_label_glyph_is_invalid_support(self):
-        """bare support: {tone: positive} (the OLD broken hint) is rejected.
-
-        _require_non_empty enforces that at least one of value/label/glyph
-        must be set — tone alone is insufficient.
-        """
-        with pytest.raises(ValidationError, match="Empty"):
-            KpiSupportConfig(tone="positive")
+    def test_tone_on_support_block_rejected(self):
+        """KpiSupportConfig carries content only; tone is style.support.tone."""
+        with pytest.raises(ValidationError, match="tone"):
+            KpiSupportConfig(value="delta_col", tone="positive")  # type: ignore[call-arg]
 
     def test_both_at_chart_root_rejected(self):
         with pytest.raises(ValidationError):
@@ -127,7 +118,7 @@ class TestChartRootRejection:
 
 
 # ---------------------------------------------------------------------------
-# Positive path: style.glyph.character compiles and renders; support.tone
+# Positive path: the root glyph compiles and renders; style.support.tone
 # paints the support row, never the headline value or its glyph.
 # ---------------------------------------------------------------------------
 
@@ -135,16 +126,15 @@ class TestChartRootRejection:
 def _compiled_kpi_with_style(
     *, glyph_char: str | None = None, support_tone: str | None = None
 ) -> Chart:
-    """Build a compiled Chart with glyph.character via the style namespace and
-    an optional tone-carrying support row."""
-    kpi_patch: dict = {}
-    if glyph_char is not None:
-        kpi_patch["glyph"] = {"character": glyph_char}
-    style = KpiChartStylePatch.model_validate(kpi_patch) if kpi_patch else None
-    support = (
-        KpiSupportConfig(label="vs last quarter", tone=support_tone)
+    """Build a compiled Chart with a root glyph and an optional tone-carrying
+    support row (content in ``support``, tone in ``style.support``)."""
+    style = (
+        KpiChartStylePatch.model_validate({"support": {"tone": support_tone}})
         if support_tone is not None
         else None
+    )
+    support = (
+        KpiSupportConfig(label="vs last quarter") if support_tone is not None else None
     )
     return KpiChart(
         id="t",
@@ -153,6 +143,7 @@ def _compiled_kpi_with_style(
         type="kpi",
         label="Revenue",
         value="revenue",
+        glyph=glyph_char,
         style=style,
         support=support,
     )
@@ -160,7 +151,7 @@ def _compiled_kpi_with_style(
 
 class TestStyleNamespacePositivePath:
     def test_glyph_character_renders_in_svg(self):
-        """style.glyph.character flows through cascade and appears in KPI SVG output."""
+        """The root glyph flows through resolve and appears in KPI SVG output."""
         chart = _compiled_kpi_with_style(glyph_char="▲")
         data = [{"revenue": 1_500_000}]
         resolved = resolve(chart, data, chart_style_context=_chart_style_context())
@@ -189,7 +180,7 @@ class TestStyleNamespacePositivePath:
         assert es.tones.positive not in glyph_tspan.group(0)
 
     def test_no_glyph_character_no_glyph_in_svg(self):
-        """When style.glyph.character is absent, no glyph tspan is emitted."""
+        """When the root glyph is absent, no glyph tspan is emitted."""
         chart = _compiled_kpi_with_style()
         data = [{"revenue": 1_500_000}]
         resolved = resolve(chart, data, chart_style_context=_chart_style_context())
@@ -201,9 +192,8 @@ class TestStyleNamespacePositivePath:
             assert glyph_char not in svg
 
     def test_style_cascade_via_normalize_chart(self):
-        """Authored style dict { glyph: { character: '▲' } } survives compile
-        normalization (the _wrap_authored_style path); style.tone in the same
-        dict is rejected."""
+        """Authored root `glyph` and style dict { support: { tone } } survive
+        compile normalization (the _wrap_authored_style path)."""
         from dbt_charts.core.compile.normalize.charts import normalize_chart
 
         query_registry = {"q": SqlQuery(sql="SELECT 1", source="t")}
@@ -213,16 +203,16 @@ class TestStyleNamespacePositivePath:
                 "type": "kpi",
                 "query": "q",
                 "value": "revenue",
-                "style": {
-                    "glyph": {"character": "▲"},
-                },
+                "glyph": "▲",
+                "style": {"support": {"tone": "positive"}},
             },
             query_registry,
             sources={},
         )
+        assert chart.glyph == "▲"
         assert chart.style is not None
-        assert chart.style.glyph is not None
-        assert chart.style.glyph.character == "▲"  # type: ignore[union-attr]
+        assert chart.style.support is not None
+        assert chart.style.support.tone == "positive"  # type: ignore[union-attr]
 
     def test_style_tone_via_normalize_chart_rejected(self):
         """style.tone in authored YAML fails compilation — the field is gone."""

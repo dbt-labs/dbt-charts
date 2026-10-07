@@ -104,7 +104,7 @@ Aliases:
 
 ## redshift
 
-dbt-redshift 1.10.1
+dbt-redshift 1.11.1
 
 ### `dbt.adapters.redshift.connections.RedshiftCredentials`
 
@@ -120,6 +120,7 @@ dbt-redshift 1.10.1
 - `autocreate`
 - `db_groups`
 - `ra3_node`
+- `datasharing`
 - `connect_timeout`
 - `role`
 - `sslmode`
@@ -142,6 +143,9 @@ dbt-redshift 1.10.1
 - `tcp_keepalive_idle`
 - `tcp_keepalive_interval`
 - `tcp_keepalive_count`
+- `query_group`
+- `allow_concurrent_drops`
+- `drop_without_cascade`
 
 Aliases:
 - `dbname` → `database`

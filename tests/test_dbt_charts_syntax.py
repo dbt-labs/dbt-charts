@@ -285,7 +285,7 @@ def test_number_format_alias_example_matches_engine(
     """The catalog row's rendered example must be the engine's actual output
     for the stated input (default register). Guards the failure mode where a
     hand-written example teaches a rendering the engine never produces."""
-    from dbt_charts.core.render.format_utils import format_value
+    from dbt_charts.core.compile.format_value import format_value
 
     rendered = format_value(probe, alias)
     rows = [

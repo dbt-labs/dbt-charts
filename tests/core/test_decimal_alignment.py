@@ -356,6 +356,10 @@ class TestDecimalPadTableFor:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[],
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (
@@ -853,6 +857,10 @@ class TestDecimalPadForEdgeCases:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=uniform_rows,  # type: ignore[arg-type]
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table == (), (
@@ -882,6 +890,10 @@ class TestDecimalPadForEdgeCases:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=mixed_rows,  # type: ignore[arg-type]
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (
@@ -915,6 +927,10 @@ class TestDecimalPadForEdgeCases:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=mixed_rows,  # type: ignore[arg-type]
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (

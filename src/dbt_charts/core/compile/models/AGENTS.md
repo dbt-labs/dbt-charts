@@ -87,7 +87,7 @@ Reviewer-enforced beyond `check_models.py`; an existing model that breaks one is
 - **New fields use `Annotated[T, Field(...)]`** so metadata composes with `Discriminator`/`BeforeValidator`; don't mass-rewrite old ones.
 - **Mutable defaults use `default_factory=list|dict|<Model>`**; `default_factory=lambda: <literal>` is a hardcoded default in disguise.
 - **No `dict[str, Any]` / `Any` values in this tree** except Vega-Lite passthrough; define the model. Agent-API return types wrapping variable JSON are typed at the boundary.
-- **Validator order of preference:** typed field (Literal, Enum, constrained type), then `field_validator(mode="after")`, then `model_validator(mode="after")` for cross-field invariants. No custom `__init__`.
+- **Validator order of preference:** typed field (Literal, Enum, constrained type), then `field_validator(mode="after")`. Cross-field invariants go in the model's `__constraints__` (`constraints.py`), which parse and the JSON Schema both enforce; a hand `model_validator(mode="after")` is only for a rule JSON Schema cannot state, with an `INEXPRESSIBLE` conformance probe. No custom `__init__`.
 - **Merge cascade overlays with `model_dump(exclude_unset=True)`**; without it every `None` on a patch overwrites its parent. Re-validate the merged dict with `model_validate`.
 - **Immutable settled data uses `ConfigDict(frozen=True)` with `tuple[...]`** sequences (frozen does not make lists immutable).
 

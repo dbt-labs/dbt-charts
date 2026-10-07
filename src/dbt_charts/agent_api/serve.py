@@ -103,7 +103,11 @@ def prepare_serve(
         # 3s bounds a slow in-flight render; the live-reload streams end on
         # their own, because shutdown closes the watch they read from.
         server=build_server(
-            app, host=host, port=resolved_port, timeout_graceful_shutdown=3
+            app,
+            host=host,
+            port=resolved_port,
+            timeout_graceful_shutdown=3,
+            exit_deadline=8,
         ),
         port=resolved_port,
         dialect=effective_dialect,

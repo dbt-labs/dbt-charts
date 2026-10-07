@@ -96,10 +96,16 @@ def list_examples() -> list[dict[str, str]]:
     return examples
 
 
+def resolve_under(base: Path, relative: str) -> Path | None:
+    """Resolve ``relative`` inside ``base``, or None if it escapes ``base``."""
+    resolved = (base / relative).resolve()
+    return resolved if resolved.is_relative_to(base.resolve()) else None
+
+
 def load_example(filename: str) -> str:
     """Load an example file content."""
-    path = EXAMPLES_DIR / filename
-    if path.exists() and path.suffix == ".md":
+    path = resolve_under(EXAMPLES_DIR, filename)
+    if path is not None and path.exists() and path.suffix == ".md":
         return path.read_text()
     return ""
 
@@ -127,7 +133,7 @@ class PlaygroundHandler(SimpleHTTPRequestHandler):
                 self._send_error(404, "Example not found")
         elif path.startswith("/examples/"):
             # Serve files from the examples directory
-            self._serve_file(ROOT_DIR / path.lstrip("/"))
+            self._serve_file(EXAMPLES_DIR, path.removeprefix("/examples/"))
         else:
             # Serve static files from playground
             super().do_GET()
@@ -183,9 +189,10 @@ class PlaygroundHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_file(self, file_path: Path) -> None:
-        """Serve a static file from an arbitrary path."""
-        if not file_path.exists() or not file_path.is_file():
+    def _serve_file(self, base: Path, relative: str) -> None:
+        """Serve a static file located under ``base``."""
+        file_path = resolve_under(base, relative)
+        if file_path is None or not file_path.is_file():
             self._send_error(404, "File not found")
             return
 

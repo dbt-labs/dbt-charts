@@ -335,3 +335,30 @@ def test_emit_board_artifact_fails_on_a_chart_that_cannot_resolve(
     # this board, so there is no artifact for them to consume.
     assert not (tmp_path / "out" / "board.json").exists()
     assert not (tmp_path / "out" / "board.rows.json").exists()
+
+
+def test_a_board_whose_text_reads_a_query_emits_and_replays(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    yaml = (
+        "queries:\n  summary:\n    columns: [x]\n    values:\n      - [4242]\n"
+        "text: 'Answer {{ queries.summary.one.x }}'\n"
+    )
+    (tmp_path / "board.yml").write_text(yaml)
+    project = local_project(tmp_path)
+    artifact_path = tmp_path / "out" / "board.artifact.json"
+    recording_path = tmp_path / "out" / "board.recording.json"
+
+    emitted = emit_board_artifact(
+        tmp_path / "board.yml",
+        artifact_path,
+        recording_path,
+        project=project,
+        adapter_registry=build_adapter_registry(project),
+    )
+    assert emitted.success, emitted.errors
+
+    replayed = render_board_from_files(artifact_path, recording_path)
+    assert replayed.success, replayed.errors
+    assert replayed.svg is not None
+    assert "4242" in re.sub(r"<[^>]+>", "", replayed.svg)

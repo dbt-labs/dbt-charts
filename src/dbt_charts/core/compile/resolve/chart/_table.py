@@ -10,10 +10,9 @@ from d3_format import format as _d3_fmt
 from dbt_charts.core.colors import sanitize_color
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
-    authored_sign_placement,
     column_format,
     decimal_pad_table_for,
-    resolve_format_parts,
+    declared_format,
     sub_unit_spec,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
@@ -24,6 +23,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedTableChart,
 )
 from dbt_charts.core.compile.models.primitives import (
+    AuthoredFormat,
     FormatAliases,
     ResolvedNamedPaletteScaleTargetConfig,
     ResolvedScaleTargetConfig,
@@ -43,7 +43,6 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.compile.resolve.chart._channels import _channels_for
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
-    ChartTextVariables,
     _base_kwargs,
     _shared_kwargs,
     _title_font,
@@ -59,6 +58,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.palette import (
     palette as resolve_named_palette,
 )
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_SIGN_PLACEMENT_TABLE_UNSUPPORTED,
 )
@@ -319,7 +319,10 @@ def _with_resolved_scale_stops(
     formats: FormatAliases | None,
     font_family: str,
     rows: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
-    allow_shared_scale: bool = True,
+    allow_shared_scale: bool,
+    own_formats: Mapping[str, AuthoredFormat | None],
+    defaults_format: AuthoredFormat | None,
+    declared: Mapping[str, str] | None,
 ) -> dict[str, ResolvedTableColumnConfig] | None:
     """Construct ResolvedTableColumnConfig entries with baked scale stops.
 
@@ -353,9 +356,19 @@ def _with_resolved_scale_stops(
 
     result: dict[str, ResolvedTableColumnConfig] = {}
     for name, col in columns.items():
-        _col_parts = resolve_format_parts(col.format, formats)
-        resolved_fmt = _col_parts.spec
         coerced_values = _coerced_column_values(rows, name) if rows else []
+        own = own_formats.get(name)
+        declared_name = declared_format(declared, name)
+        _effective = column_format(
+            "number" if coerced_values else "time",
+            formats,
+            own,
+            board=defaults_format,
+            column=declared_name,
+        )
+        has_format = any(f is not None for f in (own, defaults_format, declared_name))
+        _col_parts = _effective if has_format else None
+        resolved_fmt = _effective.spec if has_format else ""
 
         # A column with no explicit format: still falls back to the engine default
         # (an SI spec) at render time (format_kpi_parts's default_number=True)
@@ -363,7 +376,6 @@ def _with_resolved_scale_stops(
         # eligible for the same shared-scale bake as an explicitly `~s`
         # column, matching the Problem this task targets ("the engine
         # default, or any inline ~s spec").
-        _effective = column_format("number", formats, col.format)
         si_check_fmt, raw_format_name = _effective.spec, _effective.raw
         explicit_prefix, explicit_suffix = _effective.prefix, _effective.suffix
 
@@ -488,7 +500,7 @@ def _with_resolved_scale_stops(
             result[name] = ResolvedTableColumnConfig.model_validate(
                 {
                     **col.model_dump(exclude_none=True),
-                    **({"format": _col_parts} if col.format is not None else {}),
+                    **({"format": _col_parts} if _col_parts is not None else {}),
                     "decimal_pad_table": pad_table,
                     "shared_scale": shared_scale,
                 }
@@ -532,7 +544,7 @@ def _with_resolved_scale_stops(
         resolved_scale = ResolvedColumnScaleConfig.model_validate(scale_base)
         col_base = col.model_dump(exclude_none=True)
         col_base["scale"] = resolved_scale.model_dump(exclude_unset=True)
-        if col.format is not None:
+        if _col_parts is not None:
             col_base["format"] = _col_parts
         col_base["decimal_pad_table"] = pad_table
         col_base["shared_scale"] = shared_scale
@@ -566,7 +578,7 @@ def _resolve_table(
     automatic_link_candidate: AutomaticLinkCandidate,
     table_column_links: Mapping[str, str],
     table_column_rows: Sequence[Mapping[str, str]],
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
     allow_shared_scale: bool = True,
 ) -> ResolvedTableChart:
     chart_local_style_context = build_chart_style_context(
@@ -606,6 +618,9 @@ def _resolve_table(
         if table.font.family and "Source Serif" in table.font.family
         else DBT_SANS_TABULAR_FONT_FAMILY
     )
+    authored_columns = (
+        primary.columns if primary is not None and primary.columns else {}
+    )
     table_columns = _materialize_table_columns(
         primary.columns if primary is not None else None,
         column_defaults_val,
@@ -622,11 +637,15 @@ def _resolve_table(
         font_family=numeric_cell_font,
         rows=data,
         allow_shared_scale=allow_shared_scale,
+        own_formats={name: cfg.format for name, cfg in authored_columns.items()},
+        defaults_format=(
+            column_defaults_val.format if column_defaults_val is not None else None
+        ),
+        declared=normalized.query.formats if normalized.query else None,
     )
     # The prefix lane paints apart from the signed digits (`€  −40`).
-    formats = chart_local_style_context.formats
-    for name, column in table_columns.items() if table_columns is not None else ():
-        if authored_sign_placement(column.format, formats) is not None:
+    for name, column in resolved_columns.items() if resolved_columns else ():
+        if column.format is not None and column.format.sign_placement is not None:
             raise CompilationError.from_code(
                 ERR_FORMAT_SIGN_PLACEMENT_TABLE_UNSUPPORTED,
                 field_path=f"charts.{normalized.id}.style.columns.{name}.format",
@@ -647,7 +666,7 @@ def _resolve_table(
             legendless=True,
             wrap_legend=False,
         ),
-        **_shared_kwargs(normalized, variables, chart_local_style_context),
+        **_shared_kwargs(normalized, display_text, chart_local_style_context),
         chart_type="table",
         rows=normalized.rows,
         pivot_columns=normalized.columns,

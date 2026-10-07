@@ -116,15 +116,6 @@ def test_scale_domain_iso_strings_still_valid_without_temporal_type() -> None:
     assert scale.domain == ("1955-01-01", "2026-01-01")
 
 
-def test_scale_type_temporal_rejects_non_list_iterable_domain():
-    """A set/frozenset/deque/generator isn't a str or dict, so it slips past
-    the "before" validator's isinstance guard -- the mixin's own message
-    fires first (before the strict-tuple annotation gets a chance), giving a
-    temporal-specific error rather than a generic "wrong container" one."""
-    with pytest.raises(ValidationError, match="must be a list of 2 ISO-8601"):
-        ScaleContinuousStyle(type="temporal", domain={1955, 2026})
-
-
 def test_scale_domain_rejects_non_list_iterable_without_temporal_type():
     """Regression: domain's shape check must not be scoped to type: temporal.
     A set is silently coerced into a tuple by pydantic's lax mode -- in hash
@@ -159,7 +150,7 @@ def test_scale_domain_rejects_bool_element():
 # per-element type, and the bool exclusion all live on the field's own
 # annotation (which the factory copies verbatim, so they reach the Patch
 # regardless of the mixin); only the temporal ISO-date check is a mixin
-# validator, and it reaches the Patch because ScaleDomainValidationMixin is
+# constraint, and it reaches the Patch because ScaleDomainValidationMixin is
 # on the Patch's base class.
 # ---------------------------------------------------------------------------
 

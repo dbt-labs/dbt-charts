@@ -21,145 +21,151 @@ charts:
   stacked_full:
     type: kpi
     query: q
-    variant: stacked
     label: Potential savings
     value: revenue
     style:
       value:
         format: currency
+      variant: stacked
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      format: percent_delta
       glyph: ▲
-      tone: positive
   stacked_label_only:
     type: kpi
     query: q
-    variant: stacked
     label: Potential savings
     value: revenue
     style:
       value:
         format: currency
+      variant: stacked
   stacked_support_only:
     type: kpi
     query: q
-    variant: stacked
     value: revenue
     style:
       value:
         format: currency
+      variant: stacked
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      format: percent_delta
       glyph: ▲
-      tone: positive
   stacked_value_only:
     type: kpi
     query: q
-    variant: stacked
     value: revenue
     style:
       value:
         format: currency
+      variant: stacked
 
   # ──────── inline ────────
   inline_full:
     type: kpi
     query: q
-    variant: inline
     label: Potential savings
     value: revenue
     style:
       value:
         format: currency
+      variant: inline
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      format: percent_delta
       glyph: ▲
-      tone: positive
   inline_label_only:
     type: kpi
     query: q
-    variant: inline
     label: Potential savings
     value: revenue
     style:
       value:
         format: currency
+      variant: inline
   inline_support_only:
     type: kpi
     query: q
-    variant: inline
     value: revenue
     style:
       value:
         format: currency
+      variant: inline
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      format: percent_delta
       glyph: ▲
-      tone: positive
   inline_value_only:
     type: kpi
     query: q
-    variant: inline
     value: revenue
     style:
       value:
         format: currency
+      variant: inline
 
   # ──────── compact ────────
   compact_full:
     type: kpi
     query: q
-    variant: compact
     label: Potential savings
     value: revenue
     style:
       value:
         format: currency
+      variant: compact
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      format: percent_delta
       glyph: ▲
-      tone: positive
   compact_label_only:
     type: kpi
     query: q
-    variant: compact
     label: Potential savings
     value: revenue
     style:
       value:
         format: currency
+      variant: compact
   compact_support_only:
     type: kpi
     query: q
-    variant: compact
     value: revenue
     style:
       value:
         format: currency
+      variant: compact
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      format: percent_delta
       glyph: ▲
-      tone: positive
   compact_value_only:
     type: kpi
     query: q
-    variant: compact
     value: revenue
     style:
       value:
         format: currency
+      variant: compact
 rows:
 - title: 'stacked (default) — three lines, fixed slot widths'
   cols:

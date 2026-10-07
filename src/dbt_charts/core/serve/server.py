@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
+import threading
+from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from importlib.resources import files
@@ -119,6 +121,72 @@ _SKIP_REFRESH_PATHS = frozenset({"/health", "/templates", "/__livereload"})
 # Shared empty request-variables default (never mutated) — keeps the
 # registered-view wrapper's request_variables parameter non-optional.
 _NO_REQUEST_VARS: dict[str, str] = {}
+
+
+class RegistryLeases:
+    """Keeps a replaced registry open until the requests using it finish.
+
+    Renders run on worker threads, so a config reload can swap the registry
+    while a render still queries the old one.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._counts: Counter[AdapterRegistry] = Counter()
+        self._retired: set[AdapterRegistry] = set()
+        # None until shutdown begins; then the registries already interrupted.
+        self._interrupted: set[AdapterRegistry] | None = None
+
+    def acquire(self, registry: AdapterRegistry) -> None:
+        late = False
+        with self._lock:
+            self._counts[registry] += 1
+            interrupted = self._interrupted
+            if interrupted is not None and registry not in interrupted:
+                interrupted.add(registry)
+                late = True
+        if late:
+            # Built by a reload after shutdown began.
+            registry.interrupt()
+
+    def release(self, registry: AdapterRegistry) -> None:
+        with self._lock:
+            self._counts[registry] -= 1
+            if self._counts[registry]:
+                return
+            del self._counts[registry]
+            if registry not in self._retired:
+                return
+            self._retired.remove(registry)
+        registry.close()
+
+    def retire(self, registry: AdapterRegistry) -> None:
+        """Close `registry` now, or once its last lease is released."""
+        with self._lock:
+            leased = registry in self._counts
+            if leased:
+                self._retired.add(registry)
+        if not leased:
+            registry.close()
+
+    def interrupt_all(self, current: AdapterRegistry) -> None:
+        """Interrupt `current`, every leased registry, and any leased later."""
+        with self._lock:
+            registries = dict.fromkeys([current, *self._counts])
+            self._interrupted = set(registries)
+        for registry in registries:
+            registry.interrupt()
+
+    def close_retired(self) -> None:
+        """Close retired registries a render still holds; for shutdown."""
+        with self._lock:
+            retired, self._retired = self._retired, set()
+        for registry in retired:
+            registry.close()
+
+
+def interrupt_queries(state: Any) -> None:  # type-state: explicit_any — starlette State
+    state.registry_leases.interrupt_all(state.adapter_registry)
 
 
 def _board_dir_mtime(scan_root: Path) -> float:
@@ -1059,11 +1127,10 @@ def create_server(
             await _app.state.watcher.start()
             yield
         finally:
-            # Close the live registry (older ones were closed on rebuild) and the
-            # cache — including on a failed startup, so neither leaks. The nested
-            # try guards the registry close so a raising close never strands the cache.
+            # The registry closes must not strand the cache close.
             registry = getattr(_app.state, "adapter_registry", None)
             try:
+                _app.state.registry_leases.close_retired()
                 if registry is not None:
                     registry.close()
             finally:
@@ -1094,6 +1161,7 @@ def create_server(
     # Built here so shutdown.py can take it before the app runs. Watches the
     # root, not charts_dir, which lives under it and need not exist yet.
     app.state.watcher = FileWatcher(str(core_project.root), cache_path=boot.path)
+    app.state.registry_leases = RegistryLeases()
     # Serializes concurrent registry / alias-index rebuilds.
     _refresh_lock = asyncio.Lock()
 
@@ -1115,10 +1183,11 @@ def create_server(
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         path = request.url.path
-        if path.startswith("/static/") or path in _SKIP_REFRESH_PATHS:
+        if path.startswith("/static/fonts/") or path in _SKIP_REFRESH_PATHS:
             return await call_next(request)
         state = request.app.state
         project: FilesystemProject = state.project
+        leases: RegistryLeases = state.registry_leases
         async with _refresh_lock:
             # dbt_charts.yml edit → rebuild the registry from fresh sources and close
             # the old one (releasing its DuckDB handles). The project is a permanent
@@ -1129,17 +1198,22 @@ def create_server(
                     vars(project).pop(key, None)
                 old_registry = state.adapter_registry
                 state.adapter_registry = _build_registry(project)
-                # Safe to close inline: the render path is synchronous (it blocks
-                # the event loop) and rebuilds run under _refresh_lock, so no
-                # in-flight request is still using old_registry at this point.
-                old_registry.close()
+                leases.retire(old_registry)
                 state.config_mtime = config_mtime
             # Board add/edit/remove → rebuild the alias index.
             charts_mtime = _all_board_roots_mtime(project)
             if charts_mtime != state.alias_index_mtime:
                 state.alias_index = AliasIndex.build(project)
                 state.alias_index_mtime = charts_mtime
-        return await call_next(request)
+            # Leased under the lock, so a reload cannot close it before the route
+            # reads it from request.state.
+            registry: AdapterRegistry = state.adapter_registry
+            leases.acquire(registry)
+        request.state.adapter_registry = registry
+        try:
+            return await call_next(request)
+        finally:
+            leases.release(registry)
 
     # Mount the bundled webfonts at /static/fonts so the @font-face URLs
     # injected into rendered HTML/SVG (Inter Variable, dbt Sans Tabular,
@@ -1184,7 +1258,7 @@ def create_server(
         )
 
     @app.post("/inspect/profile/", response_class=HTMLResponse)
-    async def profile_table(request: Request) -> str:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    def profile_table(request: Request) -> str:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
         """Run table profiling, save results, and render the dashboard.
 
         Requires ``dbt-charts-super-schema`` to be installed. Without the private
@@ -1243,7 +1317,7 @@ def create_server(
         )
 
     @app.get("/inspect/exists/")
-    async def table_exists(model: str) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    def table_exists(model: str) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
         """Check if a table exists in the warehouse without reading profile data.
 
         Requires ``dbt-charts-super-schema`` to be installed.
@@ -1286,7 +1360,7 @@ def create_server(
         )
 
     @app.get("/{path:path}", response_class=HTMLResponse)
-    async def get_board(path: str, request: Request) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    def get_board(path: str, request: Request) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
         """Serve any board file with query params as variables.
 
         URL path maps to file path:
@@ -1322,7 +1396,7 @@ def create_server(
                     file_path,
                     raw_variables,
                     app.state.project,
-                    adapter_registry=app.state.adapter_registry,
+                    adapter_registry=request.state.adapter_registry,
                     serve_storage_prefix=app.state.serve_storage_prefix,
                     max_workers=app.state.max_workers,
                     result_cache=app.state.result_cache,
@@ -1390,7 +1464,7 @@ def create_server(
                     candidate,
                     variables,
                     app.state.project,
-                    adapter_registry=app.state.adapter_registry,
+                    adapter_registry=request.state.adapter_registry,
                     serve_storage_prefix=app.state.serve_storage_prefix,
                     max_workers=app.state.max_workers,
                     result_cache=app.state.result_cache,
@@ -1421,7 +1495,7 @@ def create_server(
                         index_board,
                         variables,
                         project,
-                        adapter_registry=app.state.adapter_registry,
+                        adapter_registry=request.state.adapter_registry,
                         serve_storage_prefix=app.state.serve_storage_prefix,
                         max_workers=app.state.max_workers,
                         result_cache=app.state.result_cache,
@@ -1451,7 +1525,7 @@ def create_server(
             registered_response = _render_registered_view_response(
                 request_path=request_abs_path,
                 project=app.state.project,
-                adapter_registry=app.state.adapter_registry,
+                adapter_registry=request.state.adapter_registry,
                 result_cache=app.state.result_cache,
                 max_workers=app.state.max_workers,
                 request_variables=variables_from_query_pairs(
@@ -1494,7 +1568,7 @@ def create_server(
             file_path,
             variables,
             app.state.project,
-            adapter_registry=app.state.adapter_registry,
+            adapter_registry=request.state.adapter_registry,
             serve_storage_prefix=app.state.serve_storage_prefix,
             max_workers=app.state.max_workers,
             result_cache=app.state.result_cache,

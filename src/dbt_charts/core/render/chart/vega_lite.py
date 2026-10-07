@@ -855,7 +855,9 @@ def generate_vega_lite_spec(
     # types (arc, boxplot, errorbar) before any width math runs. preferred_chart_width
     # indexes _FAMILY_SLOT by chart.type and KeyErrors on those same types, so it must
     # only run after resolve() has confirmed the type is a real, authorable family.
-    resolved = resolve(chart, data, chart_style_context=context, width=width)
+    resolved = resolve(
+        chart, data, chart_style_context=context, width=width, display_text="raw"
+    )
     resolved_width = (
         resolved.resolution_width
         if isinstance(resolved, ResolvedPieChart)
@@ -948,6 +950,7 @@ def render_chart(
             if datasets is None
             else {name: rows for name, rows in datasets.items() if name is not None}
         ),
+        display_text="raw",
     )
     artifact = render_resolved_chart(
         resolved,

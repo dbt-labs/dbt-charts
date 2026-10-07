@@ -381,11 +381,8 @@ class TestTextFormat:
             value="revenue",
             x=None,
             y=None,
-            support={
-                "value": "delta",
-                "label": "vs last month",
-                "format": "percent",
-            },
+            support={"value": "delta", "label": "vs last month"},
+            style={"support": {"format": "percent"}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -471,7 +468,7 @@ class TestTextFormat:
         """A bare sub-1 "number" range is formatted the same way a KPI or
         table cell reads the same value -- ``format_value(0.2, "number")``
         is "200m" (see ``TestSiSubUnitFloor.test_plain_quantity_fraction_
-        keeps_milli_reading`` in test_format_utils.py: the non-money
+        keeps_milli_reading`` in test_format_value.py: the non-money
         sub-unit floor is a deliberate, separately-pinned decision this
         function does not override).
         """
@@ -1030,9 +1027,7 @@ rows:
     def test_kpi_headline_glyph_appears_in_text(self, make_chart):
         """An authored headline glyph shows in text, matching chart/kpi.py's draw order."""
         data = [{"revenue": 210.0}]
-        chart = make_chart(
-            "kpi", value="revenue", x=None, y=None, style={"glyph": {"character": "▲"}}
-        )
+        chart = make_chart("kpi", value="revenue", x=None, y=None, glyph="▲")
         board = _make_board([chart])
         executor = _make_executor(data)
 
@@ -1260,3 +1255,20 @@ class TestTextDataFormat:
 
         assert "0.0 " not in data_section
         assert "4e-05" in data_section
+
+
+def test_kpi_with_no_rows_stamps_no_data_code(make_chart):
+    from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
+    from dbt_charts.core.render.board_to_dict import _render_chart_item
+
+    chart = make_chart("kpi", value="revenue", x=None, y=None)
+    collected = []
+    _render_chart_item(
+        chart,
+        _make_executor([]),
+        {},
+        _default_chart_style_context(),
+        collected,
+        include_text_format=True,
+    )
+    assert [d.code for d in collected] == [ERR_KPI_NO_DATA.code]

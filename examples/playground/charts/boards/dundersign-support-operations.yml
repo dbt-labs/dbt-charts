@@ -240,12 +240,13 @@ charts:
     style:
       value:
         format: ",.0f"
+      support:
+        format: .0%
+        tone: negative
     support:
       value: aging_share
       label: aging > 90 days
-      format: ".0%"
       glyph: "▲"
-      tone: negative
 
   kpi_aging:
     type: kpi
@@ -255,12 +256,13 @@ charts:
     style:
       value:
         format: ",.0f"
+      support:
+        format: ",.0f"
+        tone: negative
     support:
       value: median_age
       label: median age (days)
-      format: ",.0f"
       glyph: "●"
-      tone: negative
 
   kpi_solved:
     type: kpi
@@ -270,12 +272,13 @@ charts:
     style:
       value:
         format: ",.0f"
+      support:
+        format: +.0%
+        tone: positive
     support:
       value: solved_30_growth
       label: vs prior 30 days
-      format: "+.0%"
       glyph: "▲"
-      tone: positive
 
   kpi_oldest:
     type: kpi
@@ -285,12 +288,13 @@ charts:
     style:
       value:
         format: ",.0f"
+      support:
+        format: ",.0f"
+        tone: warning
     support:
       value: open_tickets
       label: tickets in queue
-      format: ",.0f"
       glyph: "○"
-      tone: warning
 
   # ── Hero: vertical stacked column — queue by age, colored by priority ──
   # One column per age band, urgency-stacked. The 180+ days column towers

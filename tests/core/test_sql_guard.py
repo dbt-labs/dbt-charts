@@ -25,6 +25,7 @@ DIALECTS: list[str | None] = [
     "databricks",
     "mysql",
     "sqlserver",
+    "fabric",
     None,
 ]
 
@@ -192,6 +193,10 @@ class TestValidateSelectOnlyPasses:
             "SELECT a {% for c in cols %}, {{ c }}{% endfor %} FROM t",
             dialect=dialect,
         )
+
+
+def test_fabric_accepts_tsql_top_n() -> None:
+    validate_select_only("SELECT TOP 5 * FROM t", dialect="fabric")
 
 
 class TestDescribeDetailDatabricks:

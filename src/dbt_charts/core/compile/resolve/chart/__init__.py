@@ -34,7 +34,6 @@ from ._kwargs import (
     AutomaticLinkCandidate,
     default_chart_width,
     preferred_chart_width,
-    resolve_chart_display_title,
 )
 from ._links import (
     auto_link_excludes_x,
@@ -50,7 +49,6 @@ __all__ = [
     "infer_pivot_measure_names",
     "preferred_chart_width",
     "resolve",
-    "resolve_chart_display_title",
     "resolve_y_zero",
     "should_fetch_table_fk_links",
     "should_synthesize_auto_link",

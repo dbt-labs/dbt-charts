@@ -262,7 +262,6 @@ _TITLE_FONT_DATA = [
         "scatter",
         "heatmap",
         "pie",
-        "kpi",
         pytest.param(
             "spark_bar",
             marks=pytest.mark.skip(
@@ -295,3 +294,11 @@ def test_chart_local_title_font_override_reaches_resolved_chart(chart_type):
         f"{chart_type}: chart-local style.title.font.style did not reach the "
         f"resolved title font (got {resolved.style.title_font.style!r})"
     )
+
+
+def test_kpi_has_no_chart_local_title_override() -> None:
+    """A KPI paints a label, not a title: a chart-local style.title is rejected."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="title"):
+        _title_font_chart("kpi")

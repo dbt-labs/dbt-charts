@@ -53,7 +53,6 @@ from dbt_charts.core.compile.resolve.chart._domain import (
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
-    ChartTextVariables,
     _base_kwargs,
     _cartesian_kwargs,
     _title_font,
@@ -95,6 +94,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LINE_Y_NOT_NUMERIC,
 )
@@ -115,7 +115,7 @@ def _resolve_line(
     width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedLineChart:
     data = dataset.all_rows()
     multiples_scale = (
@@ -462,10 +462,11 @@ def _resolve_line(
     _ck = _cartesian_kwargs(
         normalized,
         chart_local_style_context,
-        variables,
+        display_text,
         data,
         "line",
         panel_axes=dataset.axes,
+        stacked=False,
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     return ResolvedLineChart(

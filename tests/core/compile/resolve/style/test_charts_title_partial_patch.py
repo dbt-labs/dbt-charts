@@ -4,7 +4,7 @@
 carries ``InheritSlot(from_path="Style.title")`` (see ``charts.py``), so
 ``merge_style`` fills the empty slot from the board title before an override
 merges onto it. Per-family overrides
-(``style.charts.kpi.title``, ...) keep ``_ChartStyleBase.title``'s
+(``style.charts.table.title``, ...) keep ``_ChartStyleBase.title``'s
 ``SkipInheritSlots()`` and stay sparse patches at this board-cascade stage —
 they reach every chart of that family at chart-resolve time instead, via
 ``build_chart_style_context``'s board -> family-theme -> chart-local title

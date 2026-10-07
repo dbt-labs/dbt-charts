@@ -384,6 +384,11 @@ class AdapterRegistry:
                 self._type_index[query_type] = []
             self._type_index[query_type].append(adapter)
 
+    def interrupt(self) -> None:
+        """Cancel in-flight queries and refuse new ones; one-way, for shutdown."""
+        for adapter in self._adapters:
+            adapter.interrupt()
+
     def close(self) -> None:
         """Close adapters that hold external resources (e.g. DuckDB file handles).
 

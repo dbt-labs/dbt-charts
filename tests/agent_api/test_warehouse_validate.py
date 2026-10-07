@@ -117,6 +117,20 @@ class TestWarehouseValidateDuckDB:
         assert "missing_col" in err.message
         assert "my_chart" in err.message
 
+    def test_formats_naming_a_column_the_query_lacks_produces_err(self, tmp_path):
+        project, registry = _setup_duckdb_project(
+            tmp_path,
+            board_yml=_HEALTHY_BOARD.replace(
+                "SELECT id, revenue FROM orders\n",
+                "\n    sql: SELECT id, revenue FROM orders\n"
+                "    formats:\n      revenue: currency\n      totl: currency\n",
+            ),
+        )
+        r = _validate(tmp_path, project, registry)
+        err = next(e for e in r.errors if e.code == "ERR-QUERY-FORMAT-COLUMN-MISSING")
+        assert "column 'totl'" in err.message
+        assert "id, revenue" in err.message
+
     def test_layer_channel_is_checked_too(self, tmp_path):
         """A column referenced only from a layer must be checked like a top-level one."""
         project, registry = _setup_duckdb_project(

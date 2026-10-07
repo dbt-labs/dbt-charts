@@ -25,9 +25,14 @@ from dbt_charts.core.compile.models.board.normalized import (
     VariableValues,
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.chart.normalized.kpi import KpiChart
 from dbt_charts.core.compile.models.primitives import FormatAliases
+from dbt_charts.core.compile.template.display_text import resolve_display_text
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.execute.chart_resolution import collect_display_text_inputs
 from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.render.board_variables import board_data_provider
+from dbt_charts.core.render.boards import resolve_display_text_from_provider
 from dbt_charts.core.render.conditions import evaluate_visible
 
 if TYPE_CHECKING:
@@ -154,37 +159,38 @@ def render_board_terminal(
     board_width = width - 4  # Account for padding
     board_height = height - 4
 
-    # Render title if present
-    title_lines: list[str] = []
-    title_height = 0
-    if board.title:
-        from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+    with board_data_provider(executor):
+        # Render title if present
+        title_lines: list[str] = []
+        title_height = 0
+        if board.title:
+            resolved_title = resolve_display_text_from_provider(
+                board.title, all_variables, resolved_style=resolved_style
+            )
 
-        resolved_title = resolve_jinja_template(board.title, all_variables)
+            # Format title with border
+            title_lines.append("=" * board_width)
+            title_lines.append(f" {resolved_title}")
+            title_lines.append("=" * board_width)
+            title_lines.append("")
+            title_height = len(title_lines)
 
-        # Format title with border
-        title_lines.append("=" * board_width)
-        title_lines.append(f" {resolved_title}")
-        title_lines.append("=" * board_width)
-        title_lines.append("")
-        title_height = len(title_lines)
+        # Calculate layout area
+        layout_width = board_width
+        layout_height = board_height - title_height
 
-    # Calculate layout area
-    layout_width = board_width
-    layout_height = board_height - title_height
-
-    bg = board.authored_style.background if board.authored_style else None
-    layout_output = _dispatch_layout(
-        board.layout,
-        executor,
-        all_variables,
-        layout_width,
-        layout_height,
-        gap=1,
-        background=bg,
-        grid_columns=grid_columns,
-        resolved_style=resolved_style,
-    )
+        bg = board.authored_style.background if board.authored_style else None
+        layout_output = _dispatch_layout(
+            board.layout,
+            executor,
+            all_variables,
+            layout_width,
+            layout_height,
+            gap=1,
+            background=bg,
+            grid_columns=grid_columns,
+            resolved_style=resolved_style,
+        )
 
     # Combine title and layout
     output_lines = title_lines + [layout_output]
@@ -232,7 +238,6 @@ def render_layout_item_terminal(
             variables,
             available_width,
             available_height,
-            resolved_style=resolved_style,
         )
     return ""
 
@@ -263,9 +268,15 @@ def render_chart_item_terminal(
         # Execute query to get data
         data = executor.execute_chart(chart, variables)
 
-        from dbt_charts.core.compile.resolve import resolve_chart_display_title
-
-        display_title = resolve_chart_display_title(chart, variables)
+        text_inputs = collect_display_text_inputs(chart, executor, variables)
+        title_text = chart.label if isinstance(chart, KpiChart) else chart.title
+        display_title = (
+            resolve_display_text(
+                title_text, text_inputs.variables, text_inputs.query_results, formats
+            )
+            if title_text
+            else ""
+        )
 
         # Render chart
         from dbt_charts.core.render.terminal_charts import render_chart_terminal
@@ -297,10 +308,8 @@ def render_nested_board_terminal(
     variables: VariableValues,
     available_width: int,
     available_height: int,
-    *,
-    resolved_style: ResolvedStyle,
 ) -> str:
-    """Render a nested board to terminal.
+    """Render a nested board to terminal, in its own resolved style.
 
     Args:
         board: Board to render
@@ -308,16 +317,15 @@ def render_nested_board_terminal(
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
-        resolved_style: Board-scoped style for grid column config.
 
     Returns:
         Terminal-formatted board string
     """
     title_lines: list[str] = []
     if board.title:
-        from dbt_charts.core.compile.template.jinja import resolve_jinja_template
-
-        resolved_title = resolve_jinja_template(board.title, variables)
+        resolved_title = resolve_display_text_from_provider(
+            board.title, variables, resolved_style=board.resolved_style
+        )
         title_lines.append(f"─ {resolved_title} ─")
         title_lines.append("")
 
@@ -333,8 +341,8 @@ def render_nested_board_terminal(
         layout_height,
         gap=1,
         background=bg,
-        grid_columns=resolved_style.layout.grid.columns,
-        resolved_style=resolved_style,
+        grid_columns=board.resolved_style.layout.grid.columns,
+        resolved_style=board.resolved_style,
     )
 
     return "\n".join(title_lines + [layout_output])

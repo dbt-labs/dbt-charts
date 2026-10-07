@@ -622,6 +622,7 @@ class TestDialectRegistry:
             "redshift",
             "sqlserver",
             "mssql",
+            "fabric",
             "databricks",
             "spark",
             "athena",

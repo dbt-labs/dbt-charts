@@ -17,6 +17,7 @@ from dbt_charts.core.diagnostics import (
     WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED,
     WARN_KPI_LABEL_TRUNCATED,
     WARN_SPARK_LABEL_TRUNCATED,
+    WARN_SUPPORT_TABLE_CELL_OVERFLOW,
     WARN_TABLE_TEXT_TRUNCATED,
 )
 from dbt_charts.core.render.chart.text_truncation import TextTruncation
@@ -27,6 +28,7 @@ from dbt_charts.core.render.warnings import (
     kpi_inline_fallback,
     kpi_label_truncated,
     spark_label_truncated,
+    support_table_cell_overflow,
     table_text_truncated,
 )
 from dbt_charts.core.render.warnings.base import WarningContext
@@ -374,3 +376,35 @@ def test_kpi_align_overflow_detector_fires_once_per_chart() -> None:
         ],
     )
     assert len(kpi_align_overflow.detect(ctx)) == 1
+
+
+def test_support_table_cell_overflow_detector_fires_once_per_chart() -> None:
+    ctx = _ctx(
+        "s1",
+        [
+            TextTruncation(
+                surface="support_table_cell_overflow",
+                authored_field="support_table",
+                authored_text="46px needed, 22px per band",
+            )
+        ],
+    )
+    warnings = support_table_cell_overflow.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_SUPPORT_TABLE_CELL_OVERFLOW.code
+    assert w.chart == "s1"
+    assert "46px needed, 22px per band" in w.message
+    assert w.path == "charts.s1.support_table"
+
+
+def test_support_table_cell_overflow_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "s2",
+        [
+            TextTruncation(
+                surface="kpi_label", authored_field="label", authored_text="Long"
+            )
+        ],
+    )
+    assert support_table_cell_overflow.detect(ctx) == []

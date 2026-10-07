@@ -92,10 +92,11 @@ charts:
     style:
       value:
         format: currency_whole
+      support:
+        format: delta
     support:
       value: revenue_delta
       label: vs prior month
-      format: delta
   k_users:
     label: Active users
     query: kpis
@@ -104,7 +105,9 @@ charts:
     support:
       value: users_delta
       label: vs prior month
-      format: delta
+    style:
+      support:
+        format: delta
   k_win_rate:
     label: Win rate, all closed deals
     query: kpis
@@ -236,7 +239,7 @@ environment, so install the one you use as an extra:
 
 ```bash
 uv tool install "dbt-charts[bigquery]"  # or: pip install "dbt-charts[bigquery]"
-                                         # also: athena, clickhouse, databricks,
+                                         # also: athena, clickhouse, databricks, fabric,
                                          # postgresql, redshift, snowflake, spark,
                                          # sqlserver, trino. DuckDB is built in.
 ```

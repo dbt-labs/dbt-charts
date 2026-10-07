@@ -48,6 +48,46 @@ ERR_UNKNOWN_QUERY = REGISTRY.register(
     )
 )
 
+ERR_TEXT_UNKNOWN_QUERY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-UNKNOWN-QUERY",
+        domain="compile",
+        title="Text references an unknown query",
+        message_template=(
+            "{surface} references unknown query {query_name!r}. "
+            "Defined queries: {defined}."
+        ),
+        doc=(
+            "Fired when board `text:` or `title:`, or a chart's `title`, `subtitle`, "
+            "KPI `label` or callout `title` or `message`, reads `queries.<name>` for a query "
+            "that is not defined on the board, its `extends:` parents or its "
+            "imports. Check for typos and declare the query under `queries:`."
+        ),
+        summary="Fired when board or chart text reads a query the board does not define.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_QUERIES_NONLITERAL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-QUERIES-NONLITERAL",
+        domain="compile",
+        title="Text uses queries without a literal name",
+        message_template=(
+            "Text must reference queries by literal name "
+            "(queries.<name> or queries['<name>'])."
+        ),
+        doc=(
+            "Fired when board `text:` or `title:`, or chart text, uses `queries` in any way other than "
+            "`queries.<name>` or `queries['<name>']`, such as `queries[var]`, "
+            "`queries | list` or `{% set q = queries %}`. The queries a board "
+            "reads must be known before it runs."
+        ),
+        summary="Fired when text uses `queries` without a literal query name.",
+        docs_topic="board",
+    )
+)
+
 ERR_EXTRA_FIELD = REGISTRY.register(
     ErrorCode(
         code="ERR-EXTRA-FIELD",
@@ -572,6 +612,29 @@ ERR_SUPPORT_TABLE_POSITION_INVALID = REGISTRY.register(
             "axis (vertical bar, line, area) only accepts `top`/`bottom`; a "
             "vertical one (a horizontal bar) only accepts `left`/`right`. The "
             "message carries the specific value and orientation."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_SUPPORT_TABLE_LABEL_IGNORED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SUPPORT-TABLE-LABEL-IGNORED",
+        domain="compile",
+        title="support_table per_series label: names nothing in this layout",
+        message_template="{message}",
+        summary=(
+            "Fired when a `per_series:` support_table entry sets `label:` on a "
+            "layout that names its rows or columns by series."
+        ),
+        doc=(
+            "Fired when a `per_series:` entry without `by_measure: true` sets "
+            "`label:` on a chart whose strip rows (vertical bar, line, area) or "
+            "per-series columns (stacked horizontal bar) are named by the color "
+            "field's series values, so the label would be silently dropped. A "
+            "horizontal grouped bar's single per_series column still takes its "
+            "header from `label:`. Remove the label; series names come from the "
+            "color field and legend."
         ),
         docs_topic="charts",
     )
@@ -1173,6 +1236,52 @@ ERR_FORMAT_KIND_MISMATCH = REGISTRY.register(
         # reaches this raise, so the input domain is the vocabulary itself and no
         # member of it is a near-miss for the other half. The message names the
         # legal values outright instead.
+    )
+)
+
+ERR_QUERY_FORMAT_SPEC = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-FORMAT-SPEC",
+        domain="compile",
+        title="A query's formats: value is a format spec, not a format name",
+        message_template=(
+            "Query {query!r} formats.{column} is a format spec ({spec!r}), not a "
+            "format name. Name it in style.formats (for example "
+            "`{column}_format: {spec!r}`) and use the name here."
+        ),
+        doc=(
+            "Fired when a query's `formats:` value is a d3 or strftime spec "
+            "(`$,.0f`, `%b %Y`) instead of a name. A query says what a column "
+            "means by naming a format: an engine format (`currency`, `percent`, "
+            "`year`, ...) or one the board defines in `style.formats`. The spec "
+            "itself belongs in `style.formats`, where one definition restyles "
+            "every column that names it."
+        ),
+        summary="A query's formats: value is a spec, not a format name.",
+        docs_topic="queries",
+    )
+)
+
+ERR_QUERY_FORMAT_UNKNOWN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-FORMAT-UNKNOWN",
+        domain="compile",
+        title="A query's formats: value names a format the board does not have",
+        message_template=(
+            "Query {query!r} formats.{column} names {spec!r}, which is neither "
+            "an engine format nor defined in style.formats. Available: "
+            "{available}"
+        ),
+        doc=(
+            "Fired when a query's `formats:` value is not an engine format name "
+            "and not a key in the rendering board's merged `style.formats`. A "
+            "query imported into another board is checked against that board's "
+            "names, so a shared query naming a format of your own needs it "
+            "defined in every board that imports it."
+        ),
+        summary="A query's formats: value names a format the board lacks.",
+        docs_topic="queries",
+        hint_generator=suggest_close_format,
     )
 )
 
@@ -1881,5 +1990,23 @@ ERR_VARIABLE_NAME_INVALID = REGISTRY.register(
         ),
         summary="Fired when a variable name is not a valid identifier.",
         docs_topic="variables",
+    )
+)
+
+ERR_STYLE_CSS_VALUE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-STYLE-CSS-VALUE-INVALID",
+        domain="compile",
+        title="A style value for markdown text is not valid CSS",
+        summary="A style value written into CSS contains characters that break out of it.",
+        message_template="Invalid style value for markdown text: {detail}.",
+        doc=(
+            "Fired when a font color, weight, style or decoration that styles "
+            "markdown text (prose, callouts, table cells) contains a character "
+            "that could close the CSS declaration or open a new rule: one of "
+            "`<>;{}\"'\\*` or a control character. Use a plain CSS value such "
+            "as a hex color, `oklch(...)`, `var(--x)`, or `bold`."
+        ),
+        docs_topic="charts",
     )
 )

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from dbt_charts.core.registered_views.query_runner import ViewQueryResult
+    from dbt_charts.core.compile.template.query_result import QueryResult
     from dbt_charts.core.registered_views.router import RouteMatch
 
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -1810,15 +1810,16 @@ class TestAuthoredBoardAutoLink:
 class TestTableIndexDetailLinkRegression:
     """Verify /data/.../index still links to detail page after template block removal."""
 
-    def _col_results(self) -> dict[str, ViewQueryResult]:
-        from dbt_charts.core.registered_views.query_runner import ViewQueryResult
+    def _col_results(self) -> dict[str, QueryResult]:
+        from dbt_charts.core.compile.template.query_result import QueryResult
 
         return {
-            "columns": ViewQueryResult(
+            "columns": QueryResult(
+                "q",
                 rows=[
                     {"name": "id", "actual_type": "BIGINT"},
                     {"name": "status", "actual_type": "VARCHAR"},
-                ]
+                ],
             )
         }
 
@@ -2399,17 +2400,23 @@ charts:
 
 
 class TestResolveCellLinkUnknownFilter:
-    """resolve_cell_link raises ValueError for unrecognized template filters."""
+    """resolve_cell_link raises a coded ChartDataError for unrecognized filters."""
 
     def test_unknown_filter_raises(self) -> None:
         import pytest
 
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_TABLE_LINK_FILTER_UNKNOWN,
+        )
         from dbt_charts.core.render.chart.table_support import resolve_cell_link
 
         link = "/data/dw/public/users/detail/?id={{ id | xss }}"
         row = {"id": "abc"}
-        with pytest.raises(ValueError, match="Unknown link template filter: 'xss'"):
+        with pytest.raises(ChartDataError) as exc_info:
             resolve_cell_link(link, row, ["id"])
+        assert exc_info.value.code is ERR_TABLE_LINK_FILTER_UNKNOWN
+        assert exc_info.value.fields == {"filter_name": "xss"}
 
 
 # ---------------------------------------------------------------------------

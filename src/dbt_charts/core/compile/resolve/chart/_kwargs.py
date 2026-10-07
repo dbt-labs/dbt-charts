@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from types import MappingProxyType
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -13,7 +12,6 @@ from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
 from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
-    KpiChart,
 )
 from dbt_charts.core.compile.models.chart.normalized._base import (
     _BaseChartFields,
@@ -61,12 +59,13 @@ from dbt_charts.core.compile.resolve.style.legend_position import (
 from dbt_charts.core.compile.resolve.style.palette import substitute_for_alias
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
-from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+from dbt_charts.core.compile.template.display_text import (
+    ChartDisplayText,
+    resolve_display_text,
+)
 
 __all__ = [
     "AutomaticLinkCandidate",
-    "ChartTextVariables",
-    "_EMPTY_CHART_TEXT_VARIABLES",
     "_FAMILY_SLOT",
     "_base_kwargs",
     "_cartesian_kwargs",
@@ -76,7 +75,6 @@ __all__ = [
     "_title_font",
     "default_chart_width",
     "preferred_chart_width",
-    "resolve_chart_display_title",
 ]
 
 
@@ -325,22 +323,26 @@ def _base_kwargs(
     }
 
 
-ChartTextVariables = Mapping[str, Any]
-_EMPTY_CHART_TEXT_VARIABLES: ChartTextVariables = MappingProxyType({})
-
-
-def _resolve_text(value: str, variables: ChartTextVariables) -> str:
-    if not variables:
-        return value
-    return resolve_jinja_template(value, variables, strict=False)
-
-
-def resolve_chart_display_title(
-    normalized: Chart, variables: ChartTextVariables, strict: bool = True
+def _resolve_text(
+    value: str,
+    display_text: ChartDisplayText,
+    formats: FormatAliases | None,
+    chart_id: str,
+    field: str,
 ) -> str:
-    """Resolve the one title-like field used by normalized terminal charts."""
-    value = normalized.label if isinstance(normalized, KpiChart) else normalized.title
-    return resolve_jinja_template(value, variables, strict=strict) if value else ""
+    """``"raw"`` keeps authored text; ``None`` allows only text without Jinja."""
+    if display_text == "raw":
+        return value
+    if display_text is None:
+        if "{{" in value or "{%" in value:
+            raise ValueError(
+                f"chart '{chart_id}' {field} contains Jinja but resolve() "
+                "got no display_text"
+            )
+        return value
+    return resolve_display_text(
+        value, display_text.variables, display_text.query_results, formats
+    )
 
 
 def _title_font(
@@ -373,7 +375,7 @@ def _resolved_chart_format(
 
 def _shared_kwargs(
     normalized: _SharedChartFields,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText,
     chart_style_context: ChartStyleContext,
 ) -> dict[str, Any]:
     """Extra kwargs for _SharedResolvedChartFields subclasses.
@@ -390,8 +392,20 @@ def _shared_kwargs(
     ``render/chart/translate.py``), not baked in here.
     """
     return {
-        "title": _resolve_text(normalized.title, variables),
-        "subtitle": _resolve_text(normalized.subtitle, variables),
+        "title": _resolve_text(
+            normalized.title,
+            display_text,
+            chart_style_context.formats,
+            normalized.id,
+            "title",
+        ),
+        "subtitle": _resolve_text(
+            normalized.subtitle,
+            display_text,
+            chart_style_context.formats,
+            normalized.id,
+            "subtitle",
+        ),
         "background": chart_style_context.background,
         "canvas": chart_style_context.ink_canvas,
         "title_style": chart_style_context.title,
@@ -518,6 +532,7 @@ def _support_table_geometry(
     chart_id: str,
     category_axis_vertical: bool,
     axis_y_orient: Literal["left", "right"],
+    stacked: bool,
 ) -> tuple[SupportTableStyle | None, float | None]:
     """Bake the support_table strip's compile-owned geometry: the chart's
     effective SupportTableStyle (with ``position`` resolved to a concrete
@@ -544,8 +559,13 @@ def _support_table_geometry(
         return None, None
     from dbt_charts.core.compile.support_table import (  # noqa: PLC0415
         axis_offset,
+        reject_ignored_per_series_label,
         resolve_effective_support_table_style,
         resolve_support_table_position,
+    )
+
+    reject_ignored_per_series_label(
+        support_table, chart_id, category_axis_vertical, stacked
     )
 
     effective_style = resolve_effective_support_table_style(
@@ -566,10 +586,11 @@ def _support_table_geometry(
 def _cartesian_kwargs(
     normalized: _CartesianChartFields,
     chart_style_context: ChartStyleContext,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText,
     data: list[dict[str, Any]],
     chart_type: str,
     panel_axes: tuple[PartitionAxis, ...],
+    stacked: bool,
     category_axis_vertical: bool = False,
     axis_y_orient: Literal["left", "right"] = "left",
 ) -> dict[str, Any]:
@@ -584,7 +605,8 @@ def _cartesian_kwargs(
     new resolver.
 
     ``category_axis_vertical``/``axis_y_orient`` feed ``support_table.position``
-    resolution. Every family but bar has a horizontal category axis
+    resolution; ``stacked`` is bar's own resolved stacking, which decides whether
+    a ``per_series`` label names a column. Every family but bar has a horizontal category axis
     unconditionally, so they take the defaults (``False``/unused); bar passes
     its own already-resolved ``orientation == "horizontal"`` and baked
     ``axis_y.position``.
@@ -600,9 +622,10 @@ def _cartesian_kwargs(
         normalized.id,
         category_axis_vertical,
         axis_y_orient,
+        stacked,
     )
     return {
-        **_shared_kwargs(normalized, variables, chart_style_context),
+        **_shared_kwargs(normalized, display_text, chart_style_context),
         "x": normalized.x,
         "y": normalized.y,
         "color": normalized.color,
@@ -627,11 +650,11 @@ def _cartesian_kwargs(
 def _geo_kwargs(
     normalized: _GeoChartFields,
     chart_style_context: ChartStyleContext,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText,
 ) -> dict[str, Any]:
     """Extra kwargs for _GeoResolvedChartFields subclasses (projection only)."""
     return {
-        **_shared_kwargs(normalized, variables, chart_style_context),
+        **_shared_kwargs(normalized, display_text, chart_style_context),
         "projection": normalized.projection,
         "field_labels": normalized.field_labels,
     }

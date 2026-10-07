@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from dbt_charts.core.compile.schema.introspection import introspect
 
@@ -42,12 +43,18 @@ class TestIdeExtras:
             "*.board.yml",
         ]
 
-    def test_root_any_of_layout_constraint(self, vscode_schema) -> None:
-        any_of = vscode_schema.get("anyOf", [])
-        required_keys = {
-            list(item["required"])[0] for item in any_of if "required" in item
-        }
-        assert required_keys >= {"rows", "cols", "grid", "tabs", "charts"}
+    @pytest.mark.parametrize(
+        ("board", "valid"),
+        [
+            ({"title": "T"}, True),
+            ({"text": "hi"}, True),
+            ({"notes": "n"}, False),
+        ],
+    )
+    def test_states_the_board_content_rule(
+        self, vscode_schema: dict[str, object], board: dict[str, str], valid: bool
+    ) -> None:
+        assert Draft202012Validator(vscode_schema).is_valid(board) is valid
 
     def test_theme_enum_populated(self, vscode_schema) -> None:
         theme_prop = vscode_schema["properties"]["theme"]

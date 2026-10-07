@@ -1,0 +1,3 @@
+kind: Fixes
+body: Junk `padding`, `margin`, `border`, `gap`, `header_overflow`, `overflow` and `theme` values now raise an error instead of being silently coerced; `border` strings now accept every CSS color keyword and draw `dashed` and `dotted` lines.
+time: 2026-10-07T12:00:00.000000-07:00

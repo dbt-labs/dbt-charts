@@ -74,6 +74,7 @@ import dbt_charts.core.render.warnings.series_label_truncated as series_label_tr
 import dbt_charts.core.render.warnings.series_labels_repeat_word as series_labels_repeat_word
 import dbt_charts.core.render.warnings.spark_label_truncated as spark_label_truncated
 import dbt_charts.core.render.warnings.static_pagination_capped as static_pagination_capped
+import dbt_charts.core.render.warnings.support_table_cell_overflow as support_table_cell_overflow
 import dbt_charts.core.render.warnings.table_columns_overflow as table_columns_overflow
 import dbt_charts.core.render.warnings.table_cramped as table_cramped
 import dbt_charts.core.render.warnings.table_page_squeezed as table_page_squeezed
@@ -113,6 +114,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     series_label_truncated,
     spark_label_truncated,
     static_pagination_capped,
+    support_table_cell_overflow,
     table_columns_overflow,
     table_cramped,
     table_page_squeezed,

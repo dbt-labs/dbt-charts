@@ -473,7 +473,6 @@ def _render_chart_item_inner(
 
         resolved_style = _rs(get_theme_style())
 
-    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
     from dbt_charts.core.render.chart.spec_builders import shift_artifact_title
     from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
     from dbt_charts.core.render.converters.chart import render_chart_artifact
@@ -578,17 +577,12 @@ def _render_chart_item_inner(
                 row_count=len(v2_data),
             )
 
-    # Resolve chart title for data attributes (Jinja only — no full resolve needed).
     # KPI charts carry their authored text in ``label``; every other chart type
     # uses ``title``. The wire-level ``data-chart-title`` attribute stays under
     # one name regardless (it is an accessibility/identification handle, not
     # tied to the YAML field name).
     chart_title_source = chart.label if chart.chart_type == "kpi" else chart.title
-    chart_title = (
-        resolve_jinja_template(chart_title_source, variables, strict=False)
-        if chart_title_source
-        else ""
-    ) or chart.id
+    chart_title = chart_title_source or chart.id
 
     return _wrap_rendered_chart_svg(
         ChartIdentity.from_resolved(chart),

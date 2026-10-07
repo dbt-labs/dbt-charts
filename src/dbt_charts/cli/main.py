@@ -1732,7 +1732,9 @@ def examples(
 def skills(
     skill_name: Annotated[
         str | None,
-        typer.Argument(help="Skill name to show (default: list all)"),
+        typer.Argument(
+            metavar="SKILL_NAME", help="Skill name to show (default: list all)"
+        ),
     ] = None,
     search: Annotated[
         str | None,

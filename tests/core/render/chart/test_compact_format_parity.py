@@ -10,13 +10,13 @@ import dataclasses
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format_value import format_kpi_parts
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-from dbt_charts.core.render.format_utils import format_kpi_parts
 
 _BOARD_RS, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 

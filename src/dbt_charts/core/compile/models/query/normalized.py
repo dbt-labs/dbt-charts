@@ -99,6 +99,14 @@ class Query(BaseModel, ABC):
         default=None, description="Maximum number of rows to return."
     )
 
+    formats: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Column -> format name, from the query's `formats:`. Names are "
+            "checked against the rendering board's `style.formats` at compile."
+        ),
+    )
+
     # Diagnostic suppression — list of diagnostic codes to suppress
     ignore: list[str] | None = Field(
         default=None,

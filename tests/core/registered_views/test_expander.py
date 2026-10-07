@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.registered_views.expander import (
     ExpansionError,
     TemplateLoadError,
@@ -21,7 +22,6 @@ from dbt_charts.core.registered_views.expander import (
     render_template,
 )
 from dbt_charts.core.registered_views.models import RegisteredView
-from dbt_charts.core.registered_views.query_runner import ViewQueryResult
 from dbt_charts.core.registered_views.router import RouteMatch
 
 # ---------------------------------------------------------------------------
@@ -105,144 +105,6 @@ class TestLoadTemplateContainment:
 
 
 # ---------------------------------------------------------------------------
-# _sql_identifier — dialect-aware quoting
-# ---------------------------------------------------------------------------
-
-
-class TestSqlIdentifierDialect:
-    """BigQuery/MySQL use backticks, not ANSI double quotes — the root cause
-    of the /data/ 404 this module fixes: `_sql_identifier` used to be
-    dialect-blind and always emitted double quotes, which BigQuery parses as
-    a string literal, not an identifier.
-    """
-
-    def test_bigquery_dialect_uses_backticks(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        assert _sql_identifier("dundersign", "bigquery") == "`dundersign`"
-
-    def test_postgres_dialect_keeps_double_quotes(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        assert _sql_identifier("dundersign", "postgres") == '"dundersign"'
-
-    def test_duckdb_dialect_keeps_double_quotes(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        assert _sql_identifier("dundersign", "duckdb") == '"dundersign"'
-
-    def test_none_dialect_defaults_to_ansi_double_quotes(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        assert _sql_identifier("dundersign", None) == '"dundersign"'
-
-    def test_dotted_identifier_is_accepted(self) -> None:
-        """A dot is legal inside a quoted identifier on every supported dialect
-        (e.g. a BigQuery dataset.table-style registered view name) — reject-by-
-        denylist must not turn this into a 500 on a page the /data/ index links to."""
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        assert _sql_identifier("orders.v2", "postgres") == '"orders.v2"'
-
-    def test_non_ascii_identifier_is_accepted(self) -> None:
-        """Non-ASCII letters are legal in a quoted identifier; the round-2
-        ASCII-only allowlist rejected these and broke real warehouse table names."""
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        assert _sql_identifier("ventas_señor", "postgres") == '"ventas_señor"'
-
-    def test_space_in_identifier_is_accepted(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        assert _sql_identifier("my col", "postgres") == '"my col"'
-
-    def test_hash_and_percent_in_identifier_are_accepted(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        assert _sql_identifier("col#1", "postgres") == '"col#1"'
-        assert _sql_identifier("col%done", "postgres") == '"col%done"'
-
-    def test_embedded_double_quote_is_rejected(self) -> None:
-        """Runtime-boundary validation, not escaping: a quote char in an
-        identifier is rejected outright rather than doubled — sqlglot's
-        per-dialect escaping is a formatting step, not a security boundary
-        (see test_backslash_payload_is_rejected_not_escaped below)."""
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier('bad"name', "postgres")
-
-    def test_embedded_backtick_is_rejected(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier("bad`name", "bigquery")
-
-    def test_backslash_payload_is_rejected_not_escaped(self) -> None:
-        """The exact review payload: sqlglot's BigQuery quoting doubles an
-        embedded backtick but leaves a backslash untouched (its
-        IDENTIFIER_ESCAPES is empty), so `a\\`,other.secrets#` can round-trip
-        through `.sql(dialect="bigquery")` as a different identifier than the
-        one quoted. Reject it at the runtime boundary instead of trusting the
-        code generator to escape it."""
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier("a\\`,other.secrets#", "bigquery")
-
-    def test_embedded_single_quote_is_rejected(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier("bad'name", "postgres")
-
-    def test_embedded_bracket_is_rejected(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier("bad[name]", "postgres")
-
-    def test_control_character_is_rejected(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier("bad\tname", "postgres")
-
-    def test_c1_control_character_is_rejected(self) -> None:
-        """C1 controls (\\x80-\\x9f) pass the route regex and would reach PyYAML,
-        which raises a raw ReaderError — reject them at the boundary instead."""
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier("bad\x82name", "postgres")
-
-    def test_jinja_delimiters_are_rejected(self) -> None:
-        """Board SQL is re-rendered as Jinja downstream in a non-sandboxed env.
-        SchemaQuery._no_jinja blocks this today for every current route, but that
-        gate lives in another package — deny braces here so a future registered
-        view without a schema pre-query can't lose it silently."""
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        for payload in ("{{ 7*7 }}", "{% raw %}", "a{b"):
-            with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-                _sql_identifier(payload, "postgres")
-
-    def test_trailing_newline_is_rejected(self) -> None:
-        """A `.match()` + `$` check would accept a trailing newline; the
-        validation boundary must reject it outright."""
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier("orders\n", "bigquery")
-
-    def test_empty_identifier_is_rejected(self) -> None:
-        from dbt_charts.core.registered_views.expander import _sql_identifier
-
-        with pytest.raises(ExpansionError, match="not a valid SQL identifier"):
-            _sql_identifier("", "postgres")
-
-
-# ---------------------------------------------------------------------------
 # render_template — isolated unit tests
 # ---------------------------------------------------------------------------
 
@@ -259,7 +121,7 @@ class TestRenderTemplate:
     def test_queries_namespace_injected(self) -> None:
         """[[ queries.cols.rows | length ]] resolves from query results."""
         tmpl = "count: [[ queries.cols.rows | length ]]"
-        cols = ViewQueryResult(rows=[{"name": "id"}, {"name": "status"}])
+        cols = QueryResult("q", rows=[{"name": "id"}, {"name": "status"}])
         result = render_template(tmpl, path_params={}, query_results={"cols": cols})
         assert result == "count: 2"
 
@@ -273,7 +135,7 @@ class TestRenderTemplate:
             [% endfor %]
             """
         )
-        cols = ViewQueryResult(rows=[{"name": "id"}, {"name": "status"}])
+        cols = QueryResult("q", rows=[{"name": "id"}, {"name": "status"}])
         result = render_template(tmpl, path_params={}, query_results={"cols": cols})
         assert "id:" in result
         assert "status:" in result
@@ -330,11 +192,11 @@ class TestRenderTemplate:
 # ---------------------------------------------------------------------------
 
 
-def _table_index_columns(*names: str) -> dict[str, ViewQueryResult]:
+def _table_index_columns(*names: str) -> dict[str, QueryResult]:
     """Minimal columns query result for table-index.yaml (requires pre-template 'columns')."""
     return {
-        "columns": ViewQueryResult(
-            rows=[{"name": n, "actual_type": "VARCHAR"} for n in names]
+        "columns": QueryResult(
+            "q", rows=[{"name": n, "actual_type": "VARCHAR"} for n in names]
         )
     }
 
@@ -388,7 +250,7 @@ class TestExpandRegisteredView:
         """
         import dbt_charts.core.registered_views.expander as expander_mod
 
-        cols = ViewQueryResult(rows=[{"name": "order_id"}, {"name": "status"}])
+        cols = QueryResult("q", rows=[{"name": "order_id"}, {"name": "status"}])
         tmpl = textwrap.dedent(
             """\
             title: [[ path.source | tojson ]]
@@ -577,3 +439,11 @@ class TestExpandRegisteredViewDialect:
                 query_results=_table_index_columns("id"),
                 resolve_dialect=lambda: "bigquery",
             )
+
+
+def test_render_template_reports_a_query_result_error_as_expansion_error() -> None:
+    from dbt_charts.core.compile.template.query_result import QueryResult
+
+    results = {"q": QueryResult("q", [{"x": 1}, {"x": 2}])}
+    with pytest.raises(ExpansionError, match="returned 2 rows"):
+        render_template("[[ queries.q.one.x ]]", {}, results)

@@ -1107,6 +1107,10 @@ class TestWithResolvedScaleStops:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[],
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert result is not None
         bg = result["val"].scale.background
@@ -1141,6 +1145,10 @@ class TestWithResolvedScaleStops:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[],
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert result is not None
         bg = result["val"].scale.background
@@ -1166,6 +1174,10 @@ class TestWithResolvedScaleStops:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[],
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert result is not None
         assert isinstance(result["val"], ResolvedTableColumnConfig)
@@ -1185,6 +1197,10 @@ class TestWithResolvedScaleStops:
                 formats=None,
                 font_family=DBT_SANS_TABULAR_FONT_FAMILY,
                 rows=[],
+                allow_shared_scale=True,
+                own_formats={n: c.format for n, c in (None or {}).items()},
+                defaults_format=None,
+                declared=None,
             )
             is None
         )

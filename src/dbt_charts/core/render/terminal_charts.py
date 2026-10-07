@@ -28,6 +28,7 @@ from dbt_charts.core.compile.models.primitives import FormatAliases
 from dbt_charts.core.compile.models.style.theme import KpiValueStyle
 from dbt_charts.core.compile.resolve.chart.channel import parse_style_channel
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_KPI_MULTIROW, ERR_KPI_NO_DATA
 from dbt_charts.core.render.chart.kpi import kpi_value_text
 from dbt_charts.core.render.utils import normalize_data_types, slug_to_text
 from dbt_charts.core.text.format_d3 import NULL_DISPLAY
@@ -327,9 +328,9 @@ def render_kpi_terminal(
     reference (string column name). Raises ``ChartDataError`` when the
     column is not present — same behavior as the SVG renderer.
 
-    The data-shape contract matches the SVG renderer: empty data and
-    multi-row results both raise ``ChartDataError`` so the same authoring
-    mistake fails the same way regardless of output medium.
+    The data-shape contract matches the SVG renderer: empty data raises
+    ERR-KPI-NO-DATA and multi-row results ERR-KPI-MULTIROW, so the same
+    authoring mistake fails the same way regardless of output medium.
     """
     from dbt_charts.core.render.chart.kpi import _resolve_value  # noqa: PLC0415
 
@@ -338,15 +339,10 @@ def render_kpi_terminal(
 
     chart_id = getattr(chart, "id", "unknown")
     if not data:
-        raise ChartDataError(
-            f"KPI chart '{chart_id}' has no data — query returned 0 rows",
-            chart_id=chart_id,
-        )
+        raise ChartDataError.from_code(ERR_KPI_NO_DATA, chart_id=chart_id)
     if len(data) > 1:
-        raise ChartDataError(
-            f"KPI chart '{chart_id}' expects exactly 1 row, got {len(data)}. "
-            f"Use a query that returns a single row (e.g. SELECT SUM(...) or LIMIT 1).",
-            chart_id=chart_id,
+        raise ChartDataError.from_code(
+            ERR_KPI_MULTIROW, chart_id=chart_id, row_count=len(data)
         )
 
     raw_value = chart.value
@@ -365,7 +361,7 @@ def render_kpi_terminal(
                 finalize_kpi_value_format(value_format, float(cell), formats),
                 chart_id,
                 formats,
-                native=kpi_format_native(value_format, formats),
+                native=kpi_format_native(formats, value_format),
                 format_may_be_cascaded=True,
             )
         elif isinstance(cell, float) and cell.is_integer():

@@ -3,8 +3,8 @@
 Exports test_connection(source_config) -> tuple[bool, WarehouseProbeError | None],
 probe_relation_readability, bulk_schema_for_config, plus the BigQuery discovery
 helpers hosts use to fill a connection form: build_bigquery_client,
-list_datasets, dataset_location — the latter two return real values on success,
-so they keep raising on failure rather than a tuple.
+list_datasets, dataset_location, and Databricks' list_catalogs — these return
+real values on success, so they keep raising on failure rather than a tuple.
 
 All DB connection machinery lives in execute/adapters/dbt_adapter_factory.py.
 Cloud and other consumers call this, not dbt.adapters directly — Cloud in
@@ -155,6 +155,14 @@ def classify_connection_error(source_type: str, exc: Exception) -> WarehouseProb
         # generic one.
         if "communication error" in text or "connection time out" in text:
             return WarehouseUnreachableError(_UNREACHABLE_MESSAGE, detail=text)
+    elif source_type == "fabric":
+        # Fabric sends one message for a missing database and missing permission.
+        if "database was not found or you have insufficient permissions" in text:
+            return WarehouseDatabaseNotFoundError(
+                "The named database does not exist, or the credential lacks "
+                "permission to connect to it.",
+                detail=text,
+            )
     elif source_type == "snowflake":
         if "Incorrect username or password" in text:
             return WarehouseAuthError(
@@ -171,6 +179,12 @@ def classify_connection_error(source_type: str, exc: Exception) -> WarehouseProb
             )
         if "Could not connect to Snowflake backend after" in text:
             return WarehouseUnreachableError(_UNREACHABLE_MESSAGE, detail=text)
+    elif source_type == "databricks":
+        if "NO_SUCH_CATALOG_EXCEPTION" in text:
+            return WarehouseDatabaseNotFoundError(
+                "The catalog does not exist, or this token cannot see it.",
+                detail=text,
+            )
     elif source_type == "duckdb":
         if "No such file or directory" in text:
             return WarehouseDatabaseNotFoundError(
@@ -351,6 +365,38 @@ def list_datasets(source_config: SourceConfig) -> list[str]:
         ) from e
 
 
+def list_catalogs(source_config: SourceConfig) -> list[str]:
+    """Catalogs this token can see (`catalog` is ignored; dbt-databricks can't open a catalog-less session)."""
+    from dbt_charts.core.compile.models.source import DatabricksSourceConfig
+
+    if not isinstance(source_config, DatabricksSourceConfig):
+        raise ValueError(
+            f"list_catalogs is Databricks-only, got {source_config.type!r}."
+        )
+    import databricks.sql as sql
+
+    timeouts: dict[str, int] = {}
+    if source_config.socket_timeout is not None:
+        timeouts = {
+            "_socket_timeout": source_config.socket_timeout,
+            "_retry_stop_after_attempts_duration": source_config.socket_timeout,
+        }
+    try:
+        with (
+            sql.connect(
+                server_hostname=source_config.host,
+                http_path=source_config.http_path,
+                access_token=source_config.token,
+                **timeouts,
+            ) as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("SHOW CATALOGS")
+            return [row[0] for row in cursor.fetchall()]
+    except Exception as e:  # noqa: BLE001 — classify at the driver boundary
+        raise classify_connection_error("databricks", e) from e
+
+
 def dataset_location(source_config: SourceConfig) -> str:
     """Location of the dataset named in source_config.
 
@@ -421,6 +467,7 @@ def test_connection(
             raised deeper in the probe is classified like any other escape,
             since it can carry driver internals.
     """
+    from dbt_charts.core.dialects import get_dialect
     from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
         ConnectionSetupFailed,
         build_adapter,
@@ -441,8 +488,18 @@ def test_connection(
         return False, classify_connection_error(source_config.type, e)
 
     try:
+        probe_sql = get_dialect(source_config.type).namespace_probe_sql(creds)
+    except ValueError as e:
+        return False, WarehouseProbeError(
+            "The catalog name contains characters that are not allowed.",
+            detail=str(e),
+        )
+
+    try:
         with open_connection(adapter, "test"):
             adapter.execute("SELECT 1", auto_begin=False, fetch=True)
+            if probe_sql is not None:
+                adapter.execute(probe_sql, auto_begin=False, fetch=True)
     except ConnectionSetupFailed as e:
         return False, classify_connection_error(source_config.type, e.cause)
     except Exception as e:  # noqa: BLE001 — classify every driver-level escape

@@ -16,8 +16,8 @@ from pydantic import BaseModel
 
 import dbt_charts.core.compile.models as _models_pkg
 from dbt_charts.core.compile.compiler import compile as compile_board
+from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.markers import Format
-from dbt_charts.core.render.format_utils import format_value
 from dbt_charts.core.text.format_d3 import format_d3, is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import sub_unit_digit_format
 from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
@@ -55,8 +55,8 @@ def schema_format_fields() -> set[tuple[str, str]]:
 
 def _is_excluded(class_field: tuple[str, str]) -> bool:
     # time_format is a strftime slot with no FormatConfig arm, so no affix
-    # shape reaches it.
-    return class_field[1] == "time_format" or class_field[0].startswith(
+    # shape reaches it; a query's `formats:` map takes names only, so none does.
+    return class_field[1] in ("time_format", "formats") or class_field[0].startswith(
         _EXCLUDED_CLASS_PREFIXES
     )
 
@@ -392,7 +392,7 @@ def _table_column_defaults(shape: str, value: float) -> dict[str, Any]:
 
 
 def _kpi_support(shape: str, value: float) -> dict[str, Any]:
-    """``KpiSupportConfig.format``, the KPI support line."""
+    """``style.support.format``, the KPI support line."""
     fmt, formats = _shape_value(shape)
     chart: dict[str, Any] = {
         "type": "kpi",
@@ -402,7 +402,7 @@ def _kpi_support(shape: str, value: float) -> dict[str, Any]:
         "support": {"value": "v", "label": "vs last"},
     }
     if fmt is not None:
-        chart["support"]["format"] = fmt
+        chart["style"] = {"support": {"format": fmt}}
     board = _board({"c": chart}, style_formats=formats)
     board["queries"] = {"t": {"columns": ["headline", "v"], "values": [[1.0, value]]}}
     return board
@@ -637,8 +637,8 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             checks_sign=False,
         ),
         SlotFixture(
-            "support.format",
-            covers=(("KpiSupportConfig", "format"),),
+            "style.support.format",
+            covers=(("KpiSupportStyle", "format"),),
             bands=_ALL_BANDS,
             build=_kpi_support,
             exact_value=True,
@@ -1003,7 +1003,8 @@ def _native_kpi_board(slot: str, fmt: dict[str, Any], value: float) -> dict[str,
         chart["style"] = {"value": {"format": fmt}}
     else:
         chart["value"] = "headline"
-        chart["support"] = {"value": "v", "label": "vs last", "format": fmt}
+        chart["support"] = {"value": "v", "label": "vs last"}
+        chart["style"] = {"support": {"format": fmt}}
     board = _board({"c": chart})
     board["queries"] = {"t": {"columns": ["headline", "v"], "values": [[1.0, value]]}}
     return board
@@ -1048,7 +1049,8 @@ def _resolved_native_kpi(make_chart: Any, slot: str, fmt: dict[str, Any], value:
             "kpi",
             value="headline",
             label="L",
-            support={"value": "v", "label": "vs last", "format": fmt},
+            support={"value": "v", "label": "vs last"},
+            style={"support": {"format": fmt}},
         )
     data = [{"headline": 1.0, "v": value}]
     resolved = resolve(
@@ -1260,7 +1262,8 @@ def _date_affix_board(
             "query": "t",
             "value": "n",
             "label": "L",
-            "support": {"value": "d", "label": "since", "format": fmt},
+            "support": {"value": "d", "label": "since"},
+            "style": {"support": {"format": fmt}},
         }
     board = _board({"c": chart}, style_formats=aliases or None)
     board["queries"] = {"t": {"columns": ["d", "n"], "values": [["2026-01-15", 1.0]]}}
@@ -1304,7 +1307,8 @@ def test_date_spec_beside_an_affix_paints_the_affix_in_kpi_text(
             "kpi",
             value="n",
             label="L",
-            support={"value": "d", "label": "since", "format": fmt},
+            support={"value": "d", "label": "since"},
+            style={"support": {"format": fmt}},
         )
     data = [{"d": "2026-01-15", "n": 1.0}]
     resolved = resolve(

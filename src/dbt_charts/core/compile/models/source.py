@@ -1008,6 +1008,22 @@ class RedshiftSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
         int | None,
         Field(description="Number of TCP keepalive probes before failure."),
     ] = None
+    datasharing: Annotated[
+        bool | None,
+        Field(description="Whether Redshift datashare metadata is queried."),
+    ] = False
+    query_group: Annotated[
+        str | None,
+        Field(description="Redshift query group applied to each session."),
+    ] = None
+    allow_concurrent_drops: Annotated[
+        bool,
+        Field(description="Whether dbt may run drops concurrently."),
+    ] = False
+    drop_without_cascade: Annotated[
+        bool,
+        Field(description="Whether dbt drops relations without CASCADE."),
+    ] = False
 
 
 # dbt-databricks' own EXTRACT_CLUSTER_ID_FROM_HTTP_PATH_REGEX
@@ -1335,9 +1351,13 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
             description="Root path for dbt-duckdb external materializations.",
         ),
     ] = "."
+    # Unsupported fields parse only so the executor can name them in its error.
     use_credential_provider: Annotated[
         str | None,
-        Field(description="Not supported; remove this field from the source config."),
+        Field(
+            description="Not supported; remove this field from the source config.",
+            json_schema_extra={"internal": True},
+        ),
     ] = None
     attach: Annotated[
         list[DuckDBAttachmentConfig] | None,
@@ -1345,15 +1365,24 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
     ] = None
     filesystems: Annotated[
         list[dict[str, SourceOptionScalar]] | None,
-        Field(description="Not supported; remove this field from the source config."),
+        Field(
+            description="Not supported; remove this field from the source config.",
+            json_schema_extra={"internal": True},
+        ),
     ] = None
     remote: Annotated[
         DuckDBRemoteConfig | None,
-        Field(description="Not supported; remove this field from the source config."),
+        Field(
+            description="Not supported; remove this field from the source config.",
+            json_schema_extra={"internal": True},
+        ),
     ] = None
     plugins: Annotated[
         list[DuckDBPluginConfig] | None,
-        Field(description="Not supported; remove this field from the source config."),
+        Field(
+            description="Not supported; remove this field from the source config.",
+            json_schema_extra={"internal": True},
+        ),
     ] = None
     disable_transactions: Annotated[
         bool,

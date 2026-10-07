@@ -15,12 +15,15 @@ read the collected dict via ``WarningContext.text_truncations``.
   "table_cell"   — table body cell (table.py)
   "callout_text" — callout title, message, or hint (callout.py)
   "spark_label"  — spark-bar row label (spark_bar.py)
+  "support_table_cell_overflow" — strip cells wider than their band
+    (support_table_attachment.py); not a cut but a collision, so
+    ``authored_text`` carries the measured "needed vs available" detail
 
 ``authored_field`` is the YAML key or column name the squiggle should point
 at, e.g. "x_label", "title", "label", or a column name for tables.
 ``authored_text`` is the full text before truncation — except on
 "kpi_inline_fallback", where the record isn't a text cut but a whole-variant
-degradation (inline -> stacked); there ``authored_field`` is "variant" and
+degradation (inline -> stacked); there ``authored_field`` is "style.variant" and
 ``authored_text`` is the variant the author wrote ("inline").
 """
 
@@ -43,6 +46,7 @@ TruncationSurface = Literal[
     "table_cell",
     "callout_text",
     "spark_label",
+    "support_table_cell_overflow",
 ]
 
 

@@ -11,11 +11,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from dbt_charts.core.compile.schema.introspection import introspect
-from dbt_charts.core.compile.schema.renderers.json_schema import render_yaml_schema
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaEntry,
     canonical_schema_bytes,
+    compute_current_schema,
     load_yaml_schema_catalog_from,
     next_minor,
     parse_dotted_version,
@@ -200,7 +199,7 @@ def main() -> None:
     versions_directory = (
         Path(__file__).parent / "core" / "compile" / "migrations" / "versions"
     )
-    candidate = render_yaml_schema(introspect())
+    candidate = compute_current_schema()
     if args.verify:
         verify_released_yaml_schema(
             directory, version=args.version, candidate=candidate

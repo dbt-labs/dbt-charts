@@ -29,6 +29,8 @@ from dbt_charts.core.compile.models.board.normalized import VariableValues
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
+
 _BOARD_VARIABLES: ContextVar[VariableValues | None] = ContextVar(
     "dct_board_variables", default=None
 )
@@ -47,3 +49,22 @@ def board_variables(values: VariableValues) -> Generator[None]:
 def current_board_variables() -> VariableValues | None:
     """The board's variable values for the render pass in progress, if any."""
     return _BOARD_VARIABLES.get()
+
+
+_BOARD_DATA_PROVIDER: ContextVar[ChartDataProvider | None] = ContextVar(
+    "dct_board_data_provider", default=None
+)
+
+
+@contextmanager
+def board_data_provider(provider: ChartDataProvider) -> Generator[None]:
+    """Scope the query-result source board text reads."""
+    token = _BOARD_DATA_PROVIDER.set(provider)
+    try:
+        yield
+    finally:
+        _BOARD_DATA_PROVIDER.reset(token)
+
+
+def current_board_data_provider() -> ChartDataProvider | None:
+    return _BOARD_DATA_PROVIDER.get()

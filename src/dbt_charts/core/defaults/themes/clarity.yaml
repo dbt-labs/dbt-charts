@@ -35,7 +35,7 @@ style:
     heading:
       family: "'Source Serif 4', Georgia, 'Times New Roman', serif"
     body:
-      family: "'Source Serif 4', Georgia, 'Times New Roman', serif"
+      family: &serif "'Source Serif 4', Georgia, 'Times New Roman', serif"
   title:
     # Serif headlines — the editorial voice the `clarity` theme adds on top
     # of `stark`. Source Serif 4 is the editorial board; chart-title
@@ -135,13 +135,20 @@ style:
       drop_line_width: 3.0
     kpi:
       # KPI value font is a serif on clarity-voiced themes — narrative type
-      # for the headline number while the body and support-row stay on
-      # the tabular sans (kpi.font.family from stark).
+      # for the headline number, its affix, and its glyph, while the label
+      # and support row stay on the tabular sans (kpi.font.family from stark).
       value:
         font:
           extends: body
           size: 24
-          line_height: 1.25
+        affix:
+          font:
+            extends: label
+            family: *serif
+        glyph:
+          font:
+            extends: label
+            family: *serif
     bar:
       legend:
         visible: true

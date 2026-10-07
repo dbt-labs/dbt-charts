@@ -154,7 +154,7 @@ def _cased(case: str) -> ResolvedStyle:
 
 
 def _cased_words(title: str, case: str) -> list[str]:
-    (heading,) = title_blocks(title, {}, 1, _cased(case), _CHARTS, None)
+    (heading,) = title_blocks(title, title, 1, _cased(case), _CHARTS, None)
     assert isinstance(heading, Heading)
     return [s.text for s in heading.spans if s.span_type is not SpanType.IMAGE]
 
@@ -178,7 +178,12 @@ class TestTitleCase:
 
     def test_image_url_keeps_its_case(self) -> None:
         (heading,) = title_blocks(
-            "![logo](tall.svg) sales", {}, 1, _cased("upper"), _CHARTS, None
+            "![logo](tall.svg) sales",
+            "![logo](tall.svg) sales",
+            1,
+            _cased("upper"),
+            _CHARTS,
+            None,
         )
         assert isinstance(heading, Heading)
         image, words = heading.spans
@@ -200,7 +205,7 @@ class TestTitleCase:
         self, title: str, words: list[str]
     ) -> None:
         style = resolve_style(get_theme_style())
-        (heading,) = title_blocks(title, {}, 1, style, _CHARTS, None)
+        (heading,) = title_blocks(title, title, 1, style, _CHARTS, None)
         assert isinstance(heading, Heading)
         assert [s.text for s in heading.spans] == words
 

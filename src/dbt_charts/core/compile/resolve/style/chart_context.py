@@ -15,9 +15,22 @@ from typing import Any
 from pydantic import BaseModel
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.format import declared_format, resolve_format
 from dbt_charts.core.compile.merge import merge_onto_base
-from dbt_charts.core.compile.models.chart.normalized import Chart, _CartesianChartFields
-from dbt_charts.core.compile.models.primitives import AuthoredFormat, FormatConfig
+from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
+    BarChart,
+    Chart,
+    HeatmapChart,
+    LineChart,
+    ScatterChart,
+    _BaseChartFields,
+)
+from dbt_charts.core.compile.models.primitives import (
+    AuthoredFormat,
+    FormatAliases,
+    FormatConfig,
+)
 from dbt_charts.core.compile.models.style.authored import ChartStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme import ChartsStyle
@@ -37,6 +50,7 @@ from dbt_charts.core.compile.resolve.style.tokens import (
     _append_emoji_family,
     _resolve_color_tokens,
 )
+from dbt_charts.core.text.format_d3 import is_time_format
 
 # Family sub-patch keys in author-precedence order.  The cascade reads global
 # fields (palette, background, …) from the FIRST non-null sub-patch.
@@ -102,8 +116,12 @@ def _family_field_patch(
     )  # type-state: silent_fallback — family is a per-family style union; not every member (e.g. ResolvedCalloutStyle) carries every cascade field
 
 
+# The families that carry axes (and so `number_format` / `time_format`).
+CartesianFamilyChart = BarChart | LineChart | AreaChart | ScatterChart | HeatmapChart
+
+
 def chart_authored_axis_format(
-    chart: Chart, channel_type: str
+    chart: CartesianFamilyChart, channel_type: str
 ) -> AuthoredFormat | None:
     """Return the chart-level axis-format fallback for one channel, or None.
 
@@ -129,11 +147,6 @@ def chart_authored_axis_format(
     """
     if channel_type not in ("quantitative", "temporal"):
         return None
-    # number_format/time_format only exist on the cartesian family
-    # (bar/line/area/scatter/heatmap); other families (kpi, pie, …) don't
-    # carry an axis_quantitative concept at all.
-    if not isinstance(chart, _CartesianChartFields):
-        return None
     primary = chart.style
     if channel_type == "temporal":
         if primary is not None and isinstance(primary.time_format, str):
@@ -144,6 +157,53 @@ def chart_authored_axis_format(
     if isinstance(chart.format, (str, FormatConfig)):
         return chart.format
     return None
+
+
+def declared_column_format(
+    chart: _BaseChartFields,
+    columns: str | list[str] | None,
+    formats: FormatAliases | None,
+    *,
+    time: bool,
+) -> str | None:
+    """The format name the chart's query declares for ``columns``, when it is of
+    the asked kind (a time format for ``time``, else a number format).
+
+    A number format on a date axis would paint garbage, and a time format has
+    nothing to say about a number, so the other kind is no format at all.
+    """
+    name = declared_format(chart.query.formats if chart.query else None, columns)
+    if name is None or is_time_format(resolve_format(name, formats)) != time:
+        return None
+    return name
+
+
+def axis_layer_format(
+    chart: CartesianFamilyChart,
+    channel_type: str,
+    columns: str | list[str] | None,
+    formats: FormatAliases | None,
+    *,
+    dimension: bool,
+) -> AuthoredFormat | None:
+    """The axis cascade's chart-level layer: the column's declared format, else
+    the chart-wide ``number_format`` / ``time_format`` / ``format``.
+
+    The cascade merges board-level axis formats below this layer and the chart's
+    own ``axis_*.labels.format`` above it, which is where the column belongs.
+    A dimension axis takes no measure format, and a band axis prints its
+    category text as it is, so it takes none at all.
+    """
+    if channel_type not in ("quantitative", "temporal"):
+        return None
+    declared = declared_column_format(
+        chart, columns, formats, time=channel_type == "temporal"
+    )
+    if declared is not None:
+        return declared
+    if dimension and channel_type != "temporal":
+        return None
+    return chart_authored_axis_format(chart, channel_type)
 
 
 def build_chart_style_context(

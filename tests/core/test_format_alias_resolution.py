@@ -365,7 +365,7 @@ def test_predefined_format_member_gets_house_rules_inline_d3_gets_native() -> No
     name gets notation registers (analytic "1.5 M"), the inline d3 string gets
     native d3 output ("1.5M" — no space, lowercase m for mega).
     """
-    from dbt_charts.core.render.format_utils import format_value
+    from dbt_charts.core.compile.format_value import format_value
 
     # Predefined member: house rules apply (analytic notation register).
     enum_output = format_value(1_500_000.0, "number")

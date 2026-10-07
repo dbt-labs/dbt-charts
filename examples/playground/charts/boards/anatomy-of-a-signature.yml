@@ -323,10 +323,11 @@ charts:
     style:
       value:
         format: integer
+      support:
+        format: percent_delta
     support:
       value: documents_growth
       label: vs prior 90 days
-      format: percent_delta
 
   kpi_signatures:
     type: kpi
@@ -336,10 +337,11 @@ charts:
     style:
       value:
         format: integer
+      support:
+        format: percent_delta
     support:
       value: signatures_growth
       label: vs prior 90 days
-      format: percent_delta
 
   kpi_speed:
     type: kpi

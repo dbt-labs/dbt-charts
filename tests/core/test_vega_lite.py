@@ -234,7 +234,10 @@ class TestSingleChartPropertyValidation:
         standalone_spec = generate_vega_lite_spec(chart, data, width=400)
 
         resolved_chart = resolve(
-            chart, data, chart_style_context=_BOARD_CONTEXT, width=400
+            chart,
+            data,
+            chart_style_context=_BOARD_CONTEXT,
+            width=400,
         )
         board_spec = render_resolved_chart(
             resolved_chart, data, _BOARD_STYLE, width=400
@@ -901,7 +904,9 @@ class TestRenderChart:
             subtitle = resolve_jinja_template(subtitle, variables, strict=False)
             chart = chart.model_copy(update={"subtitle": subtitle})
         resolved = resolve(
-            chart, [{"month": "Jan", "revenue": 100}], chart_style_context=rs_context
+            chart,
+            [{"month": "Jan", "revenue": 100}],
+            chart_style_context=rs_context,
         )
         svg, _height = render_chart_item(
             resolved,
@@ -1011,7 +1016,7 @@ class TestFormatKpiParts:
     _FORMATS = {"money": "$,.2f", "pct": ".1%", "tilde": ",.2s"}
 
     def test_currency_format(self):
-        from dbt_charts.core.render.format_utils import format_kpi_parts
+        from dbt_charts.core.compile.format_value import format_kpi_parts
 
         prefix, number, suffix = format_kpi_parts(
             1234567.89, "currency_full", self._FORMATS
@@ -1021,7 +1026,7 @@ class TestFormatKpiParts:
         assert suffix == ""
 
     def test_percent_format(self):
-        from dbt_charts.core.render.format_utils import format_kpi_parts
+        from dbt_charts.core.compile.format_value import format_kpi_parts
 
         prefix, number, suffix = format_kpi_parts(0.123, "percent", self._FORMATS)
         assert prefix == ""
@@ -1029,7 +1034,7 @@ class TestFormatKpiParts:
         assert suffix == "%"
 
     def test_compact_format(self):
-        from dbt_charts.core.render.format_utils import format_kpi_parts
+        from dbt_charts.core.compile.format_value import format_kpi_parts
 
         prefix, number, suffix = format_kpi_parts(1500000, "number", self._FORMATS)
         assert prefix == ""
@@ -1037,8 +1042,8 @@ class TestFormatKpiParts:
         assert suffix == "M"
 
     def test_format_config_prefix_suffix(self):
+        from dbt_charts.core.compile.format_value import format_kpi_parts
         from dbt_charts.core.compile.models.primitives import FormatConfig
-        from dbt_charts.core.render.format_utils import format_kpi_parts
 
         prefix, number, suffix = format_kpi_parts(
             1234, FormatConfig(spec=",.0f", prefix="$", suffix=" USD")
@@ -1049,7 +1054,7 @@ class TestFormatKpiParts:
 
     def test_no_format(self):
         # KPI path (no default_format): below-threshold exact-digit fallback.
-        from dbt_charts.core.render.format_utils import format_kpi_parts
+        from dbt_charts.core.compile.format_value import format_kpi_parts
 
         prefix, number, suffix = format_kpi_parts(42000, None)
         assert prefix == ""
@@ -1057,14 +1062,14 @@ class TestFormatKpiParts:
         assert suffix == ""
 
     def test_none_value(self):
-        from dbt_charts.core.render.format_utils import format_kpi_parts
+        from dbt_charts.core.compile.format_value import format_kpi_parts
 
         prefix, number, suffix = format_kpi_parts(None, "currency", self._FORMATS)
         assert number == "\u2014"
 
     def test_percent_number_format(self):
         # percent_number: value is already the whole-number percent (no \u00d7100)
-        from dbt_charts.core.render.format_utils import format_kpi_parts, format_value
+        from dbt_charts.core.compile.format_value import format_kpi_parts, format_value
 
         prefix, number, suffix = format_kpi_parts(12.8, "percent_number")
         assert prefix == ""
@@ -1075,7 +1080,7 @@ class TestFormatKpiParts:
         assert format_value(0.128, "percent_number") == "0.1%"  # NOT "12.8%"
 
     def test_percent_number_delta_format(self):
-        from dbt_charts.core.render.format_utils import format_value
+        from dbt_charts.core.compile.format_value import format_value
 
         assert format_value(3.2, "percent_number_delta") == "+3.2%"
         # PREDEFINED_NATIVE bypasses d3_format, so its own lambda is
@@ -1083,7 +1088,7 @@ class TestFormatKpiParts:
         assert format_value(-1.4, "percent_number_delta") == "−1.4%"
 
     def test_percent_number_none(self):
-        from dbt_charts.core.render.format_utils import format_kpi_parts, format_value
+        from dbt_charts.core.compile.format_value import format_kpi_parts, format_value
 
         assert format_value(None, "percent_number") == "\u2014"
         _, number, _ = format_kpi_parts(None, "percent_number")
@@ -1174,9 +1179,8 @@ class TestRenderKpiSvg:
                     value="delta_pct",
                     label="vs LQ",
                     glyph="▲",
-                    tone="positive",
-                    format={"spec": "+.1%"},
                 ),
+                style={"support": {"tone": "positive", "format": {"spec": "+.1%"}}},
             ),
             data,
         )
@@ -1203,7 +1207,7 @@ class TestRenderKpiSvg:
         positive_tone = "#00884d"
         muted_hex = resolve_style(get_theme_style()).variables.font.color.lower()
         match = re.search(
-            r'<tspan fill="(#[0-9A-Fa-f]{6})">[^<]*vs LQ',
+            r'<tspan[^>]* fill="(#[0-9A-Fa-f]{6})">[^<]*vs LQ',
             svg,
         )
         assert match, f"explainer 'vs LQ' tspan not found in svg: {svg}"

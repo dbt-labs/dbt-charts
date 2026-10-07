@@ -37,7 +37,10 @@ from dbt_charts.core.compile.models.query.normalized import (
 from dbt_charts.core.compile.sql_guard import validate_select_only, validate_setup_sql
 from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_DURATION_EXCEEDED
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_QUERY_DURATION_EXCEEDED,
+    ERR_QUERY_INTERRUPTED,
+)
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.adapters.base import (
@@ -57,6 +60,7 @@ from dbt_charts.core.execute.adapters.base import (
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
     AdapterNotInstalledError,
     ConnectionSetupFailed,
+    cancel_open_queries,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import (
     DbtRefResolver,
@@ -206,6 +210,7 @@ class _SourcePool:
             source_config, self._timeout_seconds
         )
         self._tls: threading.local = threading.local()
+        self._interrupted = False
         # Track every per-thread adapter so close() can release them all.
         self._adapters: list[Any] = []
         self._adapters_lock = threading.Lock()
@@ -235,13 +240,22 @@ class _SourcePool:
         kwarg, which bounds the fetch via ``cursor.fetchmany(limit)`` — the SQL
         text sent to the warehouse is never touched.
         """
-        return self._pool.submit(
-            copy_context().run,
-            self._execute_on_worker,
-            inlined_sql,
-            setup_sql,
-            limit,
-        ).result()
+        if self._interrupted:
+            raise QueryError.from_code(ERR_QUERY_INTERRUPTED)
+        try:
+            return self._pool.submit(
+                copy_context().run,
+                self._execute_on_worker,
+                inlined_sql,
+                setup_sql,
+                limit,
+            ).result()
+        except Exception as exc:  # noqa: BLE001 — re-raised unless interrupted
+            # The cancel surfaces as a driver error, a CancelledError for a
+            # dropped queued query, or a refused submit; all mean the same.
+            if self._interrupted:
+                raise QueryError.from_code(ERR_QUERY_INTERRUPTED) from exc
+            raise
 
     def _execute_on_worker(
         self, inlined_sql: str, setup_sql: str | None, limit: int | None
@@ -259,6 +273,10 @@ class _SourcePool:
             # retrying would just burn the same timeout window again.
             raise
         except Exception:  # noqa: BLE001 — retried below only if the session died
+            if self._interrupted:
+                # Postgres cancels by killing the session: a reconnect would run
+                # the query again.
+                raise
             adapter = self._replace_if_released(adapter)
             if self._connection_alive(adapter):
                 # The warehouse received the query and rejected it. Re-sending it
@@ -459,6 +477,15 @@ class _SourcePool:
                 self._adapters.remove(adapter)
         _cleanup_adapter(adapter)
 
+    def interrupt(self) -> None:
+        """Cancel running queries, drop queued ones, and refuse new ones."""
+        self._interrupted = True
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        with self._adapters_lock:
+            adapters = list(self._adapters)
+        for adapter in adapters:
+            cancel_open_queries(adapter)
+
     def close(self) -> None:
         """Stop the worker threads, then close every adapter they built."""
         self._pool.shutdown(wait=True)
@@ -513,6 +540,7 @@ class SqlAdapter(BaseAdapter):
         self.profile_type = profile_type
         self._source_pools: dict[str, _SourcePool] = {}
         self._source_pools_lock = threading.Lock()
+        self._interrupted = False
         self._max_workers = max_workers
         self._dbt_refs = DbtRefResolver(project)
 
@@ -720,6 +748,8 @@ class SqlAdapter(BaseAdapter):
         key = _source_config_hash(source_config)
         if key not in self._source_pools:
             with self._source_pools_lock:
+                if self._interrupted:
+                    raise QueryError.from_code(ERR_QUERY_INTERRUPTED)
                 if key not in self._source_pools:
                     from dbt_charts.core.compile.config import (
                         resolve_max_query_duration_seconds,
@@ -819,6 +849,13 @@ class SqlAdapter(BaseAdapter):
         return QueryResult(
             data=data, columns=columns, truncated_reason=truncated_reason
         )
+
+    def interrupt(self) -> None:
+        with self._source_pools_lock:
+            self._interrupted = True
+            pools = list(self._source_pools.values())
+        for pool in pools:
+            pool.interrupt()
 
     def close(self) -> None:
         """Close all source pools."""

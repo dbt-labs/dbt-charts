@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field
 
+from dbt_charts.core.compile.models.constraints import Constraint, Forbids, IsList
 from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
 
-from ._base import (
-    _CartesianChartFields,
-    reject_multi_series_channel_conflicts,
-)
+from ._base import _CartesianChartFields
 from ._layer import CartesianLayer
 
 
@@ -19,6 +17,16 @@ class AreaChart(_CartesianChartFields):
     """Authored patch for area charts."""
 
     model_config = ConfigDict(extra="forbid")
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Forbids(
+            ("layers",),
+            "Area chart: layers are not supported with multi-metric "
+            "(y: [...]) charts. Use a long-form query with one y field.",
+            when=(IsList("y"),),
+            nonempty=("layers",),
+        ),
+    )
 
     type: Annotated[Literal["area"], Field(description="Selects the chart family.")]
     style: Annotated[
@@ -32,8 +40,3 @@ class AreaChart(_CartesianChartFields):
             description="Extra marks drawn over this chart, each with its own type and columns.",
         ),
     ]
-
-    @model_validator(mode="after")
-    def _validate_multi_series(self) -> AreaChart:
-        reject_multi_series_channel_conflicts("Area", self.y, self.layers)
-        return self

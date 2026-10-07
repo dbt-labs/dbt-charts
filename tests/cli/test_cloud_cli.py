@@ -13,13 +13,12 @@ import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 
-import click
 import httpx
 import pytest
 import typer.main
-from click.testing import Result
 from rich.markup import render as render_markup
-from typer.testing import CliRunner
+from typer.core import TyperGroup
+from typer.testing import CliRunner, Result
 
 from dbt_charts.cli.commands import cloud as cloud_cmd
 from dbt_charts.cli.main import app
@@ -239,16 +238,16 @@ class TestUse:
         markup renderer directly on the exact usage string Click generates.
         """
         root_cmd = typer.main.get_command(app)
-        assert isinstance(root_cmd, click.Group)
-        with click.Context(root_cmd, info_name="dct") as root_ctx:
+        assert isinstance(root_cmd, TyperGroup)
+        with typer.Context(root_cmd, info_name="dct") as root_ctx:
             cloud_group = root_cmd.get_command(root_ctx, "cloud")
-            assert isinstance(cloud_group, click.Group)
-            with click.Context(
+            assert isinstance(cloud_group, TyperGroup)
+            with typer.Context(
                 cloud_group, parent=root_ctx, info_name="cloud"
             ) as cloud_ctx:
                 use_cmd = cloud_group.get_command(cloud_ctx, "use")
                 assert use_cmd is not None
-                with click.Context(
+                with typer.Context(
                     use_cmd, parent=cloud_ctx, info_name="use"
                 ) as use_ctx:
                     usage = use_ctx.get_usage()

@@ -9,35 +9,45 @@ from pydantic import BaseModel, ConfigDict, Field
 from dbt_charts.core.compile.models.markers import (
     Color,
     Format,
+    Inherit,
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
-    FontStyle,
     FormatConfig,
+    SingleLineFontStyle,
     SpacingValues,
+    ToneLiteral,
 )
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _ChartStyleBaseAllOptional,
-    _TitledChartStyleBaseAllOptional,
 )
+from dbt_charts.core.compile.models.style.theme.board import OverflowMode
+
+# Every KPI slot font fills from ``kpi.font`` except ``color``: that leaf stays
+# a cascade-managed sentinel so "author named this slot's ink" is
+# distinguishable from "the KPI's ink cascaded down" (see _resolve_kpi_colors).
+_KPI_FONT = InheritSlot(from_path="Style.charts.kpi.font", exclude=frozenset({"color"}))
 
 
-class KpiValueStyle(BaseModel):
-    """KPI headline value slot: font and format. Theme populates font.size directly."""
+class KpiTextSlotStyle(BaseModel):
+    """A KPI text slot styled by its font alone (affix, headline glyph)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # InheritSlot: kpi.value.font fills from kpi.font, except `color` — that
-    # leaf stays a cascade-managed sentinel so "author named this slot's ink"
-    # is distinguishable from "the KPI's ink cascaded down". The renderer needs
-    # the difference to let it beat the whole-card `style.font.color` fallback.
-    font: Annotated[
-        FontStyle,
-        InheritSlot(from_path="Style.charts.kpi.font", exclude=frozenset({"color"})),
-    ] = Field(
-        default_factory=FontStyle,
+    font: Annotated[SingleLineFontStyle, _KPI_FONT] = Field(
+        default_factory=SingleLineFontStyle, description="Slot font."
+    )
+
+
+class KpiValueStyle(BaseModel):
+    """KPI headline value slot: font, format, and the affix and glyph beside it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    font: Annotated[SingleLineFontStyle, _KPI_FONT] = Field(
+        default_factory=SingleLineFontStyle,
         description="Headline value font.",
     )
     # None = author did not specify a format; resolve() finalizes the default
@@ -47,27 +57,67 @@ class KpiValueStyle(BaseModel):
         default=None,
         description="Format for the KPI headline value: D3 format string, preset name, or FormatConfig object. A date value defaults to date_short when unformatted.",
     )
+    affix: KpiTextSlotStyle = Field(
+        default_factory=KpiTextSlotStyle,
+        description="Currency or percent sign written around the headline number.",
+    )
+    glyph: KpiTextSlotStyle = Field(
+        default_factory=KpiTextSlotStyle,
+        description="Indicator glyph drawn before the headline value.",
+    )
 
 
-class KpiSlotStyle(BaseModel):
-    """KPI per-slot style for label, affix, and glyph slots."""
+class KpiLabelStyle(BaseModel):
+    """KPI label slot: font and how a long label fits the card."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # InheritSlot: kpi.{label,affix,glyph}.font fills from kpi.font, except
-    # `color` — see KpiValueStyle.font.
-    font: Annotated[
-        FontStyle,
-        InheritSlot(from_path="Style.charts.kpi.font", exclude=frozenset({"color"})),
-    ] = Field(
-        default_factory=FontStyle,
-        description="Slot font style.",
+    font: Annotated[SingleLineFontStyle, _KPI_FONT] = Field(
+        default_factory=SingleLineFontStyle, description="Label font."
     )
-    # Authored glyph character (e.g. '▲', '▼', '●'). None = no glyph rendered.
-    # Only meaningful on the `glyph` slot — ignored on label/affix slots.
-    character: str | None = Field(
+    # Cascade-managed sentinel: apply_inherit fills it from the chart title's
+    # overflow, so it is never None after resolve.
+    overflow: Annotated[
+        OverflowMode | None, Inherit(from_path="Style.charts.title.overflow")
+    ] = Field(default=None, description="How a label too wide for the card is fit.")
+
+
+class KpiSupportGlyphStyle(BaseModel):
+    """KPI support-row glyph slot."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    font: Annotated[
+        SingleLineFontStyle,
+        InheritSlot(
+            from_path="Style.charts.kpi.support.font", exclude=frozenset({"color"})
+        ),
+    ] = Field(default_factory=SingleLineFontStyle, description="Glyph font.")
+
+
+class KpiSupportStyle(BaseModel):
+    """KPI support row: font, format, tone, and its glyph."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    font: Annotated[SingleLineFontStyle, _KPI_FONT] = Field(
+        default_factory=SingleLineFontStyle,
+        description="Support row font; its color paints the support value.",
+    )
+    # None = inferred: a date value defaults to date_short, a number to the
+    # default number format.
+    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
-        description="Glyph character to render (e.g. '▲'). None = no glyph.",
+        description="How the support value is written: a D3 spec, a preset name, or a format block.",
+    )
+    # None = no semantic color; the support row paints in muted ink.
+    tone: ToneLiteral | None = Field(
+        default=None,
+        description="Semantic color for the support value and glyph.",
+    )
+    glyph: KpiSupportGlyphStyle = Field(
+        default_factory=KpiSupportGlyphStyle,
+        description="Glyph drawn before the support value.",
     )
 
 
@@ -83,7 +133,7 @@ class KpiTonesStyle(BaseModel):
     Four tones — positive, negative, warning, info (neutral blue). Tone
     lives on the block it paints: a KPI's headline value stays neutral by
     design (NYT/FT convention — the absolute number is direction-neutral),
-    so only ``support.tone`` (KpiSupportConfig) reads this palette for KPI.
+    so only ``style.support.tone`` reads this palette for KPI.
     A support row without a tone uses default chrome colors.
     """
 
@@ -103,46 +153,44 @@ class KpiTonesStyle(BaseModel):
     )
 
 
-class KpiChartStyle(_ChartStyleBaseAllOptional, _TitledChartStyleBaseAllOptional):
+class KpiChartStyle(_ChartStyleBaseAllOptional):
     """Produced by cascade from theme YAML.
 
-    Four per-slot font blocks (value, label, affix, glyph) plus a parent
-    ``font`` that cascades into every slot and doubles as the support-row
-    font. Concrete pixel values live in ``stark.yaml``.
-
-    * ``font`` — parent font; also the support row (small text under value)
-    * ``value.font`` — headline number typography; size/weight from theme (authoritative)
-    * ``label.font`` — card label typography
-    * ``affix.font`` — currency/percent affixes
-    * ``glyph.font`` — indicator glyphs (▲▼●)
-    * ``content_padding`` — per-side inner inset for the value/label/support text block
+    ``font`` is the parent every slot font fills from (except ``color``); each
+    slot paints only from its own block. Concrete values live in ``_base.yaml``.
 
     KPI uses a fixed sizing contract and paints no legend — ``aspect_ratio``,
     ``min_height``, ``max_height``, and ``legend`` are absent by construction
     (``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).
     ``color`` is likewise absent by construction — KPI has no series axis and
     no gradient-eligible channel, so it has nothing for a paint config to
-    configure; ``font.color`` / ``value.font.color`` / ``label.font.color``
-    are how a KPI's text gets painted.
+    configure; slot ``font.color`` is how a KPI's text gets painted.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Override _ChartStyleBaseAllOptional.font to declare the inherit link.
     # InheritSlot: kpi.font fills from charts.font.
-    font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
-        default_factory=FontStyle,
-        description="KPI chart-level font overrides.",
+    font: Annotated[SingleLineFontStyle, InheritSlot(from_path="Style.charts.font")] = (
+        Field(
+            default_factory=SingleLineFontStyle,
+            description="Font every KPI text slot starts from.",
+        )
     )
 
+    variant: Literal["stacked", "inline", "compact"] = Field(
+        description=(
+            "Card layout. 'stacked' puts value, label, and support on three lines; "
+            "'inline' sets them on one baseline; 'compact' puts the value left "
+            "and up to two lines right."
+        )
+    )
     value: KpiValueStyle = Field(description="KPI headline value slot.")
-    label: KpiSlotStyle = Field(description="KPI card label slot.")
-    affix: KpiSlotStyle = Field(description="Currency/percent affix slot.")
-    glyph: KpiSlotStyle = Field(
-        # Indicator glyphs (▲▼●) sit next to the value as markers, not second
-        # headlines — drawn at body/narrow tier so a triangle's visual mass
-        # doesn't compete with the digits.
-        description="Indicator glyph (▲▼●) slot.",
+    label: KpiLabelStyle = Field(
+        default_factory=KpiLabelStyle, description="KPI card label slot."
+    )
+    support: KpiSupportStyle = Field(
+        default_factory=KpiSupportStyle, description="KPI support row slot."
     )
     min_card_width: float = Field(description="Minimum KPI card width in pixels.")
     default_height: float = Field(description="Default KPI card height in pixels.")

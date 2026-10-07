@@ -10,7 +10,7 @@ LayoutType for board layout variants.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, ClassVar, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -27,6 +27,12 @@ from pydantic import (
 from dbt_charts.core.aliases import normalize_alias_url
 from dbt_charts.core.compile.models.cache import CachePatch
 from dbt_charts.core.compile.models.chart.authored import AuthoredChart
+from dbt_charts.core.compile.models.constraints import (
+    AtLeastOneOf,
+    AtMostOneOf,
+    ConstrainedModel,
+    Constraint,
+)
 from dbt_charts.core.compile.models.markers import (
     Content,
     DisplayText,
@@ -397,21 +403,20 @@ def desugar_theme(
     """
     if not isinstance(data, dict) or "theme" not in data:
         return data
-    theme_val = data.get("theme")
-    extends_val = data.get("extends")
-    if extends_val is not None and theme_val is not None:
+    theme_val = data["theme"]
+    if not isinstance(theme_val, str):
+        raise ValueError(f"'theme:' must be a theme name string, got {theme_val!r}")
+    if data.get("extends") is not None:
         raise ValueError(
             "Cannot specify both 'theme:' and 'extends:'. "
             "'theme:' is sugar for 'extends:'; use one or the other."
         )
-    data = dict(data)
-    if theme_val is not None:
-        data["extends"] = theme_val
-    del data["theme"]  # always strip theme: (even null — it is not a field)
+    data = {k: v for k, v in data.items() if k != "theme"}
+    data["extends"] = theme_val
     return data
 
 
-class AuthoredBoard(BaseModel):
+class AuthoredBoard(ConstrainedModel):
     """AuthoredBoard definition from YAML.
 
     This is the top-level input type representing a complete board.
@@ -454,6 +459,20 @@ class AuthoredBoard(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    # Notes alone render nothing; a title renders, so it is content. An empty
+    # layout or text still places a slot (a spacer, a variables-only cell).
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtMostOneOf(
+            ("rows", "cols", "grid", "tabs"),
+            "Board can only have one layout type (rows, cols, grid, or tabs)",
+        ),
+        AtLeastOneOf(
+            ("rows", "cols", "grid", "tabs", "text", "charts", "title"),
+            "Board must have at least one layout type, text, title, or chart",
+            nonempty=("charts", "title"),
+        ),
+    )
 
     title: Annotated[str | None, Merge(Strategy.OVERRIDE), DisplayText()] = Field(
         default=None, description="Heading shown at the top of the board."
@@ -575,7 +594,7 @@ class AuthoredBoard(BaseModel):
         ),
     )
 
-    # Layout (exactly one should be present)
+    # Layout (at most one)
     rows: Annotated[
         list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
         | None,
@@ -724,27 +743,6 @@ class AuthoredBoard(BaseModel):
             return self
         for alias in self.aliases:
             normalize_alias_url(alias)
-        return self
-
-    @model_validator(mode="after")
-    def validate_layout(self) -> AuthoredBoard:
-        """Ensure at least one layout type or content is defined."""
-        layouts = [self.rows, self.cols, self.grid, self.tabs]
-        defined = [layout for layout in layouts if layout is not None]
-        if len(defined) > 1:
-            raise ValueError(
-                "Board can only have one layout type (rows, cols, grid, or tabs)"
-            )
-        if (
-            len(defined) == 0
-            and self.text is None
-            and not self.title
-            and not self.notes
-            and not self.charts
-        ):
-            raise ValueError(
-                "Board must have at least one layout type, text, title, notes, or chart"
-            )
         return self
 
     def get_default_source(self) -> str | None:

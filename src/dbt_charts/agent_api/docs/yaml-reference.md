@@ -88,12 +88,13 @@ Raw SQL query: the default query type.
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
 | `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
 | `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "sql" |  |
 | `sql` | str | The statement to run, with Jinja2 over board variables, other queries, and the filter helpers. |
 | `setup_sql` | str | Non-nestable SQL preamble executed before the main query (e.g., CREATE TEMP FUNCTION). |
 | `target` | str | dbt target name for queries against a dbt_profile source (defaults to 'dev'). |
-| `dialect` | enum: "athena", "bigquery", "clickhouse", "databricks", "duckdb", "mysql", "postgres", "presto", "redshift", "snowflake", "spark", "sqlite", "sqlserver", "trino" | Warehouse dialect the SQL is written in, translated to the source's. |
+| `dialect` | enum: "athena", "bigquery", "clickhouse", "databricks", "duckdb", "fabric", "mysql", "postgres", "presto", "redshift", "snowflake", "spark", "sqlite", "sqlserver", "trino" | Warehouse dialect the SQL is written in, translated to the source's. |
 
 <a id="httpquery"></a>
 ## HttpQuery
@@ -113,6 +114,7 @@ REST API query.
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
 | `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
 | `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "http" |  |
 | `method` | enum: "GET", "POST", "PUT", "DELETE", "PATCH" | Verb the request is sent with (GET, POST, PUT, DELETE, PATCH). |
@@ -140,6 +142,7 @@ Inline data authored as a list of row mappings.
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
 | `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
 | `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "values" |  |
 
@@ -162,6 +165,7 @@ Inline data authored as column names plus positional row values.
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
 | `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
 | `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "values" |  |
 
@@ -175,6 +179,7 @@ dbt source schema query.
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
 | `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
 | `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "schema" | Never inferred; write `type: schema` explicitly. |
 | `schema` | str | Which schema to inspect; lists every schema in the source if omitted (YAML key: schema). |
@@ -419,9 +424,9 @@ Authored patch for KPI (key performance indicator) charts.
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
 | `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
-| `label` | str | Caption naming what the headline value measures; `variant` decides where it sits. |
-| `variant` | enum: "stacked", "inline", "compact" | Layout variant. 'stacked' (default) shows value, label, and support on three vertical lines. 'inline' lays value, label, and support out on a single baseline-aligned row. 'compact' is 2-column: big value on the left, up to two stacked lines on the right with the bottom line sharing baseline with the value; a lone `support` block splits across the two right-column lines. |
-| `support` | [KpiSupportConfig](#kpisupportconfig) | Secondary block, a delta, comparison, or note; `variant` decides where it sits. |
+| `label` | str | Caption naming what the headline value measures; `style.variant` places it. |
+| `glyph` | str | Text shown before the headline value (e.g. '▲', '●'). |
+| `support` | [KpiSupportConfig](#kpisupportconfig) | Secondary block, a delta, comparison, or note; `style.variant` places it. |
 | `style` | [KpiChartStyle](#kpichartstyle) | Appearance overrides for this chart alone. |
 | `background` | str \| dict[str, Any] | Gradient background channel, {column, scale} shape. Paints the card background by the value's position in the scale. |
 
@@ -475,7 +480,7 @@ Authored patch for point_map and bubble_map charts; the two type spellings are s
 | `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
-| `projection` | str \| Projection | Map projection name or Vega-Lite projection config. |
+| `projection` | str \| [Projection](#projection) | Map projection name or Vega-Lite projection config. |
 | `color` | str | Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only. |
 | `geo` | str \| dict[str, Any] | Named GeoJSON boundary source, or inline GeoJSON spec, for geoshape charts. |
 | `geo_source` | str | Named geographic data source for loading GeoJSON boundaries. |
@@ -512,7 +517,7 @@ Authored patch for map and geoshape charts; the two type spellings are synonyms.
 | `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
-| `projection` | str \| Projection | Map projection name or Vega-Lite projection config. |
+| `projection` | str \| [Projection](#projection) | Map projection name or Vega-Lite projection config. |
 | `color` | str | Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only. |
 | `geo` | str \| dict[str, Any] | Named GeoJSON boundary source, or inline GeoJSON spec, for geoshape charts. |
 | `geo_source` | str | Named geographic data source for loading GeoJSON boundaries. |
@@ -629,7 +634,7 @@ Collapsible section metadata for a board.
 
 <a id="style"></a>
 ## Style
-Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
+Authored overlay for Style: all fields optional.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -638,7 +643,7 @@ Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
 | `accent` | str | Accent color token cascaded to sparklines, bars, and focus rings. |
 | `muted` | str | Muted secondary-text color token (KPI support rows, table and spark subtitles). |
 | `font` | [RootFontStyle](#rootfontstyle) | Root font configuration including emoji mode. |
-| `border` | [BorderStyle](#borderstyle) | Default border style cascaded to all chart cards. |
+| `border` | str \| [BorderStyle](#borderstyle) | Default border style cascaded to all chart cards. |
 | `box_shadow` | str | CSS box shadow for chart cards; None means no shadow. |
 | `opacity` | float | Default mark opacity (0–1). |
 | `title` | [TitleStyle](#titlestyle) | Typography for every heading: board and prose titles, and chart, table, and spark object titles. |
@@ -654,9 +659,9 @@ Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
 | `palettes` | dict[str, one of: 'category-6-tonal-blue', 'category-6-tonal-blue.dark', 'category-6-tonal-blue.deep', 'category-6-tonal-blue.light', 'category-6-tonal-blue.pale', 'category-6-tonal-brown', 'category-6-tonal-brown.dark', 'category-6-tonal-brown.deep', 'category-6-tonal-brown.light', 'category-6-tonal-brown.pale', 'category-6-tonal-green', 'category-6-tonal-green.dark', 'category-6-tonal-green.deep', 'category-6-tonal-green.light', 'category-6-tonal-green.pale', 'category-6-tonal-orange', 'category-6-tonal-orange.dark', 'category-6-tonal-orange.deep', 'category-6-tonal-orange.light', 'category-6-tonal-orange.pale', 'category-6-tonal-purple', 'category-6-tonal-purple.dark', 'category-6-tonal-purple.deep', 'category-6-tonal-purple.light', 'category-6-tonal-purple.pale', 'dbt-creams', 'dbt-div-blue-red', 'dbt-div-blue-red-dark', 'dbt-div-coolwarm', 'dbt-div-coolwarm-dark', 'dbt-div-crimson-green', 'dbt-div-crimson-green-dark', 'dbt-div-orange-teal', 'dbt-div-orange-teal-dark', 'dbt-div-sunset', 'dbt-div-sunset-dark', 'dbt-grays', 'dbt-seq-amber', 'dbt-seq-amber-dark', 'dbt-seq-blue', 'dbt-seq-blue-dark', 'dbt-seq-brown', 'dbt-seq-brown-dark', 'dbt-seq-gray', 'dbt-seq-gray-dark', 'dbt-seq-green', 'dbt-seq-green-dark', 'dbt-seq-purple', 'dbt-seq-purple-dark', 'dbt-seq-rust', 'dbt-seq-rust-dark', 'dbt-seq-teal', 'dbt-seq-teal-dark', 'editorial-10', 'editorial-10.dark', 'editorial-10.deep', 'editorial-10.light', 'editorial-10.pale', 'hero-6', 'hero-6.dark', 'hero-6.deep', 'hero-6.light', 'hero-6.pale', 'info', 'negative', 'positive', 'tableau', 'tableau.dark', 'tableau.deep', 'tableau.light', 'tableau.pale', 'vivid-10', 'vivid-10.dark', 'vivid-10.deep', 'vivid-10.light', 'vivid-10.pale', 'warning'] | Theme palette role assignments: open dict mapping role name to palette file name. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge. |
 | `tones` | [KpiTonesStyle](#kpitonesstyle) | Semantic tone color palette (positive/negative/warning/info) for KPI support rows, table conditional glyphs, and spark negative_color. |
 | `roles` | dict[str, str] | Optional top-level theme role aliases: bare name → role.alias. e.g. ink: chrome.heading |
-| `padding` | [SpacingValues](#spacingvalues) | Per-board padding override (CSS shorthand or structured). |
-| `margin` | [SpacingValues](#spacingvalues) | Per-board margin override (CSS shorthand or structured). |
-| `gap` | float | Per-board gap between layout items in pixels. |
+| `padding` | str \| float \| [SpacingValues](#spacingvalues) | Per-board padding override (CSS shorthand or structured). |
+| `margin` | str \| float \| [SpacingValues](#spacingvalues) | Per-board margin override (CSS shorthand or structured). |
+| `gap` | str \| float | Per-board gap between layout items in pixels. |
 
 <a id="singlerowboolprobe"></a>
 ## SingleRowBoolProbe
@@ -985,9 +990,7 @@ Support-line block authored alongside a KPI's main value.
 |-------|------|-------------|
 | `value` | str | Column reference (string column name) for the support number/text. |
 | `label` | str | Trailing explainer text rendered beside the support value. |
-| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | How the value is written: a D3 spec, a preset name, or a format block. A date value defaults to date_short when unformatted. |
 | `glyph` | str | Text shown before the value (e.g. '▲', '▼', '●'). |
-| `tone` | enum: "positive", "negative", "warning", "info" | Semantic styling for the support value/glyph. |
 
 <a id="kpichartstyle"></a>
 ## KpiChartStyle
@@ -995,19 +998,18 @@ Authored overlay for KpiChartStyle. Produced by cascade from theme YAML.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `title` | [TitleStyle](#titlestyle) | Chart-level title style override; None inherits the theme title style. |
 | `preferred_width` | float | Preferred chart width in pixels. Falls back to [`style.charts.preferred_width`](#chartsstyle). |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Chart-local background color override; None inherits from theme. |
-| `font` | [FontStyle](#fontstyle) | KPI chart-level font overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
+| `font` | [SingleLineFontStyle](#singlelinefontstyle) | Font every KPI text slot starts from. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
+| `variant` | enum: "stacked", "inline", "compact" | Card layout. 'stacked' puts value, label, and support on three lines; 'inline' sets them on one baseline; 'compact' puts the value left and up to two lines right. |
 | `value` | [KpiValueStyle](#kpivaluestyle) | KPI headline value slot. |
-| `label` | [KpiSlotStyle](#kpislotstyle) | KPI card label slot. |
-| `affix` | [KpiSlotStyle](#kpislotstyle) | Currency/percent affix slot. |
-| `glyph` | [KpiSlotStyle](#kpislotstyle) | Indicator glyph (▲▼●) slot. |
+| `label` | [KpiLabelStyle](#kpilabelstyle) | KPI card label slot. |
+| `support` | [KpiSupportStyle](#kpisupportstyle) | KPI support row slot. |
 | `min_card_width` | float | Minimum KPI card width in pixels. |
 | `default_height` | float | Default KPI card height in pixels. |
-| `border` | [BorderStyle](#borderstyle) | KPI card border style. |
-| `content_padding` | [SpacingValues](#spacingvalues) | Inner inset (top/right/bottom/left) for KPI card content in pixels. |
+| `border` | str \| [BorderStyle](#borderstyle) | KPI card border style. |
+| `content_padding` | str \| float \| [SpacingValues](#spacingvalues) | Inner inset (top/right/bottom/left) for KPI card content in pixels. |
 | `align` | enum: "left", "center", "right" | Horizontal alignment of the value, label, and support text within the card. |
 
 <a id="tablechartstyle"></a>
@@ -1021,7 +1023,7 @@ Authored overlay for TableChartStyle. Table chart style overrides layered on top
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Table background color; None inherits from theme. |
 | `font` | [FontStyle](#fontstyle) | Table chart-level font overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
-| `border` | [BorderStyle](#borderstyle) | Chart card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Table color: static text paint or gradient scale only (no categorical arm). |
 | `outer_padding` | float | Outer table padding in pixels. |
 | `bottom_padding` | float | Extra bottom padding below the last row in pixels. |
@@ -1055,6 +1057,14 @@ One authored spanner: a label drawn over a run of adjacent columns.
 | `label` | str | Group label for the listed columns. |
 | `columns` | list[str] | Query columns the spanner covers. Must be adjacent in the query's column order and unique; a column may sit in at most one spanner. |
 
+<a id="projection"></a>
+## Projection
+A Vega-Lite projection; any other Vega-Lite projection property is accepted.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | str | Projection name, such as mercator. |
+
 <a id="basemapconfig"></a>
 ## BasemapConfig
 Styled geographic background layer for point_map and bubble_map charts.
@@ -1081,7 +1091,7 @@ Authored overlay for PointMapChartStyle. Point map chart style.
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Geo color: static paint or gradient scale only (no categorical arm). |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. |
-| `border` | [BorderStyle](#borderstyle) | Chart card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. |
 | `projection` | [ProjectionStyle](#projectionstyle) | Vega-Lite projection configuration for this geo family. |
 | `basemap` | [BasemapStyle](#basemapstyle) | Background map layer; None source = no topo layer. |
 | `marks` | [PointMapChartMarksStyle](#pointmapchartmarksstyle) | Point-map-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
@@ -1102,7 +1112,7 @@ Authored overlay for GeoshapeChartStyle. Geoshape (choropleth) chart style.
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Geo color: static paint or gradient scale only (no categorical arm). |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. |
-| `border` | [BorderStyle](#borderstyle) | Chart card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. |
 | `projection` | [ProjectionStyle](#projectionstyle) | Vega-Lite projection configuration for this geo family. |
 | `basemap` | [BasemapStyle](#basemapstyle) | Background map layer; None source = no topo layer. |
 | `marks` | [GeoshapeChartMarksStyle](#geoshapechartmarksstyle) | Geoshape-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
@@ -1116,7 +1126,7 @@ Authored overlay for CalloutChartStyle. Chart-family style for ``type: callout``
 | `preferred_width` | float | Preferred callout width in pixels. |
 | `tone` | enum: "positive", "negative", "warning", "info" | Semantic tone for palette-role lookup (info \| positive \| negative \| warning). |
 | `background` | str | Callout card background color. `by_tone` is the tone's color. |
-| `border` | [BorderStyle](#borderstyle) | Callout card border style. A color of `by_tone` is the tone's color. |
+| `border` | str \| [BorderStyle](#borderstyle) | Callout card border style. A color of `by_tone` is the tone's color. |
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `section_gap` | float | Vertical gap between callout title and message in pixels. |
 | `title` | [CalloutElementStyle](#calloutelementstyle) | Callout title element style. |
@@ -1282,7 +1292,7 @@ Authored overlay for ChartsStyle. Registry of all chart-type styles plus shared 
 | `max_height` | float | Maximum chart height in pixels. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. Unset fields fall back to [`style.font`](#style). |
-| `border` | [BorderStyle](#borderstyle) | Chart card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. |
 | `title` | [TitleStyle](#titlestyle) | Title style for every chart's title. Unset fields fall back to [`style.title`](#style). |
 | `category_colors` | dict[str, [CategoryColorBinding](#categorycolorbinding)] | Board-wide category→color bindings, keyed by data field name. Pins a category to one swatch across every chart on the board. |
 | `tooltip` | [TooltipStyle](#tooltipstyle) | Board-wide chart tooltip style. |
@@ -1342,7 +1352,7 @@ Authored overlay for VariablesStyle. Variable controls chrome styling.
 | `value` | [VariablesValueStyle](#variablesvaluestyle) | Variable value typography. |
 | `placeholder` | [VariablesPlaceholderStyle](#variablesplaceholderstyle) | Style for unselected/hint text in variable inputs. |
 | `container_height` | float | Height of the variables panel container in pixels. |
-| `border` | [BorderStyle](#borderstyle) | Variables panel border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Variables panel border style. |
 | `control_gap` | float | Gap between label and input within a single control in pixels. |
 | `input` | [InputStyle](#inputstyle) | Input control style. |
 
@@ -1474,7 +1484,7 @@ A support_table entry that expands into one row per color: series.
 | Field | Type | Description |
 |-------|------|-------------|
 | `by_measure` | bool | When True, expand one row reading the named measure field directly (no color: groupby). Required for multi-y charts where each measure is its own y-field rather than a color-encoded series. |
-| `label` | str | Row label displayed in the strip's label gutter. When None and by_measure=True, the per_series column name is used. Has no effect when by_measure=False (series name is the label). |
+| `label` | str | Row label for a by_measure=True row; when None and by_measure=True, the per_series column name is used. Also the header of a horizontal grouped bar's single per_series column. Not allowed on a non-by_measure strip row or stacked-bar column. |
 | `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | D3 format string or format config object. Optional. |
 
 <a id="quantitativeaxisstyle"></a>
@@ -1765,9 +1775,55 @@ A single conditional formatting rule.
 | `glyph_color` | str | Color for the glyph when the rule matches. Requires glyph to be set. |
 | `tone` | enum: "positive", "negative", "warning", "info" | Semantic tone (positive\|negative\|warning\|info) that colors the glyph via the theme's tone palette; the preferred, theme-adaptive alternative to a raw glyph_color. Requires glyph. Explicit glyph_color wins. |
 
+<a id="singlelinefontstyle"></a>
+## SingleLineFontStyle
+Text appearance for a slot that always paints one line.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `extends` | str | Name of a ``style.fonts`` entry this slot starts from; the fields set beside it override that entry. |
+| `family` | str | Font family name (e.g., 'sans-serif', 'Roboto'). |
+| `color` | str | Text color as a CSS color string. |
+| `size` | float | Font size in pixels. |
+| `weight` | str \| float | How heavy the type is drawn (e.g., 'bold', 400, 700). |
+| `style` | enum: "normal", "italic" | Upright or slanted type (normal or italic). |
+| `decoration` | enum: "none", "line-through", "underline" | Line drawn on the text (underline, line-through, or none). |
+| `case` | enum: "none", "sentence", "title", "upper", "lower", "slug", "camel" | Letter-case transform applied at render time. 'title' uses Chicago/Gruber rules and preserves tokens with internal capitals (ARR, iPhone). 'sentence' uppercases only the first character. 'none' (default) emits the string without any letter-case change. |
+
+<a id="kpivaluestyle"></a>
+## KpiValueStyle
+Authored overlay for KpiValueStyle. KPI headline value slot: font, format, and the affix and glyph beside it.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `font` | [SingleLineFontStyle](#singlelinefontstyle) | Headline value font. Unset fields fall back to [`style.charts.kpi.font`](#kpichartstyle) (except `color`). |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Format for the KPI headline value: D3 format string, preset name, or FormatConfig object. A date value defaults to date_short when unformatted. |
+| `affix` | [KpiTextSlotStyle](#kpitextslotstyle) | Currency or percent sign written around the headline number. |
+| `glyph` | [KpiTextSlotStyle](#kpitextslotstyle) | Indicator glyph drawn before the headline value. |
+
+<a id="kpilabelstyle"></a>
+## KpiLabelStyle
+Authored overlay for KpiLabelStyle. KPI label slot: font and how a long label fits the card.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `font` | [SingleLineFontStyle](#singlelinefontstyle) | Label font. Unset fields fall back to [`style.charts.kpi.font`](#kpichartstyle) (except `color`). |
+| `overflow` | enum: "clip", "truncate", "wrap-two", "wrap" | How a label too wide for the card is fit. Falls back to [`style.charts.title.overflow`](#titlestyle). |
+
+<a id="kpisupportstyle"></a>
+## KpiSupportStyle
+Authored overlay for KpiSupportStyle. KPI support row: font, format, tone, and its glyph.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `font` | [SingleLineFontStyle](#singlelinefontstyle) | Support row font; its color paints the support value. Unset fields fall back to [`style.charts.kpi.font`](#kpichartstyle) (except `color`). |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | How the support value is written: a D3 spec, a preset name, or a format block. |
+| `tone` | enum: "positive", "negative", "warning", "info" | Semantic color for the support value and glyph. |
+| `glyph` | [KpiSupportGlyphStyle](#kpisupportglyphstyle) | Glyph drawn before the support value. |
+
 <a id="fontstyle"></a>
 ## FontStyle
-Text appearance. Merged as a unit.
+Text appearance, including leading for text that wraps. Merged as a unit.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1780,24 +1836,6 @@ Text appearance. Merged as a unit.
 | `decoration` | enum: "none", "line-through", "underline" | Line drawn on the text (underline, line-through, or none). |
 | `case` | enum: "none", "sentence", "title", "upper", "lower", "slug", "camel" | Letter-case transform applied at render time. 'title' uses Chicago/Gruber rules and preserves tokens with internal capitals (ARR, iPhone). 'sentence' uppercases only the first character. 'none' (default) emits the string without any letter-case change. |
 | `line_height` | float | Line height as a unitless multiple of font size. Cascades through Style.font to all text roles that carry a FontStyle slot. Body prose defaults to 1.25; titles override tighter via their font patch in theme YAML. |
-
-<a id="kpivaluestyle"></a>
-## KpiValueStyle
-Authored overlay for KpiValueStyle. KPI headline value slot: font and format. Theme populates font.size directly.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `font` | [FontStyle](#fontstyle) | Headline value font. Unset fields fall back to [`style.charts.kpi.font`](#kpichartstyle) (except `color`). |
-| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Format for the KPI headline value: D3 format string, preset name, or FormatConfig object. A date value defaults to date_short when unformatted. |
-
-<a id="kpislotstyle"></a>
-## KpiSlotStyle
-Authored overlay for KpiSlotStyle. KPI per-slot style for label, affix, and glyph slots.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `font` | [FontStyle](#fontstyle) | Slot font style. Unset fields fall back to [`style.charts.kpi.font`](#kpichartstyle) (except `color`). |
-| `character` | str | Glyph character to render (e.g. '▲'). None = no glyph. |
 
 <a id="staticgradientcolorstyle"></a>
 ## StaticGradientColorStyle
@@ -1939,7 +1977,7 @@ Authored overlay for SparkStyle. Inline sparkline defaults (inside table cells).
 | Field | Type | Description |
 |-------|------|-------------|
 | `color` | str | Sparkline line/point color; None seeds from style.charts.color.categorical.single_series_palette[0]. |
-| `padding` | [SpacingValues](#spacingvalues) | Cell padding around the sparkline in pixels. |
+| `padding` | str \| float \| [SpacingValues](#spacingvalues) | Cell padding around the sparkline in pixels. |
 | `empty` | [SparkEmptyStyle](#sparkemptystyle) | Style for empty/no-data sparklines. |
 | `single_value` | [SparkSingleValueStyle](#sparksinglevaluestyle) | Style for single-data-point sparklines. |
 | `columns` | [SparkColumnsStyle](#sparkcolumnsstyle) | Style for column-type sparklines. |
@@ -2091,7 +2129,7 @@ Authored overlay for TextCodeStyle. Inline and fenced code spans in markdown pro
 |-------|------|-------------|
 | `font` | [FontStyle](#fontstyle) | Box text font overrides: full FontStyle (family, color, size, weight, style, decoration, case). |
 | `background` | str | Box background fill. |
-| `border` | [BorderStyle](#borderstyle) | Box border (width, color, radius). |
+| `border` | str \| [BorderStyle](#borderstyle) | Box border (width, color, radius). |
 | `highlight` | bool | Syntax-highlight fenced markdown code blocks. |
 | `theme` | str | Pygments style name for fenced markdown code tokens. |
 
@@ -2103,7 +2141,7 @@ Authored overlay for TextBlockquoteStyle. Blockquote prose. Box group; border is
 |-------|------|-------------|
 | `font` | [FontStyle](#fontstyle) | Box text font overrides: full FontStyle (family, color, size, weight, style, decoration, case). |
 | `background` | str | Box background fill. |
-| `border` | [BorderStyle](#borderstyle) | Box border (width, color, radius). |
+| `border` | str \| [BorderStyle](#borderstyle) | Box border (width, color, radius). |
 
 <a id="textboldstyle"></a>
 ## TextBoldStyle
@@ -2261,7 +2299,7 @@ Authored overlay for TabsStyle.
 | Field | Type | Description |
 |-------|------|-------------|
 | `bar_height` | float | Tab bar height in pixels. |
-| `border` | [BorderStyle](#borderstyle) | Tab bar border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Tab bar border style. |
 | `font` | [FontStyle](#fontstyle) | Tab label font style overrides. Unset fields fall back to [`style.font`](#style). |
 | `active_weight` | str | Font weight for the active tab label. |
 | `inactive_weight` | str | Font weight for inactive tab labels. |
@@ -2274,7 +2312,7 @@ Authored overlay for DetailsStyle.
 | Field | Type | Description |
 |-------|------|-------------|
 | `summary_height` | float | Height of the details summary (collapsed) row in pixels. |
-| `border` | [BorderStyle](#borderstyle) | Details element border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Details element border style. |
 | `font` | [FontStyle](#fontstyle) | Details summary font style overrides. Unset fields fall back to [`style.font`](#style). |
 | `arrow` | [DetailsArrowStyle](#detailsarrowstyle) | Expand/collapse arrow glyph layout and font style. |
 | `label_x` | float | X position of the details summary label text in pixels. |
@@ -2315,7 +2353,7 @@ Authored overlay for InputStyle.
 | `border` | [CornerStyle](#cornerstyle) | Corner rounding for input controls. |
 | `focus_color` | str | Input focus ring color. Falls back to [`style.accent`](#style). |
 | `background` | str | Input background color. |
-| `padding` | [SpacingValues](#spacingvalues) | Input inner padding in pixels. |
+| `padding` | str \| float \| [SpacingValues](#spacingvalues) | Input inner padding in pixels. |
 | `widths` | [InputWidths](#inputwidths) | Per-input-type default widths. |
 | `range` | [RangeDefaults](#rangedefaults) | Range input default min/max/step values. |
 
@@ -2491,7 +2529,7 @@ Authored overlay for DimensionLabelStyle. AxisLabelStyle + dimension-axis-only l
 | `offset` | float | Pixel offset of the label from its tick anchor; None uses Vega-Lite's default. |
 | `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | Tick value format string; None uses auto-format. |
 | `time_unit` | enum: "auto", "year", "yearquarter", "yearmonth", "yearweek", "yearmonthdate", "monthofyear", "dayofweek", "dayofmonth", "dayofyear", "hourofday", "none" | Label cadence for temporal axes; None inherits from the parent axis time_unit. |
-| `clock` | one of: 24, 12 | Sub-day clock register for a continuous temporal x-axis: 24 for the unambiguous, meridiem-free 24-hour clock, or 12 for the 12-hour clock with the Noon/Midnight word vocabulary. None leaves the value to the theme cascade. |
+| `clock` | enum: 24, 12 | Sub-day clock register for a continuous temporal x-axis: 24 for the unambiguous, meridiem-free 24-hour clock, or 12 for the 12-hour clock with the Noon/Midnight word vocabulary. None leaves the value to the theme cascade. |
 | `tilt_increments` | list[float] | Descending tilt angles for label overlap resolution on discrete x-axes; None disables tilt. |
 | `values` | list[Any] | Dates to keep label text on, chosen from among the axis's ticks (whatever axis_x.scale.values or the auto-fill cadence already produced): this filters which ticks show text, it does not add or remove ticks. Every tick not in this list keeps its position and gridline but has its label blanked. Set axis_x.scale.values separately to change tick/grid density itself. Temporal x-axes only; not supported on a horizontal bar's categorical axis. None labels every tick as usual. |
 
@@ -2542,7 +2580,7 @@ Authored overlay for BarMarkStyle. Bar mark geometry and stroke. Chart-level bar
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `border` | [BorderStyle](#borderstyle) | Bar border style (color/width also serve as the bar stroke). |
+| `border` | str \| [BorderStyle](#borderstyle) | Bar border style (color/width also serve as the bar stroke). |
 | `padding` | float | Padding around bar marks in pixels. |
 | `size` | float | Bar width in pixels; overrides all other sizing. |
 | `band_width` | float | Bar width as a fraction of the band step (0–1). |
@@ -2698,6 +2736,22 @@ Authored overlay for SliceMarkStyle. Pie/donut slice mark: mark-level paint and 
 | `corner_radius` | float | Corner radius of arc slices in pixels. |
 | `stroke` | [StrokeStyle](#strokestyle) | Arc slice stroke style. |
 | `labels` | [SliceLabelsStyle](#slicelabelsstyle) | Per-slice label style. |
+
+<a id="kpitextslotstyle"></a>
+## KpiTextSlotStyle
+Authored overlay for KpiTextSlotStyle. A KPI text slot styled by its font alone (affix, headline glyph).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `font` | [SingleLineFontStyle](#singlelinefontstyle) | Slot font. Unset fields fall back to [`style.charts.kpi.font`](#kpichartstyle) (except `color`). |
+
+<a id="kpisupportglyphstyle"></a>
+## KpiSupportGlyphStyle
+Authored overlay for KpiSupportGlyphStyle. KPI support-row glyph slot.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `font` | [SingleLineFontStyle](#singlelinefontstyle) | Glyph font. Unset fields fall back to [`style.charts.kpi.support.font`](#kpisupportstyle) (except `color`). |
 
 <a id="tabledividerstyle"></a>
 ## TableDividerStyle
@@ -3299,6 +3353,10 @@ Redshift source configuration.
 | `tcp_keepalive_idle` | int | Idle seconds before TCP keepalives begin. |
 | `tcp_keepalive_interval` | int | Seconds between TCP keepalive probes. |
 | `tcp_keepalive_count` | int | Number of TCP keepalive probes before failure. |
+| `datasharing` | bool | Whether Redshift datashare metadata is queried. |
+| `query_group` | str | Redshift query group applied to each session. |
+| `allow_concurrent_drops` | bool | Whether dbt may run drops concurrently. |
+| `drop_without_cascade` | bool | Whether dbt drops relations without CASCADE. |
 
 <a id="databrickssourceconfig"></a>
 ## DatabricksSourceConfig
@@ -3370,19 +3428,15 @@ DuckDB source configuration.
 | `path` | str | DuckDB file path or ':memory:' for an in-memory database. |
 | `schema` | str | Default schema for unqualified table names (sets search_path). |
 | `duckdb_config` | dict[str, str \| int \| float \| bool] | DuckDB connection configuration values, such as enable_external_access. |
-| `extensions` | list[str \| DuckDBExtensionConfig] | DuckDB extensions to install and load. |
+| `extensions` | list[str \| [DuckDBExtensionConfig](#duckdbextensionconfig)] | DuckDB extensions to install and load. |
 | `settings` | dict[str, str \| int \| float \| bool] | DuckDB settings and pragma values. |
-| `secrets` | list[DuckDBSecretConfig] | DuckDB secret definitions for external services. |
+| `secrets` | list[[DuckDBSecretConfig](#duckdbsecretconfig)] | DuckDB secret definitions for external services. |
 | `external_root` | str | Root path for dbt-duckdb external materializations. |
-| `use_credential_provider` | str | Not supported; remove this field from the source config. |
-| `attach` | list[DuckDBAttachmentConfig] | Databases to attach to the DuckDB connection. |
-| `filesystems` | list[dict[str, str \| int \| float \| bool]] | Not supported; remove this field from the source config. |
-| `remote` | DuckDBRemoteConfig | Not supported; remove this field from the source config. |
-| `plugins` | list[DuckDBPluginConfig] | Not supported; remove this field from the source config. |
+| `attach` | list[[DuckDBAttachmentConfig](#duckdbattachmentconfig)] | Databases to attach to the DuckDB connection. |
 | `disable_transactions` | bool | Whether dbt-duckdb disables statement transactions. |
 | `keep_open` | bool | Whether dbt-duckdb holds its connection open between queries. Off by default: a held handle pins the database file at one DuckDB config, and DuckDB refuses any other connection to a pinned file whose config differs. Ignored for ':memory:' and MotherDuck, which dbt-duckdb holds open either way; closing an in-memory database would destroy it. |
 | `module_paths` | list[str] | Python module paths dbt-duckdb loads. |
-| `retries` | DuckDBRetriesConfig | dbt-duckdb connection and query retry configuration. |
+| `retries` | [DuckDBRetriesConfig](#duckdbretriesconfig) | dbt-duckdb connection and query retry configuration. |
 | `is_ducklake` | bool | Whether this source uses DuckLake. |
 
 <a id="sqlitesourceconfig"></a>
@@ -3494,6 +3548,71 @@ Reference to a dbt profile.
 | `target` | str | dbt target to use; defaults to the profile's default target. |
 | `profiles_dir` | str | Directory containing profiles.yml, relative to the linked dbt project directory (see --dbt-project-dir). Use when profiles.yml is in a subdirectory (e.g. services/dbt). Resolution order: profiles_dir → $DBT_PROFILES_DIR → linked dbt project → ~/.dbt. |
 | `target_path` | str | Directory holding the manifest.json built for this target, relative to the linked dbt project directory; same meaning as dbt's --target-path. ref() and source() resolve against &lt;target_path&gt;/manifest.json. Build it with `dbt parse --target &lt;target&gt; --target-path &lt;target_path&gt;`. Defaults to dbt's own resolution: $DBT_TARGET_PATH → dbt_project.yml target-path → target. |
+
+<a id="duckdbextensionconfig"></a>
+## DuckDBExtensionConfig
+One DuckDB extension installed from a custom repository.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | str | Extension name to install and load. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `repo` | str | Repository to install the extension from. Omit to use DuckDB's default repository. |
+
+<a id="duckdbsecretconfig"></a>
+## DuckDBSecretConfig
+One DuckDB CREATE SECRET declaration.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | str | DuckDB secret type, e.g. s3, gcs, azure. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | str | Optional secret name. |
+| `persistent` | bool | Whether the secret persists to disk (~/.duckdb/stored_secrets). |
+| `scope` | str \| list[str] | Optional URL scope(s) this secret applies to. |
+
+<a id="duckdbattachmentconfig"></a>
+## DuckDBAttachmentConfig
+One dbt-duckdb ATTACH declaration.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | str | DuckDB database path or URL to attach. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | str | Attached database type supplied by its extension. |
+| `alias` | str | Optional name for the attached database. |
+| `secret` | str | Name of the DuckDB secret used for this attachment. |
+| `read_only` | bool | Whether the attached database is read-only. Honored as written when the adapter itself is read-write; when the adapter is read_only (the default), the in-process DuckDB adapter forces every attachment read-only regardless of this flag. |
+| `options` | dict[str, str \| int \| float \| bool] | Additional scalar DuckDB ATTACH options. |
+| `is_ducklake` | bool | Whether the attachment is a DuckLake database. |
+
+<a id="duckdbretriesconfig"></a>
+## DuckDBRetriesConfig
+dbt-duckdb retry settings.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `connect_attempts` | int | Number of connection attempts before failure. |
+| `query_attempts` | int | Number of attempts for a retryable query failure. |
+| `retryable_exceptions` | list[str] | Exception names that dbt-duckdb may retry. |
 
 # dbt charts Project Config Reference: execution settings
 

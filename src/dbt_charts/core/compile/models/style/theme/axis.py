@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Annotated, Any, Literal
+import re
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
 
+from dbt_charts.core.compile.models.constraints import (
+    AtLeastOneOf,
+    AtMostOneOf,
+    ConstrainedModel,
+    Constraint,
+    ItemsMatch,
+    ValueIn,
+)
 from dbt_charts.core.compile.models.markers import (
     Color,
     Format,
@@ -504,28 +514,17 @@ class DimensionLabelStyle(AxisLabelStyle):
     )
 
 
-def _is_iso_date_string(value: str) -> bool:
-    """True when ``value`` parses as an ISO-8601 date or datetime string.
-
-    Delegates to ``fromisoformat``, so the accepted grammar is Python-version
-    dependent for exotic forms (e.g. ISO week dates parse on 3.11+ only).
-    The common domain-bound shapes — ``YYYY-MM-DD``, ``YYYY-MM-DDTHH:MM:SS``
-    with optional offset or trailing ``Z`` — validate identically on both CI
-    lanes; the ``Z`` suffix is normalized upfront because Python <3.11
-    rejects it.
-    """
-    if value.endswith("Z"):
-        value = value[:-1] + "+00:00"
-    try:
-        dt.date.fromisoformat(value)
-        return True
-    except ValueError:
-        pass
-    try:
-        dt.datetime.fromisoformat(value)
-        return True
-    except ValueError:
-        return False
+# The ISO-8601 date and datetime shapes a temporal domain bound may take.
+_ISO_DATE_PATTERN = (
+    r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"
+    r"([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?"
+    r"(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])?)?$"
+)
+_TEMPORAL_DOMAIN_MESSAGE = (
+    "scale.domain element {item!r} is not an ISO-8601 date/datetime string, "
+    "but scale.type: temporal requires both domain bounds to be dates (e.g. "
+    "'1955-01-01')."
+)
 
 
 def _coerce_list_to_tuple(
@@ -539,73 +538,50 @@ def _coerce_list_to_tuple(
     return tuple(value) if isinstance(value, list) else value
 
 
-class ScaleDomainValidationMixin(BaseModel):
-    """Shared authored-input validator for scale domain type-consistency.
+class ScaleDomainValidationMixin(ConstrainedModel):
+    """Shared authored-input rule for a temporal scale domain.
 
     Inherited by both ``ScaleContinuousStyle`` and its generated Patch so
     chart-local authored patches enforce the same domain rules as
     theme-stage input — ``build_patch_model_ext`` only carries over
     validators that live on the patch model's base class.
 
-    The 2-element shape (a fixed ``tuple``, not a variable-length ``list``),
-    per-bound ``int | float | str`` typing (which also rejects a ``None``
-    element — a domain bound may not be null), and the
-    bool-is-not-a-domain-bound exclusion (``bool`` is an ``int`` subclass, so
-    the numeric arms use ``Field(strict=True)``) are all enforced by the
-    ``domain`` field's own annotation. The constraints must sit on an
-    *inner* ``Annotated`` layer (wrapping ``tuple[...]``), not on the
-    field's own outer ``Field(...)`` call: ``build_patch_model_ext`` copies
-    a field's raw ``annotation`` into the generated Patch verbatim, but
-    rebuilds its ``FieldInfo`` from scratch, forwarding only
-    ``description`` plus a fixed set of marker types
-    (``Inherit``/``InheritSlot``/``SkipInheritSlots``/``Merge``/``Facet``);
-    an outer ``Field(min_length=..., strict=...)`` kwarg lives on the
-    outer ``FieldInfo`` and is silently dropped for the Patch, while a
-    constraint nested inside the annotation survives untouched.
-
-    This mixin covers what the type can't: when the scale type is
-    ``temporal``, both bounds must additionally be ISO-8601 date/datetime
-    strings, a cross-field check against the sibling ``type`` field. A
-    ``None`` domain — the field unset — is always valid; a ``None``
-    *element* is not.
+    The 2-element shape, per-bound typing, and the bool exclusion are on the
+    ``domain`` field's own inner ``Annotated`` layer: ``build_patch_model_ext``
+    copies a field's raw annotation into the Patch but rebuilds its outer
+    ``FieldInfo``, dropping outer ``Field(...)`` constraints.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    @model_validator(mode="before")
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        ItemsMatch(
+            "domain",
+            _ISO_DATE_PATTERN,
+            _TEMPORAL_DOMAIN_MESSAGE,
+            when=(ValueIn("type", ("temporal",)),),
+        ),
+    )
+
+    # The pattern bounds month and day but cannot know month lengths.
+    @field_validator("domain", check_fields=False)
     @classmethod
-    def _validate_domain_temporal_type(
+    def _reject_impossible_dates(
         cls,
-        data: object,  # type-state: object_annotation — pydantic "before" validator; raw pre-validation input, shape not yet known
-    ) -> object:  # type-state: object_annotation — mirrors the "before" validator's required return type
-        if not isinstance(data, dict):
-            return data
-        domain = data.get("domain")
-        if domain is None or data.get("type") != "temporal":
-            return data
-        if not isinstance(domain, (list, tuple)):
-            # The field annotation's strict tuple check (after
-            # _coerce_list_to_tuple) already rejects any non-list/tuple
-            # domain -- but that's per-field validation, which runs after
-            # this model-level "before" validator returns. Without this
-            # guard, `for value in domain` below would either crash with a
-            # raw (non-ValidationError) TypeError on a non-iterable domain
-            # (an int, a float), or -- for an iterable like a set -- report
-            # the generic ISO-string error instead of a message that names
-            # the actual problem (wrong container, not wrong element type).
-            raise ValueError(
-                f"scale.domain must be a list of 2 ISO-8601 date/datetime "
-                f"strings when scale.type: temporal, got {type(domain).__name__}."
-            )
+        domain: tuple[int | float | str, int | float | str] | None,
+        info: ValidationInfo,
+    ) -> tuple[int | float | str, int | float | str] | None:
+        if domain is None or info.data.get("type") != "temporal":
+            return domain
         for value in domain:
-            if not isinstance(value, str) or not _is_iso_date_string(value):
-                raise ValueError(
-                    f"scale.domain element {value!r} is not an ISO-8601 "
-                    "date/datetime string, but scale.type: temporal "
-                    "requires both domain bounds to be dates (e.g. "
-                    "'1955-01-01')."
-                )
-        return data
+            if isinstance(value, str) and re.fullmatch(_ISO_DATE_PATTERN, value):
+                try:
+                    dt.date.fromisoformat(value[:10])
+                except ValueError:
+                    raise ValueError(
+                        _TEMPORAL_DOMAIN_MESSAGE.format(item=value)
+                    ) from None
+        return domain
 
 
 class ScaleLogStyle(BaseModel):
@@ -975,7 +951,7 @@ class TooltipStyle(BaseModel):
     )
 
 
-class AxisMirrorStyle(BaseModel):
+class AxisMirrorStyle(ConstrainedModel):
     """Per-edge label override for the mirrored ``axis_y.mirror`` ghost axis.
 
     Mirror's whole value proposition is one shared y-scale ⇒ guaranteed-aligned
@@ -987,6 +963,22 @@ class AxisMirrorStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    # VL ignores `format` whenever `labelExpr` is present, so both-set makes
+    # format dead config; an empty object overrides nothing.
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtMostOneOf(
+            ("format", "expr"),
+            "mirror takes format or expr, not both — expr fully controls "
+            "the label text (call format() inside it if needed).",
+        ),
+        AtLeastOneOf(
+            ("format", "expr"),
+            "empty mirror override — set format or expr to relabel the "
+            "mirrored edge, or use `mirror: true` to mirror the primary "
+            "axis's label verbatim.",
+        ),
+    )
+
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
         description="Tick value format string for the mirrored edge; None reuses the primary axis's format.",
@@ -995,25 +987,6 @@ class AxisMirrorStyle(BaseModel):
         default=None,
         description="Custom Vega expression for the mirrored edge's label text; None reuses the primary axis's label expression.",
     )
-
-    @model_validator(mode="after")
-    def _require_exactly_one_override(self) -> AxisMirrorStyle:
-        # Both are label overrides for the same edge, and VL ignores `format`
-        # whenever `labelExpr` is present — both-set would make format dead
-        # config. Reject rather than silently prefer expr. An empty object is
-        # an override that overrides nothing — also meaningless input.
-        if self.format is not None and self.expr is not None:
-            raise ValueError(
-                "mirror takes format or expr, not both — expr fully controls "
-                "the label text (call format() inside it if needed)."
-            )
-        if self.format is None and self.expr is None:
-            raise ValueError(
-                "empty mirror override — set format or expr to relabel the "
-                "mirrored edge, or use `mirror: true` to mirror the primary "
-                "axis's label verbatim."
-            )
-        return self
 
 
 class BaseAxisStyle(BaseModel):

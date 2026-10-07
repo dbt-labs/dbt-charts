@@ -6,11 +6,9 @@ Purpose: Execute a RegisteredView's ``queries:`` block before its template
 The public API is:
 - ``materialize_path_params(spec, path_params)`` — replace ``{{ path.X }}``
   placeholders with literal route path param values.
-- ``ViewQueryResult`` — typed result wrapper with ``.rows``, ``.one``,
-  ``.columns``.
 - ``run_registry_queries(view, path_params, adapter_registry, ...)`` — execute
   all queries declared in the view's ``queries:`` block and return a
-  ``dict[name, ViewQueryResult]`` for the template context.
+  ``dict[name, QueryResult]`` for the template context.
 
 Registry queries reuse the normal dbt charts query system: the same
 ``normalize_query`` entry point, source protocols, values protocols,
@@ -28,11 +26,11 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.normalize.queries import normalize_query
+from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.execute.cache_backend import CacheHit
 
 if TYPE_CHECKING:
@@ -106,53 +104,6 @@ def materialize_path_params(
 
 
 # ---------------------------------------------------------------------------
-# ViewQueryResult
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ViewQueryResult:
-    """Typed result wrapper for a single registry pre-template query.
-
-    Exposed to the template context as ``queries.<name>`` with three
-    accessors — ``.rows``, ``.one``, ``.columns`` — matching the
-    convention already used for ``{{ queries.<name> }}`` in board templates.
-
-    Attributes:
-        rows: All result rows as a list of dicts.
-    """
-
-    rows: list[dict[str, Any]] = field(default_factory=list)
-
-    @property
-    def columns(self) -> list[str]:
-        """Column names in the order they appear in the first result row.
-
-        Returns an empty list when ``rows`` is empty.
-        """
-        if not self.rows:
-            return []
-        return list(self.rows[0].keys())
-
-    @property
-    def one(self) -> dict[str, Any]:
-        """The single result row.
-
-        Raises:
-            ValueError: If the result does not contain exactly one row.
-                Zero rows or more than one row are both errors — the caller
-                must handle empty/ambiguous results explicitly (non-negotiable
-                #4: no silent fallback).
-        """
-        if len(self.rows) != 1:
-            raise ValueError(
-                f"Expected exactly one row but got {len(self.rows)}. "
-                "Use .rows for multi-row results."
-            )
-        return self.rows[0]
-
-
-# ---------------------------------------------------------------------------
 # run_registry_queries
 # ---------------------------------------------------------------------------
 
@@ -164,7 +115,7 @@ def run_registry_queries(
     cache: QueryResultCache | None = None,
     *,
     slow_query_threshold_s: float = DEFAULT_SLOW_QUERY_THRESHOLD_S,
-) -> dict[str, ViewQueryResult]:
+) -> dict[str, QueryResult]:
     """Execute all pre-template queries declared in a registered view.
 
     Each query in ``view.queries`` is:
@@ -172,9 +123,9 @@ def run_registry_queries(
        ``path_params``.
     2. Normalized: validated with ``normalize_query`` (same path as board queries).
     3. Executed: run via ``adapter_registry.execute``.
-    4. Wrapped: result becomes a ``ViewQueryResult``.
+    4. Wrapped: result becomes a ``QueryResult``.
 
-    Results are returned as a ``dict[name, ViewQueryResult]`` — the
+    Results are returned as a ``dict[name, QueryResult]`` — the
     expansion pipeline injects this into the template context as
     ``queries.<name>``.
 
@@ -192,7 +143,7 @@ def run_registry_queries(
             Registry queries block generated-board construction.
 
     Returns:
-        Dict mapping each query name to its ``ViewQueryResult``.  Empty
+        Dict mapping each query name to its ``QueryResult``.  Empty
         dict when ``view.queries`` is None or empty.
 
     Raises:
@@ -203,7 +154,7 @@ def run_registry_queries(
     if not view.queries:
         return {}
 
-    results: dict[str, ViewQueryResult] = {}
+    results: dict[str, QueryResult] = {}
 
     for query_name, raw_spec in view.queries.items():
         context = f"view={view.name!r}, query={query_name!r}"
@@ -259,7 +210,7 @@ def run_registry_queries(
             # (below), so only a rows outcome can be here — narrowed anyway so
             # a cached error from any other writer can never be read as rows.
             if isinstance(outcome, CacheHit):
-                results[query_name] = ViewQueryResult(rows=outcome.rows)
+                results[query_name] = QueryResult(query_name, outcome.rows)
                 continue
 
         start = time.monotonic()
@@ -299,6 +250,6 @@ def run_registry_queries(
                 query_name=query_name,
             )
 
-        results[query_name] = ViewQueryResult(rows=result.data)
+        results[query_name] = QueryResult(query_name, result.data)
 
     return results

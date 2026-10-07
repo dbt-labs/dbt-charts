@@ -69,6 +69,12 @@ from dbt_charts.core.compile.format import (
     resolve_format,
     resolve_format_parts,
 )
+from dbt_charts.core.compile.format_value import (
+    MAGNITUDE_SUFFIXES,
+    _raise_if_time_format_on_numeric,
+    format_kpi_parts,
+    format_table_cell_value,
+)
 from dbt_charts.core.compile.models.style.theme import (
     VALID_FONT_WEIGHTS,
     PaginatorStyle,
@@ -80,6 +86,20 @@ from dbt_charts.core.compile.models.style.theme import (
     font_weight_as_css,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_TABLE_PIVOT_DIMENSIONS_AMBIGUOUS,
+    ERR_TABLE_PIVOT_DUPLICATE_CELL,
+    ERR_TABLE_PIVOT_FIELD_NOT_FOUND,
+    ERR_TABLE_PIVOT_NO_MEASURES,
+    ERR_TABLE_PIVOT_ROW_ROLE_CONFLICT,
+    ERR_TABLE_PIVOT_ROW_ROLE_LITERAL,
+    ERR_TABLE_SPANNER_NOT_ADJACENT,
+    ERR_TABLE_SPANNER_UNKNOWN_COLUMN,
+    ERR_TABLE_SWATCH_NOT_COLOR,
+    ERR_TABLE_TRANSPOSE_ROW_COUNT,
+    ERR_TABLE_TRANSPOSE_VISIBLE_UNKNOWN_COLUMN,
+    ERR_TABLE_VISIBLE_UNKNOWN_COLUMN,
+)
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.fonts import (
     DBT_SANS_TABULAR_FONT_FAMILY,
@@ -107,10 +127,8 @@ from dbt_charts.core.render.chart.table_static_pagination import (
 from dbt_charts.core.render.chart.table_support import (
     _VALID_ROW_ROLES,
     _glyph_possible,
-    _raise_if_time_format_on_numeric,
     calculate_column_layout,
     cell_glyph_run,
-    format_table_cell_value,
     glyph_run,
     is_summary_role,
     is_total_role,
@@ -136,7 +154,6 @@ from dbt_charts.core.render.chart.title_overflow import (
     resolve_title_overflow,
 )
 from dbt_charts.core.render.controls import controls_are_interactive
-from dbt_charts.core.render.format_utils import MAGNITUDE_SUFFIXES, format_kpi_parts
 from dbt_charts.core.render.script_embedding import embed_svg_script
 from dbt_charts.core.render.svg_utils import (
     authored_kind_attr,
@@ -477,12 +494,12 @@ def _render_swatch_cell(value: Any, col: str, row_idx: int, chart_id: str) -> st
         else None
     )
     if not color:
-        raise ChartDataError(
-            f"Column {col!r} declares swatch: true but row {row_idx} value "
-            f"{value!r} is not a CSS color. Swatch cells must be hex "
-            f"(e.g. '#3164a3') or 'transparent'. Either point swatch: true "
-            f"at a different column, or fix the data.",
+        raise ChartDataError.from_code(
+            ERR_TABLE_SWATCH_NOT_COLOR,
             chart_id=chart_id,
+            swatch_column=col,
+            row_index=row_idx,
+            value=value,
         )
     return (
         f'<rect width="{escape_attr(_SWATCH_SIZE)}" height="{escape_attr(_SWATCH_SIZE)}" '
@@ -947,10 +964,12 @@ def _authored_spanner_level(
     for spanner in spanners:
         unknown = [c for c in spanner.columns if c not in queried_columns]
         if unknown:
-            raise ChartDataError(
-                f"table {chart_id!r}: spanner {spanner.label!r} names"
-                f" {unknown}, which are not query columns"
-                f" (columns: {list(queried_columns)})."
+            raise ChartDataError.from_code(
+                ERR_TABLE_SPANNER_UNKNOWN_COLUMN,
+                chart_id=chart_id,
+                label=spanner.label,
+                unknown=unknown,
+                columns=list(queried_columns),
             )
 
     level: list[tuple[str, int, int]] = []
@@ -961,11 +980,12 @@ def _authored_spanner_level(
         if not idxs:
             continue
         if idxs[-1] - idxs[0] + 1 != len(idxs):
-            raise ChartDataError(
-                f"table {chart_id!r}: spanner {spanner.label!r} columns"
-                f" {spanner.columns} are not adjacent among the visible columns"
-                f" {list(visible_columns)}. Reorder the query's SELECT;"
-                " spanners never reorder columns."
+            raise ChartDataError.from_code(
+                ERR_TABLE_SPANNER_NOT_ADJACENT,
+                chart_id=chart_id,
+                label=spanner.label,
+                spanner_columns=list(spanner.columns),
+                visible_columns=list(visible_columns),
             )
         level.append((spanner.label, idxs[0], len(idxs)))
     return level
@@ -3206,9 +3226,8 @@ def _transpose_data_for_render(
     Raises ChartDataError when data does not have exactly one row.
     """
     if len(data) != 1:
-        raise ChartDataError(
-            f"style.table.transpose requires exactly one data row; "
-            f"got {len(data)}. Remove transpose: true or change the query."
+        raise ChartDataError.from_code(
+            ERR_TABLE_TRANSPOSE_ROW_COUNT, row_count=len(data)
         )
 
     # columns carries the promoted per-column configs (label, format, etc.)
@@ -3223,10 +3242,10 @@ def _transpose_data_for_render(
         if cfg.visible is False and key not in row
     )
     if _unaddressed:
-        raise ChartDataError(
-            f"style.table.transpose: style.columns sets `visible:` on"
-            f" {_unaddressed}, which match no query column — the transposable"
-            f" columns are {sorted(row)}. Check for a typo."
+        raise ChartDataError.from_code(
+            ERR_TABLE_TRANSPOSE_VISIBLE_UNKNOWN_COLUMN,
+            unaddressed=_unaddressed,
+            available=sorted(row),
         )
     src_cols = [
         c
@@ -3603,13 +3622,11 @@ def _prepare_columns(
             _shown = sorted(
                 {key.replace(_PIVOT_LEAF_SEP, " / ") for key in _addressable}
             )
-            raise ChartDataError(
-                f"table {chart_id!r}: style.columns sets `visible:` on"
-                f" {_unaddressed}, which match no rendered column — this"
-                f" table's addressable columns are {_shown}."
-                " Check for a typo, or key the entry by the name the rendered"
-                " column actually carries (a pivot's measure name, or a bare"
-                " pivoted value)."
+            raise ChartDataError.from_code(
+                ERR_TABLE_VISIBLE_UNKNOWN_COLUMN,
+                chart_id=chart_id,
+                unaddressed=_unaddressed,
+                addressable=_shown,
             )
 
     # The rendered column list is the query's own (post-pivot) result shape —
@@ -4975,8 +4992,11 @@ def _validate_pivot_fields(
 
     for c in columns:
         if c not in all_keys:
-            raise ChartDataError(
-                f"pivot.column {c!r} not in data rows; observed keys: {observed}"
+            raise ChartDataError.from_code(
+                ERR_TABLE_PIVOT_FIELD_NOT_FOUND,
+                channel="pivot.column",
+                field=c,
+                observed=observed,
             )
 
     # ``row.role`` cascades from the theme/board, so an ABSENT column name is
@@ -4989,10 +5009,10 @@ def _validate_pivot_fields(
         and row_role_spec not in all_keys
         and row_role_spec in _VALID_ROW_ROLES
     ):
-        raise ChartDataError(
-            f"pivot.row_role {row_role_spec!r} is a literal role, not a query"
-            f" column; under a pivot row.role must name the query column that"
-            f" carries the per-row role — observed keys: {observed}"
+        raise ChartDataError.from_code(
+            ERR_TABLE_PIVOT_ROW_ROLE_LITERAL,
+            row_role=row_role_spec,
+            observed=observed,
         )
 
     effective_values = infer_pivot_measure_names(
@@ -5000,14 +5020,14 @@ def _validate_pivot_fields(
     )
     for v in effective_values:
         if v not in all_keys:
-            raise ChartDataError(
-                f"pivot.value {v!r} not in data rows; observed keys: {observed}"
+            raise ChartDataError.from_code(
+                ERR_TABLE_PIVOT_FIELD_NOT_FOUND,
+                channel="pivot.value",
+                field=v,
+                observed=observed,
             )
     if not effective_values:
-        raise ChartDataError(
-            "pivot: no measure columns — `values` resolved to empty; declare at"
-            f" least one measure field. observed keys: {observed}"
-        )
+        raise ChartDataError.from_code(ERR_TABLE_PIVOT_NO_MEASURES, observed=observed)
 
     if not rows:
         rows = [
@@ -5018,8 +5038,11 @@ def _validate_pivot_fields(
     else:
         for r in rows:
             if r not in all_keys:
-                raise ChartDataError(
-                    f"pivot.row {r!r} not in data rows; observed keys: {observed}"
+                raise ChartDataError.from_code(
+                    ERR_TABLE_PIVOT_FIELD_NOT_FOUND,
+                    channel="pivot.row",
+                    field=r,
+                    observed=observed,
                 )
 
     return rows, effective_values
@@ -5226,10 +5249,7 @@ def pivot_table_data(
     # measures without guessing. Validate-and-error rather than degenerate into
     # a single row with the intended row dimension silently turned into a value.
     if values is None and not rows:
-        raise ChartDataError(
-            "pivot: declare at least one of `rows` or `values` — with both"
-            " omitted the row and measure dimensions are ambiguous."
-        )
+        raise ChartDataError.from_code(ERR_TABLE_PIVOT_DIMENSIONS_AMBIGUOUS)
 
     rows, effective_values = _validate_pivot_fields(
         data, rows, columns, values, row_role_spec
@@ -5290,23 +5310,20 @@ def pivot_table_data(
             this_role = resolve_row_role(role_col, row)
             if this_role != stored_role:
                 row_key_repr = ", ".join(f"{k}={row_map[row_key][k]!r}" for k in rows)
-                raise ChartDataError(
-                    f"pivot_table_data: conflicting row roles for row"
-                    f" ({row_key_repr}): {stored_role!r} vs {this_role!r} — a"
-                    f" merged pivot row must resolve to a single role."
+                raise ChartDataError.from_code(
+                    ERR_TABLE_PIVOT_ROW_ROLE_CONFLICT,
+                    row=row_key_repr,
+                    stored_role=stored_role,
+                    this_role=this_role,
                 )
         col_tuple = tuple(str(row[c]) for c in columns)
-        # Carry the bare measure name ("" for the single-measure arm), not a
-        # pre-formatted fragment: the ", measure …" text is only ever consumed
-        # by the duplicate-cell error below, so building it per cell would be a
-        # throwaway allocation on the hot path (n_measures × rows per render).
         leaf_cells: list[tuple[str, str, Any]] = (
             [(_pivot_leaf_key(col_tuple, m), m, row.get(m)) for m in effective_values]
             if n_measures > 1
             else [
                 (
                     _pivot_leaf_key_no_measure(col_tuple),
-                    "",
+                    effective_values[0],
                     row.get(effective_values[0]),
                 )
             ]
@@ -5314,11 +5331,11 @@ def pivot_table_data(
         for leaf, measure_name, cell_value in leaf_cells:
             if leaf in filled[row_key]:
                 row_key_repr = ", ".join(f"{k}={row_map[row_key][k]!r}" for k in rows)
-                measure_repr = f", measure {measure_name!r}" if measure_name else ""
-                raise ChartDataError(
-                    f"pivot_table_data: duplicate value for row ({row_key_repr})"
-                    f" and column {col_tuple!r}{measure_repr} — move the extra"
-                    f" field onto rows or columns."
+                raise ChartDataError.from_code(
+                    ERR_TABLE_PIVOT_DUPLICATE_CELL,
+                    row=row_key_repr,
+                    pivot_column=repr(col_tuple),
+                    measure=measure_name,
                 )
             row_map[row_key][leaf] = cell_value
             filled[row_key].add(leaf)

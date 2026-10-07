@@ -258,7 +258,7 @@ A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets �
 | same — the dimension, when it is genuinely **numeric** (e.g. a scatter's x column) | `style.axis_x.labels.format` — `number_format` never reaches the dimension axis | `style.axis_x.labels.format: integer` |
 | `heatmap` | no axis format applies — the value is on the color channel | — |
 | `kpi` headline value | `style.value.format` | `style.value.format: currency_whole` |
-| `kpi` support delta | `support.format` | `support.format: percent_delta` |
+| `kpi` support delta | `style.support.format` | `style.support.format: percent_delta` |
 | `table` column | `style.columns.<col>.format` | `style.columns.revenue.format: currency_whole` |
 
 **Never** put `format:` at chart root on `line` / `bar` / `area` / `scatter` / `kpi` — compile rejects it (`ERR-EXTRA-FIELD`).

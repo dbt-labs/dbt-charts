@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     HeatmapChart,
@@ -31,7 +32,6 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
 from dbt_charts.core.compile.resolve.chart._domain import _CartesianTickResolution
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
-    ChartTextVariables,
     _base_kwargs,
     _cartesian_kwargs,
     _title_font,
@@ -51,8 +51,10 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
+    declared_column_format,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 
 __all__ = [
     "_resolve_heatmap",
@@ -65,7 +67,7 @@ def _resolve_heatmap(
     chart_style_context: ChartStyleContext,
     width: float,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedHeatmapChart:
     validate_wide_measure_labels(normalized)
     data = dataset.all_rows()
@@ -133,6 +135,9 @@ def _resolve_heatmap(
         else None
     )
     tooltip_format_values = _column_numeric_values(data, color_field)
+    color_declared = declared_column_format(
+        normalized, color_field, chart_style_context.formats, time=False
+    )
     _ay, style_tail = build_cartesian_axes(
         normalized.id,
         "heatmap",
@@ -142,7 +147,16 @@ def _resolve_heatmap(
         ax_edge=None,
         ticks=_CartesianTickResolution((), None, None),
         column_forming=True,
-        measure_tooltip_format=None,
+        measure_tooltip_format=(
+            column_format(
+                "number",
+                chart_style_context.formats,
+                column=color_declared,
+                values=tooltip_format_values,
+            )
+            if color_declared is not None and tooltip_format_values
+            else None
+        ),
         tooltip_format_values=tooltip_format_values,
         structured_tooltip_eligible=has_structured_tooltip(
             normalized, heatmap_color_field=color_field
@@ -190,10 +204,11 @@ def _resolve_heatmap(
         **_cartesian_kwargs(
             normalized,
             chart_local_style_context,
-            variables,
+            display_text,
             data,
             "heatmap",
             panel_axes=dataset.axes,
+            stacked=False,
         ),
         chart_type="heatmap",
         style=ResolvedHeatmapStyle(

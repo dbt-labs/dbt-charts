@@ -146,24 +146,19 @@ def test_oklch_to_hex_refuses_a_lightness_outside_the_unit_range(
 
 class TestCssNamedColorToHex:
     """css_named_color_to_hex covers the full CSS Color Module / SVG 1.1
-    keyword set (148 names) -- a superset of _CSS_NAMED_COLORS
-    (compile/models/primitives.py, a narrower table scoped to border-
-    shorthand extraction). 'transparent' means 'no fill', not a color, and
-    has no hex, so it's excluded even though _CSS_NAMED_COLORS carries it."""
+    keyword set. 'transparent' means 'no fill', not a color, and
+    has no hex, so it is excluded."""
 
     def test_round_trips_every_name_in_the_table(self):
-        from dbt_charts.core.colors import css_named_color_to_hex
-        from dbt_charts.core.compile.models.primitives import _CSS_NAMED_COLORS
+        from dbt_charts.core.colors import CSS_COLOR_NAMES, css_named_color_to_hex
 
-        for name in _CSS_NAMED_COLORS - {"transparent"}:
+        assert len(CSS_COLOR_NAMES) == 148
+        for name in CSS_COLOR_NAMES:
             hex_value = css_named_color_to_hex(name)
             assert hex_value is not None, name
             assert is_sanitizable_color(hex_value), (name, hex_value)
 
-    def test_covers_names_outside_the_narrower_border_shorthand_table(self):
-        """mistyrose/aliceblue motivated widening past _CSS_NAMED_COLORS --
-        test_layout_rendering.py's nested-board fixtures author them as
-        style.background, and neither is in that narrower table."""
+    def test_covers_less_common_names(self):
         from dbt_charts.core.colors import css_named_color_to_hex
 
         assert css_named_color_to_hex("mistyrose") == "#ffe4e1"

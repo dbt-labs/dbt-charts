@@ -19,7 +19,7 @@ from ._base import _BaseResolvedChartFields
 class ResolvedKpiSupportConfig(KpiSupportConfig):
     format: ResolvedFormat | None = Field(
         default=None,
-        description="Resolved support value format; a date value defaults to date_short when None.",
+        description="Resolved `style.support.format`; a date value defaults to date_short when None.",
     )
     rules: tuple[ConditionalRule, ...] | None = Field(
         default=None,
@@ -60,9 +60,12 @@ class ResolvedKpiChart(_BaseResolvedChartFields):
         default=None,
         description="Optional support line below the headline.",
     )
+    glyph: str | None = Field(
+        default=None,
+        description="Text drawn before the headline value; None draws none.",
+    )
     variant: Literal["stacked", "inline", "compact"] = Field(
-        default="stacked",
-        description="Layout variant — dispatches to a distinct SVG emit path.",
+        description="Resolved `style.variant`; dispatches to a distinct SVG emit path.",
     )
     format: ResolvedFormat | None = Field(
         default=None,

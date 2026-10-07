@@ -38,6 +38,16 @@ def test_translates_between_dialects_and_keeps_sentinels() -> None:
     assert out.count(REL) == 1
 
 
+def test_fabric_uses_its_own_datetime_types() -> None:
+    out = translate_sql(
+        "select cast(a as timestamp), cast(b as timestamptz) from t",
+        "duckdb",
+        "fabric",
+    )
+    assert "DATETIME2(6)" in out
+    assert "DATETIMEOFFSET" not in out
+
+
 def test_integer_division_keeps_source_meaning_on_postgres() -> None:
     out = translate_sql("select x / nullif(y, 0) from t", "duckdb", "postgres")
     assert "DOUBLE PRECISION" in out

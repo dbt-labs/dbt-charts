@@ -15,9 +15,16 @@ DAG-safe path.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import re
+from typing import TYPE_CHECKING, Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+)
 
 from dbt_charts.core.compile.models.factories import (
     _PatchBase,
@@ -25,6 +32,7 @@ from dbt_charts.core.compile.models.factories import (
     build_patch_model_ext,
     register_patch,
 )
+from dbt_charts.core.compile.models.markers import Merge, Strategy
 from dbt_charts.core.compile.models.style.authored.table import (
     PaginationConfig,
     TableChartStylePatch,
@@ -80,7 +88,6 @@ from dbt_charts.core.compile.models.style.theme import (
     _GeoChartStyle,
     _QuantitativeAxisChartStyleMixin,
     _RadialChartStyle,
-    coerce_gap,
 )
 
 # ── Scale group patches ───────────────────────────────────────────────────────
@@ -337,13 +344,42 @@ else:
     _StylePatchBase = build_patch_model(Style)
 
 
-class StylePatch(_StylePatchBase):
-    """Authored overlay for Style: all fields optional. Adds CSS shorthand coercers."""
+_GAP_PATTERN = r"[0-9]+(?:\.[0-9]+)?(?:px)?"
 
-    @field_validator("gap", mode="before")
-    @classmethod
-    def _coerce_gap_value(cls, v: Any) -> Any:
-        return coerce_gap(v)
+
+def _parse_gap(
+    value: Any,  # type-state: explicit_any — before-validator boundary
+) -> Any:  # type-state: explicit_any — numbers pass through to float validation
+    if isinstance(value, bool):
+        raise ValueError(f"gap must be a number or a pixel length, got {value!r}")
+    if isinstance(value, str):
+        if not re.fullmatch(_GAP_PATTERN, value):
+            raise ValueError(
+                f"gap must be a number or a pixel length like '12px', got {value!r}"
+            )
+        return float(value.removesuffix("px"))
+    return value
+
+
+class StylePatch(_StylePatchBase):
+    """Authored overlay for Style: all fields optional."""
+
+    # Redeclared (not generated) because a float has no patch class to carry the
+    # shorthand; Merge repeats Style.gap's.
+    gap: Annotated[
+        Annotated[
+            float,
+            BeforeValidator(
+                _parse_gap,
+                json_schema_input_type=Annotated[
+                    str, StringConstraints(pattern=f"^{_GAP_PATTERN}$")
+                ]
+                | float,
+            ),
+        ]
+        | None,
+        Merge(Strategy.OVERRIDE, nested=Strategy.CHILD),
+    ] = Field(default=None, description=Style.model_fields["gap"].description)
 
 
 # BaseAxisGridStylePatch / AxisDomainStylePatch / AxisElementStylePatch are

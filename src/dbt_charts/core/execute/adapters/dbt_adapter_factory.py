@@ -92,6 +92,7 @@ _ADAPTER_TYPE_MAP: dict[str, tuple[str, str, str, str | None]] = {
         "SQLServerCredentials",
         "sqlserver",
     ),
+    "fabric": ("dbt.adapters.fabric", "FabricAdapter", "FabricCredentials", "fabric"),
 }
 
 SUPPORTED_ADAPTER_TYPES = frozenset(_ADAPTER_TYPE_MAP)
@@ -194,7 +195,9 @@ def _route_dbt_events_to_stderr() -> None:
     adapter it builds, and on stdout they corrupt ``dct query --json``.
     """
     for handler in logging.getLogger("stdout_log").handlers:
-        if isinstance(handler, logging.StreamHandler):
+        # dbt's own handler is a plain StreamHandler. Subclasses belong to others:
+        # pytest attaches its log-capture handlers to every non-propagating logger.
+        if type(handler) is logging.StreamHandler:
             # Not setStream(): it flushes the stream being replaced first, and a
             # stream a previous capture closed raises there.
             handler.stream = sys.stderr
@@ -438,6 +441,21 @@ class ConnectionSetupFailed(Exception):
     def __init__(self, cause: Exception) -> None:
         self.cause = cause
         super().__init__(str(cause))
+
+
+def cancel_open_queries(
+    adapter: Any,  # type-state: explicit_any — dbt adapter instance is untyped here
+) -> None:
+    """Cancel the queries running on a dbt adapter's connections, best effort.
+
+    Postgres and Snowflake send the cancel as a query of their own, so dbt needs
+    a connection on the calling thread; it skips that one when cancelling.
+    """
+    try:
+        with adapter.connection_named("dct-cancel"):
+            adapter.cancel_open_connections()
+    except Exception:  # noqa: BLE001 — best-effort shutdown
+        logger.warning("Could not cancel running warehouse queries", exc_info=True)
 
 
 @contextmanager

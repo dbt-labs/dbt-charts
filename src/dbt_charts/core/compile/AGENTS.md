@@ -143,6 +143,18 @@ obviously screaming*. Hold these when touching `compile/`:
   the sub-unit `_full` swap) no longer apply. Don't add a kind → format map
   (`formats.defaults`, `format_defaults`) beside the names: it would map each
   name to itself. Where a kind lacks a same-named format, add one.
+- **One merge rule, in `column_format`.** A value's format is the layers
+  `fmt` (the chart's own slot), `column` (the query's `formats:`) and `board`
+  (board- or theme-level slot, chart-wide `number_format`), over the board's
+  default for the kind. Callers pass each layer as its own input and never
+  pre-merge them: every field (spec, affix, notation, options) comes from the
+  strongest layer that sets it, a layer's spec of the other kind is ignored (the
+  slot's own `fmt` aside), and the engine's rules apply only when the spec came
+  from the default. An axis is the exception: the cascade has already merged
+  its layers, so the declared format enters as the cascade's chart-level layer
+  (`axis_layer_format`). An axis painting several columns takes it only when they
+  all agree. Don't take a d3 spec as a query `formats:` value: names resolve
+  against the rendering board's `style.formats`.
 - **The type ladder is coupled to board geometry.** Object-title width tiers
   (`resolve/style/typography.py`) derive from the default board's 24-column grid via a single
   global reference. Changing `frame.width` / `frame.margin` in `_base.yaml` moves the

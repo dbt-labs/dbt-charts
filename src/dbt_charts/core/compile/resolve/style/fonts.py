@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, TypeVar
 from pydantic import BaseModel
 
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.models.primitives import FontStyle, NamedFont
+from dbt_charts.core.compile.models.primitives import NamedFont, SingleLineFontStyle
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FONT_REGISTRY,
     ERR_FONT_UNKNOWN,
@@ -93,14 +93,22 @@ def expand_named_fonts(
 
     ``path`` is the dotted authored location of ``node``, used in errors.
     """
-    if isinstance(node, FontStyle):
+    if isinstance(node, SingleLineFontStyle):
         if node.extends is None:
             return node
         _check_known(node.extends, registry, path)
         entry = registry[node.extends]
         assert entry is not None
+        # A single-line slot has no leading, so a registry font's is dropped.
+        slot_fields = type(node).model_fields
         fields = {
-            **entry.model_dump(exclude_unset=True, exclude=set(_REGISTRY_ONLY)),
+            **{
+                k: v
+                for k, v in entry.model_dump(
+                    exclude_unset=True, exclude=set(_REGISTRY_ONLY)
+                ).items()
+                if k in slot_fields
+            },
             **node.model_dump(exclude_unset=True, exclude=set(_REGISTRY_ONLY)),
         }
         return type(node).model_validate(fields)
@@ -134,7 +142,7 @@ def _slot_graph() -> Mapping[str, str]:
     return build_slot_graph(Style)
 
 
-def _slot_at(style: BaseModel, path: str) -> FontStyle | None:
+def _slot_at(style: BaseModel, path: str) -> SingleLineFontStyle | None:
     node: object = style  # type-state: object_annotation — a walk down model attributes
     for segment in path.split("."):
         node = getattr(
@@ -142,7 +150,7 @@ def _slot_at(style: BaseModel, path: str) -> FontStyle | None:
         )  # type-state: silent_fallback — a path off the model has no slot
         if node is None:
             return None
-    return node if isinstance(node, FontStyle) else None
+    return node if isinstance(node, SingleLineFontStyle) else None
 
 
 def inherited_font_name(

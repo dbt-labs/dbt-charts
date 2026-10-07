@@ -36,10 +36,11 @@ from pydantic import BaseModel
 from d3_format import parse as _d3_parse
 from d3_format.errors import D3FormatError
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import resolve_format_parts
+from dbt_charts.core.compile.format import missing_format_columns, resolve_format_parts
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.markers import Format
 from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.query.normalized import Query, ValuesQuery
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_TIME_UNSUPPORTED,
     ERR_FORMAT_INVALID,
@@ -47,7 +48,10 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
     ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
     ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED,
+    ERR_QUERY_FORMAT_SPEC,
+    ERR_QUERY_FORMAT_UNKNOWN,
 )
+from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_FORMAT_COLUMN_MISSING
 from dbt_charts.core.text.format_d3 import (
     PYTHON_STRFTIME_DIRECTIVES,
     VEGA_SAFE_TIME_DIRECTIVES,
@@ -449,6 +453,44 @@ def _check_redefinition_kind(name: str, target: str | FormatConfig) -> None:
         )
 
 
+def _validate_query_formats(
+    query_name: str, query: Query, formats: dict[str, str | FormatConfig]
+) -> None:
+    """Check a query's ``formats:`` values are names this board has, and, for a
+    ``values`` query whose columns are literal, that every key is a column."""
+    if not query.formats:
+        return
+    for column, name in query.formats.items():
+        if name in ALL_PREDEFINED_NAMES or name in formats:
+            continue
+        try:
+            _d3_parse(name)
+            is_spec = True
+        except D3FormatError:
+            is_spec = is_time_format(name)
+        if is_spec:
+            raise CompilationError.from_code(
+                ERR_QUERY_FORMAT_SPEC, query=query_name, column=column, spec=name
+            )
+        raise CompilationError.from_code(
+            ERR_QUERY_FORMAT_UNKNOWN,
+            query=query_name,
+            column=column,
+            spec=name,
+            available=sorted({*formats, *ALL_PREDEFINED_NAMES}),
+        )
+    if isinstance(query, ValuesQuery):
+        returned = set(query.columns) if query.columns else set().union(*query.rows)
+        if returned:
+            for column in missing_format_columns(query.formats, returned):
+                raise CompilationError.from_code(
+                    ERR_QUERY_FORMAT_COLUMN_MISSING,
+                    query=query_name,
+                    column=column,
+                    columns=", ".join(sorted(returned)),
+                )
+
+
 def validate_board_format_specs(board: Board) -> None:
     """Walk a normalized Board tree, validating every authored format string.
 
@@ -477,6 +519,8 @@ def _validate_board(board: Board, validated: set[int]) -> None:
     # would let `formats: {mine: bogus}` reach the render-time raise. A preset
     # target is judged per slot, where the alias is used. An engine name
     # redefined here must keep its kind: every slot reading it expects it.
+    for query_name, query in board.queries.items():
+        _validate_query_formats(query_name, query, formats)
     for alias, target in formats.items():
         _check_redefinition_kind(alias, target)
         _validate_spec(
@@ -536,6 +580,12 @@ def _validate_board(board: Board, validated: set[int]) -> None:
         if id(chart) in validated:
             continue
         validated.add(id(chart))
+        if (
+            chart.type != "callout"
+            and chart.query_is_inline
+            and chart.query is not None
+        ):
+            _validate_query_formats(chart_id, chart.query, formats)
         for field_path, spec, timed, is_vega, kind, reject_affix in _iter_format_slots(
             chart, f"charts.{chart_id}", False
         ):

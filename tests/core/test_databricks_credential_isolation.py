@@ -23,11 +23,15 @@ identity each thread actually saw at the read.
 
 import threading
 
+import pytest
 from dbt.adapters.contracts.connection import ConnectionState
 from dbt.adapters.databricks import connections as dbx_connections
 from dbt.adapters.databricks.connections import DatabricksDBTConnection
+from dbt_common.exceptions import DbtConfigError
 
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+pytestmark = pytest.mark.usefixtures("no_spog_probe")
 
 _BASE_CONFIG = {
     "type": "databricks",
@@ -138,3 +142,34 @@ def test_concurrent_opens_do_not_cross_tenant_credentials():
     # ITS OWN credential manager. Today the shared class var crosses them.
     assert recorded["token-A"] is manager_by_token["token-A"]
     assert recorded["token-B"] is manager_by_token["token-B"]
+
+
+def test_open_rejects_conflicting_workspace_ids_across_computes():
+    adapter = build_adapter(
+        {
+            **_BASE_CONFIG,
+            "token": "t",
+            "http_path": "/sql/1.0/warehouses/abc?o=1",
+            "compute": {"c": {"http_path": "/sql/1.0/warehouses/def?o=2"}},
+        },
+        register_macros=False,
+    )
+    connection = DatabricksDBTConnection(
+        type="databricks",
+        name="conn",
+        credentials=adapter.config.credentials,
+        state=ConnectionState.INIT,
+    )
+    connection.http_path = adapter.config.credentials.http_path
+
+    with pytest.raises(DbtConfigError, match="conflicting workspace-id"):
+        adapter.connections.open(connection)
+
+
+def test_adapter_registers_has_dbr_capability_parse_replacement():
+    adapter = build_adapter({**_BASE_CONFIG, "token": "t"}, register_macros=False)
+
+    assert (
+        adapter._parse_replacements_["has_dbr_capability"]
+        == adapter._has_dbr_capability_parse
+    )

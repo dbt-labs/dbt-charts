@@ -531,7 +531,7 @@ def test_nav_failure_does_not_break_the_board(
     assert "dbt-nav" not in response.text
 
 
-_BROKEN_BOARD = "title: Broken\n"  # no layout — always fails Board validation
+_BROKEN_BOARD = "notes: Broken\n"  # notes alone are no content: fails validation
 
 
 def test_error_page_includes_nav(tmp_path: Path) -> None:

@@ -1,23 +1,34 @@
-"""Authored KPI chart, semantic tone, and support-line block."""
+"""Authored KPI chart and its support-line block."""
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from dbt_charts.core.compile.models.markers import Channel, DisplayText, Format
-from dbt_charts.core.compile.models.primitives import FormatConfig, ToneLiteral
-from dbt_charts.core.compile.models.schema_names import FormatAlias
+from dbt_charts.core.compile.models.constraints import (
+    AtLeastOneOf,
+    ConstrainedModel,
+    Constraint,
+)
+from dbt_charts.core.compile.models.markers import Channel, DisplayText
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
 from ._base import _BaseChartFields, _ConditionalFormattingField
 
 
-class KpiSupportConfig(BaseModel):
+class KpiSupportConfig(ConstrainedModel):
     """Support-line block authored alongside a KPI's main value."""
 
     model_config = ConfigDict(extra="forbid")
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtLeastOneOf(
+            ("value", "label", "glyph"),
+            "Empty `support:` block. Set at least one of `value`, "
+            "`label`, or `glyph`, or omit the block entirely.",
+        ),
+    )
 
     value: str | None = Field(
         default=None,
@@ -27,17 +38,9 @@ class KpiSupportConfig(BaseModel):
         default=None,
         description="Trailing explainer text rendered beside the support value.",
     )
-    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
-        default=None,
-        description="How the value is written: a D3 spec, a preset name, or a format block. A date value defaults to date_short when unformatted.",
-    )
     glyph: str | None = Field(
         default=None,
         description="Text shown before the value (e.g. '▲', '▼', '●').",
-    )
-    tone: ToneLiteral | None = Field(
-        default=None,
-        description="Semantic styling for the support value/glyph.",
     )
 
     @model_validator(mode="before")
@@ -47,12 +50,12 @@ class KpiSupportConfig(BaseModel):
             if "value_color" in data:
                 raise ValueError(
                     "value_color no longer accepted on support. "
-                    "Use support.tone instead."
+                    "Use style.support.tone instead."
                 )
             if "glyph_color" in data:
                 raise ValueError(
                     "glyph_color no longer accepted on support. "
-                    "Use support.tone instead."
+                    "Use style.support.tone instead."
                 )
         return data
 
@@ -73,15 +76,6 @@ class KpiSupportConfig(BaseModel):
                     "    value: delta_pct"
                 )
         return data
-
-    @model_validator(mode="after")
-    def _require_non_empty(self) -> KpiSupportConfig:
-        if self.value is None and self.label is None and self.glyph is None:
-            raise ValueError(
-                "Empty `support:` block. Set at least one of `value`, "
-                "`label`, or `glyph`, or omit the block entirely."
-            )
-        return self
 
 
 class KpiChart(_BaseChartFields, _ConditionalFormattingField):
@@ -106,28 +100,22 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
         DisplayText(),
         Field(
             default=None,
-            description="Caption naming what the headline value measures; `variant` decides where it sits.",
+            description="Caption naming what the headline value measures; `style.variant` places it.",
         ),
     ]
-    variant: Annotated[
-        Literal["stacked", "inline", "compact"],
+    # None = no glyph before the headline value.
+    glyph: Annotated[
+        str | None,
         Field(
-            default="stacked",
-            description=(
-                "Layout variant. 'stacked' (default) shows value, label, and support "
-                "on three vertical lines. 'inline' lays value, label, and support "
-                "out on a single baseline-aligned row. 'compact' is 2-column: big "
-                "value on the left, up to two stacked lines on the right with the "
-                "bottom line sharing baseline with the value; a lone `support` "
-                "block splits across the two right-column lines."
-            ),
+            default=None,
+            description="Text shown before the headline value (e.g. '▲', '●').",
         ),
     ]
     support: Annotated[
         KpiSupportConfig | None,
         Field(
             default=None,
-            description="Secondary block, a delta, comparison, or note; `variant` decides where it sits.",
+            description="Secondary block, a delta, comparison, or note; `style.variant` places it.",
         ),
     ]
     style: Annotated[
@@ -182,23 +170,15 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
     @classmethod
     def _reject_moved_fields_at_chart_root(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            if "glyph" in data:
-                raise ValueError(
-                    "'glyph:' has moved from the KPI chart root into the style namespace.\n"
-                    "Use style.glyph.character instead:\n\n"
-                    "  style:\n"
-                    "    glyph:\n"
-                    "      character: '▲'\n"
-                )
             if "tone" in data:
                 raise ValueError(
                     "'tone:' is not a KPI chart root field.\n"
                     "Tone lives on the block it paints: the headline value stays "
                     "neutral, and only the support row carries semantic color.\n"
-                    "Use support.tone instead:\n\n"
-                    "  support:\n"
-                    "    value: <delta_column>\n"
-                    "    tone: positive\n"
+                    "Use style.support.tone instead:\n\n"
+                    "  style:\n"
+                    "    support:\n"
+                    "      tone: positive\n"
                 )
             for key in ("format", "formatter"):
                 if key in data:

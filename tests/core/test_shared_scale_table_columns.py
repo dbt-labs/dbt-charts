@@ -13,13 +13,13 @@ from decimal import Decimal
 from typing import Any
 
 from d3_format import format as _d3_format, parse as _d3_parse
+from dbt_charts.core.compile.format_value import format_kpi_parts
 from dbt_charts.core.compile.models.style.authored.table import TableColumnConfig
 from dbt_charts.core.compile.models.style.resolved.table import (
     ResolvedColumnSharedScale,
 )
 from dbt_charts.core.compile.resolve.chart._table import _with_resolved_scale_stops
 from dbt_charts.core.fonts import DBT_SANS_TABULAR_FONT_FAMILY
-from dbt_charts.core.render.format_utils import format_kpi_parts
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     column_digit_format,
@@ -82,6 +82,10 @@ class TestResolveSharedScaleForTableColumn:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -130,6 +134,10 @@ class TestResolveSharedScaleForTableColumn:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)],
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         assert resolved["amount"].shared_scale is not None
@@ -224,6 +232,10 @@ class TestFormatKpiPartsSharedScale:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         scale = resolved["amount"].shared_scale
@@ -456,6 +468,10 @@ class TestSubTierPrecisionAndRefusal:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -572,6 +588,10 @@ class TestPadTableCappedAtObservedDepth:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -604,6 +624,10 @@ class TestPadTableCappedAtObservedDepth:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -629,6 +653,10 @@ class TestSizingFunctionsRegression:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         return resolved["amount"]
@@ -729,6 +757,9 @@ class TestAllowSharedScaleGate:
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
             allow_shared_scale=allow_shared_scale,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -764,6 +795,10 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -796,6 +831,10 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -831,6 +870,9 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
             allow_shared_scale=False,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -855,6 +897,10 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -877,6 +923,10 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -902,6 +952,10 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -935,6 +989,10 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -959,6 +1017,13 @@ def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
             formats=formats,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
+            allow_shared_scale=True,
+            own_formats={
+                n: c.format
+                for n, c in {"amount": TableColumnConfig(format=fmt)}.items()
+            },
+            defaults_format=None,
+            declared=None,
         )
         assert resolved is not None
         return resolved["amount"].decimal_pad_table

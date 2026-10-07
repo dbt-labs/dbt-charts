@@ -529,12 +529,14 @@ class TestInitProjectDirErrors:
 class TestInitMcp:
     """init mcp subcommand (canonical entry point for MCP wiring)."""
 
-    def test_init_mcp_print_emits_json(self, tmp_path: Path) -> None:
+    def test_init_mcp_print_emits_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """dct init mcp print returns parseable JSON MCP config."""
         _runner = CliRunner()
-        with _runner.isolated_filesystem(temp_dir=tmp_path):
-            (Path("dbt_charts.yml")).write_text("name: test\n", encoding="utf-8")
-            result = _runner.invoke(app, ["init", "mcp", "print"])
+        monkeypatch.chdir(tmp_path)
+        (Path("dbt_charts.yml")).write_text("name: test\n", encoding="utf-8")
+        result = _runner.invoke(app, ["init", "mcp", "print"])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert "mcpServers" in payload

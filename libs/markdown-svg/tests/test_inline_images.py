@@ -415,11 +415,7 @@ class TestInlineImageEscapesHostileInput:
 
         from mdsvg import Style
 
-        style = Style(
-            image_preserve_aspect_ratio=self.HOSTILE,
-            code_background=self.HOSTILE,
-            link_color=self.HOSTILE,
-        )
+        style = Style(image_preserve_aspect_ratio="xMinYMin slice")
         svg = SVGRenderer(style=style).render(
             list(parse(markdown)), width=400, padding=0
         )

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import NamedTuple
 
+from dbt_charts.core.compile.conditions import DrawnPredicate, drawn_items, is_drawn
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
@@ -93,11 +94,13 @@ class WidthMeasurer:
     or prose block interpolates. ``chart`` is the one seam: the data-free
     default is the config width, and the data-aware sizing pass injects one that
     asks tables for their column widths. It receives the owning board's style
-    and context.
+    and context. ``drawn`` decides which items take space: the render pass
+    injects the one that also reads query-backed ``visible:`` probes.
     """
 
     variable_values: VariableValues
     chart: ChartWidth = config_chart_width
+    drawn: DrawnPredicate = is_drawn
 
     def board_own_width(self, board: Board, is_root: bool) -> IntrinsicWidth:
         """What ``board``'s own content needs, inside its page margin.
@@ -322,7 +325,7 @@ def resolve_cols_widths(
 
 
 def _fold_layout(
-    layout: Layout, values: list[float | None], gap: float
+    layout: Layout, items: list[LayoutItem], values: list[float | None], gap: float
 ) -> float | None:
     """One axis (min or preferred) of a layout from its items'; None is absent.
 
@@ -340,7 +343,7 @@ def _fold_layout(
         columns = layout.columns if layout.columns is not None else DEFAULT_GRID_COLUMNS
         required_track_width = 0.0
         has_measured_item = False
-        for item, width in zip(layout.items, values, strict=True):
+        for item, width in zip(items, values, strict=True):
             if width is None:
                 continue
             start = item.col if item.col is not None else 0
@@ -405,11 +408,12 @@ def layout_intrinsic_width(
             measurer=measurer,
         )
 
-    widths = [item_width(item) for item in layout.items]
+    items = drawn_items(layout.items, measurer.variable_values, measurer.drawn)
+    widths = [item_width(item) for item in items]
     effective_gap = gap + card_gap
     return IntrinsicWidth(
-        _fold_layout(layout, [w.min for w in widths], effective_gap),
-        _fold_layout(layout, [w.preferred for w in widths], effective_gap),
+        _fold_layout(layout, items, [w.min for w in widths], effective_gap),
+        _fold_layout(layout, items, [w.preferred for w in widths], effective_gap),
     )
 
 
@@ -450,6 +454,7 @@ def board_container_width(
     board: Board,
     variable_values: VariableValues,
     chart: ChartWidth = config_chart_width,
+    drawn: DrawnPredicate = is_drawn,
 ) -> float:
     """Final board container width: ``frame.width`` exactly, else the hug.
 
@@ -463,7 +468,7 @@ def board_container_width(
     Single source for the container computation shared by the render sizing
     pass. ``variable_values`` resolve the Jinja a title or prose block
     interpolates; ``chart`` is the data-aware sizing pass's seam for measuring
-    tables from their data.
+    tables from their data; ``drawn`` is the one for which items take space.
     """
     frame = board.resolved_style.frame
     if frame.width is not None:
@@ -475,7 +480,7 @@ def board_container_width(
         True,
         max_content_width=max_content_width,
         card_gap=float(frame.card_gap) if board.card_gap else 0.0,
-        measurer=WidthMeasurer(variable_values, chart),
+        measurer=WidthMeasurer(variable_values, chart, drawn),
     )
     preferred = max_content_width if width.preferred is None else width.preferred
     minimum = 0.0 if width.min is None else width.min
@@ -500,9 +505,13 @@ def nested_content_geometry(nested: Board, item_width: float) -> tuple[float, fl
 
 
 def _layout_item_widths(
-    layout: Layout, available_width: float, gap: float, card_gap: float
+    layout: Layout,
+    items: list[LayoutItem],
+    available_width: float,
+    gap: float,
+    card_gap: float,
 ) -> list[float]:
-    """Slot width per item, mirroring the sizing pass's width assignment.
+    """Slot width per drawn item, mirroring the sizing pass's width assignment.
 
     rows give an item its authored width (capped at the row) or the full
     available width; tabs give every item the full available width; cols
@@ -511,32 +520,35 @@ def _layout_item_widths(
     """
     effective_gap = gap + card_gap
     if layout.type == "rows":
-        return [rows_item_width(item, available_width) for item in layout.items]
+        return [rows_item_width(item, available_width) for item in items]
     if layout.type == "cols":
-        n = len(layout.items)
+        n = len(items)
         content_width = available_width - effective_gap * (n - 1)
-        specified = [
-            parse_dimension(item.user_width, content_width) for item in layout.items
-        ]
+        specified = [parse_dimension(item.user_width, content_width) for item in items]
         return resolve_cols_widths(specified, content_width, n)
     if layout.type == "grid":
         columns = layout.columns if layout.columns is not None else DEFAULT_GRID_COLUMNS
         col_width = (available_width - effective_gap * (columns - 1)) / columns
         return [
             grid_span_width(col_width, item_grid_span(item)[0], effective_gap)
-            for item in layout.items
+            for item in items
         ]
-    return [available_width] * len(layout.items)
+    return [available_width] * len(items)
 
 
-def prose_slot_widths(board: Board, content_width: float) -> dict[int, float]:
+def prose_slot_widths(
+    board: Board,
+    content_width: float,
+    variable_values: VariableValues,
+    drawn: DrawnPredicate,
+) -> dict[int, float]:
     """The px slot each text-bearing board in the tree gives its prose, from config alone.
 
     Keyed by ``id(board)``. Mirrors the width arithmetic of the sizing pass --
     which never depends on query data or measured heights -- so the slot is the
     one the text is sized and drawn at. ``content_width`` is the root board's
     content width; a nested board's text sits inside its padding, margin and
-    ``card_padding``.
+    ``card_padding``. A hidden item takes no slot, as in the sizing pass.
     """
     slots: dict[int, float] = {}
     card_gap = float(board.resolved_style.frame.card_gap) if board.card_gap else 0.0
@@ -545,8 +557,9 @@ def prose_slot_widths(board: Board, content_width: float) -> dict[int, float]:
         if node.text:
             pad = float(node.resolved_style.frame.card_padding)
             slots[id(node)] = max(available - 2 * pad, 1.0)
-        widths = _layout_item_widths(node.layout, available, gap, card_gap)
-        for item, width in zip(node.layout.items, widths, strict=True):
+        items = drawn_items(node.layout.items, variable_values, drawn)
+        widths = _layout_item_widths(node.layout, items, available, gap, card_gap)
+        for item, width in zip(items, widths, strict=True):
             if item.board is not None:
                 visit(item.board, *nested_content_geometry(item.board, width))
 

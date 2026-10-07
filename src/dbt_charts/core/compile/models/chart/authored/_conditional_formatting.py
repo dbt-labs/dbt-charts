@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -13,8 +13,16 @@ from pydantic import (
     model_validator,
 )
 
+from dbt_charts.core.compile.models.constraints import (
+    AtLeastOneOf,
+    AtMostOneOf,
+    ConstrainedModel,
+    Constraint,
+    IsSet,
+    Requires,
+)
 from dbt_charts.core.compile.models.primitives import FontStyle, ToneLiteral
-from dbt_charts.core.compile.models.style.authored import _validate_glyph_pair
+from dbt_charts.core.compile.models.style.authored import _validate_glyph_text
 from dbt_charts.core.compile.models.style.theme import (
     VALID_FONT_WEIGHTS,
     font_weight_as_css,
@@ -22,7 +30,7 @@ from dbt_charts.core.compile.models.style.theme import (
 from dbt_charts.core.utils import coerce_numeric_cell
 
 
-class _PredicateBase(BaseModel):
+class _PredicateBase(ConstrainedModel):
     """Shared predicate fields and helpers for conditional rules."""
 
     # extra="forbid": rejects unknown fields like all authored models.
@@ -55,10 +63,13 @@ class _PredicateBase(BaseModel):
     )
     between: list[int | float] | None = Field(
         default=None,
+        min_length=2,
+        max_length=2,
         description="Match rows where the column value falls in [low, high] (inclusive).",
     )
     in_: list[Any] | None = Field(
         default=None,
+        min_length=1,
         alias="in",
         description="Match rows where the column value is in this list.",
     )
@@ -73,43 +84,14 @@ class _PredicateBase(BaseModel):
     @field_validator("between")
     @classmethod
     def _validate_between(cls, v: list[int | float] | None) -> list[int | float] | None:
-        if v is None:
-            return v
-        if len(v) != 2:
-            raise ValueError(
-                f"between expects exactly 2 values [low, high], got {len(v)}"
-            )
-        low, high = v
-        if low > high:
-            raise ValueError(f"between requires low <= high, got [{low}, {high}]")
-        return v
-
-    @field_validator("in_")
-    @classmethod
-    def _validate_in(cls, v: list[Any] | None) -> list[Any] | None:
-        if v is None:
-            return v
-        if len(v) == 0:
-            raise ValueError("in must be a non-empty list")
+        if v is not None and v[0] > v[1]:
+            raise ValueError(f"between requires low <= high, got [{v[0]}, {v[1]}]")
         return v
 
 
-# Derived from _PredicateBase.model_fields — no manual maintenance needed.
-# Pydantic preserves field declaration order, so iteration order is stable.
-_PREDICATE_OPS: tuple[str, ...] = tuple(_PredicateBase.model_fields.keys())
-
-
-def _validate_exactly_one_predicate(obj: Any) -> None:
-    """Raise ValueError if obj does not have exactly one condition operator set."""
-    ops = [f for f in _PREDICATE_OPS if getattr(obj, f) is not None]
-    if len(ops) == 0:
-        raise ValueError(
-            f"{type(obj).__name__} requires exactly one condition operator"
-        )
-    if len(ops) > 1:
-        raise ValueError(
-            f"{type(obj).__name__} requires exactly one condition operator, got: {ops}"
-        )
+_PREDICATE_KEYS: tuple[str, ...] = tuple(
+    field.alias or name for name, field in _PredicateBase.model_fields.items()
+)
 
 
 def _in_value_matches(candidate: Any, value: Any) -> bool:
@@ -158,6 +140,40 @@ class ConditionalRule(_PredicateBase):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtLeastOneOf(
+            _PREDICATE_KEYS, "ConditionalRule requires exactly one condition operator"
+        ),
+        AtMostOneOf(
+            _PREDICATE_KEYS,
+            "ConditionalRule requires exactly one condition operator, got: {set}",
+        ),
+        Requires(
+            ("glyph",),
+            "ConditionalRule glyph_color requires glyph to be set",
+            when=(IsSet("glyph_color"),),
+        ),
+        Requires(
+            ("glyph",),
+            "ConditionalRule tone requires glyph to be set",
+            when=(IsSet("tone"),),
+        ),
+        AtLeastOneOf(
+            (
+                "background",
+                "font.extends",
+                "font.color",
+                "font.weight",
+                "font.style",
+                "font.decoration",
+                "glyph",
+            ),
+            "ConditionalRule requires at least one style override "
+            "(background, font.color, font.weight, font.style, "
+            "font.decoration, or glyph)",
+        ),
+    )
+
     # Style overrides — at least one must be set
     background: str | None = Field(
         default=None, description="Cell background color applied when the rule matches."
@@ -181,23 +197,7 @@ class ConditionalRule(_PredicateBase):
 
     @model_validator(mode="after")
     def _validate_rule(self) -> ConditionalRule:
-        _validate_exactly_one_predicate(self)
-        _font_effective = self.font is not None and (
-            self.font.extends is not None
-            or self.font.color is not None
-            or self.font.weight is not None
-            or self.font.style is not None
-            or self.font.decoration is not None
-        )
-        _validate_glyph_pair(self.glyph, self.glyph_color, label="ConditionalRule")
-        if self.tone is not None and self.glyph is None:
-            raise ValueError("ConditionalRule tone requires glyph to be set")
-        if self.background is None and not _font_effective and self.glyph is None:
-            raise ValueError(
-                "ConditionalRule requires at least one style override "
-                "(background, font.color, font.weight, font.style, "
-                "font.decoration, or glyph)"
-            )
+        _validate_glyph_text(self.glyph, label="ConditionalRule")
         if self.font is not None and self.font.weight is not None:
             if font_weight_as_css(self.font.weight) not in VALID_FONT_WEIGHTS:
                 raise ValueError(

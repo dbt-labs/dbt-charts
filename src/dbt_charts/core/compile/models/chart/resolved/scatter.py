@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedScatterStyle
 
 from ._base import _CartesianResolvedChartFields
@@ -31,6 +32,13 @@ class ResolvedScatterChart(_CartesianResolvedChartFields):
     )
     chart_type: Literal["scatter"] = Field(
         description="Discriminator key; always 'scatter'.",
+    )
+    x_tooltip_format: ResolvedFormat | None = Field(
+        default=None,
+        description=(
+            "Tooltip format for a numeric x the query names a format for; None "
+            "when x takes the measure's digit spec."
+        ),
     )
     size: str | None = Field(
         default=None,

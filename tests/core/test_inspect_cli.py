@@ -154,12 +154,10 @@ class TestInspectEject:
 
     def test_eject_invalid_template_raises(self) -> None:
         """Ejecting invalid template name should raise error."""
-        from click.exceptions import Exit
-
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "charts" / "inspect"
 
-            with pytest.raises(Exit):
+            with pytest.raises(typer.Exit):
                 eject_command(
                     templates=["nonexistent_template"],
                     all_templates=False,

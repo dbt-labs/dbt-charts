@@ -62,10 +62,6 @@ class InvalidColorError(DbtChartsError):
 
 # The full CSS Color Module / SVG 1.1 extended keyword set, minus
 # "transparent" -- that name means "no fill", not a color, and has no hex.
-# A superset of _CSS_NAMED_COLORS (compile/models/primitives.py), a
-# narrower table scoped to extracting a keyword from a border-shorthand
-# string, not the full legal vocabulary for a Color()-faceted field like
-# style.background.
 _CSS_NAMED_COLOR_HEX: dict[str, str] = {
     "aliceblue": "#f0f8ff",
     "antiquewhite": "#faebd7",
@@ -216,6 +212,8 @@ _CSS_NAMED_COLOR_HEX: dict[str, str] = {
     "yellow": "#ffff00",
     "yellowgreen": "#9acd32",
 }
+
+CSS_COLOR_NAMES: frozenset[str] = frozenset(_CSS_NAMED_COLOR_HEX)
 
 
 def css_named_color_to_hex(name: str) -> str | None:

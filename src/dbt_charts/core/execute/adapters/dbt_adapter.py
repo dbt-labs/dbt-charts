@@ -9,6 +9,7 @@ supporting dbt-specific features like ref() and source() resolution.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path  # noqa: TID251 — reads dbt profiles.yml/dbt_project.yml
 from typing import TYPE_CHECKING, Any
 
@@ -48,12 +49,14 @@ from dbt_charts.core.execute.adapters.base import (
     classify_warehouse_error,
     connection_failure,
     handle_adapter_error,
+    interrupted,
     plain_error,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
     SUPPORTED_ADAPTER_TYPES,
     ConnectionSetupFailed,
+    cancel_open_queries,
     import_adapter_module,
     open_connection,
 )
@@ -296,6 +299,12 @@ class DbtAdapter(BaseAdapter):
         # field before the adapter another thread short-circuits on.
         self._dialect: str = ""
         self._dbt_refs = DbtRefResolver(project)
+        self._interrupted = threading.Event()
+
+    def interrupt(self) -> None:
+        self._interrupted.set()
+        if self._adapter is not None:
+            cancel_open_queries(self._adapter)
 
     @property
     def supported_types(self) -> set[str]:
@@ -336,6 +345,8 @@ class DbtAdapter(BaseAdapter):
         """
         if not is_sql_query(query):
             return plain_error(f"Expected SQL query, got {query.query_type}")
+        if self._interrupted.is_set():
+            return interrupted()
 
         try:
             adapter = (
@@ -384,6 +395,8 @@ class DbtAdapter(BaseAdapter):
                         limit=driver_limit,
                     )
                 except Exception as e:  # noqa: BLE001 — any driver's rejection, classified below
+                    if self._interrupted.is_set():
+                        return interrupted()
                     return classify_warehouse_error(
                         "dbt SQL execution", e, self._dialect
                     )

@@ -495,7 +495,8 @@ def test_anchor_index_is_numbered_after_every_filter():
 
     assert ops.count("window") == 2
     assert ops.index("filter") < ops.index("window", ops.index("window") + 1)
-    assert ops[-1] == "calculate"
+    # The trailing filter splits the hung anchor cell onto its own layer.
+    assert ops[-2:] == ["calculate", "filter"]
 
 
 def test_anchor_index_is_numbered_after_the_label_period_filter():
@@ -509,7 +510,8 @@ def test_anchor_index_is_numbered_after_the_label_period_filter():
     )
 
     assert ops.index("filter") < ops.index("window")
-    assert ops[-1] == "calculate"
+    # The trailing filter splits the hung anchor cell onto its own layer.
+    assert ops[-2:] == ["calculate", "filter"]
 
 
 def test_each_row_anchors_independently():
@@ -736,7 +738,8 @@ def test_per_series_rows_anchor_after_their_own_series_filter():
 
     ops = _transform_ops(spec, 1)
     assert ops.index("filter") < ops.index("window")
-    assert ops[-1] == "calculate"
+    # The trailing filter splits the hung anchor cell onto its own layer.
+    assert ops[-2:] == ["calculate", "filter"]
 
 
 def test_a_small_value_keeps_a_significant_digit_instead_of_printing_zero():
@@ -856,7 +859,7 @@ def test_the_painted_text_and_the_measured_text_agree_exactly():
     """Parity is the whole design: the lane is measured with `bare_text` and
     painted with the emitted expression. Emulate the emitted expression's bare
     branch in Python and require it to equal `bare_text` on real values."""
-    from dbt_charts.core.render.format_utils import format_value
+    from dbt_charts.core.compile.format_value import format_value
 
     for spec, values in (
         ("$,.3s", _goal_values(441e6, 448e6, 5e6)),
@@ -1485,3 +1488,284 @@ def test_repeat_every_on_an_affixless_house_format_paints_plain_digits():
     assert [strip.bare_text(v) for v in (168000.0, -41500.0)] == ["168,000", "−41,500"]
     assert strip.anchor_text(168000.0) == "168,000"
     assert _paint(strip, [168000.0, -41500.0]) == ["168,000", "−41,500"]
+
+
+def _render_share_strip(
+    fmt: str, shares: list[float], extra_entries: list[dict] | None = None
+) -> str:
+    pytest.importorskip("vl_convert")
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.config import reset_config
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+        resolve_style,
+    )
+    from dbt_charts.core.render.chart.vega_lite import render_chart
+
+    reset_config()
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "hang_suffix",
+            "type": "bar",
+            "x": "month",
+            "y": "share",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {
+                "entries": [*(extra_entries or []), {"source": "share", "format": fmt}]
+            },
+            "style": {"orientation": "vertical"},
+        }
+    )
+    data = [
+        {"month": f"m{i:02d}", "share": v, "big": 1000.0 + i}
+        for i, v in enumerate(shares)
+    ]
+    svg = render_chart(
+        chart,
+        resolve_style(get_theme_style()),
+        resolve_chart_style_context(get_theme_style()),
+        data,
+        format="svg",
+        width=600,
+        height=320,
+    )
+    reset_config()
+    return svg
+
+
+def _strip_offsets_from_band_centers(fmt: str) -> dict[str, float]:
+    """Each strip cell's text edge relative to its own band's center, by text.
+
+    The x-axis labels sit on the band centers, so they are the reference the
+    strip must stay registered to; comparing a row to its own cells would let a
+    rigid shift of the whole row go unnoticed. ``aria-label`` is what separates
+    strip cells from axis ticks.
+    """
+    import re
+
+    svg = _render_share_strip(fmt, [0.03, 0.05, 0.07])
+    centers = [
+        float(x)
+        for x, _ in re.findall(
+            r'<text [^>]*transform="translate\(([\d.]+),[\d.]+\)[^>]*>(m\d+)</text>',
+            svg,
+        )
+    ]
+    cells = re.findall(
+        r'<text [^>]*aria-label="[^"]*"[^>]*text-anchor="(?:end|start)"'
+        r'[^>]*transform="translate\(([\d.]+),-?[\d.]+\)"[^>]*>(\d+%?)</text>',
+        svg,
+    )
+    by_x = sorted((float(x), text) for x, text in cells)
+    return {text: x - c for (x, text), c in zip(by_x, centers, strict=True)}
+
+
+def test_right_aligned_anchor_suffix_hangs_past_the_digit_edge():
+    """The "%" on the anchor must not occupy a digit slot, nor move its band.
+
+    Every digit edge sits at the same small offset from its band's center; the
+    anchor's text ends one suffix-width further right so its digits stay in
+    register.
+    """
+    offsets = _strip_offsets_from_band_centers("percent_whole")
+    digit_edge = offsets["5"]
+    assert offsets["7"] == pytest.approx(digit_edge, abs=0.5)
+    assert 0 < digit_edge < 10, "cells ride their band centers"
+    assert 3.0 < offsets["3%"] - digit_edge < 15.0, "the % must hang past the edge"
+
+
+def test_cells_wider_than_their_band_record_an_overflow():
+    """27 bands in 600px leave ~22px each; "142" plus padding needs far more."""
+    from dbt_charts.core.render.chart.text_truncation import collect_text_truncations
+
+    with collect_text_truncations() as sink:
+        _render_share_strip("percent_whole", [1.42] * 27)
+    assert [t.surface for t in sink["hang_suffix"]] == ["support_table_cell_overflow"]
+
+
+def test_cells_that_fit_their_band_record_nothing():
+    from dbt_charts.core.render.chart.text_truncation import collect_text_truncations
+
+    with collect_text_truncations() as sink:
+        _render_share_strip("percent_whole", [0.03, 0.05, 0.07])
+    surfaces = {t.surface for records in sink.values() for t in records}
+    assert "support_table_cell_overflow" not in surfaces
+
+
+def _render_per_series_label(orientation: str, stack: str | None) -> str:
+    pytest.importorskip("vl_convert")
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.config import reset_config
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+        resolve_style,
+    )
+    from dbt_charts.core.render.chart.vega_lite import render_chart
+
+    reset_config()
+    style: dict = {"orientation": orientation}
+    if stack:
+        style["stack"] = stack
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "ps_label",
+            "type": "bar",
+            "x": "month",
+            "y": "share",
+            "color": "seg",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {"entries": [{"per_series": "share", "label": "Mine"}]},
+            "style": style,
+        }
+    )
+    data = [
+        {"month": m, "seg": s, "share": 0.1}
+        for m in ("a", "b", "c")
+        for s in ("x", "y")
+    ]
+    try:
+        return render_chart(
+            chart,
+            resolve_style(get_theme_style()),
+            resolve_chart_style_context(get_theme_style()),
+            data,
+            format="svg",
+            width=600,
+            height=320,
+        )
+    finally:
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    ("orientation", "stack"),
+    [("vertical", None), ("vertical", "zero"), ("horizontal", "zero")],
+)
+def test_per_series_label_is_rejected_where_series_name_the_rows(orientation, stack):
+    """A strip row or stacked-bar column is named by its series; a label is ignored."""
+    from dbt_charts.core.compile.errors import CompilationError
+
+    with pytest.raises(CompilationError, match=r"per_series: 'share'.*label") as exc:
+        _render_per_series_label(orientation, stack)
+    assert exc.value.field_path == "charts.ps_label.support_table.entries[0].label"
+
+
+def test_per_series_label_still_names_a_grouped_bar_column():
+    assert "Mine" in _render_per_series_label("horizontal", None)
+
+
+def test_a_hung_suffix_that_collides_with_the_next_cell_records_an_overflow():
+    """22 bands leave ~27px: the bare digits fit, the anchor's hung "%" does not."""
+    from dbt_charts.core.render.chart.text_truncation import collect_text_truncations
+
+    with collect_text_truncations() as sink:
+        _render_share_strip("percent_whole", [0.03] * 22)
+    assert [t.surface for t in sink["hang_suffix"]] == ["support_table_cell_overflow"]
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_by_measure_label_is_never_rejected(orientation):
+    """by_measure names its single row, so the label is always read."""
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.config import reset_config
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+        resolve_style,
+    )
+    from dbt_charts.core.render.chart.vega_lite import render_chart
+
+    reset_config()
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "bm_label",
+            "type": "bar",
+            "x": "month",
+            "y": "share",
+            "color": "seg",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {
+                "entries": [
+                    {"per_series": "share", "by_measure": True, "label": "Mine"}
+                ]
+            },
+            "style": {"orientation": orientation, "stack": "zero"},
+        }
+    )
+    data = [{"month": m, "seg": "x", "share": 0.1} for m in ("a", "b")]
+    try:
+        render_chart(
+            chart,
+            resolve_style(get_theme_style()),
+            resolve_chart_style_context(get_theme_style()),
+            data,
+            format="svg",
+            width=600,
+            height=320,
+        )
+    finally:
+        reset_config()
+
+
+def _percent_numerals(**overrides) -> StripNumerals:
+    return StripNumerals(digit_spec=".0%", anchor=_DRAWN, suffix="%", **overrides)
+
+
+def test_hung_suffix_is_the_anchors_trailing_affix_on_a_right_aligned_row():
+    assert _percent_numerals().hung_suffix == "%"
+    assert _MILLIONS.hung_suffix == "mn"
+
+
+def test_hung_suffix_carve_outs_hang_nothing():
+    assert _percent_numerals(hang="right").hung_suffix == "", "left-aligned trails"
+    assert _percent_numerals(repeat_suffix=True).hung_suffix == "", "every cell has it"
+    assert _millions(repeat=True).hung_suffix == ""
+    nowhere = StripNumerals(digit_spec=".0%", anchor=StripAnchor.nowhere(), suffix="%")
+    assert nowhere.hung_suffix == "", "no anchor, no hung cell"
+
+
+def test_hung_suffix_of_an_authored_affix_is_its_suffix():
+    numerals = _house_affix_numerals_values(
+        [1.0, 2.0], spec=",.0f", repeat="anchor", suffix=" pts"
+    )
+    assert numerals.hung_suffix == " pts"
+
+
+def test_the_magnitude_anchor_layer_is_gated_on_a_non_zero_cell():
+    """A zero cell drops its "mn", so it must not be shifted for a suffix."""
+    spec = _attach(_goal_table(), entry_numerals=[_MILLIONS])
+    filters = [
+        t["filter"]
+        for layer in spec["layer"]
+        for t in layer.get("transform", [])
+        if "filter" in t
+    ]
+    assert any("!== 0" in f for f in filters)
+
+
+def test_a_wide_row_and_a_hung_suffix_in_different_rows_do_not_add_up():
+    """The widest bare cell (an integer row) and the "%" belong to different
+    rows; each cell fits the ~46px band, so nothing collides and nothing warns.
+    Summing the two maxima would demand ~54px.
+    """
+    from dbt_charts.core.render.chart.text_truncation import collect_text_truncations
+
+    with collect_text_truncations() as sink:
+        _render_share_strip(
+            "percent_whole",
+            [0.03] * 13,
+            extra_entries=[{"source": "big", "format": ",d"}],
+        )
+    surfaces = {t.surface for records in sink.values() for t in records}
+    assert "support_table_cell_overflow" not in surfaces

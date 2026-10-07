@@ -304,6 +304,7 @@ EXPECTED_CLASSIFICATION = {
     "redshift": True,
     "sqlserver": False,
     "mssql": False,
+    "fabric": False,
     "databricks": True,
     "spark": True,
     "athena": False,

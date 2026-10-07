@@ -58,6 +58,12 @@ def _with_pad_config(fmt: Any, rows: list[dict[str, Any]]) -> TableColumnConfig:
         formats=None,
         font_family=DBT_SANS_TABULAR_FONT_FAMILY,
         rows=rows,
+        allow_shared_scale=True,
+        own_formats={
+            n: c.format for n, c in {"amt": TableColumnConfig(format=fmt)}.items()
+        },
+        defaults_format=None,
+        declared=None,
     )
     assert resolved is not None
     return resolved["amt"]

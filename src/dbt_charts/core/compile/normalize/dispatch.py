@@ -79,6 +79,7 @@ from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
     _collect_charts_from_layout,
+    display_text_fields,
     normalize_chart,
 )
 from dbt_charts.core.compile.normalize.layout import (
@@ -108,7 +109,11 @@ from dbt_charts.core.compile.normalize.variables import (
     validate_variable_value,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.diagnostics.codes_compile import ERR_VALIDATION_FIELD
+from dbt_charts.core.compile.template.jinja import text_query_references
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_TEXT_UNKNOWN_QUERY,
+    ERR_VALIDATION_FIELD,
+)
 
 
 def compiled_meta() -> dict[str, str]:
@@ -620,19 +625,6 @@ def normalize_board(
             "card_gap can only be set on the root board, not on nested boards"
         )
 
-    # Root-level boards must have renderable content (layout or text). A title-only
-    # board is valid at depth>0 (AuthoredBoard.validate_layout allows it for section
-    # headers and style wrappers), but is not renderable as a standalone dashboard.
-    if (
-        depth == 0
-        and not board.text
-        and not board.charts
-        and all(f is None for f in (board.rows, board.cols, board.grid, board.tabs))
-    ):
-        raise CompilationError(
-            "Board must have at least one layout type, text, or chart"
-        )
-
     parent_context = parent_context or {}
     # model_fields_set, not a default comparison: an authored `none` must win.
     inherits_html_policy = (
@@ -828,6 +820,7 @@ def normalize_board(
             cache_root=cache_root,
             board_cache=board_cache,
             written_in=registered.base_dir,
+            text_query_keys=registered.text_query_keys,
         )
 
     local_charts: dict[str, Chart] = {}
@@ -862,6 +855,18 @@ def normalize_board(
                         pull_cross_board_query_chain(
                             layer.query, query_registry, local_queries
                         )
+
+    for surface, text in (("Board title", board.title), ("Board text", board.text)):
+        for query_name in sorted(text_query_references([text])):
+            if query_name not in query_registry:
+                raise CompilationError.from_code(
+                    ERR_TEXT_UNKNOWN_QUERY,
+                    surface=surface,
+                    query_name=query_name,
+                    defined=sorted(query_registry),
+                )
+            local_queries.setdefault(query_name, query_registry[query_name])
+    _pull_chart_text_queries(charts, query_registry, local_queries, False)
 
     # Expand transitive variable dependencies (A→B→C means chart depends on A, B, C)
     expand_chart_variable_dependencies(charts, local_variables)
@@ -981,6 +986,12 @@ def normalize_board(
     # kept from the pre-compiled dict.
     layout_charts: dict[str, Chart] = {}
     _collect_charts_from_layout(layout, layout_charts)
+    _pull_chart_text_queries(
+        {name: c for name, c in layout_charts.items() if name not in charts},
+        query_registry,
+        local_queries,
+        True,
+    )
     charts = {**charts, **layout_charts}
 
     # ════════════════════════════════════════════════════════════════════
@@ -1061,6 +1072,42 @@ def normalize_board(
             )
 
     return compiled_board
+
+
+def _pull_chart_text_queries(
+    charts: dict[str, Chart],
+    query_registry: dict[str, AnyQuery],
+    local_queries: dict[str, AnyQuery],
+    inline: bool,
+) -> None:
+    """Make every query a chart's display text reads part of the board.
+
+    Adds each to ``local_queries`` (with its composition chain when it is an
+    imported chart's query) and its variable dependencies to the chart's own,
+    so a focused render keeps the variables the text depends on.
+
+    ``inline`` charts have a generated id, so errors name their layout path.
+
+    Raises:
+        CompilationError: ``ERR-TEXT-UNKNOWN-QUERY`` for a name no query matches.
+    """
+    from dbt_charts.core.compile.compiler import pull_cross_board_query_chain
+
+    for chart in charts.values():
+        label = (chart.source_path or chart.id) if inline else chart.id
+        for field in display_text_fields(chart.type):
+            for name in sorted(text_query_references([getattr(chart, field)])):
+                key = chart.text_queries[name]
+                if key not in query_registry:
+                    raise CompilationError.from_code(
+                        ERR_TEXT_UNKNOWN_QUERY,
+                        surface=f"Chart '{label}' {field}",
+                        query_name=name,
+                        defined=sorted(query_registry),
+                    )
+                pull_cross_board_query_chain(key, query_registry, local_queries)
+                local_queries.setdefault(key, query_registry[key])
+                chart.variable_dependencies |= query_registry[key].variable_dependencies
 
 
 def _generate_board_id(

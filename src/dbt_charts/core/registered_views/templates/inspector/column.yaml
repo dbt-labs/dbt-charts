@@ -1,6 +1,5 @@
 [% set colrows = (queries.col.rows if (queries is defined and queries.col is defined and queries.col.rows is defined) else []) %]
-[% set col = (colrows[0] if colrows else {}) %]
-[% set atype = (col.get('actual_type') or '') | upper %]
+[% set atype = ((colrows[0].actual_type if colrows and 'actual_type' in colrows[0] else '') or '') | upper %]
 [# Coarse substring type dispatch. INTERVAL contains 'INT' but is neither numeric
    nor a DATE/TIMESTAMP, so it's excluded here and falls to the generic top-values
    branch rather than getting min/max/histogram or ::DATE treatment. #]

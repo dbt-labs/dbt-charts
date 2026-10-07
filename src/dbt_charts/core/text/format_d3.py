@@ -8,7 +8,7 @@ notation (predefined format members) pass ``notation="analytic"`` or
 user aliases) omit it so no post-process runs.
 
 No dependency on the theme/format-alias cascade (that lives in
-``dbt_charts.core.compile.format`` — see ``render.format_utils.format_value``
+``dbt_charts.core.compile.format`` — see ``compile.format_value.format_value``
 for the cascade-aware caller). Lives in ``core`` so compile-time callers
 (e.g. axis-tick label formatting) can format a raw value without depending
 on render.

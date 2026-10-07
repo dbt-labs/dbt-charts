@@ -1261,6 +1261,28 @@ class TestSQLServerAdapter:
         assert captured.out == ""
         assert "dbt_sqlserver_use_native_string_types" in captured.err
 
+    def test_stderr_routing_leaves_foreign_handlers_alone(self) -> None:
+        """Only dbt's own console handler moves to stderr."""
+        import io
+        import logging
+
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        class _ForeignHandler(logging.StreamHandler):
+            pass
+
+        # dbt clears this logger's handlers when it is first imported.
+        build_adapter(self._SOURCE, register_macros=False)
+        stream = io.StringIO()
+        foreign = _ForeignHandler(stream)
+        dbt_logger = logging.getLogger("stdout_log")
+        dbt_logger.addHandler(foreign)
+        try:
+            build_adapter(self._SOURCE, register_macros=False)
+        finally:
+            dbt_logger.removeHandler(foreign)
+        assert foreign.stream is stream
+
     def test_a_rejected_query_is_sent_once(self) -> None:
         """dbt-sqlserver releases the connection on any database error. The
         pool must still read the rejection as a rejection, not a dead session."""

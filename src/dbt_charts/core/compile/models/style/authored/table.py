@@ -10,17 +10,23 @@ re-imports them for external callers.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
 
+from dbt_charts.core.compile.models.constraints import (
+    AtMostOneOf,
+    ConstrainedModel,
+    Constraint,
+    IsSet,
+    Requires,
+)
 from dbt_charts.core.compile.models.factories import (
     build_patch_model,
     build_patch_model_ext,
@@ -35,7 +41,6 @@ from dbt_charts.core.compile.models.schema_names import FormatAlias
 from dbt_charts.core.compile.models.style.theme import (
     SparkStyle,
     TableChartStyle,
-    _normalize_overflow_value,
 )
 from dbt_charts.core.utils import classify_date_column_align
 
@@ -61,6 +66,7 @@ class PaginationConfig(BaseModel):
     )
     page_rows: int | None = Field(
         default=None,
+        ge=1,
         description=(
             "Rows per page, a ceiling bounded by the tile height. The theme "
             "defaults it to 20; null means unlimited (the tile height alone "
@@ -68,15 +74,8 @@ class PaginationConfig(BaseModel):
         ),
     )
 
-    @field_validator("page_rows")
-    @classmethod
-    def _page_rows_positive(cls, v: int | None) -> int | None:
-        if v is not None and v < 1:
-            raise ValueError("page_rows must be a positive integer")
-        return v
 
-
-PixelWidth = int | str | None
+PixelWidth = Annotated[int, Field(gt=0)] | str | None
 
 
 class TableColumnDefaultsConfig(BaseModel):
@@ -94,7 +93,7 @@ class TableColumnDefaultsConfig(BaseModel):
         default=None,
         description="One header text applied to every column, unless a column sets its own.",
     )
-    width: int | str | None = Field(
+    width: PixelWidth = Field(
         default=None,
         description="Override column width in pixels (integer) or a CSS width string.",
     )
@@ -113,11 +112,6 @@ class TableColumnDefaultsConfig(BaseModel):
         default=None,
         description="Override cell font style (size, weight, color, family).",
     )
-
-    @field_validator("width")
-    @classmethod
-    def _validate_width(cls, value: PixelWidth) -> PixelWidth:
-        return _validate_positive_pixel_width(value, "TableColumnDefaultsConfig.width")
 
 
 SparkTypeLiteral = Literal[
@@ -224,22 +218,9 @@ class SparkConfig(BaseModel):
         return value
 
 
-def _validate_glyph_pair(
-    glyph: str | None, glyph_color: str | None, label: str
-) -> None:
-    """Shared check for the (glyph, glyph_color) authoring contract."""
+def _validate_glyph_text(glyph: str | None, label: str) -> None:
     if glyph is not None and not glyph.strip():
         raise ValueError(f"{label} glyph must be a non-empty string")
-    if glyph_color is not None and glyph is None:
-        raise ValueError(f"{label} glyph_color requires glyph to be set")
-
-
-def _validate_positive_pixel_width(value: PixelWidth, field_name: str) -> PixelWidth:
-    """Shared check for width/max_width: a CSS string passes through untouched;
-    an int must be a positive pixel value."""
-    if isinstance(value, int) and value <= 0:
-        raise ValueError(f"{field_name} must be a positive pixel value, got {value}")
-    return value
 
 
 class ColumnScaleConfig(BaseModel):
@@ -266,10 +247,23 @@ class ColumnScaleConfig(BaseModel):
         return self
 
 
-class TableColumnConfig(BaseModel):
+class TableColumnConfig(ConstrainedModel):
     """Configuration for a single table column."""
 
     model_config = ConfigDict(extra="forbid")
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Requires(
+            ("glyph",),
+            "TableColumnConfig glyph_color requires glyph to be set",
+            when=(IsSet("glyph_color"),),
+        ),
+        AtMostOneOf(
+            ("width", "max_width"),
+            "TableColumnConfig: 'width' and 'max_width' are mutually exclusive. "
+            "Use 'width' for a hard pin, or 'max_width' to cap auto-sizing.",
+        ),
+    )
 
     visible: bool | None = Field(
         default=None,
@@ -304,11 +298,11 @@ class TableColumnConfig(BaseModel):
             "is identified by its color in the parent chart's palette."
         ),
     )
-    width: int | str | None = Field(
+    width: PixelWidth = Field(
         default=None,
         description="Column width (integer pixels or CSS string like '10%').",
     )
-    max_width: int | str | None = Field(
+    max_width: PixelWidth = Field(
         default=None,
         description=(
             "Maximum column width for auto-sized text columns "
@@ -358,11 +352,6 @@ class TableColumnConfig(BaseModel):
         default=None, description="Color for the glyph. Requires glyph to be set."
     )
 
-    @field_validator("header_overflow", mode="before")
-    @classmethod
-    def _normalize_header_overflow(cls, value: Any) -> Any:
-        return _normalize_overflow_value(value)
-
     @field_validator("spark", mode="before")
     @classmethod
     def _normalize_spark_shorthand(cls, value: Any) -> Any:
@@ -377,28 +366,11 @@ class TableColumnConfig(BaseModel):
             return {"type": value}
         return value
 
-    @model_validator(mode="after")
-    def _validate_glyph(self) -> TableColumnConfig:
-        _validate_glyph_pair(self.glyph, self.glyph_color, label="TableColumnConfig")
-        return self
-
-    @model_validator(mode="after")
-    def _validate_width_max_width_exclusive(self) -> TableColumnConfig:
-        if self.width is not None and self.max_width is not None:
-            raise ValueError(
-                "TableColumnConfig: 'width' and 'max_width' are mutually exclusive. "
-                "Use 'width' for a hard pin, or 'max_width' to cap auto-sizing."
-            )
-        return self
-
-    @field_validator("width", "max_width")
+    @field_validator("glyph")
     @classmethod
-    def _validate_width_fields(
-        cls, value: PixelWidth, info: ValidationInfo
-    ) -> PixelWidth:
-        return _validate_positive_pixel_width(
-            value, f"TableColumnConfig.{info.field_name}"
-        )
+    def _validate_glyph(cls, glyph: str | None) -> str | None:
+        _validate_glyph_text(glyph, label="TableColumnConfig")
+        return glyph
 
 
 _SIZING_FIELDS = frozenset({"width", "max_width"})

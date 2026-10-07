@@ -68,20 +68,21 @@ from dbt.adapters.databricks.events.connection_events import (  # pyright: ignor
 from dbt.adapters.databricks.handle import DatabricksHandle
 from dbt.adapters.databricks.impl import DatabricksAdapter
 from dbt.adapters.databricks.logging import logger
+from dbt.adapters.databricks.spog.decision import check_spog_preconditions
 from dbt.adapters.databricks.utils import is_cluster_http_path
 from dbt.adapters.events.types import NewConnection
 from dbt_common.events.contextvars import get_node_info
 from dbt_common.events.functions import fire_event
 from dbt_common.exceptions import DbtDatabaseError
 
-# SHA-256 of inspect.getsource(...) for the vendored bodies below, dbt-databricks 1.12.0.
+# SHA-256 of inspect.getsource(...) for the vendored bodies below, dbt-databricks 1.12.6.
 # Update these constants whenever the package version changes and re-verify the override.
-_VENDORED_OPEN_HASH = "256b105e3e59ad75b494d4687a770603677a9dce71663535a90aeece425f941c"
+_VENDORED_OPEN_HASH = "b1aa695bf627443d85ad02f7910543a1edeac0159981bc3abcae68d5fafc287f"
 _VENDORED_CREATE_FRESH_CONNECTION_HASH = (
     "1a35bd3e2059fa300ec86fc3108ebca80b8036aa5b41e1f9ef7dbbf290911678"
 )
 _VENDORED_ADAPTER_INIT_HASH = (
-    "31722fc539a3cc5421db4f3aa3259ba94faf3d96882782c5382944201771a2b2"
+    "5699f9669b038c23db34a1f9b1c179213b0dcd6f023364f929f1d1ca2ac0413a"
 )
 
 
@@ -151,6 +152,15 @@ class DbtChartsDatabricksConnectionManager(DatabricksConnectionManager):
 
         # Deviation from vendored: a call-local, never cls.credentials_manager.
         creds_manager = creds.authenticate()
+
+        computes = creds.compute or {}  # type-state: silent_fallback — upstream
+        compute_paths = [
+            p for cfg in computes.values() if cfg and (p := cfg.get("http_path"))
+        ]
+        check_spog_preconditions(
+            host=creds.host or "",  # type-state: silent_fallback — vendored upstream
+            http_paths=[databricks_connection.http_path, *compute_paths],
+        )
 
         query_header_context = databricks_connection._query_header_context
         merged_query_tags: dict[str, str] = {}
@@ -269,3 +279,7 @@ class DbtChartsDatabricksAdapter(DatabricksAdapter):
         self.add_catalog_integration(
             constants.DEFAULT_HIVE_METASTORE_CATALOG  # pyright: ignore[reportArgumentType]
         )
+        self._parse_replacements_ = {
+            **self.__class__._parse_replacements_,
+            "has_dbr_capability": self._has_dbr_capability_parse,
+        }

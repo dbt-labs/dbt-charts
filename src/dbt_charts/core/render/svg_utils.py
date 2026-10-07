@@ -464,14 +464,18 @@ def render_title(
         title_blocks,
         title_renderer,
     )
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
     from dbt_charts.core.render.font_selection import record_painted_faces
 
     # Driven through SVGRenderer rather than mdsvg's one-shot `render()` so the
     # faces this title reached can be read back off the renderer: a title carries
     # markdown, so it can be the only thing on a board that paints italic.
     renderer, font_path_family = title_renderer(resolved_style, level, text_align)
+    resolved_title = resolve_display_text_from_provider(
+        title, variable_values, resolved_style=resolved_style
+    )
     blocks = title_blocks(
-        title, variable_values, level, resolved_style, base_dir, error_collector
+        title, resolved_title, level, resolved_style, base_dir, error_collector
     )
     svg = renderer.render(blocks, width=width, padding=0.0)
     record_painted_faces(font_path_family, renderer.used_faces)

@@ -29,7 +29,7 @@ def _validate(**fields: object) -> object:
 def test_spark_bar_rejects_multi_field_y():
     with pytest.raises(ValidationError) as exc:
         _validate(type="spark_bar", x="month", y=["revenue", "cost"])
-    assert "single y" in str(exc.value)
+    assert "List should have at most 1 item after validation, not 2" in str(exc.value)
 
 
 def test_spark_bar_accepts_single_element_y_list():

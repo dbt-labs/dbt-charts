@@ -39,6 +39,7 @@ when supplied.
 from __future__ import annotations
 
 import contextlib
+import copy
 import datetime
 import json
 import math
@@ -54,6 +55,10 @@ from dbt_charts.core.colors import ensure_readable_ink, parse_css_color, rgb01_t
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.format import (
     decimal_pad_table_for,
+)
+from dbt_charts.core.compile.format_value import (
+    _check_percent_range,
+    format_value,
 )
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSort,
@@ -111,6 +116,7 @@ from dbt_charts.core.render.chart.spec_builders import (
     bump_padding_top,
 )
 from dbt_charts.core.render.chart.table import _table_numeric_cell_font
+from dbt_charts.core.render.chart.text_truncation import record_text_truncation
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
     detect_time_unit,
@@ -130,10 +136,6 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 )
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.errors import RenderError
-from dbt_charts.core.render.format_utils import (
-    _check_percent_range,
-    format_value,
-)
 from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 from dbt_charts.core.render.utils import font_style_to_mark
 from dbt_charts.core.text.case import inferred_display_name
@@ -735,6 +737,20 @@ class StripNumerals:
         return format_value(value, self.digit_spec, None)
 
     @property
+    def hung_suffix(self) -> str:
+        """The trailing affix only the anchor paints on a right-aligned strip.
+
+        Right-aligned text puts a trailing affix on the aligned edge, so the
+        anchor's digits would sit one affix-width left of every bare cell's.
+        The affix hangs past the edge instead (``_hung_anchor_layers``).
+        """
+        if self.hang != "left" or not self.anchor.needs_drawn_index:
+            return ""
+        if self.authored is not None:
+            return self.authored.suffix
+        return "" if self.repeat_suffix else self.suffix
+
+    @property
     def needs_drawn_index_window(self) -> bool:
         """Whether the emitted expression actually reads the drawn index.
 
@@ -1073,6 +1089,55 @@ def strip_numerals_for_values(
     )
 
 
+def _valid_value_expr(value_expr: str) -> str:
+    return (
+        f"isValid({value_expr}) && (!isNumber({value_expr}) || isFinite({value_expr}))"
+    )
+
+
+def _hung_anchor_layers(
+    layer: VLDict,
+    source: str,
+    numerals: StripNumerals,
+    style: SupportTableStyle,
+) -> list[VLDict]:
+    """Split the anchor cell onto its own layer, shifted by its suffix's width.
+
+    The anchor paints "3%" right-aligned, which would put the "%" on the
+    shared digit edge. On a layer of its own with ``dx`` grown by the measured
+    suffix width, its digits land on that edge and the suffix hangs past it.
+    Per-cell offsets are not an option: any ``xOffset`` channel makes a
+    band-scaled x ignore ``bandPosition``.
+    """
+    suffix = numerals.hung_suffix
+    if not suffix:
+        return [layer]
+    font_size = style.font.size
+    if font_size is None:
+        raise RenderError.from_code(
+            ERR_INPUT_INVALID,
+            message=(
+                "support_table.font.size must be set by the theme cascade; "
+                "a missing value means the theme is misconfigured."
+            ),
+        )
+    width = get_font_measurer(style.font.family, numeric=True).measure(
+        suffix, font_size
+    )
+    value_expr = f"datum[{json.dumps(source)}]"
+    # A magnitude suffix is dropped on a zero cell, so there is nothing to hang.
+    nonzero = f" && {value_expr} !== 0" if numerals.suffix_is_magnitude else ""
+    is_anchor = f"({_valid_value_expr(value_expr)}{nonzero} && {numerals.anchor.test})"
+    anchor_layer = copy.deepcopy(layer)
+    anchor_layer["transform"].append({"filter": is_anchor})
+    base_dx = anchor_layer["mark"].get(
+        "dx", 0.0
+    )  # type-state: silent_fallback — only bar strips set dx; absent is VL's 0
+    anchor_layer["mark"]["dx"] = base_dx + width
+    layer["transform"].append({"filter": f"!{is_anchor}"})
+    return [layer, anchor_layer]
+
+
 def _vl_format_calc(
     source: str,
     format_spec: ResolvedFormat | None,
@@ -1081,9 +1146,7 @@ def _vl_format_calc(
 ) -> dict[str, Any]:
     """Build a Vega-Lite calculate transform that formats or dashes invalid values."""
     value_expr = f"datum[{json.dumps(source)}]"
-    valid_expr = (
-        f"isValid({value_expr}) && (!isNumber({value_expr}) || isFinite({value_expr}))"
-    )
+    valid_expr = _valid_value_expr(value_expr)
     if format_spec is None:
         return {"calculate": f"{valid_expr} ? {value_expr} : '-'", "as": as_name}
     # The alias is already resolved: numerals.digit_spec is what
@@ -1309,8 +1372,8 @@ def _row_text_layer(
     dx: float | None = None,
     value_align: Literal["left", "right"] = "right",
     label_period_filter_expr: str | None = None,
-) -> dict[str, Any]:
-    """Emit a text layer for one support_table row (source or aggregate).
+) -> list[VLDict]:
+    """Emit the text layer(s) for one support_table row (source or aggregate).
 
     When sampling_step > 1, a Vega-Lite window+filter chain is inserted so
     only every Nth x position renders a cell. Transform ordering matters:
@@ -1391,7 +1454,9 @@ def _row_text_layer(
         },
         "transform": transforms,
     }
-    return layer
+    return _hung_anchor_layers(
+        layer, f"{cell_name}_val" if is_agg else entry.source, numerals, style
+    )
 
 
 def _per_series_row_layers(
@@ -1499,8 +1564,11 @@ def _per_series_row_layers(
             },
             "transform": bm_transforms,
         }
+        bm_cell_layers = _hung_anchor_layers(
+            bm_cell_layer, entry.per_series, numerals, style
+        )
         if suppress_series_labels:
-            return [bm_cell_layer]
+            return bm_cell_layers
         # Label stub: use entry.label when set, else fall back to the field name.
         bm_label_text = entry.label if entry.label is not None else entry.per_series
         if axis_y_orient == "right":
@@ -1525,7 +1593,7 @@ def _per_series_row_layers(
                 axis_label_padding=axis_label_padding,
                 limit=label_limit,
             )
-        return [bm_cell_layer, bm_label_layer]
+        return [*bm_cell_layers, bm_label_layer]
 
     # Normal mode: one cell + label per series in series_order.
     # color_field is guaranteed non-None here: attach_support_table raises RenderError
@@ -1588,7 +1656,7 @@ def _per_series_row_layers(
             },
             "transform": transforms,
         }
-        layers.append(cell_layer)
+        layers.extend(_hung_anchor_layers(cell_layer, agg_name, numerals, style))
 
         if suppress_series_labels:
             continue
@@ -2143,7 +2211,7 @@ def attach_support_table(
                 label_period_filter_expr=label_period_filter_expr,
                 numerals=row_numerals,
             )
-            layers.append(row_layer)
+            layers.extend(row_layer)
             label = _default_support_table_label(entry)
             if label:
                 if axis_y_orient == "right":
@@ -4762,6 +4830,22 @@ def apply_chart_support_table_post_pass(
     # The period filter is the correct thinning mechanism; suppress sampling.
     if period_filter is not None:
         sampling_step = 1
+    elif resolved_chart.x and isinstance(axis_x_width, (int, float)):
+        n_bands = len(
+            {
+                row.get(resolved_chart.x)
+                for row in data
+                if row.get(resolved_chart.x) is not None
+            }
+        )
+        drawn_band_px = axis_x_width / max(n_bands, 1) * sampling_step
+        if n_bands and min_band_px > drawn_band_px:
+            record_text_truncation(
+                resolved_chart.id,
+                "support_table_cell_overflow",
+                f"{min_band_px:.0f}px needed, {drawn_band_px:.0f}px per band",
+                "support_table",
+            )
     # Per_series row labels repeat the series names; drop them when the chart
     # already shows those names via a legend or endpoint labels.
     # Resolved models carry .legend (shared base) with the per-chart resolved value.

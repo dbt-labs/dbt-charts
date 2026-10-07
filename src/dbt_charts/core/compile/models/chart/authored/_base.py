@@ -12,8 +12,7 @@ family models. extra="forbid" on each base propagates to all subclasses.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -26,8 +25,12 @@ from pydantic import (
     model_validator,
 )
 
-from dbt_charts.core.compile.models.chart.authored._layer import (
-    CartesianLayer,
+from dbt_charts.core.compile.models.constraints import (
+    AtLeastOneOf,
+    ConstrainedModel,
+    Constraint,
+    Forbids,
+    ValueIn,
 )
 from dbt_charts.core.compile.models.markers import Channel, Color, DisplayText, Url
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
@@ -140,7 +143,7 @@ def _reject_color_dict(v: Any) -> Any:
     return v
 
 
-class MultiplesConfig(BaseModel):
+class MultiplesConfig(ConstrainedModel):
     """Small-multiples partition, keyed by layout direction.
 
     ``rows`` stacks one panel per value vertically; ``columns`` lays them out
@@ -151,6 +154,13 @@ class MultiplesConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtLeastOneOf(
+            ("rows", "columns"),
+            "multiples requires at least one of `rows` or `columns`.",
+        ),
+    )
 
     rows: str | None = Field(
         default=None,
@@ -168,21 +178,13 @@ class MultiplesConfig(BaseModel):
         ),
     )
 
-    @model_validator(mode="after")
-    def _require_row_or_column(self) -> MultiplesConfig:
-        # "one-or-the-other-or-both" can't be expressed by the field types, so
-        # enforce it explicitly rather than let an empty partition through.
-        if self.rows is None and self.columns is None:
-            raise ValueError("multiples requires at least one of `rows` or `columns`.")
-        return self
-
 
 # ============================================================================
 # CHART FIELD BASES
 # ============================================================================
 
 
-class _BaseChartFields(BaseModel):
+class _BaseChartFields(ConstrainedModel):
     """Private base shared by ALL chart families including KPI.
 
     Contains fields that every chart type meaningfully uses, excluding
@@ -341,35 +343,21 @@ class _SharedChartFields(_BaseChartFields):
     ]
 
 
-def reject_multi_series_channel_conflicts(
-    family: str,
-    y: str | list[str] | None,
-    layers: Sequence[CartesianLayer] | None,
-) -> None:
-    """Reject encodings that carry their own series alongside a list-valued `y:`.
-
-    A wide family folds its measures onto a single mark family, which spends the
-    layer stack on the measures themselves — a second series source has nowhere
-    left to go. Bar and area enforce that here, at parse. Line does not call
-    this: it raises on `layers:` from `resolve_wide_measure_channels`
-    (`resolve/chart/_wide_fields.py`) at resolve. Scatter refuses a list `y:`
-    outright, from its own resolver.
-
-    An authored `color:` column is not a conflict: it is the dimension the
-    measures are grouped by, and the fold crosses it with them (one series per
-    value per measure — `resolve_wide_measure_channels`).
-
-    A one-element `y:` list still counts: the emitters branch on `isinstance`,
-    not on length, so `y: [revenue]` takes the same folded path as `y: [a, b]`.
-    """
-    if not isinstance(y, list):
-        return
-    remedy = "Use a long-form query with one y field."
-    if layers:
-        raise ValueError(
-            f"{family} chart: layers are not supported with multi-metric "
-            f"(y: [...]) charts. {remedy}"
-        )
+# Declared on each concrete family whose type can lack support_table, since
+# the shared base has no `type` field to key the rule on.
+SUPPORT_TABLE_TYPE_RULE = Forbids(
+    ("support_table",),
+    "chart.support_table is not supported for chart type {type!r} in v1. "
+    "Supported chart types: "
+    f"{', '.join(sorted(CHART_SUPPORT_TABLE_SUPPORTED_TYPES))}.",
+    when=(
+        ValueIn(
+            "type",
+            tuple(sorted(CHART_SUPPORT_TABLE_SUPPORTED_TYPES)),
+            negate=True,
+        ),
+    ),
+)
 
 
 class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
@@ -494,12 +482,6 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
     def _validate_support_table(self) -> _CartesianChartFields:
         if self.support_table is None:
             return self
-        if self.type not in CHART_SUPPORT_TABLE_SUPPORTED_TYPES:
-            supported = ", ".join(sorted(CHART_SUPPORT_TABLE_SUPPORTED_TYPES))
-            raise ValueError(
-                f"chart.support_table is not supported for chart type "
-                f"{self.type!r} in v1. Supported chart types: {supported}."
-            )
         if isinstance(self.y, list) and len(self.y) > 1:
             all_by_measure = all(
                 isinstance(e, ChartSupportTablePerSeries) and e.by_measure

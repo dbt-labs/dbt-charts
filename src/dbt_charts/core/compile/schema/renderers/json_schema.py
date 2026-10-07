@@ -9,11 +9,24 @@ Entry point: render_yaml_schema(schema: AuthorableSchema) -> dict
 from __future__ import annotations
 
 import dataclasses
+import itertools
 from collections import defaultdict
 from typing import Any
 
 from pydantic_core import PydanticUndefined
 
+from dbt_charts.core.compile.models.constraints import (
+    AtLeastOneOf,
+    AtMostOneOf,
+    Condition,
+    Constraint,
+    Forbids,
+    IsList,
+    IsSet,
+    ItemsMatch,
+    Requires,
+    ValueIn,
+)
 from dbt_charts.core.compile.schema.introspection import (
     AuthorableSchema,
     SchemaField,
@@ -33,15 +46,30 @@ def _schema_for_token(token: str) -> dict[str, Any]:
     """Map a single non-union type token to a JSON Schema dict."""
     if token in _PRIMITIVES:
         return _PRIMITIVES[token]
-    if token.startswith("list["):
-        return {"type": "array"}
+    if token.startswith(("list[", "set[", "frozenset[")):
+        item_repr = token[token.index("[") + 1 : -1]
+        return _container_schema("array", "items", _map_type_repr(item_repr, {}))
     if token.startswith("dict["):
-        return {"type": "object"}
+        value_repr = ", ".join(_split_union(token[5:-1], ", ")[1:])
+        return _container_schema(
+            "object", "additionalProperties", _map_type_repr(value_repr, {})
+        )
     return {}
 
 
-def _split_union(s: str) -> list[str]:
-    """Split s on ' | ' separators at bracket depth 0 (not inside [...])."""
+def _container_schema(
+    kind: str,
+    inner_key: str,
+    inner: dict[str, Any],  # type-state: explicit_any — JSON Schema value, see _ref
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    """An array/object schema, typed by `inner` unless it is empty."""
+    if not inner:
+        return {"type": kind}
+    return {"type": kind, inner_key: inner}
+
+
+def _split_union(s: str, sep: str = " | ") -> list[str]:
+    """Split s on sep at bracket depth 0 (not inside [...])."""
     parts: list[str] = []
     depth = 0
     start = 0
@@ -51,10 +79,10 @@ def _split_union(s: str) -> list[str]:
             depth += 1
         elif s[i] == "]":
             depth -= 1
-        elif depth == 0 and s[i : i + 3] == " | ":
+        elif depth == 0 and s.startswith(sep, i):
             parts.append(s[start:i])
-            start = i + 3
-            i += 3
+            start = i + len(sep)
+            i += len(sep)
             continue
         i += 1
     parts.append(s[start:])
@@ -86,24 +114,18 @@ def sibling_container_tokens(type_repr: str) -> list[str]:
     `core/AGENTS.md`'s "one canonical mapper per concept" rule; not
     underscore-prefixed since prompt.py imports it across module boundaries.
     """
-    base = type_repr.replace(" | None", "").strip()
     return [
         token.strip()
-        for token in _split_union(base)
+        for token in _split_union(type_repr)
         if token.strip().startswith(("list[", "dict["))
     ]
 
 
 def _array_schema(
     items: dict[str, Any],  # type-state: explicit_any — see _ref
-    min_items: int | None,
 ) -> dict[str, Any]:  # type-state: explicit_any — see _ref
-    """Build an array-shaped JSON Schema fragment, with an optional minItems."""
-    schema: dict[str, Any] = {"type": "array"}  # type-state: explicit_any — see _ref
-    schema["items"] = items
-    if min_items is not None:
-        schema["minItems"] = min_items
-    return schema
+    """Build an array-shaped JSON Schema fragment."""
+    return {"type": "array", "items": items}
 
 
 def _primitive_schema(
@@ -142,7 +164,7 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
         # type; a tuple's positions don't).
         tuple_schema = {
             "type": "array",
-            "prefixItems": [_map_type_repr(r) for r in field.tuple_item_reprs],
+            "prefixItems": [_map_type_repr(r, {}) for r in field.tuple_item_reprs],
             "minItems": len(field.tuple_item_reprs),
             "maxItems": len(field.tuple_item_reprs),
         }
@@ -172,10 +194,8 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
             )
             return {"anyOf": [wrapped, {"type": "null"}]} if nullable else wrapped
         # Otherwise a list[...]/dict[...] may still sit as a *sibling* union
-        # arm (e.g. `ThemeName | str | list[str]`) — add its bare shape so it
-        # isn't dropped from the anyOf. Multiple sibling tokens can map to the
-        # same schema (list[str] | list[float] both → {"type": "array"}), so
-        # dedup on the mapped shape, not the token.
+        # arm (e.g. `ThemeName | str | list[str]`) — add its shape so it
+        # isn't dropped from the anyOf, deduped on the mapped shape.
         for token in sibling_container_tokens(field.type_repr):
             arm = _schema_for_token(token)
             if arm and arm not in branches:
@@ -248,46 +268,88 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
             item_schema = (
                 item_schemas[0] if len(item_schemas) == 1 else {"anyOf": item_schemas}
             )
-            all_branches.append(
-                _array_schema(item_schema, field.container_list_min_items)
-            )
+            all_branches.append(_array_schema(item_schema))
         if nullable:
             all_branches.append({"type": "null"})
         return {"anyOf": all_branches} if len(all_branches) > 1 else all_branches[0]
 
-    return _map_type_repr(field.type_repr)
+    return _map_type_repr(field.type_repr, field.extra_union_type_patterns)
 
 
-def _map_type_repr(type_repr: str) -> dict[str, Any]:
-    """Map a type_repr string to a JSON Schema type dict."""
-    nullable = " | None" in type_repr
-    base = type_repr.replace(" | None", "").strip()
+def _map_type_repr(
+    type_repr: str, patterns: dict[str, str]
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    """Map a type_repr string to a JSON Schema type dict.
 
-    if base in _PRIMITIVES:
-        schema = _PRIMITIVES[base]
-    elif " | " in base:
-        # Bracket-aware split so 'list[X | Y]' stays intact; dedup identical schemas
-        # (e.g. list[str] | list[float] both map to {"type": "array"}).
-        token_schemas = []
-        for token in _split_union(base):
-            s = _schema_for_token(token.strip())
-            if s and s not in token_schemas:
-                token_schemas.append(s)
-        schema = {"anyOf": token_schemas} if token_schemas else {}
-    elif base.startswith("list["):
-        schema = {"type": "array"}
-    elif base.startswith("dict["):
-        schema = {"type": "object"}
-    else:
-        schema = {}
+    `patterns` (SchemaField.extra_union_type_patterns) constrains a top-level
+    primitive arm, e.g. the str arm of `float | <patterned str>`.
 
-    if not nullable or not schema:
-        return schema
-    if "anyOf" in schema:
-        schema = dict(schema)
-        schema["anyOf"] = list(schema["anyOf"]) + [{"type": "null"}]
-        return schema
-    return {"anyOf": [schema, {"type": "null"}]}
+    An arm with no schema (`Any`, a model this IR does not walk) admits
+    anything, so the whole union does: dropping that arm would reject values
+    Pydantic accepts.
+    """
+    schemas: list[dict[str, Any]] = []  # type-state: explicit_any — see _ref
+    for token in (t.strip() for t in _split_union(type_repr)):
+        schema = (
+            _primitive_schema(token, patterns)
+            if token in _PRIMITIVES
+            else _schema_for_token(token)
+        )
+        if not schema:
+            return {}
+        if schema not in schemas:
+            schemas.append(schema)
+    return schemas[0] if len(schemas) == 1 else {"anyOf": schemas}
+
+
+_BOUND_KEYWORDS = {
+    "gt": "exclusiveMinimum",
+    "ge": "minimum",
+    "lt": "exclusiveMaximum",
+    "le": "maximum",
+    "pattern": "pattern",
+}
+_LENGTH_KEYWORD_SUFFIX = {
+    "str": "Length",
+    "list": "Items",
+    "tuple": "Items",
+    "set": "Items",
+    "frozenset": "Items",
+    "dict": "Properties",
+}
+
+
+def _constraint_keywords(
+    field: SchemaField,
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    """JSON Schema keywords for field.constraints, set beside its type schema.
+
+    Each keyword only constrains its own JSON type, so it leaves other arms free.
+    """
+    keywords: dict[str, Any] = {}  # type-state: explicit_any — see _ref
+    for name, value in field.constraints.items():
+        if name in _BOUND_KEYWORDS:
+            keywords[_BOUND_KEYWORDS[name]] = value
+            continue
+        prefix = name.removesuffix("_length")
+        suffixes = {
+            _LENGTH_KEYWORD_SUFFIX[kind]
+            for kind in (
+                token.strip().split("[", 1)[0]
+                for token in _split_union(field.type_repr)
+            )
+            if kind in _LENGTH_KEYWORD_SUFFIX
+        }
+        if not suffixes:
+            raise ValueError(
+                f"field {field.name!r} ({field.type_repr}) has {name} but no sized arm"
+            )
+        keywords |= {f"{prefix}{suffix}": value for suffix in suffixes}
+    for kind, lengths in field.arm_length_constraints.items():
+        for name, value in lengths.items():
+            prefix = name.removesuffix("_length")
+            keywords[f"{prefix}{_LENGTH_KEYWORD_SUFFIX[kind]}"] = value
+    return keywords
 
 
 def _inherit_note(field: SchemaField) -> str:
@@ -355,6 +417,126 @@ def _union_to_def(model_name: str, ir: AuthorableSchema) -> dict[str, Any]:
     return defn
 
 
+_EMPTY_VALUES: list[Any] = [None, "", [], {}]  # type-state: explicit_any — JSON values
+
+
+def _at(
+    key: str,
+    schema: dict[str, Any],  # type-state: explicit_any — JSON Schema value, see _ref
+    required: bool = True,
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    """Apply ``schema`` to the value at dotted ``key`` of an object.
+
+    Each level is typed ``object``: ``required``/``properties`` hold vacuously on
+    a null, which would make an absent nested key read as present.
+    """
+    for part in reversed(key.split(".")):
+        wrapped: dict[str, Any] = {  # type-state: explicit_any — see _ref
+            "type": "object",
+            "properties": {part: schema},
+        }
+        if required:
+            wrapped["required"] = [part]
+        schema = wrapped
+    return schema
+
+
+def _is_set(
+    key: str, nonempty: bool
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    unset: dict[str, Any] = (  # type-state: explicit_any — see _ref
+        {"enum": _EMPTY_VALUES} if nonempty else {"type": "null"}
+    )
+    return _at(key, {"not": unset})
+
+
+def _condition(
+    condition: Condition,
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    match condition:
+        case IsSet(key):
+            return _is_set(key, nonempty=False)
+        case ValueIn(key, values, negate):
+            matches = _at(key, {"enum": list(values)})
+            return {"not": matches} if negate else matches
+        case IsList(key):
+            return _at(key, {"type": "array"})
+
+
+def _when(
+    when: tuple[Condition, ...],
+    then: dict[str, Any],  # type-state: explicit_any — JSON Schema value, see _ref
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    if not when:
+        return then
+    return {"if": {"allOf": [_condition(c) for c in when]}, "then": then}
+
+
+def _constraint(
+    constraint: Constraint,
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    match constraint:
+        case AtLeastOneOf(keys, _, nonempty):
+            return {"anyOf": [_is_set(k, k in nonempty) for k in keys]}
+        case AtMostOneOf(keys, _, nonempty):
+            pairs = itertools.combinations(keys, 2)
+            return {
+                "not": {
+                    "anyOf": [
+                        {
+                            "allOf": [
+                                _is_set(a, a in nonempty),
+                                _is_set(b, b in nonempty),
+                            ]
+                        }
+                        for a, b in pairs
+                    ]
+                }
+            }
+        case Requires(keys, _, when, nonempty):
+            return _when(when, {"allOf": [_is_set(k, k in nonempty) for k in keys]})
+        case Forbids(keys, _, when, nonempty):
+            return _when(
+                when, {"not": {"anyOf": [_is_set(k, k in nonempty) for k in keys]}}
+            )
+        case ItemsMatch(key, pattern, _, when):
+            items = {"items": {"type": "string", "pattern": pattern}}
+            return _when(when, _at(key, items, required=False))
+
+
+# Annotation keyword marking an `allOf` entry as a cross-field rule. Validators
+# ignore unknown keywords; `grammar_only` keys on it to drop the rules exactly.
+CROSS_FIELD_RULE = "x-dbt-charts-cross-field-rule"
+
+
+def constraint_schema(
+    constraints: tuple[Constraint, ...],
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    """JSON Schema keywords stating a model's cross-field constraints."""
+    if not constraints:
+        return {}
+    return {"allOf": [{CROSS_FIELD_RULE: True, **_constraint(c)} for c in constraints]}
+
+
+def grammar_only(
+    node: Any,  # type-state: explicit_any — any JSON Schema value
+) -> Any:  # type-state: explicit_any — same shape as the input
+    """``node`` without its cross-field rules: the key shapes alone."""
+    if isinstance(node, list):
+        return [grammar_only(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    stripped = {key: grammar_only(value) for key, value in node.items()}
+    rules = stripped.get("allOf")
+    if isinstance(rules, list):
+        kept = [r for r in rules if not (isinstance(r, dict) and CROSS_FIELD_RULE in r)]
+        if kept:
+            stripped["allOf"] = kept
+        else:
+            del stripped["allOf"]
+    return stripped
+
+
 def _model_to_def(model_name: str, ir: AuthorableSchema) -> dict[str, Any]:
     """Build a JSON Schema $defs entry for one AuthorableModel."""
     model = ir.models[model_name]
@@ -365,7 +547,14 @@ def _model_to_def(model_name: str, ir: AuthorableSchema) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     additional_properties: dict[str, Any] | None = None
     for field in model.fields:
-        prop: dict[str, Any] = _type_schema(field, ir.root)
+        prop = _type_schema(field, ir.root)
+        keywords = _constraint_keywords(field)
+        if clash := prop.keys() & keywords.keys():
+            raise ValueError(
+                f"{model_name}.{field.name}: constraint keywords {sorted(clash)} "
+                "collide with its type schema"
+            )
+        prop = {**prop, **keywords}
         note = _inherit_note(field)
         desc = " ".join(filter(None, [field.description, note]))
         if desc:
@@ -391,8 +580,9 @@ def _model_to_def(model_name: str, ir: AuthorableSchema) -> dict[str, Any]:
         defn["required"] = required
     if additional_properties is not None:
         defn["additionalProperties"] = additional_properties
-    else:
+    elif model.closed:
         defn["additionalProperties"] = False
+    defn.update(constraint_schema(model.constraints))
     return defn
 
 
@@ -419,9 +609,12 @@ def render_yaml_schema(schema: AuthorableSchema) -> dict[str, Any]:
         result["description"] = root["description"]
     result["type"] = "object"
     result["properties"] = root["properties"]
-    result["additionalProperties"] = root["additionalProperties"]
+    if "additionalProperties" in root:
+        result["additionalProperties"] = root["additionalProperties"]
     if root.get("required"):
         result["required"] = root["required"]
+    if root.get("allOf"):
+        result["allOf"] = root["allOf"]
     if defs:
         result["$defs"] = defs
 

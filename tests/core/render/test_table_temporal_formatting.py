@@ -23,17 +23,18 @@ import datetime
 import pytest
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+from dbt_charts.core.compile.format_value import (
+    format_table_cell_value,
+    is_temporal_value,
+)
 from dbt_charts.core.compile.models.chart.normalized import TableChart
 from dbt_charts.core.compile.models.chart.resolved.table import ResolvedTableChart
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_TABLE_TEMPORAL_FORMAT_INVALID
 from dbt_charts.core.render.chart.table import render_table_svg
-from dbt_charts.core.render.chart.table_support import (
-    format_table_cell_value,
-    is_temporal_value,
-)
 from dbt_charts.core.utils import is_date_like
 
 # The default format that must be present in stark.yaml as date_short.
@@ -170,12 +171,13 @@ class TestFormatTableCellValueTemporal:
 
     def test_invalid_temporal_format_spec_raises(self) -> None:
         # %v is not a valid strftime directive — must raise, not silently pass through.
-        with pytest.raises(ValueError, match="%v"):
+        with pytest.raises(ChartDataError, match="%v") as exc_info:
             format_table_cell_value(
                 datetime.date(2024, 1, 15),
                 "%v",
                 {"date_short": _DATE_SHORT_FORMAT},
             )
+        assert exc_info.value.code is ERR_TABLE_TEMPORAL_FORMAT_INVALID
 
     def test_non_temporal_value_unchanged_str(self) -> None:
         # Regular string passes through unchanged

@@ -30,6 +30,7 @@ _ALLOW_PATTERNS = [
     re.compile(r"catalog=exp\."),  # sqlglot AST node kwarg (3-part table name)
     re.compile(r'text\("catalog"\)'),  # sqlglot AST attribute read (3-part name)
     re.compile(r"Unity Catalog"),  # Databricks product name
+    re.compile(r"get\(\"catalog\"\)"),  # Databricks connection field
     re.compile(r"skill catalog"),  # dct skills registry phrasing in MCP docs
     re.compile(r"Pattern Catalog"),  # layout-pattern registry heading in skills
 ]

@@ -98,6 +98,28 @@ def validate_declarations(registry: MigrationRegistry) -> None:
                     "value remap on a key that survives the transition unrenamed "
                     "-- give it a value_map, or remove the declaration."
                 )
+        elif move.chart_type is not None:
+            source_schema_obj = catalog.schema_for(move.source_schema)
+            tail = next(
+                (
+                    move.old_path[i:]
+                    for i in range(len(move.old_path))
+                    if schema_has_tail_for_chart_type(
+                        source_schema_obj, move.old_path[i:], move.chart_type
+                    )
+                ),
+                None,
+            )
+            if tail is None:
+                raise MigrationError(
+                    f"Move source path {_format_path(move.old_path)!r} ends in no "
+                    f"tail {move.chart_type!r} charts declare in {move.source_schema}"
+                )
+            if schema_has_tail_for_chart_type(target_schema_obj, tail, move.chart_type):
+                raise MigrationError(
+                    f"Move source tail {_format_path(tail)!r} still exists on "
+                    f"{move.chart_type!r} charts in {move.target_schema!r}"
+                )
         elif _schema_path_exists(target_schema_obj, move.old_path):
             raise MigrationError(
                 f"Move source path {_format_path(move.old_path)!r} still exists in "

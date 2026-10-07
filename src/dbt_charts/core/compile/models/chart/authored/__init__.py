@@ -60,7 +60,6 @@ from ._base import (
     _SharedChartFields,
 )
 from ._conditional_formatting import (
-    _PREDICATE_OPS,
     ConditionalRule,
     FieldConditionalFormatting,
     _PredicateBase,
@@ -207,7 +206,6 @@ __all__ = [
     # conditional formatting
     "ConditionalRule",
     "FieldConditionalFormatting",
-    "_PREDICATE_OPS",
     "_PredicateBase",
     "match_predicate",
     # support_table

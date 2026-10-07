@@ -13,9 +13,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import click
 import pytest
 import typer
+from typer.core import TyperGroup
 from typer.testing import CliRunner
 
 from dbt_charts.cli.main import PANEL_ORDER, app
@@ -133,8 +133,8 @@ def test_commands_alphabetical_within_panels() -> None:
             panel_rows[str(panel)].append(name)
 
     click_root = typer.main.get_command(app)
-    assert isinstance(click_root, click.Group), "Root Typer must be a Click Group"
-    ctx = click.Context(click_root)
+    assert isinstance(click_root, TyperGroup), "Root Typer must be a TyperGroup"
+    ctx = typer.Context(click_root)
     rendered_order = click_root.list_commands(ctx)
 
     for panel in PANEL_LABELS:

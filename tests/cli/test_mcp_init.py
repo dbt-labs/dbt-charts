@@ -46,55 +46,55 @@ def _read_toml(path: Path) -> dict[str, Any]:
 def _seed_project() -> None:
     """Create a minimal `dbt_charts.yml` in cwd so strict project resolution succeeds.
 
-    Call inside `runner.isolated_filesystem(...)` before invoking the CLI.
+    Call after `monkeypatch.chdir(tmp_path)` and before invoking the CLI.
     """
     Path("dbt_charts.yml").write_text("name: test\n", encoding="utf-8")
 
 
 def test_mcp_init_vscode_writes_servers_key(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        result = runner.invoke(cli_main.app, ["init", "mcp", "vscode"])
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    result = runner.invoke(cli_main.app, ["init", "mcp", "vscode"])
 
-        assert result.exit_code == 0, result.output
-        config = _read_json(Path(".vscode/mcp.json"))
-        assert "servers" in config
-        assert "mcpServers" not in config
-        # cwd is the project — workspace and project roots match, no --project-dir pin.
-        assert config["servers"]["dbt-charts"]["args"] == ["mcp", "serve"]
-        assert "cwd" not in config["servers"]["dbt-charts"]
+    assert result.exit_code == 0, result.output
+    config = _read_json(Path(".vscode/mcp.json"))
+    assert "servers" in config
+    assert "mcpServers" not in config
+    # cwd is the project — workspace and project roots match, no --project-dir pin.
+    assert config["servers"]["dbt-charts"]["args"] == ["mcp", "serve"]
+    assert "cwd" not in config["servers"]["dbt-charts"]
 
 
 def test_mcp_init_corrupt_config_errors_without_overwriting(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        Path(".vscode").mkdir()
-        corrupt = "{not valid json"
-        Path(".vscode/mcp.json").write_text(corrupt, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    Path(".vscode").mkdir()
+    corrupt = "{not valid json"
+    Path(".vscode/mcp.json").write_text(corrupt, encoding="utf-8")
 
-        result = runner.invoke(cli_main.app, ["init", "mcp", "vscode"])
+    result = runner.invoke(cli_main.app, ["init", "mcp", "vscode"])
 
-        assert result.exit_code == 1, result.output
-        assert ".vscode/mcp.json" in result.output
-        assert Path(".vscode/mcp.json").read_text(encoding="utf-8") == corrupt
+    assert result.exit_code == 1, result.output
+    assert ".vscode/mcp.json" in result.output
+    assert Path(".vscode/mcp.json").read_text(encoding="utf-8") == corrupt
 
 
 def test_mcp_init_claude_code_writes_project_root_config(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        result = runner.invoke(cli_main.app, ["init", "mcp", "claude-code"])
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    result = runner.invoke(cli_main.app, ["init", "mcp", "claude-code"])
 
-        assert result.exit_code == 0, result.output
-        config = _read_json(Path(".mcp.json"))
-        assert "mcpServers" in config
-        assert "servers" not in config
-        assert config["mcpServers"]["dbt-charts"]["args"] == ["mcp", "serve"]
+    assert result.exit_code == 0, result.output
+    config = _read_json(Path(".mcp.json"))
+    assert "mcpServers" in config
+    assert "servers" not in config
+    assert config["mcpServers"]["dbt-charts"]["args"] == ["mcp", "serve"]
 
 
 def test_mcp_init_codex_writes_toml_config_toml(
@@ -109,98 +109,100 @@ def test_mcp_init_codex_writes_toml_config_toml(
     fake_dct.chmod(0o755)
     monkeypatch.setattr(sys, "argv", [str(fake_dct), "init", "mcp", "codex"])
 
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        result = runner.invoke(cli_main.app, ["init", "mcp", "codex"])
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    result = runner.invoke(cli_main.app, ["init", "mcp", "codex"])
 
-        assert result.exit_code == 0, result.output
-        # Codex reads .codex/config.toml, NOT .codex/mcp.json
-        assert not Path(".codex/mcp.json").exists()
-        config = _read_toml(Path(".codex/config.toml"))
-        assert "mcp_servers" in config
-        # Old JSON-camelCase key must not be present
-        assert "mcpServers" not in config
-        entry = config["mcp_servers"]["dbt-charts"]
-        assert entry["args"] == ["mcp", "serve"]
-        assert entry["command"] == str(fake_dct.resolve())
+    assert result.exit_code == 0, result.output
+    # Codex reads .codex/config.toml, NOT .codex/mcp.json
+    assert not Path(".codex/mcp.json").exists()
+    config = _read_toml(Path(".codex/config.toml"))
+    assert "mcp_servers" in config
+    # Old JSON-camelCase key must not be present
+    assert "mcpServers" not in config
+    entry = config["mcp_servers"]["dbt-charts"]
+    assert entry["args"] == ["mcp", "serve"]
+    assert entry["command"] == str(fake_dct.resolve())
 
 
 def test_mcp_init_codex_preserves_existing_toml(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        codex_dir = Path(".codex")
-        codex_dir.mkdir()
-        (codex_dir / "config.toml").write_text(
-            'model = "gpt-5"\n'
-            "\n"
-            "[mcp_servers.other]\n"
-            'command = "/usr/bin/echo"\n'
-            'args = ["hi"]\n'
-        )
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    codex_dir = Path(".codex")
+    codex_dir.mkdir()
+    (codex_dir / "config.toml").write_text(
+        'model = "gpt-5"\n'
+        "\n"
+        "[mcp_servers.other]\n"
+        'command = "/usr/bin/echo"\n'
+        'args = ["hi"]\n'
+    )
 
-        result = runner.invoke(cli_main.app, ["init", "mcp", "codex"])
+    result = runner.invoke(cli_main.app, ["init", "mcp", "codex"])
 
-        assert result.exit_code == 0, result.output
-        config = _read_toml(Path(".codex/config.toml"))
-        assert config["model"] == "gpt-5"
-        assert config["mcp_servers"]["other"]["command"] == "/usr/bin/echo"
-        assert config["mcp_servers"]["other"]["args"] == ["hi"]
-        assert config["mcp_servers"]["dbt-charts"]["args"] == ["mcp", "serve"]
+    assert result.exit_code == 0, result.output
+    config = _read_toml(Path(".codex/config.toml"))
+    assert config["model"] == "gpt-5"
+    assert config["mcp_servers"]["other"]["command"] == "/usr/bin/echo"
+    assert config["mcp_servers"]["other"]["args"] == ["hi"]
+    assert config["mcp_servers"]["dbt-charts"]["args"] == ["mcp", "serve"]
 
 
 def test_mcp_init_codex_idempotent_without_force(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        first = runner.invoke(cli_main.app, ["init", "mcp", "codex"])
-        assert first.exit_code == 0, first.output
-        first_text = Path(".codex/config.toml").read_text(encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    first = runner.invoke(cli_main.app, ["init", "mcp", "codex"])
+    assert first.exit_code == 0, first.output
+    first_text = Path(".codex/config.toml").read_text(encoding="utf-8")
 
-        second = runner.invoke(cli_main.app, ["init", "mcp", "codex"])
-        assert second.exit_code == 0, second.output
-        assert "already has dbt-charts" in second.output
-        assert Path(".codex/config.toml").read_text(encoding="utf-8") == first_text
+    second = runner.invoke(cli_main.app, ["init", "mcp", "codex"])
+    assert second.exit_code == 0, second.output
+    assert "already has dbt-charts" in second.output
+    assert Path(".codex/config.toml").read_text(encoding="utf-8") == first_text
 
 
-def test_mcp_init_codex_force_updates(tmp_path: Path, patch_mcp_clients: None) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        Path(".codex").mkdir()
-        Path(".codex/config.toml").write_text(
-            '[mcp_servers.dbt-charts]\ncommand = "/old/dct"\nargs = ["old"]\n',
-            encoding="utf-8",
-        )
+def test_mcp_init_codex_force_updates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    Path(".codex").mkdir()
+    Path(".codex/config.toml").write_text(
+        '[mcp_servers.dbt-charts]\ncommand = "/old/dct"\nargs = ["old"]\n',
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(cli_main.app, ["init", "mcp", "codex", "-f"])
+    result = runner.invoke(cli_main.app, ["init", "mcp", "codex", "-f"])
 
-        assert result.exit_code == 0, result.output
-        config = _read_toml(Path(".codex/config.toml"))
-        assert config["mcp_servers"]["dbt-charts"]["args"] == ["mcp", "serve"]
-        assert config["mcp_servers"]["dbt-charts"]["command"] != "/old/dct"
+    assert result.exit_code == 0, result.output
+    config = _read_toml(Path(".codex/config.toml"))
+    assert config["mcp_servers"]["dbt-charts"]["args"] == ["mcp", "serve"]
+    assert config["mcp_servers"]["dbt-charts"]["command"] != "/old/dct"
 
 
 def test_mcp_init_auto_detects_workspace_markers(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        Path(".vscode").mkdir()
-        Path(".github").mkdir()
-        Path("CLAUDE.md").write_text("# Claude Code\n", encoding="utf-8")
-        Path("AGENTS.md").write_text("# Codex\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    Path(".vscode").mkdir()
+    Path(".github").mkdir()
+    Path("CLAUDE.md").write_text("# Claude Code\n", encoding="utf-8")
+    Path("AGENTS.md").write_text("# Codex\n", encoding="utf-8")
 
-        result = runner.invoke(cli_main.app, ["init", "mcp"])
+    result = runner.invoke(cli_main.app, ["init", "mcp"])
 
-        assert result.exit_code == 0, result.output
-        assert Path(".vscode/mcp.json").exists()
-        assert Path(".github/copilot/mcp.json").exists()
-        assert Path(".mcp.json").exists()
-        assert Path(".codex/config.toml").exists()
-        assert not Path(".codex/mcp.json").exists()
-        assert not Path(".cursor/mcp.json").exists()
+    assert result.exit_code == 0, result.output
+    assert Path(".vscode/mcp.json").exists()
+    assert Path(".github/copilot/mcp.json").exists()
+    assert Path(".mcp.json").exists()
+    assert Path(".codex/config.toml").exists()
+    assert not Path(".codex/mcp.json").exists()
+    assert not Path(".cursor/mcp.json").exists()
 
 
 def test_mcp_init_auto_detects_markers_at_git_root_without_dbt_charts_marker(
@@ -245,23 +247,23 @@ def test_mcp_init_auto_detects_markers_at_git_root_without_dbt_charts_marker(
 
 
 def test_mcp_init_all_writes_every_supported_client(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        result = runner.invoke(cli_main.app, ["init", "mcp", "--all"])
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    result = runner.invoke(cli_main.app, ["init", "mcp", "--all"])
 
-        assert result.exit_code == 0, result.output
-        assert _read_json(Path(".cursor/mcp.json"))["mcpServers"]["dbt-charts"]
-        codex_config = _read_toml(Path(".codex/config.toml"))
-        assert codex_config["mcp_servers"]["dbt-charts"]["args"] == ["mcp", "serve"]
-        assert not Path(".codex/mcp.json").exists()
-        assert _read_json(Path(".vscode/mcp.json"))["servers"]["dbt-charts"]
-        assert _read_json(Path(".mcp.json"))["mcpServers"]["dbt-charts"]
-        assert _read_json(Path(".github/copilot/mcp.json"))["servers"]["dbt-charts"]
-        assert _read_json(tmp_path / "home/.config/claude/config.json")["mcpServers"][
-            "dbt-charts"
-        ]
+    assert result.exit_code == 0, result.output
+    assert _read_json(Path(".cursor/mcp.json"))["mcpServers"]["dbt-charts"]
+    codex_config = _read_toml(Path(".codex/config.toml"))
+    assert codex_config["mcp_servers"]["dbt-charts"]["args"] == ["mcp", "serve"]
+    assert not Path(".codex/mcp.json").exists()
+    assert _read_json(Path(".vscode/mcp.json"))["servers"]["dbt-charts"]
+    assert _read_json(Path(".mcp.json"))["mcpServers"]["dbt-charts"]
+    assert _read_json(Path(".github/copilot/mcp.json"))["servers"]["dbt-charts"]
+    assert _read_json(tmp_path / "home/.config/claude/config.json")["mcpServers"][
+        "dbt-charts"
+    ]
 
 
 def test_mcp_init_walks_up_to_find_project_from_subdir(
@@ -370,16 +372,16 @@ def test_mcp_init_project_dir_flag_rejects_subdir_of_project(
 
 
 def test_mcp_init_print_emits_simple_args_when_cwd_is_project(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
     """`dct init mcp print` emits the simple shape when workspace == project."""
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        result = runner.invoke(cli_main.app, ["init", "mcp", "print"])
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    result = runner.invoke(cli_main.app, ["init", "mcp", "print"])
 
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.output)
-        assert payload["mcpServers"]["dbt-charts"]["args"] == ["mcp", "serve"]
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["mcpServers"]["dbt-charts"]["args"] == ["mcp", "serve"]
 
 
 def test_mcp_init_print_pins_project_dir_when_diverges(
@@ -533,49 +535,49 @@ def test_mcp_serve_opens_the_cache_dct_cache_path_names(
 
 
 def test_mcp_init_cursor_writes_relative_command_when_project_venv_exists(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        venv_dct = Path(".venv/bin/dct")
-        venv_dct.parent.mkdir(parents=True)
-        venv_dct.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        venv_dct.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    venv_dct = Path(".venv/bin/dct")
+    venv_dct.parent.mkdir(parents=True)
+    venv_dct.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    venv_dct.chmod(0o755)
 
-        result = runner.invoke(cli_main.app, ["init", "mcp", "cursor"])
+    result = runner.invoke(cli_main.app, ["init", "mcp", "cursor"])
 
-        assert result.exit_code == 0, result.output
-        config = _read_json(Path(".cursor/mcp.json"))
-        assert (
-            config["mcpServers"]["dbt-charts"]["command"]
-            == "${workspaceFolder}/.venv/bin/dct"
-        )
+    assert result.exit_code == 0, result.output
+    config = _read_json(Path(".cursor/mcp.json"))
+    assert (
+        config["mcpServers"]["dbt-charts"]["command"]
+        == "${workspaceFolder}/.venv/bin/dct"
+    )
 
 
 def test_mcp_init_claude_desktop_writes_absolute_command_when_project_venv_exists(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        venv_dct = Path(".venv/bin/dct")
-        venv_dct.parent.mkdir(parents=True)
-        venv_dct.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        venv_dct.chmod(0o755)
-        expected_abs = str(venv_dct.resolve())
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    venv_dct = Path(".venv/bin/dct")
+    venv_dct.parent.mkdir(parents=True)
+    venv_dct.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    venv_dct.chmod(0o755)
+    expected_abs = str(venv_dct.resolve())
 
-        result = runner.invoke(cli_main.app, ["init", "mcp", "claude"])
+    result = runner.invoke(cli_main.app, ["init", "mcp", "claude"])
 
-        assert result.exit_code == 0, result.output
-        claude_config = tmp_path / "home/.config/claude/config.json"
-        config = _read_json(claude_config)
-        command = config["mcpServers"]["dbt-charts"]["command"]
-        # Claude Desktop config is absolute (not project-committed) — must stay absolute
-        # and must resolve to THIS project's venv dct, not the invoking machine's own path.
-        assert command == expected_abs
+    assert result.exit_code == 0, result.output
+    claude_config = tmp_path / "home/.config/claude/config.json"
+    config = _read_json(claude_config)
+    command = config["mcpServers"]["dbt-charts"]["command"]
+    # Claude Desktop config is absolute (not project-committed) — must stay absolute
+    # and must resolve to THIS project's venv dct, not the invoking machine's own path.
+    assert command == expected_abs
 
 
 def test_configured_trailer_advertises_every_tool_and_resource_family(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
     # Pins the post-configure trailer to the canonical tool + resource
     # registries — without this, the trailer silently drifts each time a
@@ -583,10 +585,10 @@ def test_configured_trailer_advertises_every_tool_and_resource_family(
     from dbt_charts.ai.mcp import server as mcp_server
     from dbt_charts.ai.tool_schemas import ALL_TOOLS
 
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        result = runner.invoke(cli_main.app, ["init", "mcp", "vscode"])
-        assert result.exit_code == 0, result.output
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    result = runner.invoke(cli_main.app, ["init", "mcp", "vscode"])
+    assert result.exit_code == 0, result.output
 
     output = result.output
     tools_line = next(line for line in output.splitlines() if "MCP tools:" in line)
@@ -613,7 +615,7 @@ def test_configured_trailer_advertises_every_tool_and_resource_family(
 
 
 def test_mcp_init_all_continues_past_a_failed_client(
-    tmp_path: Path, patch_mcp_clients: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch_mcp_clients: None
 ) -> None:
     """--all keeps configuring healthy clients after one config fails to read.
 
@@ -621,16 +623,16 @@ def test_mcp_init_all_continues_past_a_failed_client(
     (vscode) is still written — the assertion that separates ``continue`` from
     aborting the loop on the first failure.
     """
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        _seed_project()
-        Path(".cursor").mkdir()
-        corrupt = "{not valid json"
-        Path(".cursor/mcp.json").write_text(corrupt, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    Path(".cursor").mkdir()
+    corrupt = "{not valid json"
+    Path(".cursor/mcp.json").write_text(corrupt, encoding="utf-8")
 
-        result = runner.invoke(cli_main.app, ["init", "mcp", "--all"])
+    result = runner.invoke(cli_main.app, ["init", "mcp", "--all"])
 
-        assert result.exit_code == 1, result.output
-        assert ".cursor/mcp.json" in result.output
-        assert Path(".cursor/mcp.json").read_text(encoding="utf-8") == corrupt
-        vscode = json.loads(Path(".vscode/mcp.json").read_text(encoding="utf-8"))
-        assert "dbt-charts" in vscode["servers"]
+    assert result.exit_code == 1, result.output
+    assert ".cursor/mcp.json" in result.output
+    assert Path(".cursor/mcp.json").read_text(encoding="utf-8") == corrupt
+    vscode = json.loads(Path(".vscode/mcp.json").read_text(encoding="utf-8"))
+    assert "dbt-charts" in vscode["servers"]

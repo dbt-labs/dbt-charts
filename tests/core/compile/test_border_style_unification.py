@@ -12,15 +12,6 @@ def test_from_css_sets_width_color():
     assert b.radius is None
 
 
-def test_from_css_none_returns_empty_border():
-    from dbt_charts.core.compile.models.primitives import BorderStylePatch
-
-    b = BorderStylePatch.from_css(None)
-    assert b.width is None
-    assert b.color is None
-    assert b.radius is None
-
-
 def test_from_css_named_color():
     from dbt_charts.core.compile.models.primitives import BorderStylePatch
 
@@ -65,9 +56,9 @@ def test_border_shorthand_tracks_only_values_present_in_the_string():
     """CSS parsing must not turn unmentioned properties into explicit clears."""
     from dbt_charts.core.compile.models.primitives import BorderStylePatch
 
-    assert BorderStylePatch.model_validate("2px").model_fields_set == {"width"}
-    assert BorderStylePatch.model_validate("red").model_fields_set == {"color"}
-    assert BorderStylePatch.model_validate("1px solid #aaa").model_fields_set == {
+    assert BorderStylePatch.from_css("2px").model_fields_set == {"width"}
+    assert BorderStylePatch.from_css("red").model_fields_set == {"color"}
+    assert BorderStylePatch.from_css("1px solid #aaa").model_fields_set == {
         "width",
         "color",
     }
@@ -78,7 +69,7 @@ def test_border_shorthand_merge_inherits_unmentioned_radius():
     from dbt_charts.core.compile.models.primitives import BorderStyle, BorderStylePatch
 
     base = BorderStyle(width=3, color="black", radius=8)
-    patch = BorderStylePatch.model_validate("1px solid #aaa")
+    patch = BorderStylePatch.from_css("1px solid #aaa")
 
     assert merge_onto_base(base, patch) == BorderStyle(
         width=1,
@@ -151,17 +142,6 @@ def test_border_patch_from_css_sets_fields():
     p = BorderStylePatch.from_css("2px solid #abcdef")
     assert p.width == 2.0
     assert p.color == "#abcdef"
-    assert p.radius is None
-
-
-def test_border_patch_from_css_none_returns_empty_patch():
-    """from_css(None) returns all-None patch."""
-    from dbt_charts.core.compile.models.primitives import BorderStylePatch
-
-    p = BorderStylePatch.from_css(None)
-    assert isinstance(p, BorderStylePatch)
-    assert p.width is None
-    assert p.color is None
     assert p.radius is None
 
 

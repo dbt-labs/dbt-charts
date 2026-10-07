@@ -650,14 +650,27 @@ def _is_query_defect(error_code: ErrorCode | None) -> bool:
 # comment that would swallow the appended `;` — the join produces `;;` or eats
 # the separator; this is the only remaining place in the module that needs a
 # semicolon strip, since DESCRIBE wraps in nothing a trailing artifact
-# could land inside of. Repeated (`+`) because a pasted `;;`
-# is as common as a single one and leaving the second one produces the same
-# rejected script.
-_TRAILING_SEMICOLON_RE = re.compile(r"(?:;[ \t]*(?:--[^\n]*)?\s*)+\Z")
+# could land inside of. Repeated because a pasted `;;` is as common as a single
+# one and leaving the second one produces the same rejected script. A loop, not
+# one regex: the regex form backtracks quadratically on long `;`/space runs.
+_SEMICOLON_COMMENT_RE = re.compile(r";[ \t]*--[^\n]*\Z")
 
 
 def _strip_trailing_semicolon_for_script_join(sql: str) -> str:
-    return _TRAILING_SEMICOLON_RE.sub("", sql.rstrip())
+    text = sql.rstrip()
+    end = len(text)
+    while True:
+        last = end
+        while last and text[last - 1].isspace():
+            last -= 1
+        if last and text[last - 1] == ";":
+            end = last - 1
+            continue
+        line_start = text.rfind("\n", 0, last) + 1
+        comment = _SEMICOLON_COMMENT_RE.search(text, line_start, last)
+        if comment is None:
+            return text[:end]
+        end = comment.start()
 
 
 def _check_sqlserver(

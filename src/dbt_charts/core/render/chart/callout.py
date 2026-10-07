@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from dbt_charts.core.compile.image_assets import rewrite_markdown_images
 from dbt_charts.core.compile.models.chart.resolved.callout import ResolvedCalloutChart
 from dbt_charts.core.compile.models.style.resolved import ResolvedCalloutStyle
+from dbt_charts.core.compile.resolve.style.markdown_style import build_mdsvg_style
 from dbt_charts.core.diagnostics.registry import build_doc_url
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.fonts import get_font_path, get_mono_font_path
@@ -19,7 +20,7 @@ from dbt_charts.core.render.svg_utils import (
     checked_href,
     escape_attr,
 )
-from mdsvg import Style as MdsvgStyle, parse as parse_md
+from mdsvg import parse as parse_md
 from mdsvg.fonts import wrap_text_precise
 from mdsvg.renderer import SVGRenderer as MdsvgRenderer
 
@@ -100,7 +101,7 @@ def _callout_md_renderer(
     # styles (bold spans) override cleanly; pass None for normal weight.
     # float (e.g. 400.0) → int; "normal"/"400" → None; other str → str.
     coerced_fw = int(font_weight) if isinstance(font_weight, float) else font_weight
-    style = MdsvgStyle(
+    style = build_mdsvg_style(
         font_family=font_family,
         base_font_size=font_size,
         font_weight=(

@@ -371,12 +371,12 @@ Fires when a KPI authors align: center or align: right and any of its text runs 
 **Message template:**
 
 ```
-Chart {chart_id!r}: variant: {authored_text!r} did not fit the card at the available width: value, label, and support fell back to the stacked arrangement instead of painting past the card edge.
+Chart {chart_id!r}: style.variant: {authored_text!r} did not fit the card at the available width: value, label, and support fell back to the stacked arrangement instead of painting past the card edge.
 ```
 
-**Fix:** Widen the card, shorten the label or support text, or author variant: stacked directly.
+**Fix:** Widen the card, shorten the label or support text, or author style.variant: stacked directly.
 
-Fires when an inline KPI's assembled value + label + support run does not fit the card at its available width. The renderer falls back to the stacked arrangement for that card rather than paint past the card edge, so the card's actual layout no longer matches the authored variant: inline.
+Fires when an inline KPI's assembled value + label + support run does not fit the card at its available width. The renderer falls back to the stacked arrangement for that card rather than paint past the card edge, so the card's actual layout no longer matches the authored style.variant: inline.
 
 ### WARN-KPI-LABEL-TRUNCATED: KPI card label was truncated
 
@@ -761,6 +761,22 @@ Table {chart_id!r}: static export pre-rendered {rendered_pages} of {total_pages}
 **Fix:** Reduce the row count, raise style.pagination.page_rows so fewer pages are needed, or view the table on an interactive host (dct serve, Cloud) instead of a static export.
 
 Fires when a static export (dct render --format html/svg) has a table with more pages than the renderer will pre-draw. A static export ships no JS runtime that can ask a server for another page, so every page's rows are pre-rendered into the artifact as toggle groups; left uncapped, that makes file size scale with total row count instead of page size. Past the cap, the renderer stops pre-rendering; the artifact shows only the first N pages, and states so in the exported file itself.
+
+### WARN-SUPPORT-TABLE-CELL-OVERFLOW: Support table cells are wider than their band
+
+- **Level:** warning
+- **Domain:** render
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+Chart {chart_id!r}: support_table cells ({detail}) are wider than the space between neighboring categories, so adjacent values run together.
+```
+
+**Fix:** Widen the chart, show fewer categories, or shorten the values with a more compact format.
+
+Fires when the widest formatted cell in a support_table row, plus the row's horizontal padding, is wider than one category band. Every cell is drawn at its own band, so neighbors collide and read as one number (6.7, 19.2, 20.4 becoming 6.719.220.4). The render is unchanged by this warning. It is skipped when the strip is already thinned to the axis's label periods.
 
 ### WARN-TABLE-COLUMNS-OVERFLOW: Table is wider than its dashboard slot
 

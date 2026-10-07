@@ -70,7 +70,7 @@ from dbt_charts.core.render.chart.spec_builders import (
     shift_artifact_title,
 )
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
-from dbt_charts.core.render.conditions import evaluate_visible
+from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.prose import plan_board_prose
 from dbt_charts.core.render.sizing import (
@@ -220,6 +220,9 @@ class SizingRenderCtx:
     resolve_errors: dict[str, ChartResolveFailure] = field(default_factory=dict)
     executor: Executor | None = None
     variables: dict[str, Any] = field(default_factory=dict)
+    # ``variables`` over the board's declared defaults: what ``visible:`` and the
+    # active tab are decided against.
+    variable_values: VariableValues = field(default_factory=dict)
     # Maps chart_id → corrected spec.width for support_table charts.
     # autosize:pad makes outer SVG wider than spec.width by a constant overhead;
     # the render-first pass measures this and stores the shrunk spec.width here so
@@ -266,6 +269,7 @@ def _nested_render_ctx(
         chart_style_context=nested_board.chart_style_context,
         executor=render_ctx.executor,
         variables=render_ctx.variables,
+        variable_values=render_ctx.variable_values,
         support_table_corrected_widths=render_ctx.support_table_corrected_widths,
     )
 
@@ -1687,7 +1691,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
 
     card_pad = float(render_ctx.resolved_style.frame.card_padding)
 
-    for item in active_layout_items(layout, render_ctx.variables):
+    for item in active_layout_items(layout, render_ctx.variable_values):
         if item.board is not None:
             nested_ctx = _nested_render_ctx(render_ctx, item.board)
             _fix_slot_heights_in_tree(item.board.layout, nested_ctx)
@@ -1788,7 +1792,7 @@ def _ensure_resolved_variants_in_tree(
     chooses between. Nothing to do with the return value here: a failure has
     already recorded itself, and the item becomes an error tile.
     """
-    for item in active_layout_items(layout, render_ctx.variables):
+    for item in active_layout_items(layout, render_ctx.variable_values):
         if item.board is not None:
             nested_ctx = _nested_render_ctx(render_ctx, item.board)
             _ensure_resolved_variants_in_tree(item.board.layout, nested_ctx, executor)
@@ -1846,15 +1850,11 @@ def _title_band_target(
     if not board.title:
         if board.text or board.visible_variables or board.layout.type != "rows":
             return None
-        leading = [
-            child
-            for child in board.layout.items
-            if evaluate_visible(child.visible, variable_values, executor)
-        ][:1]
-        if not leading:
+        drawn = active_layout_items(board.layout, variable_values)
+        if not drawn:
             return None
         inner = _title_band_target(
-            leading[0],
+            drawn[0],
             _nested_render_ctx(render_ctx, board),
             executor,
             variable_values,
@@ -1897,15 +1897,14 @@ def _assign_title_shifts_in_tree(
     if layout.type == "cols":
         cells = [
             _title_band_target(item, render_ctx, executor, variable_values)
-            for item in layout.items
-            if evaluate_visible(item.visible, variable_values, executor)
+            for item in active_layout_items(layout, variable_values)
         ]
         shifts = row_title_shifts([None if c is None else c[1] for c in cells])
         for cell, shift in zip(cells, shifts, strict=True):
             if cell is None:
                 continue
             cell[0].title_shift = shift
-    for item in active_layout_items(layout, render_ctx.variables):
+    for item in active_layout_items(layout, render_ctx.variable_values):
         if item.board is not None:
             _assign_title_shifts_in_tree(
                 item.board.layout,
@@ -1938,7 +1937,7 @@ def _align_all_cols_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> None
 
     # Nested layouts are always modeled as nested boards in the Board tree;
     # board-only recursion is correct and complete.
-    for item in active_layout_items(layout, render_ctx.variables):
+    for item in active_layout_items(layout, render_ctx.variable_values):
         if item.board is not None and item.board.layout.items:
             nested_ctx = _nested_render_ctx(render_ctx, item.board)
             _align_all_cols_in_tree(item.board.layout, nested_ctx)
@@ -2027,17 +2026,6 @@ def calculate_data_aware_layout(
     # variables=None means "no variable overrides" — normalize to {} here so
     # downstream code (SizingRenderCtx, height provider) always works with a dict.
     effective_vars = variables if variables is not None else {}
-    # executor=None disables render-first Vega sizing.
-    render_ctx = SizingRenderCtx(
-        resolved_style=board.resolved_style,
-        chart_style_context=board.chart_style_context,
-        executor=executor if render_first else None,
-        variables=effective_vars,
-        pre_resolved=pre_resolved,
-        resolved_variants=(resolved_variants if resolved_variants is not ... else {}),
-        resolve_errors=(resolve_errors if resolve_errors is not ... else {}),
-    )
-
     # What the sizing pass measures against. The charts already render at the
     # committed values; a title interpolating one, and a variable control
     # displaying one, have to be measured at them too, or this pass reserves
@@ -2051,10 +2039,22 @@ def calculate_data_aware_layout(
     # overrides (e.g. `{}` for "no overrides") still gets the declared
     # defaults for everything else this pass measures.
     variable_values = {**board.variable_defaults, **effective_vars}
+    # executor=None disables render-first Vega sizing.
+    render_ctx = SizingRenderCtx(
+        resolved_style=board.resolved_style,
+        chart_style_context=board.chart_style_context,
+        executor=executor if render_first else None,
+        variables=effective_vars,
+        variable_values=variable_values,
+        pre_resolved=pre_resolved,
+        resolved_variants=(resolved_variants if resolved_variants is not ... else {}),
+        resolve_errors=(resolve_errors if resolve_errors is not ... else {}),
+    )
     container_width = board_container_width(
         board,
         variable_values,
         _make_chart_width_measurer(render_ctx, executor, effective_vars),
+        item_is_drawn,
     )
     content_width = max(container_width - 2 * float(frame.margin), 0.0)
     min_height = float(frame.min_height)

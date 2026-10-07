@@ -141,7 +141,7 @@ class Move:
     # MigrationError for any value absent from the map that actually reaches
     # `_mapped_value` (never passes unmapped values through silently). For an
     # identity-path Move (old_path == new_path), an absent-from-map value
-    # never reaches that raise at all -- `move_locations`'
+    # never reaches that raise at all -- `move_source_locations`'
     # `_identity_value_would_change` gate leaves it untouched upstream
     # instead. Use only for total, lossless value mappings.
     # Mapping isn't hashable -- excluded from __hash__, kept in __eq__.
@@ -162,9 +162,9 @@ class Move:
         default=None, hash=False
     )
     drop_notes: Mapping[str, str] = dataclasses.field(default_factory=dict, hash=False)
-    # Where a board holds another board (`board_nesting_prefixes`): the move
+    # Where a board holds another board (`board_nesting_prefixes`): an expansion
     # follows these in the document, since `_relative_field_paths` stops at the
-    # first self-nesting. `suffix_rename_moves` sets it on every Move it yields.
+    # first self-nesting.
     sub_board_prefixes: tuple[YamlKeyPath, ...] = ()
     # Rebuilds the moved value from the old one, for shapes a rename plus a
     # scalar map cannot say. An identity-path Move fires only where the rewrite
@@ -173,6 +173,12 @@ class Move:
     rewrite: Callable[[JsonValue], JsonValue | Dropped] | None = dataclasses.field(
         default=None, hash=False
     )
+    # Reported once per firing whose `rewrite` changed the value: what the
+    # rewrite discarded, for the author.
+    rewrite_note: str | None = None
+    # Set to a chart `type:` literal to fire only inside charts of that family,
+    # for a path other families keep (`style.title.overflow`).
+    chart_type: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -350,6 +356,7 @@ def suffix_rename_moves(
     *,
     catalog: YamlSchemaCatalog,
     value_map: Mapping[MappedScalar, MappedScalar] | None = None,
+    chart_type: str | None = None,
 ) -> tuple[Move, ...]:
     """Resolve tail-only path renames to Move objects without constructing a registry.
 
@@ -367,9 +374,10 @@ def suffix_rename_moves(
     ``value_map``, if given, is attached to every ``Move`` this call produces —
     it broadcasts across all of ``renames``, not per-tuple. A rename that needs
     its own value mapping belongs in a separate ``suffix_rename_moves`` call.
+    ``chart_type`` broadcasts the same way.
     """
-    old_schema = catalog.schema_for(source_schema)
-    new_schema = catalog.schema_for(target_schema)
+    old_schema = catalog.grammar_for(source_schema)
+    new_schema = catalog.grammar_for(target_schema)
     renames = tuple(renames)
     # `_relative_field_paths` filters to these tails *during* the walk rather
     # than after materializing every field path -- see its docstring. That's
@@ -385,7 +393,6 @@ def suffix_rename_moves(
         paths = list(
             dict.fromkeys(_relative_field_paths(root_model, frozenset(), tails))
         )
-        nesting = board_nesting_prefixes(root_model)
         seen: set[tuple[YamlKeyPath, YamlKeyPath]] = set()
         result: list[Move] = []
         for new_tail, old_tail in renames:
@@ -408,7 +415,7 @@ def suffix_rename_moves(
                             old_path,
                             path,
                             value_map,
-                            sub_board_prefixes=nesting,
+                            chart_type=chart_type,
                         )
                     )
         return tuple(result)
@@ -444,7 +451,7 @@ def _apply_identity_moves(
     bypassing ``_recognize``'s currency check entirely (see
     ``prepare_board_mapping``'s cheap ``_theme_value_needs_recheck`` filter
     for when this function is even called), gated purely by whether
-    ``move_locations``' value gate (``_identity_value_would_change``)
+    ``move_source_locations``' value gate (``_identity_value_would_change``)
     finds something the value_map would actually rename — a current name or
     a value the map has never heard of is left completely untouched.
 
@@ -460,7 +467,7 @@ def _apply_identity_moves(
     firing = [
         move
         for move in identity_moves
-        if any(move_locations(mapping_dict, move, catalog))
+        if any(move_source_locations(mapping_dict, move, catalog))
     ]
     if not firing:
         return mapping_dict
@@ -487,7 +494,7 @@ def _theme_value_needs_recheck(mapping: Mapping[str, JsonValue]) -> bool:
     against the generated Literal directly — no registry, no catalog).
     Over-triggering here (a path ref, a garbage value) only costs one extra,
     `@cache`d ``_board_migration_context()`` call: the real precision comes
-    from ``move_locations``' value gate inside
+    from ``move_source_locations``' value gate inside
     ``_apply_identity_moves``, not from this filter. Under-triggering would
     be the actual bug — this must never return False for a genuinely
     retired name.
@@ -732,9 +739,9 @@ def _board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
     relocations in flight; a missing module there means no grammar change is
     pending yet, same as any other boundary.
 
-    ``catalog.current_schema`` is a fully computed live schema (see
-    ``YamlSchemaCatalog``), generated the same way as any frozen snapshot, so
-    the DEV boundary's declarations resolve against it exactly as a frozen
+    ``catalog.grammar_for(dev)`` is the live schema (see ``YamlSchemaCatalog``)
+    without cross-field rules, derived the same way as for any frozen snapshot,
+    so the DEV boundary's declarations resolve against it exactly as a frozen
     boundary's resolve against a snapshot.
 
     The ``finally`` clause drops only what this build left in
@@ -1052,15 +1059,17 @@ def migrate_yaml_text(
     """Rewrite declared moves while preserving unrelated YAML text.
 
     The general in-memory transformer supports any JSON-shaped value. The
-    file writer is narrower, for two shapes only: it moves scalar
-    block-mapping leaves, and it renames a key in place when the move is a
-    pure rename (old and new path share the same parent -- only the final
-    segment's spelling differs). A rename never relocates content, so it
-    carries no restriction on the value's shape -- an entire nested block, a
-    multi-line `|`/`>` block scalar, or a plain single-line scalar all rename
-    as cleanly, byte-identical value included. Any other non-scalar move (a
-    genuine relocation to a different parent) fails instead of reformatting a
-    board through a YAML dump/load round trip.
+    file writer is narrower: it moves scalar block-mapping leaves, relocates a
+    mapping of scalars by striking it and writing its leaves at the new
+    parent, and renames a key in place when the move is a pure rename (old
+    and new path share the same parent -- only the final segment's spelling
+    differs). A rename never relocates content, so it carries no restriction
+    on the value's shape -- an entire nested block, a multi-line `|`/`>` block
+    scalar, or a plain single-line scalar all rename as cleanly,
+    byte-identical value included. A relocated value holding anything but
+    scalars and mappings is caught by the final check against the in-memory
+    result instead of reformatting a board through a YAML dump/load round
+    trip.
 
     ``stop_target``, when given, stops the walk at that frozen version instead
     of the DEV version -- the pending
@@ -1132,7 +1141,7 @@ def migrate_yaml_text(
         for move in moves:
             if move.expansion is not None:
                 for at, node, _parent, _key, bindings in list(
-                    move_locations(staged, move, catalog)
+                    expansion_locations(staged, move, catalog)
                 ):
                     expansion_source = (
                         *at,
@@ -1157,8 +1166,8 @@ def migrate_yaml_text(
                     )
                 deletion_reasons.extend(_apply_move(staged, move, catalog))
                 continue
-            for at, _node, parent, key, bindings in list(
-                move_locations(staged, move, catalog)
+            for parent, key, bindings in list(
+                move_source_locations(staged, move, catalog)
             ):
                 if isinstance(parent, list) and move.old_path != move.new_path:
                     # A list-item destination only ever arises from an
@@ -1179,32 +1188,30 @@ def migrate_yaml_text(
                 else:
                     assert isinstance(key, str)
                     value = parent[key]
-                source = (*at, *_substitute_wildcards(move.old_path, bindings))
-                destination = (*at, *_substitute_wildcards(move.new_path, bindings))
-                # A pure rename (same parent, only the final segment's spelling
-                # differs) never relocates content, so it carries no
-                # restriction on the value's shape -- a multi-line block
-                # scalar renames as cleanly as a single-line one or a nested
-                # mapping. Checked before the scalar branch below, not after:
-                # a value_map still needs the scalar setter, since the value
-                # itself changes (e.g. html_policy's bool -> string), not just
-                # its key.
+                source = _substitute_wildcards(move.old_path, bindings)
+                destination = _substitute_wildcards(move.new_path, bindings)
                 if move.rewrite is not None:
                     yaml_text = _replay_rewrite(
                         yaml_text, move, value, source, destination
                     )
                     continue
+                # A value_map changes the value itself (html_policy's bool ->
+                # string), so it needs the scalar setter, not a rename.
                 if source[:-1] == destination[:-1] and move.value_map is None:
                     yaml_text = rename_key_at_path(
                         yaml_text, ".".join(source), destination[-1]
                     )
                     continue
+                if isinstance(value, dict) and move.value_map is None:
+                    yaml_text = _delete_paths_in_yaml_text(yaml_text, [tuple(source)])
+                    updates.update(_destination_leaves(move, destination, value))
+                    continue
                 if value is None or not isinstance(value, (str, int, float, bool)):
                     raise MigrationError(
                         f"Cannot rewrite {_format_path(move.old_path)!r}: "
-                        "only scalar block-mapping moves or same-position "
-                        "key renames are supported; migrate this field "
-                        "manually."
+                        "only scalars, mappings of scalars, and same-position "
+                        "key renames can be written to the file; migrate this "
+                        "field manually."
                     )
                 if move.value_map is not None:
                     value = _mapped_value(move.value_map, move.old_path, value)
@@ -1288,9 +1295,9 @@ def _replay_rewrite(
 ) -> str:
     """Write what ``move.rewrite`` made of *value* into the text as leaf edits.
 
-    A mapping is renamed in place and then edited leaf by leaf, so comments
-    beside untouched leaves survive; a scalar is struck and its successor
-    written. Anything else the rewrite produces cannot be expressed as leaves.
+    A mapping kept under its parent is renamed in place and then edited leaf
+    by leaf, so comments beside untouched leaves survive. Anything else is
+    struck and its successor written leaf by leaf at the destination.
     """
     from dbt_charts.core.compile.authoring.yaml_patch import (
         rename_key_at_path,
@@ -1298,12 +1305,13 @@ def _replay_rewrite(
     )
 
     rewritten = move.rewrite(value) if move.rewrite is not None else value
+    if source[:-1] != destination[:-1]:
+        yaml_text = _delete_paths_in_yaml_text(yaml_text, [tuple(source)])
+        leaves: dict[str, ScalarLeaf | None] = {
+            **_destination_leaves(move, destination, rewritten)
+        }
+        return set_board_values(yaml_text, leaves)
     if isinstance(value, dict):
-        if source[:-1] != destination[:-1] and source != destination:
-            raise MigrationError(
-                f"Cannot rewrite {_format_path(move.old_path)!r}: only a rename "
-                "in place can be written to the file; migrate this field manually."
-            )
         if source != destination:
             yaml_text = rename_key_at_path(yaml_text, ".".join(source), destination[-1])
         old_leaves = _scalar_leaves(value)
@@ -1326,6 +1334,22 @@ def _replay_rewrite(
         if leaf not in new_leaves:
             edits[".".join((*destination, *leaf))] = None
     return set_board_values(yaml_text, edits) if edits else yaml_text
+
+
+def _destination_leaves(
+    move: Move, destination: Sequence[str], value: JsonValue | Dropped
+) -> dict[str, ScalarLeaf]:
+    if isinstance(value, (str, int, float, bool)):
+        return {".".join(destination): value}
+    if not isinstance(value, dict):
+        raise MigrationError(
+            f"Cannot rewrite {_format_path(move.old_path)!r}: only scalars and "
+            "mappings can be written to the file; migrate this field manually."
+        )
+    return {
+        ".".join((*destination, *leaf)): leaf_value
+        for leaf, leaf_value in _scalar_leaves(value).items()
+    }
 
 
 def _scalar_leaves(
@@ -1450,7 +1474,7 @@ def _transition_applies(
     # which narrow the same way on isinstance(node, dict).
     document = cast(JsonObject, mapping)  # type-state: cast — always a dict here
     for move in registry.transition_from(identifier):
-        if any(move_locations(document, move, catalog)):
+        if any(move_source_locations(document, move, catalog)):
             return True
     if next(_deletions_that_fire(document, identifier, catalog, registry), None):
         return True
@@ -1460,7 +1484,7 @@ def _transition_applies(
         return True
     map_key_deletions = registry.map_key_deletions_from(identifier)
     if map_key_deletions:
-        source_schema = catalog.schema_for(map_key_deletions[0].source_schema)
+        source_schema = catalog.grammar_for(map_key_deletions[0].source_schema)
         if _map_key_deletion_would_fire(
             document, map_key_deletions, source_schema, [source_schema]
         ):
@@ -1483,8 +1507,8 @@ def _deletions_that_fire(
     deletions = registry.deletions_from(identifier)
     if not deletions:
         return
-    schema = catalog.schema_for(deletions[0].source_schema)
-    live = catalog.current_schema
+    schema = catalog.grammar_for(deletions[0].source_schema)
+    live = catalog.current_grammar
     yield from _walk_deletions(document, (), deletions, schema, [schema], live, [live])
 
 
@@ -1559,7 +1583,7 @@ def _conditional_moves_that_fire(
 ) -> Iterator[tuple[tuple[str, ...], ConditionalMove]]:
     """Each ``(chart_path, rule)`` that *identifier*'s conditional moves would fire on."""
     for rule in registry.conditional_moves_from(identifier):
-        schema = catalog.schema_for(rule.source_schema)
+        schema = catalog.grammar_for(rule.source_schema)
         for chart_path in _walk_conditional_move(document, (), rule, schema, [schema]):
             yield chart_path, rule
 
@@ -1634,11 +1658,11 @@ def retired_keys(
         for move in registry.transition_from(identifier):
             if move.old_path == move.new_path:
                 continue
-            for at, _node, _parent, _key, bindings in move_locations(
+            for _parent, _key, bindings in move_source_locations(
                 document, move, catalog
             ):
-                path = (*at, *_substitute_wildcards(move.old_path, bindings))
-                successor = (*at, *_substitute_wildcards(move.new_path, bindings))
+                path = tuple(_substitute_wildcards(move.old_path, bindings))
+                successor = tuple(_substitute_wildcards(move.new_path, bindings))
                 found.setdefault(
                     path, RetiredKey(path, move.target_schema, successor, None)
                 )
@@ -1708,8 +1732,8 @@ def _current_schema_rejections(
     author can act on, so it leads.
     """
     rejections: list[str] = []
-    for error in validator_for(catalog.current_schema)(
-        catalog.current_schema
+    for error in validator_for(catalog.current_grammar)(
+        catalog.current_grammar
     ).iter_errors(mapping):
         # A composite failure reports by dumping the whole offending node, so a
         # rejection at `charts` would otherwise serialize every chart into the
@@ -1814,7 +1838,7 @@ def _apply_conditional_move(
     would silently re-disable migration for a post-freeze board -- a trap
     that has already recurred twice for ``Deletion``.
     """
-    schema = catalog.schema_for(rule.source_schema)
+    schema = catalog.grammar_for(rule.source_schema)
     drop_warnings: list[str] = []
     _apply_conditional_move_recursive(
         result, rule, drop_warnings, "<root>", schema, [schema]
@@ -1955,8 +1979,8 @@ def _apply_deletions(
     """
     if not deletions:
         return [], []
-    source_schema = catalog.schema_for(deletions[0].source_schema)
-    live = catalog.current_schema
+    source_schema = catalog.grammar_for(deletions[0].source_schema)
+    live = catalog.current_grammar
     messages: list[str] = []
     struck: list[DocumentPath] = []
     _delete_tails_recursive(
@@ -2125,7 +2149,7 @@ def _apply_map_key_deletions(
     messages: list[str] = []
     struck: list[DocumentPath] = []
     for source_schema_name, group in by_source.items():
-        source_schema = catalog.schema_for(source_schema_name)
+        source_schema = catalog.grammar_for(source_schema_name)
         _delete_map_keys_recursive(
             document, group, source_schema, [source_schema], messages, struck, ()
         )
@@ -2222,7 +2246,7 @@ def _live_declares_tail(
     grammar by construction, so `_matching_positions` would narrow to nothing
     here and the gate would wave every position through. `_plausible_positions`
     asks the question a deletion actually needs — is *this* node one of those
-    branches — the same way `move_locations` does.
+    branches — the same way `move_source_locations` does.
 
     An unrecognized position yields no plausible branches and reads as "not
     declared", so the deletion falls back to the source-side gate alone. That
@@ -2633,23 +2657,31 @@ def _try_delete_tail(node: dict[str, JsonValue], tail: YamlKeyPath) -> bool:
 def _apply_move(
     mapping: JsonObject, move: Move, catalog: YamlSchemaCatalog
 ) -> list[str]:
-    """Apply *move* everywhere it fires; returns the notices an expansion owes."""
+    """Apply *move* everywhere it fires; returns the notices it owes the author."""
     notices: list[str] = []
-    for _at, node, parent, key, bindings in list(
-        move_locations(mapping, move, catalog)
-    ):
+    if move.expansion is not None:
+        for _at, node, parent, key, bindings in list(
+            expansion_locations(mapping, move, catalog)
+        ):
+            expanded, notes = _expanded_value(
+                node, move, _substitute_wildcards(move.new_path, bindings), catalog
+            )
+            notices.extend(notes)
+            if isinstance(parent, dict):
+                assert isinstance(key, str)
+                parent[key] = expanded
+            else:
+                assert isinstance(key, int)
+                parent[key] = expanded
+        return notices
+    for parent, key, bindings in list(move_source_locations(mapping, move, catalog)):
         destination = _substitute_wildcards(move.new_path, bindings)
-        if move.expansion is None:
-            _move_value(node, parent, key, destination, move)
-            continue
-        expanded, notes = _expanded_value(node, move, destination, catalog)
-        notices.extend(notes)
-        if isinstance(parent, dict):
-            assert isinstance(key, str)
-            parent[key] = expanded
-        else:
-            assert isinstance(key, int)
-            parent[key] = expanded
+        if move.rewrite_note is not None:
+            assert move.rewrite is not None, "rewrite_note needs a rewrite"
+            value = parent[int(key)] if isinstance(parent, list) else parent[str(key)]
+            if move.rewrite(value) != value:
+                notices.append(move.rewrite_note)
+        _move_value(mapping, parent, key, destination, move)
     return notices
 
 
@@ -2664,10 +2696,10 @@ def _value_at(document: JsonValue, path: Sequence[str]) -> JsonValue:
     return node
 
 
-def _positions_along(
+def _live_positions_along(
     document: JsonObject, path: Sequence[str], live: JsonObject
 ) -> list[JsonObject]:
-    """Schema nodes of *live* for the value at *path*, narrowed by each ancestor.
+    """Live-grammar schema nodes for the value at *path*, narrowed by each ancestor.
 
     Narrowing at every mapping on the way down is what lets a chart's own
     ``type:`` pick its family's style grammar, so a field one family declares
@@ -2702,8 +2734,8 @@ def _expanded_value(
     assert move.expansion is not None
     value = _value_at(document, destination)
     assert isinstance(value, str)
-    target = catalog.schema_for(move.target_schema)
-    positions = _positions_along(document, destination, target)
+    target = catalog.grammar_for(move.target_schema)
+    positions = _live_positions_along(document, destination, target)
     expanded: dict[str, JsonValue] = {}
     notes: list[str] = []
     for leaf, leaf_value in move.expansion[value].items():
@@ -2776,7 +2808,7 @@ def _board_nodes(
                 yield from _board_nodes(child, prefixes, (*at, *path))
 
 
-def move_locations(
+def expansion_locations(
     document: JsonObject, move: Move, catalog: YamlSchemaCatalog
 ) -> Iterable[
     tuple[
@@ -2787,14 +2819,37 @@ def move_locations(
         tuple[str, ...],
     ]
 ]:
-    """Where *move* fires: ``(board path, board, parent, key, bindings)``.
+    """Where *move*'s expansion fires: ``(board path, board, parent, key, bindings)``.
 
-    Walks the root board and each board nested in it (``Move.sub_board_prefixes``),
-    each treated as a document root; a position two walks both reach is yielded
-    once. *board path* locates the board in the document, and the other paths a
-    caller builds (``old_path``/``new_path`` with *bindings*) are relative to it.
+    Walks the root board and each nested board; a position two walks both reach
+    is yielded once.
+    """
+    assert move.expansion is not None
+    source_schema = catalog.grammar_for(move.source_schema)
+    live = catalog.current_grammar
+    seen: set[tuple[int, str | int]] = set()
+    for at, node in _board_nodes(document, move.sub_board_prefixes):
+        for parent, key, bindings in _source_locations(
+            node, move.old_path, source_schema, [source_schema], live, [live]
+        ):
+            if isinstance(parent, dict):
+                assert isinstance(key, str)
+                value = parent[key]
+            else:
+                assert isinstance(key, int)
+                value = parent[key]
+            if not (isinstance(value, str) and value in move.expansion):
+                continue
+            if (id(parent), key) in seen:
+                continue
+            seen.add((id(parent), key))
+            yield at, node, parent, key, bindings
 
-    Gated on the source grammar.
+
+def move_source_locations(
+    document: JsonObject, move: Move, catalog: YamlSchemaCatalog
+) -> Iterable[tuple[JsonObject | list[JsonValue], str | int, tuple[str, ...]]]:
+    """Document positions *move* rewrites, gated on the source grammar.
 
     The path walk alone is not enough to decide a rename. A resolved path's
     ``*`` segments come from one *declared* arm of a union, but application is
@@ -2831,50 +2886,49 @@ def move_locations(
     legal syntax for this field at any schema version) is left alone instead
     of being forced through the map.
     """
-    source_schema = catalog.schema_for(move.source_schema)
-    live = catalog.current_schema
+    if move.expansion is not None:
+        for _at, _node, parent, key, bindings in expansion_locations(
+            document, move, catalog
+        ):
+            yield parent, key, bindings
+        return
+    source_schema = catalog.grammar_for(move.source_schema)
+    live = catalog.current_grammar
     identity_move = move.old_path == move.new_path and (
         move.value_map is not None or move.rewrite is not None
     )
-    seen: set[tuple[int, str | int]] = set()
-    lead = move.old_path[0]
-    for at, node in _board_nodes(document, move.sub_board_prefixes):
-        # Seeding walks the schema down to the board, so a board that cannot
-        # hold the path's first key is not worth it.
-        if lead != "*" and lead not in node:
-            continue
-        # Seeded with where the board sits, not the root: a `rows:` item is
-        # a board or a `dict[str, AuthoredChart]`, and `_open_map_claims` needs
-        # the open-map arm among the positions to tell them apart.
-        for parent, key, bindings in _source_locations(
-            node,
-            move.old_path,
-            source_schema,
-            _positions_along(document, at, source_schema),
-            live,
-            _positions_along(document, at, live),
-        ):
+    for parent, key, bindings in _source_locations(
+        document, move.old_path, source_schema, [source_schema], live, [live]
+    ):
+        if identity_move:
             if isinstance(parent, dict):
                 assert isinstance(key, str)
-                value = parent[key]
+                current_value = parent[key]
             else:
                 assert isinstance(key, int)
-                value = parent[key]
-            if move.expansion is not None:
-                if not (isinstance(value, str) and value in move.expansion):
+                current_value = parent[key]
+            if move.rewrite is not None:
+                if move.rewrite(current_value) == current_value:
                     continue
-            elif identity_move:
-                if move.rewrite is not None:
-                    if move.rewrite(value) == value:
-                        continue
-                else:
-                    assert move.value_map is not None
-                    if not _identity_value_would_change(move.value_map, value):
-                        continue
-            if (id(parent), key) in seen:
-                continue
-            seen.add((id(parent), key))
-            yield at, node, parent, key, bindings
+            else:
+                assert move.value_map is not None
+                if not _identity_value_would_change(move.value_map, current_value):
+                    continue
+        if move.chart_type is not None and move.chart_type != _enclosing_type(
+            document, _substitute_wildcards(move.old_path, bindings)
+        ):
+            continue
+        yield parent, key, bindings
+
+
+def _enclosing_type(board: JsonObject, path: Sequence[str]) -> JsonValue:
+    """``type:`` of the innermost mapping along *path* that carries one."""
+    found: JsonValue = None
+    for depth in range(1, len(path)):
+        node = _value_at(board, path[:depth])
+        if isinstance(node, dict) and "type" in node:
+            found = node["type"]
+    return found
 
 
 def _identity_value_would_change(

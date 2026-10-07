@@ -91,6 +91,146 @@ Project config schema error: {message}. Check that all keys are valid project co
 
 Fired when dbt_charts.yml (the project config file) contains a top-level field that is not recognized (e.g. `style:`, which belongs in charts/meta.yml instead), or a field with an invalid value. Check the project config reference for the supported keys.
 
+### ERR-TEXT-EMPTY-SEQUENCE: Text took an item from an empty list
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{detail} Guard with `{{% if ... %}}` or fix the query.
+```
+
+Fired when text (board text and titles, chart text) applies `first`, `last`, `min`, `max` or `random` to an empty list, such as the rows of a query that returned none. The text would otherwise render empty.
+
+### ERR-TEXT-FORMAT-USAGE: Text format filter used incorrectly
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Text `format` takes one dbt Charts format spec (preset, alias, d3 or strftime), as in `value | format('currency')`. Printf-style `'...' | format(x)` is not supported. Got: {detail}.
+```
+
+Fired when `format` in text is called without a spec, with a spec that is not a preset, alias, d3 or strftime spec, with extra arguments, or on a value that is not a number or date. It is not Jinja's printf-style `format`.
+
+### ERR-TEXT-NULL-COMPARISON: Text compared a NULL value
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Ordering comparison on a NULL value in text; guard with 'is none'.
+```
+
+Fired when text orders a NULL value (a query cell or a variable) with `<`, `>`, `<=` or `>=`. Guard the comparison with `x is none`.
+
+### ERR-TEXT-QUERIES-NONLITERAL: Text uses queries without a literal name
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Text must reference queries by literal name (queries.<name> or queries['<name>']).
+```
+
+Fired when board `text:` or `title:`, or chart text, uses `queries` in any way other than `queries.<name>` or `queries['<name>']`, such as `queries[var]`, `queries | list` or `{% set q = queries %}`. The queries a board reads must be known before it runs.
+
+### ERR-TEXT-QUERY-ACCESS: Text accessed a query result incorrectly
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r} {access}. Use {use}.
+```
+
+Fired when text reads an attribute other than `.one`, `.rows` or `.columns` from `queries.<name>`, prints a result or row directly, reads an underscore column as `row._col` instead of `row['_col']`, or names a query the text does not reference.
+
+### ERR-TEXT-QUERY-INDEX: Text indexed past the end of a query's rows or columns
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r} has no {noun} {index} ({extent}).
+```
+
+Fired when text reads `queries.<name>.rows[i]` or `.columns[i]` with an index the result does not have, such as `rows[0]` on a query that returned no rows. Guard with `{% if queries.<name>.rows %}` or fix the query.
+
+### ERR-TEXT-QUERY-ROW-COUNT: Text read .one from a query without exactly one row
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r} returned {row_count} rows; .one needs exactly 1. Use .rows for multi-row results.
+```
+
+Fired when text reads `queries.<name>.one` and the query returned zero rows or more than one. Limit the query to one row or iterate `queries.<name>.rows`.
+
+### ERR-TEXT-QUERY-UNKNOWN-COLUMN: Text read a column the query does not return
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r} has no column {column!r}. Available: {available}.
+```
+
+Fired when text reads a column from a query row that the query does not return. Check the column name against the query's `select` list.
+
+### ERR-TEXT-TYPE-ERROR: Text applied an operator to a value of the wrong type
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Text applied an operator to a value of the wrong type: {detail}. Guard NULL cells with 'is none' and convert strings before arithmetic.
+```
+
+Fired when text, such as board `text:` or `title:` or a chart's title, adds, subtracts or compares query values of incompatible types, for example arithmetic on a NULL or string cell.
+
+### ERR-TEXT-UNKNOWN-QUERY: Text references an unknown query
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{surface} references unknown query {query_name!r}. Defined queries: {defined}.
+```
+
+Fired when board `text:` or `title:`, or a chart's `title`, `subtitle`, KPI `label` or callout `title` or `message`, reads `queries.<name>` for a query that is not defined on the board, its `extends:` parents or its imports. Check for typos and declare the query under `queries:`.
+
 ### ERR-UNKNOWN-THEME: Theme name is not a built-in theme
 
 - **Level:** error
@@ -416,6 +556,20 @@ Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked ba
 
 Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values while its endpoint-label rail is visible. The rail places its labels from the order the sorted axis draws (a vertical rail anchors each series at its own last drawn column, a horizontal one anchors every series on the top row), so it has to know that order before the chart renders. dbt Charts confirms it only for a numeric sort column, and labels placed from the wrong order name series in the wrong place, which is worse than a legend. Sort by a measure, or turn the rail off with `style.endpoint_labels.visible: false`.
 
+### ERR-ENGINE-REFUSED: the render engine cannot draw this chart yet
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+The render engine cannot draw this chart yet: {message}
+```
+
+Fired when the Rust render engine meets a chart shape it does not model yet. It names an engine gap, not a mistake in the board.
+
 ### ERR-FIELD-LABELS-FIELD-NOT-FOUND: field_labels key names no column the chart reads
 
 - **Level:** error
@@ -694,7 +848,7 @@ Fired when the render layer receives input data that fails a structural check. T
 KPI chart {chart_id!r} support value is a date/time, but its format {spec!r} is not a date format. Use date_short, a strftime spec via a style.formats alias, or remove format: to use date_short.
 ```
 
-Fired when a KPI's support.format is a number format (not date_short, time_short, or a style.formats alias resolving to a strftime spec) and support.value is a date/datetime column. support.format is always authored for that one chart, unlike the headline value's format, which can be a board-wide cascade default -- so a mismatch here is never ambiguous.
+Fired when a KPI's style.support.format is a number format (not date_short, time_short, or a style.formats alias resolving to a strftime spec) and support.value is a date/datetime column. Unlike the headline value's format, which falls back to date_short, a support format mismatch always fails.
 
 ### ERR-KPI-MULTIROW: KPI query returned more than one row
 
@@ -710,6 +864,20 @@ KPI chart {chart_id!r} expects exactly 1 row, got {row_count}. Use a query that 
 
 Fired when a KPI chart's query returns more than one row. KPI charts display exactly one value; use a query that returns a single row (e.g. SELECT SUM(...) or LIMIT 1).
 
+### ERR-KPI-NO-DATA: KPI query returned no rows
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+KPI chart {chart_id!r} has no data: its query returned 0 rows.
+```
+
+Fired when a KPI chart's query returns zero rows. A KPI displays exactly one value, so an empty result has nothing to show. Make the query return one row, for example an aggregate without a GROUP BY.
+
 ### ERR-KPI-TEMPORAL-FORMAT-INVALID: KPI temporal format spec could not be applied
 
 - **Level:** error
@@ -723,6 +891,20 @@ KPI chart {chart_id!r} could not format value {cell!r} with spec {spec!r}: {reas
 ```
 
 Fired when a KPI's resolved date/time format spec is itself invalid (an unknown strftime directive) or the cell's value cannot be parsed as a calendar date/time (e.g. an out-of-range hour in an ISO timestamp string).
+
+### ERR-KPI-VALUE-COLUMN-NOT-FOUND: KPI value names a column not in the query result
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+KPI chart {chart_id!r}: value column {value_column!r} not found in the query result. Channels are always column references; constant values come from the query. For a string status value, add `rows: [{{status: {value_column!r}}}]` to the query and set `value: status`. For a numeric literal, add `rows: [{{count: <value>}}]` and set `value: count`.
+```
+
+Fired when a KPI's `value` (or a support value) names a column that is not in the query result row. Chart channels are column references, never literals, so a constant must come from the query itself.
 
 ### ERR-LABEL-FORMAT-AXIS-MISMATCH: a non-time axis format needs numeric tick values
 
@@ -1354,6 +1536,34 @@ labels.position 'middle_aligned' aligns every bar's label to one shared height, 
 
 Fired when `labels.position: middle_aligned` is set on a stacked bar. `middle_aligned` places every label at a single common height (the mean bar height, halved) so a row of labels reads as one line, a whole-bar idea with no per-segment reading. Stacked segments each need their own center: use `middle`.
 
+### ERR-STYLE-CSS-VALUE-INVALID: A style value for markdown text is not valid CSS
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Invalid style value for markdown text: {detail}.
+```
+
+Fired when a font color, weight, style or decoration that styles markdown text (prose, callouts, table cells) contains a character that could close the CSS declaration or open a new rule: one of `<>;{}"'\*` or a control character. Use a plain CSS value such as a hex color, `oklch(...)`, `var(--x)`, or `bold`.
+
+### ERR-SUPPORT-TABLE-LABEL-IGNORED: support_table per_series label: names nothing in this layout
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{message}
+```
+
+Fired when a `per_series:` entry without `by_measure: true` sets `label:` on a chart whose strip rows (vertical bar, line, area) or per-series columns (stacked horizontal bar) are named by the color field's series values, so the label would be silently dropped. A horizontal grouped bar's single per_series column still takes its header from `label:`. Remove the label; series names come from the color field and legend.
+
 ### ERR-SUPPORT-TABLE-POSITION-INVALID: style.support_table.position is invalid for the chart's orientation
 
 - **Level:** error
@@ -1381,6 +1591,202 @@ table column format {fmt!r} does not match its cell values. {remedy}
 ```
 
 Fired when a table column's `format:` spec is the wrong kind for the values it formats: a strftime-style time spec (a predefined name like `time_short`, or an explicit string containing a `%`-prefixed directive such as `%B` or `%W`) applied to a numeric value, or a d3 numeric spec applied to a date/datetime value. `format:` is kind-agnostic at compile time, so `dct validate` accepts either mismatch; this is caught per cell at render time instead, once the actual value kind is known.
+
+### ERR-TABLE-LINK-FILTER-UNKNOWN: a table link template uses an unknown filter
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Unknown link template filter: {filter_name!r}. Only 'urlencode' is supported.
+```
+
+Fired when a table column's `link:` template pipes a value through a filter other than `urlencode`, e.g. `{{ id | shout }}`.
+
+### ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS: a pivot declares neither rows nor values
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+pivot: declare at least one of `rows` or `values`; with both omitted the row and measure dimensions are ambiguous.
+```
+
+Fired when a table pivot gives only `columns`. The remaining fields cannot be split into row dimensions and measures without guessing, so one of `rows` or `values` is required.
+
+### ERR-TABLE-PIVOT-DUPLICATE-CELL: a pivot cell receives more than one value
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+pivot_table_data: duplicate value for row ({row}) and column {pivot_column}, measure {measure!r}; move the extra field onto rows or columns.
+```
+
+Fired when more than one query row maps to the same pivot cell (same row key, column key, and measure). The pivot never aggregates, so the query must return one row per cell or the extra field must move onto `rows` or `columns`.
+
+### ERR-TABLE-PIVOT-FIELD-NOT-FOUND: a pivot field is not a column of the query result
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{channel} {field!r} not in data rows; observed keys: {observed}
+```
+
+Fired when a table pivot's `columns`, `values`, or `rows` names a field that the query does not return. `channel` says which channel: pivot.column, pivot.value, or pivot.row.
+
+### ERR-TABLE-PIVOT-NO-MEASURES: a pivot has no measure columns
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+pivot: no measure columns; `values` resolved to empty. Declare at least one measure field. Observed keys: {observed}
+```
+
+Fired when a table pivot ends up with no measure to place in the cells, for example an explicit `values: []`.
+
+### ERR-TABLE-PIVOT-ROW-ROLE-CONFLICT: pivoted rows merge with conflicting roles
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+pivot_table_data: conflicting row roles for row ({row}): {stored_role!r} vs {this_role!r}. A merged pivot row must resolve to a single role.
+```
+
+Fired when query rows that pivot into the same wide row resolve to different `row.role` values. Keeping the first would hide the disagreement.
+
+### ERR-TABLE-PIVOT-ROW-ROLE-LITERAL: a pivot row.role is a role name, not a column
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+pivot.row_role {row_role!r} is a literal role, not a query column; under a pivot row.role must name the query column that carries the per-row role. Observed keys: {observed}
+```
+
+Fired when a pivoted table's `row.role` is a literal role such as `total` instead of the name of the column that carries each row's role. A literal would give every row the same role and silently drop the reshape.
+
+### ERR-TABLE-SPANNER-NOT-ADJACENT: a table spanner's columns are not adjacent
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+table {chart_id!r}: spanner {label!r} columns {spanner_columns} are not adjacent among the visible columns {visible_columns}. Reorder the query's SELECT; spanners never reorder columns.
+```
+
+Fired when the columns of a table spanner are not next to each other in the visible column order. Column order belongs to the query, so a spanner never reorders anything; reorder the SELECT or hide the columns between them.
+
+### ERR-TABLE-SPANNER-UNKNOWN-COLUMN: a table spanner names a column not in the query result
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+table {chart_id!r}: spanner {label!r} names {unknown}, which are not query columns (columns: {columns}).
+```
+
+Fired when a table `spanners:` entry lists a column that the query does not return; usually a typo or a column renamed in the query.
+
+### ERR-TABLE-SWATCH-NOT-COLOR: a swatch column holds a value that is not a color
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+table {chart_id!r}: column {swatch_column!r} declares swatch: true but row {row_index} value {value!r} is not a CSS color. Swatch cells must be hex (e.g. '#3164a3') or 'transparent'. Either point swatch: true at a different column, or fix the data.
+```
+
+Fired when a table column declared `swatch: true` has a cell that is empty or not a CSS color. The author either pointed `swatch` at the wrong column or the query carries the wrong content; rendering it as text would hide the mistake.
+
+### ERR-TABLE-TEMPORAL-FORMAT-INVALID: a table cell's date or time could not be formatted
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+table cell {cell!r} could not be formatted with spec {spec!r}: {reason}
+```
+
+Fired when a table cell holds a date or time that cannot be parsed (for example an out-of-range hour in an ISO timestamp), or when the column's resolved date/time format spec is itself invalid.
+
+### ERR-TABLE-TRANSPOSE-ROW-COUNT: a transposed table needs exactly one row
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.table.transpose requires exactly one data row; got {row_count}. Remove transpose: true or change the query.
+```
+
+Fired when `style.table.transpose` is set and the query returns zero or several rows. Transposing turns the single result row into a column of label and value pairs.
+
+### ERR-TABLE-TRANSPOSE-VISIBLE-UNKNOWN-COLUMN: a transposed table hides a column the query does not return
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.table.transpose: style.columns sets `visible:` on {unaddressed}, which match no query column. The transposable columns are {available}. Check for a typo.
+```
+
+Fired when a transposed table's `style.columns` sets `visible:` on a name that is not a query column. Hiding it would silently do nothing.
+
+### ERR-TABLE-VISIBLE-UNKNOWN-COLUMN: a table hides a column that is not rendered
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+table {chart_id!r}: style.columns sets `visible:` on {unaddressed}, which match no rendered column. This table's addressable columns are {addressable}. Check for a typo, or key the entry by the name the rendered column actually carries (a pivot's measure name, or a bare pivoted value).
+```
+
+Fired when a table's `style.columns` sets `visible: false` on a name that is not a rendered column, so the entry could never take effect. Under a pivot the rendered names are the pivot's measure names or bare pivoted values.
 
 ### ERR-TICKS-COUNT-REQUIRES-NON-LOG-SCALE: ticks.count is not supported with log scale
 
@@ -2122,6 +2528,62 @@ Query exceeded max_query_duration_seconds={seconds}s on source {source!r}.
 ```
 
 Fired when a query runs longer than the configured `max_query_duration_seconds` limit on a source. Optimize the query, raise the limit, or add a WHERE clause to reduce the result set.
+
+### ERR-QUERY-FORMAT-COLUMN-MISSING: A query's formats: names a column the query did not return
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query '{query}' formats names column '{column}', which the query did not return. Returned columns: {columns}
+```
+
+Fired when a query's `formats:` key is not among the columns the query returns. Checked at compile for `values` queries, by `dct validate --warehouse` for SQL queries, and when rows come back at execution. A zero-row result carries no column names, so an empty result passes; `dct validate --warehouse` still checks the query's columns.
+
+### ERR-QUERY-FORMAT-SPEC: A query's formats: value is a format spec, not a format name
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query!r} formats.{column} is a format spec ({spec!r}), not a format name. Name it in style.formats (for example `{column}_format: {spec!r}`) and use the name here.
+```
+
+Fired when a query's `formats:` value is a d3 or strftime spec (`$,.0f`, `%b %Y`) instead of a name. A query says what a column means by naming a format: an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`. The spec itself belongs in `style.formats`, where one definition restyles every column that names it.
+
+### ERR-QUERY-FORMAT-UNKNOWN: A query's formats: value names a format the board does not have
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query!r} formats.{column} names {spec!r}, which is neither an engine format nor defined in style.formats. Available: {available}
+```
+
+Fired when a query's `formats:` value is not an engine format name and not a key in the rendering board's merged `style.formats`. A query imported into another board is checked against that board's names, so a shared query naming a format of your own needs it defined in every board that imports it.
+
+### ERR-QUERY-INTERRUPTED: Query interrupted by server shutdown
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query interrupted: the server is shutting down.
+```
+
+Fired when `dct serve` stops while a query runs or waits to run. It says nothing about the query and is never cached; reload the board once the server is back.
 
 ### ERR-REPO-FILE-TOO-LARGE: Repository file exceeds the per-file size limit
 

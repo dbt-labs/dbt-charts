@@ -26,9 +26,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     require_sort_field,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
-    _EMPTY_CHART_TEXT_VARIABLES,
     AutomaticLinkCandidate,
-    ChartTextVariables,
     preferred_chart_width,
 )
 from dbt_charts.core.compile.resolve.chart._table import (
@@ -54,6 +52,7 @@ from dbt_charts.core.compile.resolve.chart.simple import (
     _resolve_spark_bar,
 )
 from dbt_charts.core.compile.resolve.style.fonts import expand_named_fonts
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 
 __all__ = [
     "resolve",
@@ -69,8 +68,8 @@ def resolve(
     automatic_link_candidate: AutomaticLinkCandidate = None,
     table_column_links: Mapping[str, str] = _EMPTY_TABLE_COLUMN_LINKS,
     table_column_rows: Sequence[Mapping[str, str]] = (),
-    variables: ChartTextVariables = _EMPTY_CHART_TEXT_VARIABLES,
     pie_title_font: ResolvedFontStyle | EllipsisType = ...,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedChart:
     """Dispatch a normalized chart → ResolvedChart.
 
@@ -91,9 +90,10 @@ def resolve(
         table_column_links: Executor-derived FK-link candidates by column name.
         table_column_rows: Factual column metadata used to protect a single row
             identity key from receiving a per-column FK link.
-        variables: Request-local board variables used to finalize chart display
-            text. An empty mapping keeps authored templates literal for static
-            resolution.
+        display_text: Variables and query results the chart's title, subtitle,
+            label and message read. ``"raw"`` is the explicit no-data mode and keeps
+            authored text literal. The default ``None`` is for text without Jinja
+            and raises if any display text contains it.
         pie_title_font: Title typography already finalized for a repeated pie chart.
             Placement-specific pie policy still uses ``width``; this preserves the
             chart-level title decision shared by every placement of that chart.
@@ -128,7 +128,7 @@ def resolve(
                 effective_width,
                 datasets,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "histogram":
             return _resolve_histogram(
@@ -137,7 +137,7 @@ def resolve(
                 chart_style_context,
                 effective_width,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "line":
             return _resolve_line(
@@ -147,7 +147,7 @@ def resolve(
                 effective_width,
                 datasets,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "area":
             return _resolve_area(
@@ -157,7 +157,7 @@ def resolve(
                 effective_width,
                 datasets,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "scatter":
             return _resolve_scatter(
@@ -167,7 +167,7 @@ def resolve(
                 effective_width,
                 datasets,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "heatmap":
             return _resolve_heatmap(
@@ -176,7 +176,7 @@ def resolve(
                 chart_style_context,
                 effective_width,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "pie" | "donut":
             return _resolve_pie(
@@ -185,7 +185,7 @@ def resolve(
                 chart_style_context,
                 effective_width,
                 automatic_link_candidate,
-                variables,
+                display_text,
                 pie_title_font,
             )
         case "kpi":
@@ -195,7 +195,7 @@ def resolve(
                 chart_style_context,
                 effective_width,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "table":
             return _resolve_table(
@@ -206,7 +206,7 @@ def resolve(
                 automatic_link_candidate,
                 table_column_links,
                 table_column_rows,
-                variables,
+                display_text,
             )
         case "geoshape" | "map":
             return _resolve_geoshape(
@@ -215,7 +215,7 @@ def resolve(
                 chart_style_context,
                 effective_width,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "point_map" | "bubble_map":
             return _resolve_point_map(
@@ -224,10 +224,10 @@ def resolve(
                 chart_style_context,
                 effective_width,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case "callout":
-            return _resolve_callout(normalized, data, chart_style_context, variables)
+            return _resolve_callout(normalized, data, chart_style_context, display_text)
         case "spark_bar":
             return _resolve_spark_bar(
                 normalized,
@@ -235,7 +235,7 @@ def resolve(
                 chart_style_context,
                 effective_width,
                 automatic_link_candidate,
-                variables,
+                display_text,
             )
         case _:
             raise ValueError(f"Unknown normalized chart type: {normalized.type!r}")

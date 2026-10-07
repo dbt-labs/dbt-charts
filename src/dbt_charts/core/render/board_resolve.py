@@ -26,7 +26,9 @@ from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
+from dbt_charts.core.render.board_variables import board_data_provider
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
+from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.prose import plan_board_prose
 
 if TYPE_CHECKING:
@@ -48,8 +50,13 @@ def _resolve_chart_static(
     chart: Chart,
     chart_style_context: ChartStyleContext,
 ) -> ResolvedChart:
-    """Resolve a chart for static (data-free) display."""
-    return resolve(chart, [], chart_style_context=chart_style_context)
+    """Resolve a chart for static (data-free) display.
+
+    The skeleton has no data, so ``display_text="raw"`` keeps title, subtitle, label
+    and message as authored."""
+    return resolve(
+        chart, [], chart_style_context=chart_style_context, display_text="raw"
+    )
 
 
 def _resolve_chart_data_aware(
@@ -330,22 +337,26 @@ def build_resolved_board(
 
     # Sizing pass: mutates board.layout dimensions in place; returns render_cache
     # populated with pre-rendered SVGs for charts sized via render-first.
-    board, render_cache = calculate_data_aware_layout(
-        board,
-        executor,
-        variables,
-        render_first,
-        resolved_variants=chart_variants,
-        resolve_errors=chart_failures,
-        authored_slot_heights=authored_slot_heights,
-    )
+    with board_data_provider(executor):
+        board, render_cache = calculate_data_aware_layout(
+            board,
+            executor,
+            variables,
+            render_first,
+            resolved_variants=chart_variants,
+            resolve_errors=chart_failures,
+            authored_slot_heights=authored_slot_heights,
+        )
 
     frame = board.resolved_style.frame
     page_padding = float(frame.margin)
     card_padding = float(frame.card_padding)
     card_gap = float(frame.card_gap) if board.card_gap else 0.0
     layout_gap = get_board_gap(board)
-    width = float(board.layout.width or board_container_width(board, variables))
+    width = float(
+        board.layout.width
+        or board_container_width(board, variables, drawn=item_is_drawn)
+    )
     height = float(board.layout.height)
 
     resolved_layout = _build_resolved_layout(

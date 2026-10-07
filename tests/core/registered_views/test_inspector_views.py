@@ -332,14 +332,15 @@ class TestInspectorProfileRichness:
     def test_table_page_transposes_column_profiles(self) -> None:
         """The table overview is a describe-style pivot: one table column per data
         column, and the characteristics (Type/Role/Null %/…) as rows."""
-        from dbt_charts.core.registered_views.query_runner import ViewQueryResult
+        from dbt_charts.core.compile.template.query_result import QueryResult
 
         match = _router().match("/inspector/snowflake/analytics/orders/")
         assert match is not None
         board = expand_registered_view(
             match,
             {
-                "columns": ViewQueryResult(
+                "columns": QueryResult(
+                    "q",
                     rows=[
                         {
                             "name": "amount",
@@ -349,7 +350,7 @@ class TestInspectorProfileRichness:
                             "null_percentage": 0.0,
                             "distinct_count": 5,
                         },
-                    ]
+                    ],
                 )
             },
         )
@@ -366,15 +367,15 @@ class TestInspectorProfileRichness:
 
     def test_table_page_column_headers_link_to_column_pages(self) -> None:
         """Each data column's header links to its column inspector page (drill-down)."""
-        from dbt_charts.core.registered_views.query_runner import ViewQueryResult
+        from dbt_charts.core.compile.template.query_result import QueryResult
 
         match = _router().match("/inspector/snowflake/analytics/orders/")
         assert match is not None
         board = expand_registered_view(
             match,
             {
-                "columns": ViewQueryResult(
-                    rows=[{"name": "amount", "actual_type": "BIGINT"}]
+                "columns": QueryResult(
+                    "q", rows=[{"name": "amount", "actual_type": "BIGINT"}]
                 )
             },
         )
@@ -412,19 +413,19 @@ class TestInspectorProfileRichness:
         top-values (`categories`) breakdown — chosen from the `col` pre-template
         result, not baked statically.
         """
-        from dbt_charts.core.registered_views.query_runner import ViewQueryResult
+        from dbt_charts.core.compile.template.query_result import QueryResult
 
         match = _router().match("/inspector/wh/main/orders/amount/")
         assert match is not None
 
         numeric = expand_registered_view(
-            match, {"col": ViewQueryResult(rows=[{"actual_type": "BIGINT"}])}
+            match, {"col": QueryResult("q", rows=[{"actual_type": "BIGINT"}])}
         )
         assert numeric.queries is not None
         assert "histogram" in numeric.queries
 
         categorical = expand_registered_view(
-            match, {"col": ViewQueryResult(rows=[{"actual_type": "VARCHAR"}])}
+            match, {"col": QueryResult("q", rows=[{"actual_type": "VARCHAR"}])}
         )
         assert categorical.queries is not None
         assert "categories" in categorical.queries
@@ -433,7 +434,7 @@ class TestInspectorProfileRichness:
         # INTERVAL contains 'INT' but must NOT be treated as numeric — it falls to
         # the generic top-values branch, not min/max/histogram.
         interval = expand_registered_view(
-            match, {"col": ViewQueryResult(rows=[{"actual_type": "INTERVAL"}])}
+            match, {"col": QueryResult("q", rows=[{"actual_type": "INTERVAL"}])}
         )
         assert interval.queries is not None
         assert "categories" in interval.queries
@@ -441,7 +442,7 @@ class TestInspectorProfileRichness:
 
         # TIMESTAMP/DATE get the date branch (monthly timeline)…
         temporal = expand_registered_view(
-            match, {"col": ViewQueryResult(rows=[{"actual_type": "TIMESTAMP"}])}
+            match, {"col": QueryResult("q", rows=[{"actual_type": "TIMESTAMP"}])}
         )
         assert temporal.queries is not None
         assert "monthly" in temporal.queries
@@ -449,7 +450,7 @@ class TestInspectorProfileRichness:
         # …but bare TIME (time-of-day) can't be ::DATE-cast, so it takes the
         # generic branch instead of the date SQL that would error the whole page.
         time_col = expand_registered_view(
-            match, {"col": ViewQueryResult(rows=[{"actual_type": "TIME"}])}
+            match, {"col": QueryResult("q", rows=[{"actual_type": "TIME"}])}
         )
         assert time_col.queries is not None
         assert "categories" in time_col.queries

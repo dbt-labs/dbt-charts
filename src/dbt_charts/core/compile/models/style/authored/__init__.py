@@ -110,13 +110,13 @@ from dbt_charts.core.compile.models.style.authored.table import (
     TableChartStylePatch,
     TableColumnConfig,
     TableColumnDefaultsConfig,
-    _validate_glyph_pair as _validate_glyph_pair,
+    _validate_glyph_text as _validate_glyph_text,
     fill_table_column_defaults,
 )
 
 __all__ = [
     "_SPARK_RENAMED_AWAY",
-    "_validate_glyph_pair",
+    "_validate_glyph_text",
     "AreaChartStylePatch",
     "AreaMarkStylePatch",
     "AxisGridThresholdStylePatch",

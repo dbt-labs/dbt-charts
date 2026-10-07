@@ -442,8 +442,8 @@ class TestLanePositionsAnchorAtMidpoint:
             "Amount"
         ]
         # Measure the widest number via the same strict path the lane computer uses.
+        from dbt_charts.core.compile.format_value import format_kpi_parts
         from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.format_utils import format_kpi_parts
 
         _p, num_str, _s = format_kpi_parts(193_520_000, col_cfg["Amount"].format)
         measurer = get_font_measurer(None, numeric=True)
@@ -1288,7 +1288,11 @@ class TestDateColumnMixedSpellingPerCellBug:
         )
 
         chart = make_chart("table", x=None, y=None)
-        chart = resolve(chart, self._MIXED_SPELLING_DATA, chart_style_context=_style())
+        chart = resolve(
+            chart,
+            self._MIXED_SPELLING_DATA,
+            chart_style_context=_style(),
+        )
         svg = render_table_svg(
             chart,
             self._MIXED_SPELLING_DATA,
@@ -1332,7 +1336,11 @@ class TestDateColumnMixedSpellingPerCellBug:
             y=None,
             style={"columns": {"Last Close": {"align": "left", "visible": True}}},
         )
-        chart = resolve(chart, self._MIXED_SPELLING_DATA, chart_style_context=_style())
+        chart = resolve(
+            chart,
+            self._MIXED_SPELLING_DATA,
+            chart_style_context=_style(),
+        )
         svg = render_table_svg(
             chart,
             self._MIXED_SPELLING_DATA,
@@ -1368,7 +1376,11 @@ class TestDateColumnMixedSpellingPerCellBug:
             y=None,
             style={"columns": {"Last Close": {"align": "right", "visible": True}}},
         )
-        chart = resolve(chart, self._MIXED_SPELLING_DATA, chart_style_context=_style())
+        chart = resolve(
+            chart,
+            self._MIXED_SPELLING_DATA,
+            chart_style_context=_style(),
+        )
         svg = render_table_svg(
             chart,
             self._MIXED_SPELLING_DATA,

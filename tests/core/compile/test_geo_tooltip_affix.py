@@ -13,7 +13,6 @@ from dbt_charts.core.compile.models.chart.normalized.point_map import PointMapCh
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve.chart.geo import (
-    _EMPTY_CHART_TEXT_VARIABLES,
     _resolve_geoshape,
     _resolve_point_map,
 )
@@ -55,9 +54,7 @@ def test_point_map_tooltip_affix_alias_rejected() -> None:
     chart = PointMapChart(id="map1", type="point_map", **_POINT_MAP_KWARGS)
 
     with pytest.raises(CompilationError) as exc_info:
-        _resolve_point_map(
-            chart, [], board_style, 800.0, None, _EMPTY_CHART_TEXT_VARIABLES
-        )
+        _resolve_point_map(chart, [], board_style, 800.0, None)
     assert exc_info.value.code.code == "ERR-FORMAT-AFFIX-GEO-TOOLTIP-UNSUPPORTED"
 
 

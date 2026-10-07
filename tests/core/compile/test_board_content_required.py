@@ -1,9 +1,7 @@
 """A board must declare something that renders.
 
-`AuthoredBoard.validate_layout` rejects a board with no layout, no text, no title,
-no notes, and no charts. Styling alone does not qualify — a `style:` block
-paints a box that has nothing in it, which is the empty-region failure the rule
-exists to catch.
+A board needs a layout, text, charts, or a title. Notes and styling alone do not
+qualify: neither paints anything inside the box.
 """
 
 from __future__ import annotations
@@ -12,6 +10,10 @@ import pytest
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+from .._svg_render import render_board_to_svg
+
+_NO_CONTENT = "Board must have at least one layout type, text, title, or chart"
 
 
 class TestEmptyBoardRejected:
@@ -28,6 +30,11 @@ class TestEmptyBoardRejected:
         with pytest.raises(ValidationError, match="at least one layout type"):
             AuthoredBoard.model_validate({"style": {"padding": "8px"}})
 
+    def test_notes_only_board_raises_at_parse(self) -> None:
+        with pytest.raises(ValidationError) as exc:
+            AuthoredBoard.model_validate({"notes": "why this board exists"})
+        assert exc.value.errors()[0]["msg"] == f"Value error, {_NO_CONTENT}"
+
 
 class TestBoardWithContentAccepted:
     """Each content key on its own satisfies the rule."""
@@ -37,10 +44,9 @@ class TestBoardWithContentAccepted:
         [
             {"text": "hello"},
             {"title": "Section"},
-            {"notes": "why this board exists"},
             {"rows": ["some_chart"]},
         ],
-        ids=["text", "title", "notes", "rows"],
+        ids=["text", "title", "rows"],
     )
     def test_content_key_is_enough(self, payload: dict[str, object]):
         AuthoredBoard.model_validate(payload)
@@ -54,3 +60,7 @@ class TestBoardWithContentAccepted:
                 "style": {"background": "vivid-10.1"},
             }
         )
+
+
+def test_title_only_board_renders() -> None:
+    assert "Hello" in render_board_to_svg("title: Hello\n")

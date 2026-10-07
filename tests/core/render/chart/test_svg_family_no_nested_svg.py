@@ -460,10 +460,15 @@ def _clip_resolved_style() -> tuple[ResolvedStyle, Any]:
 
 
 def test_kpi_title_block_clip_mode_emits_inner_title_when_clipped() -> None:
-    """KPI with title.overflow=clip must emit inner <title> when text is clipped
+    """KPI with label.overflow=clip must emit inner <title> when text is clipped
     (no ellipsis emitted, but text IS shortened — the old '…' sniff misses this)."""
     long_title = "Total Revenue for Enterprise Segment by Partner Region Q4 2025"
-    chart = _chart("kpi", value="revenue", label=long_title)
+    chart = _chart(
+        "kpi",
+        value="revenue",
+        label=long_title,
+        style={"label": {"overflow": "clip"}},
+    )
     clip_rs, clip_ctx = _clip_resolved_style()
     svg, _ = render_chart_item(
         _rc(chart, clip_ctx),

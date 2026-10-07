@@ -23,7 +23,14 @@ from dbt_charts.core.compile.resolve.style.typography import (
     board_title_markdown,
     board_title_spec,
 )
-from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+from dbt_charts.core.compile.template.display_text import resolve_display_text
+from dbt_charts.core.compile.template.jinja import (
+    resolve_jinja_template,
+    template_literal_text,
+    text_needs_render_data,
+)
+from dbt_charts.core.compile.template.markdown_fence import resolve_outside_fences
+from dbt_charts.core.diagnostics.codes_compile import ERR_STYLE_CSS_VALUE_INVALID
 from dbt_charts.core.text.case import apply_case_to_runs
 from mdsvg import parse as parse_markdown
 from mdsvg.types import SpanType
@@ -119,9 +126,7 @@ def get_compact_style(
     Thin wrapper over :func:`compact_style_kwargs` (the dct→mdsvg color/size mapper);
     the contract test reads the fed-field set from that helper directly.
     """
-    from mdsvg import Style
-
-    return Style(
+    return build_mdsvg_style(
         **compact_style_kwargs(
             resolved_style,
             text_align,
@@ -131,6 +136,20 @@ def get_compact_style(
             heading_margin_scale,
         )
     )
+
+
+def build_mdsvg_style(
+    **kwargs: Any,  # type-state: explicit_any — heterogeneous Style kwargs
+) -> Style:
+    """Construct an ``mdsvg.Style``, reporting a CSS-breaking value as a diagnostic."""
+    from mdsvg import Style
+
+    try:
+        return Style(**kwargs)
+    except ValueError as e:
+        raise CompilationError.from_code(
+            ERR_STYLE_CSS_VALUE_INVALID, detail=str(e)
+        ) from e
 
 
 def compact_style_kwargs(
@@ -379,7 +398,17 @@ def prose_content_widths(
     from dbt_charts.core.font_measure import markdown_font_faces
     from mdsvg.renderer import SVGRenderer
 
-    resolved = resolve_jinja_template(text, variable_values, strict=False)
+    needs_data = text_needs_render_data(text)
+    # Query values exist only at render: measure the template without its Jinja,
+    # and ask for the readable-width cap as the one-line width.
+    resolved = resolve_outside_fences(
+        text,
+        template_literal_text
+        if needs_data
+        else (
+            lambda masked: resolve_jinja_template(masked, variable_values, strict=False)
+        ),
+    )
     blocks = rewrite_board_markdown_images(
         list(parse_markdown(resolved)), text, resolved, base_dir, None
     )
@@ -390,7 +419,10 @@ def prose_content_widths(
         fonts=markdown_font_faces(body_text_font_family(resolved_style), style),
         fetch_image_sizes=False,
     )
-    return renderer.min_content_width(blocks), renderer.max_content_width(blocks)
+    floor = renderer.min_content_width(blocks)
+    if needs_data:
+        return floor, max(floor, float(resolved_style.text.preferred_width))
+    return floor, renderer.max_content_width(blocks)
 
 
 def title_max_content_width(
@@ -401,9 +433,18 @@ def title_max_content_width(
     base_dir: str | None,
 ) -> float:
     """Width a board title needs to draw on one line, asked of the renderer and
-    blocks that paint it."""
+    blocks that paint it.
+
+    A title that reads query data or ``format`` cannot be resolved without a
+    render, so it asks for the prose reading width, as board text does.
+    """
+    if text_needs_render_data(title):
+        return float(resolved_style.text.preferred_width)
     renderer, _ = title_renderer(resolved_style, level)
-    blocks = title_blocks(title, variable_values, level, resolved_style, base_dir, None)
+    resolved_title = resolve_display_text(
+        title, variable_values, {}, resolved_style.chart_defaults.formats
+    )
+    blocks = title_blocks(title, resolved_title, level, resolved_style, base_dir, None)
     return renderer.max_content_width(blocks)
 
 
@@ -458,18 +499,18 @@ def title_renderer(
 
 def title_blocks(
     title: str,
-    variable_values: VariableValues | None,
+    resolved_title: str,
     level: int,
     resolved_style: ResolvedStyle,
     base_dir: str | None,
     error_collector: list[Diagnostic] | None,
 ) -> list[AnyBlock]:
     """The markdown blocks a board title is drawn as, asked by the measure and
-    the paint alike: Jinja resolved, formatted as the title heading,
-    ``style.title.font.case`` applied to its words, and its images resolved
-    against *base_dir*, the directory of the file the title is written in.
+    the paint alike: *resolved_title* (the authored *title* with its Jinja
+    resolved) formatted as the title heading, ``style.title.font.case`` applied
+    to its words, and its images resolved against *base_dir*, the directory of
+    the file the title is written in.
     """
-    resolved_title = resolve_jinja_template(title, variable_values, strict=False)
     markdown_title, _, _ = board_title_markdown(
         resolved_title, level=level, resolved_style=resolved_style
     )

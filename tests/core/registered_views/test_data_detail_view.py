@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import pytest
 
+from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.registered_views.expander import expand_registered_view
 from dbt_charts.core.registered_views.loader import load_builtin_registry
 from dbt_charts.core.registered_views.models import RegisteredView
-from dbt_charts.core.registered_views.query_runner import ViewQueryResult
 from dbt_charts.core.registered_views.router import RouteRouter
 
 
@@ -36,8 +36,8 @@ def _data_views() -> list[RegisteredView]:
     return [v for v in load_builtin_registry() if v.name.startswith("data_")]
 
 
-def _col_rows(*cols: tuple[str, str]) -> ViewQueryResult:
-    return ViewQueryResult(rows=[{"name": n, "actual_type": t} for n, t in cols])
+def _col_rows(*cols: tuple[str, str]) -> QueryResult:
+    return QueryResult("q", rows=[{"name": n, "actual_type": t} for n, t in cols])
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ class TestTableDetailTemplate:
         assert match is not None
         return match
 
-    def _col_results(self) -> dict[str, ViewQueryResult]:
+    def _col_results(self) -> dict[str, QueryResult]:
         return {
             "columns": _col_rows(
                 ("id", "BIGINT"),
@@ -309,9 +309,7 @@ class TestTableDetailTemplate:
         """table-detail expands cleanly when the pre-template columns query returns no rows."""
         from dbt_charts.core.compile.validate.dispatch import validate_board
 
-        empty_results: dict[str, ViewQueryResult] = {
-            "columns": ViewQueryResult(rows=[])
-        }
+        empty_results: dict[str, QueryResult] = {"columns": QueryResult("q", rows=[])}
         board = expand_registered_view(self._match(), query_results=empty_results)
         errors = validate_board(board)
         assert errors == [], f"Validation errors on empty columns result: {errors}"
@@ -330,7 +328,7 @@ class TestDetailCompositeKey:
         assert match is not None
         return match
 
-    def _col_results(self) -> dict[str, ViewQueryResult]:
+    def _col_results(self) -> dict[str, QueryResult]:
         return {
             "columns": _col_rows(
                 ("order_id", "BIGINT"),
@@ -376,7 +374,7 @@ class TestTableIndexDetailLink:
         assert match is not None
         return match
 
-    def _col_results(self) -> dict[str, ViewQueryResult]:
+    def _col_results(self) -> dict[str, QueryResult]:
         return {
             "columns": _col_rows(
                 ("id", "BIGINT"),

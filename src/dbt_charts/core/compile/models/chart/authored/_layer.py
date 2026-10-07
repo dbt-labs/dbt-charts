@@ -240,7 +240,7 @@ CartesianLayer = Annotated[
 
 # Chart `type:` values whose authored class declares a `layers` field.
 # BarChart's `type:` also covers "histogram", which does NOT support layers
-# (see BarChart._reject_histogram_layers) — kept out of this set on purpose.
+# (see BarChart.__constraints__) — kept out of this set on purpose.
 CARTESIAN_LAYER_SUPPORTED_CHART_TYPES: frozenset[str] = frozenset(
     {"area", "bar", "line", "scatter"}
 )

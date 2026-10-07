@@ -49,3 +49,26 @@ def test_every_reported_successor_is_live_in_the_current_grammar() -> None:
     ]
 
     assert chained == []
+
+
+def _kpi_move(old_tail: tuple[str, ...]) -> MigrationRegistry:
+    catalog, _ = _build_board_migration_context()
+    released = catalog.latest_released.version
+    move = Move(
+        released,
+        catalog.dev.version,
+        ("charts", "*", *old_tail),
+        ("charts", "*", "style", "label", "overflow"),
+        chart_type="kpi",
+    )
+    return MigrationRegistry([move], catalog=catalog)
+
+
+def test_chart_type_move_source_must_be_retired_on_that_family() -> None:
+    with pytest.raises(MigrationError, match="still exists on 'kpi'"):
+        validate_declarations(_kpi_move(("style", "value", "format")))
+
+
+def test_chart_type_move_source_must_be_declared_on_that_family() -> None:
+    with pytest.raises(MigrationError, match="no tail 'kpi' charts declare"):
+        validate_declarations(_kpi_move(("style", "axis_x")))

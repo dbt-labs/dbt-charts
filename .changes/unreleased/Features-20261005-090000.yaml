@@ -1,0 +1,3 @@
+kind: Features
+body: A query's `formats:` names how each column prints, so every chart, table and KPI that shows the column uses it without repeating a format.
+time: 2026-10-05T09:00:00.000000-07:00

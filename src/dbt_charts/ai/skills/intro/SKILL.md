@@ -75,7 +75,7 @@ renders.
 | `charts.*.x_label`, `charts.*.y_label` | Axis titles, where a column name would not read well. |
 | `charts.*.sort.by`, `charts.*.sort.order` | The column to sort by, and `asc` or `desc`. |
 | `charts.*.value`, `charts.*.label` | KPI: the column holding the number, and its caption. |
-| `charts.*.support.value`, `charts.*.support.format` | KPI: a second line under the number, such as the change from the prior period. |
+| `charts.*.support.value`, `charts.*.style.support.format` | KPI: a second line under the number, such as the change from the prior period. |
 | `charts.*.style.number_format` | The format of a chart's measure axis and tooltips. |
 | `charts.*.style.value.format` | The format of a KPI's number. |
 | `charts.*.style.columns.*.label`, `charts.*.style.columns.*.format` | Table: a column's header and its format. |

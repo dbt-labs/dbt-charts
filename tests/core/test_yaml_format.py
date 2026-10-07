@@ -267,7 +267,8 @@ charts:
     query: {sql: "SELECT 1 AS v"}
     type: kpi
     value: v
-    variant: inline
+    style:
+      variant: inline
 rows: [card]
 """,
                 id="kpi-variant",

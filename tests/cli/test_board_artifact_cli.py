@@ -43,13 +43,13 @@ def _normalize(svg: str) -> str:
 
 class TestArtifactCliSurface:
     def test_emit_artifact_is_registered(self) -> None:
-        import click
+        from typer.core import TyperGroup
         from typer.main import get_command
 
         click_app = get_command(app)
-        assert isinstance(click_app, click.Group)
+        assert isinstance(click_app, TyperGroup)
         artifact_group = click_app.commands["artifact"]
-        assert isinstance(artifact_group, click.Group)
+        assert isinstance(artifact_group, TyperGroup)
         assert "emit" in artifact_group.commands
         assert "render" in artifact_group.commands
 

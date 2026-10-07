@@ -17,7 +17,6 @@ from dbt_charts.core.compile.models.chart.authored import (
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
-    Chart,
     LineChart,
 )
 from dbt_charts.core.compile.models.chart.normalized._base import (
@@ -52,7 +51,8 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     chart_type_axis_patch as _chart_type_axis_patch,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
-    chart_authored_axis_format,
+    CartesianFamilyChart,
+    axis_layer_format,
 )
 from dbt_charts.core.compile.resolve.style.typography import width_tier
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -209,7 +209,7 @@ def _bake_axis(
 
 def _bake_cartesian_axes(
     chart_style_context: ChartStyleContext,
-    chart: Chart,
+    chart: CartesianFamilyChart,
     chart_type: str,
     x_channel_type: str,
     y_channel_type: str,
@@ -229,13 +229,13 @@ def _bake_cartesian_axes(
     the family patch — passed explicitly so no per-chart ChartStyleContext
     is required.
 
-    ``chart`` supplies the per-chart format fallback (``chart.format`` /
-    ``style.number_format`` / ``style.time_format``) fed into each axis's
-    Layer 10 via ``chart_authored_axis_format()``. axis_x is always the
-    dimension axis (never the measure, even when the channel type happens to
-    be quantitative — e.g. a scatter's x column), so its fallback is
-    temporal-only (``style.time_format``); the quantitative measure fallback
-    (``style.number_format`` / ``chart.format``) only ever reaches axis_y.
+    ``chart`` supplies each axis's Layer 10 via ``axis_layer_format()``: the
+    query's declared format for the axis column, else the chart-wide fallback
+    (``chart.format`` / ``style.number_format`` / ``style.time_format``).
+    axis_x is always the dimension axis (never the measure, even when its
+    channel type happens to be quantitative — e.g. a scatter's x column), so
+    its chart-wide fallback is ``style.time_format`` only; ``style.number_format``
+    / ``chart.format`` only ever reach axis_y.
 
     ``multiples`` / ``y`` are the small-multiples inputs. This is the ONE home
     for the multiples↔mirror interaction: it (a) supplies a default value for
@@ -254,42 +254,37 @@ def _bake_cartesian_axes(
     resolve against a known edge in the same construction that narrows the
     type, instead of losing the directive to a premature build.
     """
-    # x_label/y_label are structurally absent on some Chart union members
-    # (e.g. kpi, pie), so read via getattr like chart_authored_axis_format's
-    # own isinstance-guarded access — _bake_cartesian_axes is only ever
-    # called with a cartesian family in practice, but its declared parameter
-    # type is the full Chart union.
     ax, ax_band_position = _merge_axis_cascade(
         chart_style_context,
         "axis_x",
         x_channel_type,
         _chart_type_axis_patch(chart_style_context, chart_type, "axis_x"),
-        chart_fallback_format=(
-            chart_authored_axis_format(chart, "temporal")
-            if x_channel_type == "temporal"
-            else None
+        chart_fallback_format=axis_layer_format(
+            chart,
+            x_channel_type,
+            chart.x,
+            chart_style_context.formats,
+            dimension=True,
         ),
         axis_overrides=axis_overrides,
         chart_type=chart_type,
-        label_authored=bool(
-            getattr(
-                chart, "x_label", None
-            )  # type-state: silent_fallback — absent on kpi/pie
-        ),
+        label_authored=bool(chart.x_label),
     )
     ay, ay_band_position = _merge_axis_cascade(
         chart_style_context,
         "axis_y",
         y_channel_type,
         _chart_type_axis_patch(chart_style_context, chart_type, "axis_y"),
-        chart_fallback_format=chart_authored_axis_format(chart, y_channel_type),
+        chart_fallback_format=axis_layer_format(
+            chart,
+            y_channel_type,
+            chart.y,
+            chart_style_context.formats,
+            dimension=False,
+        ),
         axis_overrides=axis_overrides,
         chart_type=chart_type,
-        label_authored=bool(
-            getattr(
-                chart, "y_label", None
-            )  # type-state: silent_fallback — absent on kpi/pie
-        ),
+        label_authored=bool(chart.y_label),
     )
     # labels.values (the label-cadence filter) lives only on DimensionLabelStyle,
     # used solely by AxisXStyle.labels — axis_y structurally cannot author it,

@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.variable.authored import (
     SingleRowBoolProbe,
     Variable,
 )
+from dbt_charts.core.compile.template.jinja import text_query_references
 
 
 def _collect_var_queries(var: Variable, names: set[str]) -> None:
@@ -58,12 +59,13 @@ def collect_all_query_names(board: Board) -> set[str]:
     Covers chart queries, layered-chart layer queries (layout-reachable only),
     variable option queries (``options.query`` and top-level ``query``),
     variable ``enabled`` SingleRowBoolProbe queries, layout-item ``visible``
-    SingleRowBoolProbe queries. Descends into nested boards.
+    SingleRowBoolProbe queries, and queries read by board ``title:``/``text:``
+    and by chart display text. Descends into nested boards.
 
     All names returned are keys in ``board.queries``. Callers pass the result
     directly to ``execute_queries_parallel``.
     """
-    names: set[str] = set()
+    names: set[str] = set(text_query_references([board.title, board.text]))
 
     def _walk(items: list[Any], variables: dict[str, Variable]) -> None:
         for var in variables.values():
@@ -72,14 +74,17 @@ def collect_all_query_names(board: Board) -> set[str]:
             if item.chart:
                 if item.chart.query_name:
                     names.add(item.chart.query_name)
+                names.update(item.chart.text_queries.values())
                 if getattr(item.chart, "layers", None):
                     for layer in item.chart.layers:
                         if layer.query:
                             names.add(layer.query)
             if isinstance(item.visible, SingleRowBoolProbe):
                 names.add(item.visible.query)
-            if item.board and item.board.layout:
-                _walk(item.board.layout.items, item.board.variables)
+            if item.board:
+                names.update(text_query_references([item.board.title, item.board.text]))
+                if item.board.layout:
+                    _walk(item.board.layout.items, item.board.variables)
 
     _walk(board.layout.items, board.variables)
 

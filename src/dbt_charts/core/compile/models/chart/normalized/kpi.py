@@ -29,9 +29,8 @@ class KpiChart(_BaseChartFields):
     support: KpiSupportConfig | None = Field(
         default=None, description="Support row beneath the headline value."
     )
-    variant: Literal["stacked", "inline", "compact"] = Field(
-        default="stacked",
-        description="Layout variant, passed through from authored KpiChart.variant.",
+    glyph: str | None = Field(
+        default=None, description="Text shown before the headline value."
     )
     background: str | dict[str, Any] | None = Field(
         default=None,

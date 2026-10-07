@@ -97,7 +97,9 @@ def _print_warnings(warnings: list[Diagnostic]) -> None:
         return
     n = len(warnings)
     label = "warning" if n == 1 else "warnings"
-    print(f"⚠ {n} {label}:", file=sys.stderr)
+    codes = len({w.code for w in warnings})
+    code_count = f", {codes} {'code' if codes == 1 else 'codes'}" if codes < n else ""
+    print(f"⚠ {n} {label}{code_count}:", file=sys.stderr)
     print_diagnostics(warnings)
 
 

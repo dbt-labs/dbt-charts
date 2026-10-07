@@ -2,7 +2,7 @@
 
 Resolving a format spec to a concrete d3 string is part of the style cascade,
 so it lives in the compile layer where the cascade is baked. The render layer's
-d3 formatters (format_utils.py) import ``resolve_format`` from here.
+d3 formatters (format_value.py) import ``resolve_format`` from here.
 This module also owns ``finalize_kpi_value_format()``, the KPI headline's
 data-aware format defaulting rule — baked into ``ResolvedKpiChart.format`` at
 resolve, consumed as-is by render.
@@ -21,7 +21,7 @@ remain universal regardless of resolution path.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from typing import Any, Literal
 
 from d3_format import parse as _d3_parse
@@ -43,6 +43,7 @@ from dbt_charts.core.font_measure import compose_decimal_units
 from dbt_charts.core.text.format_d3 import (
     SignPlacement,
     is_d3_si_spec,
+    is_time_format,
     round_aware_spec,
 )
 from dbt_charts.core.text.numeral_scale import build_decimal_pad_table
@@ -305,16 +306,6 @@ def _format_fields(
 _Fields = dict[str, Any]  # type-state: explicit_any — ResolvedFormat constructor kwargs
 
 
-def _fill(fields: _Fields, lower: _Fields) -> _Fields:
-    """``fields`` with the spec of a lower tier, and any affix or option it
-    leaves unset."""
-    return (
-        fields
-        | {k: lower[k] for k in ("spec", "raw")}
-        | {k: lower[k] for k in _FILLED_FROM_DEFAULT if not fields[k]}
-    )
-
-
 _AnyFormat = dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
 
 _DEFAULT_NAME = {
@@ -323,22 +314,78 @@ _DEFAULT_NAME = {
 }
 
 
+def _is_other_kind(fields: _Fields, kind: Literal["number", "time"]) -> bool:
+    """Whether ``fields`` spells a look of the other kind: a number look has
+    nothing to say about a date, and a date look nothing about a number."""
+    spec = fields["spec"]
+    return bool(spec) and is_time_format(spec) != (kind == "time")
+
+
+def _merge_tiers(
+    kind: Literal["number", "time"],
+    formats: FormatAliases | None,
+    tiers: Sequence[AuthoredFormat | _AnyFormat | None],
+    engine_default: Callable[[], str] | None,
+) -> tuple[_Fields, bool]:
+    """The one merge rule: each field comes from the strongest tier that sets it.
+
+    ``tiers`` runs strongest first. The first is a slot's own format and keeps
+    whatever kind it is; the rest are defaults for a column with none of its own,
+    and one that spells the other kind contributes nothing, affix included. The default for the kind joins as the
+    weakest tier only when no tier sets a spec, so a tier that names its own spec
+    never inherits the default's affix. Returns the fields and whether the spec
+    came from that default.
+    """
+    resolved = [
+        fields
+        for i, tier in enumerate(tiers)
+        if tier is not None
+        for fields in [_format_fields(tier, formats)]
+        if i == 0 or not _is_other_kind(fields, kind)
+    ]
+    from_default = not any(tier["spec"] for tier in resolved)
+    if from_default:
+        name = _DEFAULT_NAME[kind]
+        default = _format_fields(name, formats)
+        if engine_default is not None and default["raw"] == name:
+            # The destination's name resolves through the board like any other,
+            # so a board that redefined it (affix included) prints it whole.
+            instead = _format_fields(engine_default(), formats)
+            default = (
+                instead
+                | {"raw": instead["raw"] or None}
+                | {k: default[k] for k in _FILLED_FROM_DEFAULT if not instead[k]}
+            )
+        resolved.append(default)
+    spec_tier = next(tier for tier in resolved if tier["spec"] or tier is resolved[-1])
+    fields = {k: spec_tier[k] for k in ("spec", "raw")} | {
+        k: next((tier[k] for tier in resolved if tier[k]), resolved[-1][k])
+        for k in _FILLED_FROM_DEFAULT
+    }
+    return fields, from_default
+
+
 def column_format(
     kind: Literal["number", "time"],
     formats: FormatAliases | None,
     fmt: AuthoredFormat | _AnyFormat | None = None,
     *,
+    board: AuthoredFormat | _AnyFormat | None = None,
+    column: AuthoredFormat | _AnyFormat | None = None,
     engine_default: Callable[[], str] | None = None,
     values: Iterable[float | None] | None = None,
     notation: Notation | None = None,
 ) -> ResolvedFormat:
     """The format a value of ``kind`` gets in one slot.
 
-    ``fmt`` is the slot's own format after the style cascade, if any. One with a
-    spec decides the look whole. Without one (no format, or only an affix), the
-    board's default for the kind decides: ``number`` or ``date_short`` through
-    ``formats``, so a name the board redefined supplies spec, affix and notation
-    together, and an affix ``fmt`` keeps its own.
+    Each layer is its own input, strongest first: ``fmt`` is the chart's own slot
+    format; ``column`` is the format a query's ``formats:`` declares for the
+    column; ``board`` is the board- or theme-level slot format, or the chart-wide
+    one. Below them sits the board's default for the kind, ``number`` or
+    ``date_short`` through ``formats``, so a name the board redefined supplies
+    spec, affix and notation together. Callers never pre-merge layers: every
+    field (spec, affix, notation, options) comes from the strongest layer that
+    sets it, so an affix-only layer keeps its affix and takes its spec from below.
 
     ``engine_default`` is a destination's policy for the engine's own default,
     returning the format name or spec to print instead (a KPI compacts it with
@@ -352,20 +399,7 @@ def column_format(
     plain-digit sibling. ``notation`` is the destination's register when the
     format sets none.
     """
-    fields = None if fmt is None else _format_fields(fmt, formats)
-    if fields is None or not fields["spec"]:
-        name = _DEFAULT_NAME[kind]
-        default = _format_fields(name, formats)
-        if engine_default is not None and default["raw"] == name:
-            # The destination's name resolves through the board like any other,
-            # so a board that redefined it (affix included) prints it whole.
-            instead = _format_fields(engine_default(), formats)
-            default = (
-                instead
-                | {"raw": instead["raw"] or None}
-                | {k: default[k] for k in _FILLED_FROM_DEFAULT if not instead[k]}
-            )
-        fields = default if fields is None else _fill(fields, default)
+    fields, _ = _merge_tiers(kind, formats, (fmt, column, board), engine_default)
     return ResolvedFormat(**_finished(fields, formats, values, notation))
 
 
@@ -458,33 +492,39 @@ def resolve_label_format(
 
 
 def kpi_format_native(
-    fmt_raw: AuthoredFormat | None,
     formats: FormatAliases | None,
+    fmt: AuthoredFormat | None = None,
+    *,
+    board: AuthoredFormat | None = None,
+    column: AuthoredFormat | None = None,
 ) -> bool:
-    """True when the headline's authored format is a literal d3 spec.
-
-    An alias, predefined name or explicit ``notation`` takes house rules; a
-    spec-less ``FormatConfig`` is never native.
-    """
-    fmt_spec = fmt_raw.spec if isinstance(fmt_raw, FormatConfig) else fmt_raw
-    if not fmt_spec:
-        return False
-    _, is_house = resolve_label_format(fmt_raw, formats)
-    if isinstance(fmt_raw, FormatConfig) and fmt_raw.notation is not None:
-        is_house = True
-    return not is_house
+    """True when the headline's merged format is a literal d3 spec a layer wrote,
+    which prints its own raw characters: not one of the engine's house names, not
+    what the engine's default supplied, with no authored notation."""
+    fields, from_default = _merge_tiers("number", formats, (fmt, column, board), None)
+    return (
+        not from_default
+        and fields["notation"] is None
+        and not (
+            fields["raw"] in PREDEFINED_NUMBER_NAMES and is_d3_si_spec(fields["spec"])
+        )
+    )
 
 
 def finalize_kpi_value_format(
-    format_input: AuthoredFormat | None,
+    fmt: AuthoredFormat | None,
     value: float | None,
     formats: FormatAliases | None = None,
+    *,
+    board: AuthoredFormat | None = None,
+    column: AuthoredFormat | None = None,
 ) -> ResolvedFormat | None:
-    """The headline's final format: ``column_format`` with the KPI's policy for
-    the engine's own ``number`` (``chart_rendering.kpi.compact_spec`` once
-    ``|value|`` reaches ``compact_threshold``, exact digits below it), and
-    narrative notation unless one is set. A date or text headline has no
-    numeric value, so no number look reaches it.
+    """The headline's final format: ``column_format``'s layers with the KPI's
+    policy for the engine's own ``number`` (``chart_rendering.kpi.compact_spec``
+    once ``|value|`` reaches ``compact_threshold``, exact digits below it), and
+    narrative notation unless one is set. A date or text headline has no numeric
+    value, so it merges as a date, and nothing is baked when no layer sets
+    anything.
     """
     kpi_rendering = get_chart_rendering().kpi
 
@@ -494,20 +534,23 @@ def finalize_kpi_value_format(
         reached = value is not None and abs(value) >= kpi_rendering.compact_threshold
         return kpi_rendering.compact_spec if reached else ""
 
-    if value is None:
-        if format_input is None:
+    layers = (fmt, column, board)
+    if all(layer is None for layer in layers):
+        if value is None:
             return None
-        return resolve_format_parts(format_input, formats, notation="narrative")
-    parts = column_format(
-        "number",
+        parts = column_format(
+            "number", formats, engine_default=compact, notation="narrative"
+        )
+        return parts if parts.spec or parts.prefix or parts.suffix else None
+    return column_format(
+        "time" if value is None else "number",
         formats,
-        format_input,
-        engine_default=compact,
+        fmt,
+        board=board,
+        column=column,
+        engine_default=None if value is None else compact,
         notation="narrative",
     )
-    if format_input is None and not (parts.spec or parts.prefix or parts.suffix):
-        return None
-    return parts
 
 
 def decimal_pad_table_for(
@@ -565,3 +608,28 @@ def decimal_pad_table_for(
         return ()
     digit_unit, dot_unit = compose_decimal_units(font_family)
     return build_decimal_pad_table(precision, digit_unit, dot_unit)
+
+
+def declared_format(
+    declared: Mapping[str, str] | None, columns: str | Collection[str] | None
+) -> str | None:
+    """The format name a query's ``formats:`` gives every one of ``columns``.
+
+    None when any column has no entry or the entries differ: a destination
+    painting several columns with one format has no single column to speak for
+    them, so it keeps its own default rather than guess.
+    """
+    if not declared or columns is None:
+        return None
+    names = {columns} if isinstance(columns, str) else set(columns)
+    entries = {declared.get(name) for name in names}
+    return entries.pop() if len(entries) == 1 else None
+
+
+def missing_format_columns(
+    declared: Mapping[str, str] | None, returned: Collection[str]
+) -> list[str]:
+    """The ``formats:`` keys the query's result does not carry, in authored order."""
+    if not declared:
+        return []
+    return [column for column in declared if column not in returned]

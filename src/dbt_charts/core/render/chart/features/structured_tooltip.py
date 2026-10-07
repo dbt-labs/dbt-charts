@@ -569,7 +569,14 @@ def _scatter_roles(
         # The affix is y's own currency/unit label and must not paint x's
         # unrelated measure too; x keeps only the shared digit spec.
         x_row = TooltipField(
-            chart.x, x_title, kind="quantitative", format=ResolvedFormat(spec=fmt.spec)
+            chart.x,
+            x_title,
+            kind="quantitative",
+            format=(
+                chart.x_tooltip_format
+                if chart.x_tooltip_format is not None
+                else ResolvedFormat(spec=fmt.spec)
+            ),
         )
     else:
         x_data = normalize_labeled_temporal(data, chart.x)

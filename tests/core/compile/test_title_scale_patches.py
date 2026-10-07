@@ -25,15 +25,18 @@ def test_chart_style_patch_accepts_compiled_title_style_patch():
     assert patch.title.font.color == "#custom"
 
 
-def test_compiled_title_style_overflow_normalizes_snake_case():
-    """TitleStyle.overflow normalizes wrap_two → wrap-two."""
+def test_compiled_title_style_overflow_rejects_snake_case():
+    """TitleStyle.overflow does not rewrite wrap_two to wrap-two."""
+    import pytest
+    from pydantic import ValidationError
+
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.style.theme import TitleStyle
 
     base = get_theme_style().title.model_dump()
     base["overflow"] = "wrap_two"
-    ts = TitleStyle.model_validate(base)
-    assert ts.overflow == "wrap-two"
+    with pytest.raises(ValidationError, match="overflow"):
+        TitleStyle.model_validate(base)
 
 
 def test_compiled_title_style_overflow_rejects_invalid():

@@ -48,7 +48,10 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme import SupportTableStyle
 from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
 from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
-from dbt_charts.core.diagnostics.codes_compile import ERR_SUPPORT_TABLE_POSITION_INVALID
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_SUPPORT_TABLE_LABEL_IGNORED,
+    ERR_SUPPORT_TABLE_POSITION_INVALID,
+)
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SUB_UNIT_FALLBACK,
     PredefinedNumberFormat,
@@ -186,6 +189,39 @@ def resolve_support_table_position(
             ),
         )
     return position
+
+
+def reject_ignored_per_series_label(
+    support_table: ResolvedSupportTable,
+    chart_id: str,
+    category_axis_vertical: bool,
+    stacked: bool,
+) -> None:
+    """Refuse a ``per_series`` ``label:`` that no layout reads.
+
+    The label names a ``by_measure`` row or a horizontal grouped bar's single
+    column. Strip rows and a stacked bar's per-series columns are named by the
+    series themselves, so the label would be silently dropped.
+    """
+    if category_axis_vertical and not stacked:
+        return
+    for index, entry in enumerate(support_table.entries):
+        if (
+            isinstance(entry, ResolvedSupportTablePerSeries)
+            and not entry.by_measure
+            and entry.label is not None
+        ):
+            raise CompilationError.from_code(
+                ERR_SUPPORT_TABLE_LABEL_IGNORED,
+                message=(
+                    f"Chart {chart_id!r}: support_table per_series: "
+                    f"{entry.per_series!r} sets label: {entry.label!r}, but this "
+                    "layout names its rows or columns by the color field's series "
+                    "values. Remove label (series names come from the color field "
+                    "and legend)."
+                ),
+                field_path=f"charts.{chart_id}.support_table.entries[{index}].label",
+            )
 
 
 def apply_measure_format_to_support_table(

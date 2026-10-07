@@ -243,6 +243,19 @@ class SQLDialect(ABC):
         """
         return False
 
+    # --- Namespace probe ---
+
+    def namespace_probe_sql(
+        self,
+        creds: dict[str, Any],  # type-state: explicit_any — raw source_config
+    ) -> str | None:
+        """SQL run after ``SELECT 1`` that fails if the configured namespace is unusable.
+
+        Raises:
+            ValueError: the configured namespace is not a valid identifier.
+        """
+        return None
+
     # --- Session state ---
 
     def session_reset_statements(self) -> tuple[str, ...]:
@@ -292,10 +305,11 @@ class SQLDialect(ABC):
         ``table_schema``, ``table_name``, ``column_name``, ``data_type``, ordered
         by schema, table, then column position. ``scope`` carries the dialect-
         specific whole-source qualifier a query needs (BigQuery: the
-        ``region-<location>`` prefix; Snowflake: the database).
+        ``region-<location>`` prefix; Snowflake: the database; Databricks: the
+        catalog).
 
         The base raises — a dialect without a confirmed bulk form (mysql, athena,
-        databricks, sqlserver) inherits this and degrades to the on-demand schema
+        spark, sqlserver) inherits this and degrades to the on-demand schema
         tool rather than guessing at syntax.
         """
         raise NotImplementedError(f"bulk_schema_sql not implemented for {self.name!r}")

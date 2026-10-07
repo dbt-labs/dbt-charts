@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
@@ -49,7 +50,6 @@ from dbt_charts.core.compile.resolve.chart._domain import (
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
-    ChartTextVariables,
     _base_kwargs,
     _cartesian_kwargs,
     _title_font,
@@ -79,8 +79,10 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
+    declared_column_format,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SCATTER_MULTI_Y_NOT_NUMERIC,
 )
@@ -97,7 +99,7 @@ def _resolve_scatter(
     width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedScatterChart:
     data = dataset.all_rows()
     multiples_scale = (
@@ -327,12 +329,17 @@ def _resolve_scatter(
     _ck = _cartesian_kwargs(
         normalized,
         chart_local_style_context,
-        variables,
+        display_text,
         data,
         "scatter",
         panel_axes=dataset.axes,
+        stacked=False,
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
+    x_values = quantitative_channel_values(data, normalized.x)
+    x_declared = declared_column_format(
+        normalized, normalized.x, chart_style_context.formats, time=False
+    )
     return ResolvedScatterChart(
         **_base_kwargs(
             normalized,
@@ -354,6 +361,16 @@ def _resolve_scatter(
         **_ck,
         wide_measures=wide_measures,
         chart_type="scatter",
+        x_tooltip_format=(
+            column_format(
+                "number",
+                chart_style_context.formats,
+                column=x_declared,
+                values=x_values,
+            )
+            if x_declared is not None and x_values
+            else None
+        ),
         size=normalized.size,
         shape=normalized.shape,
         style=ResolvedScatterStyle(

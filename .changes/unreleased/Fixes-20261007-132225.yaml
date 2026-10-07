@@ -1,0 +1,3 @@
+kind: Fixes
+body: Editors now flag out-of-range numbers and wrongly typed list or map items in board YAML.
+time: 2026-10-07T13:22:25.063868-07:00

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.render.chart._types import VLDict
@@ -44,7 +45,6 @@ from dbt_charts.core.render.chart.features.value_labels import (
     label_size_encoding,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
-from dbt_charts.core.render.format_utils import format_value
 from dbt_charts.core.utils import coerce_numeric_cell
 
 

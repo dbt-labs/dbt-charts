@@ -99,7 +99,8 @@ def test_family_title_context_stays_none_when_unauthored(theme_name: str) -> Non
     """Per-family title slots stay None when unauthored."""
     base = get_theme_style(theme_name)
     ctx = resolve_chart_style_context(base)
-    assert ctx.kpi.title is None
+    assert ctx.bar.title is None
+    assert "title" not in type(ctx.kpi).model_fields
 
 
 @pytest.mark.parametrize("theme_name", _BUILT_IN_THEMES)

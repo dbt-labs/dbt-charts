@@ -52,7 +52,10 @@ from dbt_charts.core.compile.normalize.queries import (
 from dbt_charts.core.compile.normalize.variables import synthetic_query_name
 from dbt_charts.core.compile.parse.parser import looks_like_sql
 from dbt_charts.core.compile.support_table import apply_measure_format_to_support_table
-from dbt_charts.core.compile.template.jinja import extract_variable_dependencies
+from dbt_charts.core.compile.template.jinja import (
+    extract_variable_dependencies,
+    text_query_references,
+)
 from dbt_charts.core.diagnostics.codes_compile import ERR_MULTIPLES_SELF_CROSSED
 from dbt_charts.core.text.case import apply_case, inferred_display_name
 
@@ -61,10 +64,29 @@ _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
 
 @dataclass(frozen=True)
 class RegisteredChart:
-    """A chart registry entry and the directory of the file that declares it."""
+    """A chart registry entry and the directory of the file that declares it.
+
+    ``text_query_keys`` maps each query its display text reads to the registry
+    key it resolves to in the file that declares the chart. None means the
+    chart is local, so each name is its own key.
+    """
 
     definition: AuthoredChart | YamlValue
     base_dir: ProjectDirectory | None  # type-state: optional — None is no location
+    text_query_keys: (
+        dict[str, str] | None
+    ) = (  # type-state: optional — None is a local chart, whose text names its own queries
+        None
+    )
+
+
+def display_text_fields(chart_type: str) -> tuple[str, ...]:
+    """The fields of a chart type that render Jinja for display."""
+    if chart_type == "kpi":
+        return ("label",)
+    if chart_type == "callout":
+        return ("title", "message")
+    return ("title", "subtitle")
 
 
 def normalize_chart(
@@ -80,6 +102,8 @@ def normalize_chart(
     cache_root: CachePatch | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
     written_in: ProjectDirectory | None = None,
+    text_query_keys: dict[str, str]
+    | None = None,  # type-state: optional — None is a local chart, see RegisteredChart
 ) -> Chart:
     """Authored chart dict → discriminated normalized family model.
 
@@ -119,6 +143,19 @@ def normalize_chart(
     if is_donut:
         chart_type = "pie"
 
+    # --- Display text: the variables and queries it reads ---
+    display_texts = [
+        getattr(authored, name) for name in display_text_fields(chart_type)
+    ]
+    text_deps: set[str] = set()
+    for display_text in display_texts:
+        if display_text:
+            text_deps |= extract_variable_dependencies(display_text)
+    text_queries = {
+        name: name if text_query_keys is None else text_query_keys[name]
+        for name in sorted(text_query_references(display_texts))
+    }
+
     # --- callout: query-less, chrome-less family ---
     # CalloutChart is the only family whose authored model extends bare
     # BaseModel rather than _BaseChartFields — it has no query/notes/
@@ -130,9 +167,6 @@ def normalize_chart(
             raise CompilationError(
                 f"Chart '{chart_id}' (callout) requires 'message' field."
             )
-        callout_deps: set[str] = set()
-        if authored.title:
-            callout_deps |= extract_variable_dependencies(authored.title)
         return CalloutChart(
             id=chart_id,
             type="callout",
@@ -141,7 +175,8 @@ def normalize_chart(
             source_path=source_path,
             defined_in_other_file=defined_in_other_file,
             base_dir=None if written_in is None else written_in.relpath,
-            variable_dependencies=frozenset(callout_deps),
+            variable_dependencies=frozenset(text_deps),
+            text_queries=text_queries,
             query_is_inline=False,
             style=authored.style,
             warnings_ignore=list(authored.warnings_ignore or []),
@@ -233,13 +268,9 @@ def normalize_chart(
     # --- Variable dependencies ---
     if query_name is not None:
         expand_composed_variable_dependencies(query_registry, [query_name])
-    chart_deps: set[str] = set()
+    chart_deps = set(text_deps)
     title = getattr(authored, "title", None)
     subtitle = getattr(authored, "subtitle", None)
-    if title:
-        chart_deps |= extract_variable_dependencies(title)
-    if subtitle:
-        chart_deps |= extract_variable_dependencies(subtitle)
     if query is not None and query.variable_dependencies:
         chart_deps |= query.variable_dependencies
 
@@ -257,6 +288,7 @@ def normalize_chart(
         "query": query,
         "query_name": query_name,
         "variable_dependencies": chart_deps,
+        "text_queries": text_queries,
         "source_path": source_path,
         "defined_in_other_file": defined_in_other_file,
         "query_is_inline": query_is_inline,
@@ -426,7 +458,7 @@ def normalize_chart(
                 value=value,
                 label=authored.label or "",
                 support=authored.support,
-                variant=authored.variant,
+                glyph=authored.glyph,
                 background=authored.background,
                 style=authored_style,
             )

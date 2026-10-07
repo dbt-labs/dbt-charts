@@ -26,7 +26,7 @@ runner = CliRunner()
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _run_started(server: uvicorn.Server) -> None:
+def _run_started(server: uvicorn.Server, _sockets: object = None) -> None:
     """Stand-in for Server.run(): reports a served lifetime without binding a port."""
     server.started = True
 

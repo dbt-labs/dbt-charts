@@ -39,8 +39,8 @@ def bulk_schema_scope(source_type: str, source_config: _RawValues) -> str:
     """The dialect-specific whole-source scope for ``bulk_schema_sql``.
 
     BigQuery needs the region qualifier to span every dataset in one query;
-    Snowflake names the database. The value comes from registered connection
-    config, never user input.
+    Snowflake names the database; Databricks names the Unity Catalog. The value
+    comes from registered connection config, never user input.
     """
     scope = ""
     if source_type.lower() == "bigquery":
@@ -51,6 +51,10 @@ def bulk_schema_scope(source_type: str, source_config: _RawValues) -> str:
         database = source_config.get("database")
         if database:
             scope = str(database)
+    elif source_type.lower() == "databricks":
+        namespace = source_config.get("catalog")
+        if namespace:
+            scope = str(namespace)
     return scope
 
 

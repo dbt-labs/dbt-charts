@@ -137,7 +137,7 @@ The regeneration script is `scripts/regenerate_fixture.mjs`. Do not run it in CI
 
 ## dbt charts-specific extensions
 
-dbt charts wraps this library in `dbt-charts/src/dbt_charts/core/render/format_utils.py` to add:
+dbt charts wraps this library in `dbt-charts/src/dbt_charts/core/compile/format_value.py` to add:
 
 - **`bi` notation**: d3's SI `k/M/G/T` suffixes are remapped to `K/M/B/T` with a space separator (e.g. `"1.5G"` → `"1.5 B"`). The `B`-for-billion convention is dbt charts-specific; this library emits `G` per the SI standard.
 - **`editorial` notation**: SI suffixes remapped to `k/mn/bn/tr` (journalistic abbreviations, no space).

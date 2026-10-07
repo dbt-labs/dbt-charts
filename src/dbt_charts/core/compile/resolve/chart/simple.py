@@ -23,7 +23,9 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedKpiSupportConfig,
     ResolvedSparkBarChart,
 )
-from dbt_charts.core.compile.models.primitives import resolved_as
+from dbt_charts.core.compile.models.primitives import (
+    resolved_as,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedKpiStyle,
@@ -32,7 +34,6 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.compile.resolve.chart._channels import _channels_for
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
-    ChartTextVariables,
     _base_kwargs,
     _resolve_text,
     _shared_kwargs,
@@ -45,7 +46,9 @@ from dbt_charts.core.compile.resolve.chart.channel import kpi_support_rule_colum
 from dbt_charts.core.compile.resolve.style.board import _build_resolved_callout_chart
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
+    declared_column_format,
 )
+from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.utils import coerce_numeric_cell
 
 __all__ = [
@@ -61,17 +64,22 @@ def _resolve_kpi(
     chart_style_context: ChartStyleContext,
     width: float,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedKpiChart:
-    chart_local_style_context = build_chart_style_context(
-        chart_style_context, normalized
-    )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    kpi = merge_onto_base(chart_style_context.kpi, primary)
+    # The chart-local context re-runs inherit, so a chart's own `style.font`
+    # reaches every slot font.
+    kpi = build_chart_style_context(chart_style_context, normalized).kpi
     channels = _channels_for(normalized, data)
-    _tf = _title_font(normalized, chart_local_style_context, width)
     formats = chart_style_context.formats
-    format_native = kpi_format_native(kpi.value.format, formats)
+    headline = _headline_numeric_value(normalized.value, data)
+    chart_value = (
+        primary.value.format if primary is not None and primary.value else None
+    )
+    board_value = chart_style_context.kpi.value.format
+    declared = declared_column_format(
+        normalized, normalized.value, formats, time=headline is None
+    )
     base = _base_kwargs(
         normalized,
         chart_style_context,
@@ -94,7 +102,9 @@ def _resolve_kpi(
         **base,
         chart_type="kpi",
         value=normalized.value,
-        label=_resolve_text(normalized.label, variables),
+        label=_resolve_text(
+            normalized.label, display_text, formats, normalized.id, "label"
+        ),
         support=(
             None
             if normalized.support is None
@@ -103,23 +113,21 @@ def _resolve_kpi(
                 normalized.support,
                 format=(
                     None
-                    if normalized.support.format is None
-                    else resolve_format_parts(normalized.support.format, formats)
+                    if kpi.support.format is None
+                    else resolve_format_parts(kpi.support.format, formats)
                 ),
                 rules=None if support_rules is None else tuple(support_rules.when),
             )
         ),
-        variant=normalized.variant,
+        glyph=normalized.glyph,
+        variant=kpi.variant,
         format=finalize_kpi_value_format(
-            kpi.value.format, _headline_numeric_value(normalized.value, data), formats
+            chart_value, headline, formats, board=board_value, column=declared
         ),
-        format_native=format_native,
-        # chart_local_style_context.title is build_chart_style_context()'s own
-        # board -> family-theme -> chart-local title merge (shared by every
-        # family) -- already the complete, final TitleStyle.
-        style=ResolvedKpiStyle(
-            kpi=kpi, title_font=_tf, title=chart_local_style_context.title
+        format_native=kpi_format_native(
+            formats, chart_value, board=board_value, column=declared
         ),
+        style=ResolvedKpiStyle(kpi=kpi),
     )
 
 
@@ -143,7 +151,7 @@ def _resolve_spark_bar(
     chart_style_context: ChartStyleContext,
     width: float,
     automatic_link_candidate: AutomaticLinkCandidate,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedSparkBarChart:
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
@@ -180,7 +188,7 @@ def _resolve_spark_bar(
             legendless=True,
             wrap_legend=False,
         ),
-        **_shared_kwargs(normalized, variables, chart_local_style_context),
+        **_shared_kwargs(normalized, display_text, chart_local_style_context),
         chart_type="spark_bar",
         x=normalized.x,
         y=y,
@@ -194,7 +202,7 @@ def _resolve_callout(
     normalized: CalloutChart,
     _data: list[dict[str, Any]],
     chart_style_context: ChartStyleContext,
-    variables: ChartTextVariables,
+    display_text: ChartDisplayText = None,
 ) -> ResolvedCalloutChart:
     callout = merge_onto_base(
         chart_style_context.callout,
@@ -203,11 +211,23 @@ def _resolve_callout(
     resolved_callout = _build_resolved_callout_chart(
         callout, chart_style_context.bold_font_weight, callout.tone
     )
-    message = _resolve_text(normalized.message, variables)
+    message = _resolve_text(
+        normalized.message,
+        display_text,
+        chart_style_context.formats,
+        normalized.id,
+        "message",
+    )
     check_images_written_out(normalized.message, message)
     title = None
     if normalized.title is not None:
-        title = _resolve_text(normalized.title, variables)
+        title = _resolve_text(
+            normalized.title,
+            display_text,
+            chart_style_context.formats,
+            normalized.id,
+            "title",
+        )
         check_images_written_out(normalized.title, title)
     return ResolvedCalloutChart(
         id=normalized.id,

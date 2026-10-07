@@ -77,42 +77,42 @@ ALLOWED: dict[tuple[str, int], str] = {
     # and app.state.project are FilesystemProject throughout server.py — no
     # runtime isinstance narrow needed, only the FilesystemProject import
     # (under TYPE_CHECKING) and explicit local annotations below.
-    ("core/serve/server.py", 156): (
+    ("core/serve/server.py", 224): (
         "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 251): (
+    ("core/serve/server.py", 319): (
         "_directory_candidates(..., project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 400): (
+    ("core/serve/server.py", 468): (
         "_url_mount_dir(path, project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 542): (
+    ("core/serve/server.py", 610): (
         "_render_board_file(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 645): (
+    ("core/serve/server.py", 713): (
         "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1056): (
+    ("core/serve/server.py", 1124): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1096): (
+    ("core/serve/server.py", 1163): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1126): (
+    ("core/serve/server.py", 1195): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1222): (
+    ("core/serve/server.py", 1296): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1308): (
+    ("core/serve/server.py", 1382): (
         "get_board: app.state.project is always FilesystemProject (dct serve is "
         "filesystem-only); the local a few lines below makes this explicit"
     ),
-    ("core/serve/server.py", 1411): (
+    ("core/serve/server.py", 1485): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
-    ("core/serve/server.py", 1413): (
+    ("core/serve/server.py", 1487): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (

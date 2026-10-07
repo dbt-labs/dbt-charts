@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from dbt_charts.core.colors import is_color_token
-from dbt_charts.core.compile.models.primitives import FontStyle
+from dbt_charts.core.compile.models.primitives import SingleLineFontStyle
 from dbt_charts.core.compile.models.style.theme import Style
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorBinding,
@@ -376,14 +376,14 @@ def apply_emoji_to_family(
 
 
 def _append_emoji_family(node: Any, emoji_family: str) -> Any:
-    """Walk a style subtree and append ``emoji_family`` to every non-None FontStyle.family.
+    """Walk a style subtree and append ``emoji_family`` to every non-None font family.
 
     Mirrors _resolve_color_tokens in structure: walks BaseModel trees recursively,
     returning a patched copy only when a field actually changes.
     FontStyle never appears inside a list/dict field in this schema; if that
     changes, add a list branch mirroring _resolve_color_tokens.
     """
-    if isinstance(node, FontStyle):
+    if isinstance(node, SingleLineFontStyle):
         if node.family is not None:
             new_family = insert_emoji_family(node.family, emoji_family)
             if new_family != node.family:

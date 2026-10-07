@@ -22,7 +22,14 @@ from collections.abc import Callable
 from functools import cache
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, ForwardRef, Union
 
-from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    create_model,
+    model_validator,
+)
 from pydantic_core import PydanticUndefinedType
 
 from dbt_charts.core.compile.models.markers import (
@@ -103,6 +110,26 @@ def register_as_own_patch(cls: type[BaseModel]) -> type[BaseModel]:
     return cls
 
 
+# Generated patch fields drop field-level validators, so the shorthand parser
+# (whose ``json_schema_input_type`` schema introspection reads) is re-attached
+# here wherever a patch field of that class is generated.
+PATCH_SHORTHAND: dict[type, BeforeValidator] = {}
+
+
+def register_shorthand(patch_cls: type, validator: BeforeValidator) -> None:
+    PATCH_SHORTHAND[patch_cls] = validator
+
+
+def _patch_or_none(
+    compiled_cls: type[BaseModel],
+) -> Any:  # type-state: explicit_any — runtime-built annotation
+    patch_cls = build_patch_model_ext(compiled_cls, is_recursive=True)
+    shorthand = PATCH_SHORTHAND.get(patch_cls)
+    if shorthand is None:
+        return patch_cls | None
+    return Union[Annotated[patch_cls, shorthand], None]  # noqa: UP007
+
+
 def _has_required_fields(cls: type[BaseModel]) -> bool:
     """Return True if any field on cls has no default (is required)."""
     return any(
@@ -159,7 +186,7 @@ def _make_patch_annotation(annotation: Any, *, is_recursive: bool) -> Any:
                 return dict[str, Any] | None
             if issubclass(inner, _PatchBase) and not _has_required_fields(inner):
                 return inner | None
-            return build_patch_model_ext(inner, is_recursive=True) | None
+            return _patch_or_none(inner)
         if _is_optional(annotation):
             # Union with None but inner is not a single BaseModel — keep as-is.
             return annotation
@@ -173,7 +200,7 @@ def _make_patch_annotation(annotation: Any, *, is_recursive: bool) -> Any:
                 annotation
             ):
                 return annotation | None
-            return build_patch_model_ext(annotation, is_recursive=True) | None
+            return _patch_or_none(annotation)
     else:
         # Non-recursive: already-optional annotations pass through unchanged;
         # everything else falls to the `annotation | None` below.

@@ -126,7 +126,7 @@ rows:
 
 
 def test_percentage_points_delta_valid_on_kpi_support_format() -> None:
-    """percentage_points_delta on KPI support.format is Python-painted — must compile clean."""
+    """percentage_points_delta on KPI style.support.format is Python-painted — must compile clean."""
     board = """
 title: T
 queries:
@@ -140,7 +140,9 @@ charts:
     value: pct
     support:
       value: delta
-      format: percentage_points_delta
+    style:
+      support:
+        format: percentage_points_delta
 rows:
   - headline
 """
@@ -246,7 +248,7 @@ rows:
 
 
 def test_kpi_support_format_typo_fails_compile() -> None:
-    """support.format (KPI) is also validated."""
+    """style.support.format (KPI) is also validated."""
     board = """
 title: T
 queries:
@@ -260,7 +262,9 @@ charts:
     value: revenue
     support:
       value: delta
-      format: percent_1
+    style:
+      support:
+        format: percent_1
 rows:
   - headline
 """

@@ -70,10 +70,11 @@ charts:
     style:
       value:
         format: currency_whole
+      support:
+        format: percent_delta
     support:
       value: revenue_change
       label: vs prior month
-      format: percent_delta
 
   orders_kpi:
     type: kpi

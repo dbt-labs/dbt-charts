@@ -829,27 +829,29 @@ def test_kpi_resolve_style_slice_populated() -> None:
     assert resolved.style.kpi is not None
 
 
-def test_kpi_resolve_family_title_override_reaches_resolved_style() -> None:
-    """A per-family style.charts.kpi.title override is merged onto the board
-    title at resolve time (build_chart_style_context) and lands complete on
-    ResolvedKpiChart.style.title, so render reads one field unconditionally
-    instead of choosing between a sparse per-family value and the board
-    default itself."""
+def test_kpi_resolve_family_label_override_reaches_resolved_style() -> None:
+    """A per-family style.charts.kpi.label override lands on the resolved KPI
+    style, so render reads one field unconditionally; a KPI has no title slot,
+    so style.charts.kpi.title is rejected."""
+    from pydantic import ValidationError
+
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.models.style.authored import StylePatch
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     theme = get_theme_style(get_default_theme_name())
+    with pytest.raises(ValidationError, match="title"):
+        StylePatch.model_validate({"charts": {"kpi": {"title": {"min_height": 40}}}})
     patch = StylePatch.model_validate(
-        {"charts": {"kpi": {"title": {"min_height": 40}}}}
+        {"charts": {"kpi": {"label": {"overflow": "clip"}}}}
     )
     ctx = resolve_chart_style_context(theme, patch)
-    default_ctx = _default_board_style()
 
     resolved = resolve(_kpi_compiled(), _KPI_DATA, ctx)
-    assert resolved.style.title.min_height == 40
-    assert resolved.style.title.font.family == default_ctx.title.font.family
+    assert resolved.style.kpi is not None
+    assert resolved.style.kpi.label.overflow == "clip"
+    assert _default_board_style().kpi.label.overflow != "clip"
 
 
 def test_kpi_resolved_style_has_palette() -> None:

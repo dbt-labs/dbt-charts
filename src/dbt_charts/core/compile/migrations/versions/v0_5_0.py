@@ -56,10 +56,10 @@ Changes in this release:
   charts (editorial convention: headline neutral, delta/support colored).
   When a face has an existing support: block, style.tone is moved into
   support.tone automatically.  When there is no support: block, style.tone is
-  dropped and a warning names the chart (KpiSupportConfig._require_non_empty
-  rejects a support: block with only tone set, so inventing one would produce
-  invalid output).  Callout charts, which also have style.tone, are not
-  touched — the ConditionalMove is scoped to chart_type="kpi".
+  dropped and a warning names the chart: KpiSupportConfig rejects a support:
+  block with only tone set, so inventing one would produce invalid output.
+  Callout charts, which also have style.tone, are not touched — the
+  ConditionalMove is scoped to chart_type="kpi".
 
 - animation_duration removed from all chart style models (ChartsStyle,
   all 11 per-family theme patches, and chart-level style). The field never

@@ -389,3 +389,16 @@ class TestHtmlPageEscaping:
         assert re.search(r"&(?!amp;|lt;|gt;|quot;|#)", title_inner) is None
         # Title content survives escaping (sanity check on the happy path).
         assert "Sales" in title_inner
+
+
+class TestHostilePageBackground:
+    def test_css_breaking_page_background_raises(self) -> None:
+        from dbt_charts.core.render.converters.html import to_html
+        from dbt_charts.core.render.errors import RenderError
+
+        svg = (
+            '<svg data-dbt-page-title="t" data-dbt-font-family="serif" '
+            'data-dbt-page-background="red;} body{x:y}"></svg>'
+        )
+        with pytest.raises(RenderError):
+            to_html(svg)

@@ -35,9 +35,7 @@ class _SiblingListArm(BaseModel):
 
 
 class _TwoSiblingListArms(BaseModel):
-    """Two distinct list[...] tokens (list[str], list[float]) that both map
-    to the same {"type": "array"} schema — the real ScaleTargetConfig.palette
-    shape, and the case the round-1 duplicate-arm bug needed to survive."""
+    """Two list[...] arms with different item types."""
 
     model_config = ConfigDict(extra="forbid")
     palette: _Choice | list[str] | list[float] | str | None = Field(
@@ -94,15 +92,14 @@ class TestSiblingDictArmNotDropped:
         )
 
 
-class TestTwoSiblingContainerArmsDedupToOne:
-    """Regression test for the round-1 duplicate-{"type":"array"} bug: two
-    distinct list[...] tokens mapping to the same schema must collapse to one
-    anyOf arm, not two identical ones."""
-
-    def test_only_one_array_arm_survives(self) -> None:
+class TestTwoSiblingContainerArmsKeepTheirItemTypes:
+    def test_each_list_arm_keeps_its_item_type(self) -> None:
         schema = _schema_for(_TwoSiblingListArms, "palette")
         branches = schema["anyOf"]
         array_arms = [b for b in branches if b.get("type") == "array"]
-        assert len(array_arms) == 1, f"duplicate array arm: {branches}"
+        assert array_arms == [
+            {"type": "array", "items": {"type": "string"}},
+            {"type": "array", "items": {"type": "number"}},
+        ]
         assert any(b.get("enum") == ["a", "b"] for b in branches)
         assert any(b.get("type") == "string" for b in branches)

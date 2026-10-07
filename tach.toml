@@ -80,8 +80,9 @@ exclude = [
     # Imported lazily in _SourcePool._ensure_connected when type==bigquery.
     # Tach normalizes the PyPI name: `google-cloud-bigquery` → `google_cloud_bigquery`.
     "google_cloud_bigquery",
-    # `import databricks.sql` (used in databricks_connection_manager.py) is pulled
-    # via the databricks optional-dep; tach reads only [project] deps. The top-level
+    # `import databricks.sql` (used in databricks_connection_manager.py and
+    # connections.py's list_catalogs) is pulled via the databricks optional-dep;
+    # tach reads only [project] deps. The top-level
     # `databricks` namespace is owned by `databricks-sdk` (the dist whose top_level
     # is `databricks`), so tach resolves the import to `databricks_sdk`.
     "databricks_sdk",

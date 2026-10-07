@@ -528,7 +528,8 @@ class TestKpiStylePromotion:
         assert compiled.tones.positive  # tone palette resolves through theme YAML
         assert kpi.content_padding.horizontal >= 0
         assert kpi.content_padding.vertical >= 0
-        assert kpi.affix.font.size > 0
+        assert kpi.value.affix.font.size > 0
+        assert kpi.label.font.size > 0
 
 
 class TestSparkBarStylePromotion:
@@ -834,13 +835,19 @@ def _board_resolved():
     return resolve_chart_style_context(get_theme_style())
 
 
-class TestKpiFontInheritPropagates:
-    """A chart-local kpi.font patch must re-inherit kpi.value/label/affix/glyph.font.
+def _slot(kpi, path):
+    for part in path.split("."):
+        kpi = getattr(kpi, part)
+    return kpi
 
-    All four slots carry InheritSlot(from_path="Style.charts.kpi.font"), so
-    re-running apply_inherit after the chart-local merge fills their unset
-    leaves from the patch. `weight` pins that — it is unset on all four in the
-    built-in themes.
+
+class TestKpiFontInheritPropagates:
+    """A chart-local kpi.font patch must re-inherit every KPI slot font.
+
+    value, value.affix, value.glyph, label, support and support.glyph each carry
+    an InheritSlot, so re-running apply_inherit after the chart-local merge
+    fills their unset leaves from the patch. `weight` pins that — it is unset
+    on all of them in the built-in themes.
 
     `color` is the one leaf those slots exclude from the fill. It stays a
     genuine sentinel so the renderer can tell "the author named this slot's ink"
@@ -866,20 +873,26 @@ class TestKpiFontInheritPropagates:
         )
         return build_chart_style_context(_board_resolved(), chart)
 
-    @pytest.mark.parametrize("slot", ["value", "label", "affix", "glyph"])
+    @pytest.mark.parametrize(
+        "slot",
+        ["value", "label", "value.affix", "value.glyph", "support", "support.glyph"],
+    )
     def test_kpi_font_weight_propagates(self, slot):
-        got = getattr(self._patched(weight=_KPI_SENTINEL_WEIGHT).kpi, slot).font.weight
+        got = _slot(self._patched(weight=_KPI_SENTINEL_WEIGHT).kpi, slot).font.weight
         assert got == _KPI_SENTINEL_WEIGHT, (
             f"kpi.{slot}.font.weight should be {_KPI_SENTINEL_WEIGHT} (InheritSlot "
             f"from kpi.font) but got {got!r} — apply_inherit ran before the "
             f"chart-local patch"
         )
 
-    @pytest.mark.parametrize("slot", ["value", "label", "affix", "glyph"])
+    @pytest.mark.parametrize(
+        "slot",
+        ["value", "label", "value.affix", "value.glyph", "support", "support.glyph"],
+    )
     def test_kpi_font_color_stays_a_sentinel(self, slot):
         result = self._patched(color=_KPI_SENTINEL)
         assert result.kpi.font.color == _KPI_SENTINEL
-        got = getattr(result.kpi, slot).font.color
+        got = _slot(result.kpi, slot).font.color
         assert got is None, (
             f"kpi.{slot}.font.color must stay None — the renderer reads it as "
             f"\"the author named this slot's ink\" and resolves the KPI's own "

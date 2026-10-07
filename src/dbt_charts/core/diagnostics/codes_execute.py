@@ -955,6 +955,43 @@ ERR_CHART_COLUMN_NOT_IN_RESULT = REGISTRY.register(
     )
 )
 
+ERR_QUERY_FORMAT_COLUMN_MISSING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-FORMAT-COLUMN-MISSING",
+        domain="execute",
+        title="A query's formats: names a column the query did not return",
+        summary="A query's formats: names a column the query did not return.",
+        message_template=(
+            "Query '{query}' formats names column '{column}', which the query "
+            "did not return. Returned columns: {columns}"
+        ),
+        doc=(
+            "Fired when a query's `formats:` key is not among the columns the "
+            "query returns. Checked at compile for `values` queries, by "
+            "`dct validate --warehouse` for SQL queries, and when rows come "
+            "back at execution. A zero-row result carries no column names, so "
+            "an empty result passes; `dct validate --warehouse` still checks "
+            "the query's columns."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_QUERY_INTERRUPTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-INTERRUPTED",
+        domain="execute",
+        title="Query interrupted by server shutdown",
+        message_template="Query interrupted: the server is shutting down.",
+        doc=(
+            "Fired when `dct serve` stops while a query runs or waits to run. "
+            "It says nothing about the query and is never cached; reload the "
+            "board once the server is back."
+        ),
+        docs_topic="queries",
+    )
+)
+
 WARN_COLUMN_CHECK_UNAVAILABLE = REGISTRY.register(
     WarningCode(
         code="WARN-COLUMN-CHECK-UNAVAILABLE",

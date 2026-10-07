@@ -371,7 +371,9 @@ class TestSchemaFieldTypes:
         )
         annotation = bar_cls.model_fields["border"].annotation
         # annotation is BorderStylePatch | None — extract the non-None arg
-        border_cls = next(a for a in typing.get_args(annotation) if a is not type(None))
+        border_arm = next(a for a in typing.get_args(annotation) if a is not type(None))
+        # The string shorthand rides on the arm as Annotated metadata.
+        border_cls = typing.get_args(border_arm)[0]
         assert border_cls is BorderStylePatch, (
             "registry fix must ensure BarMarkStylePatch.border uses hand-written "
             "BorderStylePatch (has from_css), not a synthesized duplicate"

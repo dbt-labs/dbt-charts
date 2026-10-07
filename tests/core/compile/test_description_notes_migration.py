@@ -21,7 +21,6 @@ import warnings
 from typing import Any
 
 import pytest
-import yaml
 
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
@@ -512,78 +511,45 @@ def _all_keys(node: Any) -> set[str]:
     return set()
 
 
-SUB_BOARD = """title: T
+def test_sub_board_charts_map_strands_the_whole_board() -> None:
+    """The one shape where this rename does not repair what it should.
+
+    ``_relative_field_paths``' ``seen`` guard makes a self-nested
+    ``AuthoredBoard`` opaque, so ``rows.*.charts.*.description`` is not among
+    the resolved positions. A board carrying one was valid 0.5.0, and its
+    *top-level* ``description:`` is stranded along with the sub-board's — the
+    whole-document check fails and the original mapping is returned unchanged.
+
+    Pinned so the limitation is a recorded cost rather than a surprise; the
+    `extra="forbid"` hint naming `notes:` is what the author gets instead.
+    """
+    from dbt_charts.core.compile import compile
+
+    yaml_content = """title: T
 description: top board prose
 queries:
   q:
     sql: SELECT 1 AS a, 2 AS b
     source: duckdb
 rows:
-  - description: sub board prose
-    queries:
-      q1:
-        sql: SELECT 1 AS a, 2 AS b
-        source: duckdb
-        description: sub query prose
-    variables:
-      v1:
-        input: text
-        description: sub variable prose
-    charts:
+  - charts:
       c1:
         type: bar
-        query: q1
+        query: q
         x: a
         y: b
         description: sub chart prose
-      c2:
-        type: bar
-        query:
-          sql: SELECT 1 AS a, 2 AS b
-          source: duckdb
-          description: inline query prose
-        x: a
-        y: b
-    rows: [c1, c2]
+    rows: [c1]
 """
 
-
-def test_sub_board_retired_keys_migrate_like_top_level_ones(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    """A board nested in a board is a board: its charts, queries and variables
-    migrate too, and the top-level ``description:`` is no longer stranded."""
-    raw = yaml.safe_load(SUB_BOARD)
-
-    migrated = _migrate(raw, catalog)
-
-    assert "description" not in _all_keys(migrated)
-    sub = migrated["rows"][0]
-    assert sub["notes"] == "sub board prose"
-    assert sub["queries"]["q1"]["notes"] == "sub query prose"
-    assert sub["variables"]["v1"]["notes"] == "sub variable prose"
-    assert sub["charts"]["c1"]["notes"] == "sub chart prose"
-    assert sub["charts"]["c2"]["query"]["notes"] == "inline query prose"
-    assert migrated["notes"] == "top board prose"
-
-
-def test_sub_board_retired_keys_migrate_on_disk(catalog: YamlSchemaCatalog) -> None:
-    from dbt_charts.core.compile.migrations import migrate_yaml_text
-
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        migrated = migrate_yaml_text(SUB_BOARD, catalog=catalog, registry=registry)
+        result = compile(yaml_content)
 
-    assert "description" not in migrated
-    assert migrated.count("notes:") == 6
-
-
-def test_sub_board_retired_keys_compile_end_to_end() -> None:
-    from dbt_charts.core.compile import compile
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", SchemaMigrationWarning)
-        result = compile(SUB_BOARD)
-
-    assert result.success, [f"{e.code}: {e.message}" for e in result.errors]
+    extra = [e for e in result.errors if e.code == "ERR-EXTRA-FIELD"]
+    assert any(e.message.endswith("Full path: description.") for e in extra), (
+        f"the top-level description is stranded too: {[e.message for e in extra]}"
+    )
+    assert all(
+        "`notes`" in (e.hint or "") or "notes:" in (e.hint or "") for e in extra
+    ), "every stranded position must still name the replacement"

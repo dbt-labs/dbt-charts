@@ -17,12 +17,13 @@ charts:
     style:
       value:
         format: currency_whole
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: rev_delta
       label: vs last quarter
-      format: percent_delta
       glyph: "▲"
-      tone: positive
 
   orders_kpi:
     type: kpi
@@ -32,9 +33,11 @@ charts:
     support:
       value: ord_delta
       label: vs last quarter
-      format: percent_delta
       glyph: "▲"
-      tone: positive
+    style:
+      support:
+        format: percent_delta
+        tone: positive
 
   aov_kpi:
     type: kpi
@@ -44,12 +47,13 @@ charts:
     style:
       value:
         format: currency_full
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: aov_delta
       label: vs last quarter
-      format: percent_delta
       glyph: "▲"
-      tone: positive
 
 rows:
   # Ceiling, not a reservation: the row shrinks to the KPIs if they need less.

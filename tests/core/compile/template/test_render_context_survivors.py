@@ -24,6 +24,7 @@ import pytest
 from jinja2.environment import Template
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.template.display_text import resolve_display_text
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.compile.template.jinja import (
     RESERVED_FILTER_HELPER_NAMES,
@@ -31,6 +32,7 @@ from dbt_charts.core.compile.template.jinja import (
     _filter_helper,
     _jinja_env,
     _jinja_env_lenient,
+    _jinja_env_text,
     resolve_jinja_template,
 )
 from dbt_charts.core.compile.template.labels_env import _format_filter, label_jinja_env
@@ -38,6 +40,11 @@ from dbt_charts.core.compile.template.parameterized import (
     make_filter_date_range_helper,
     make_filter_helper,
     render_parameterized,
+)
+from dbt_charts.core.compile.template.query_result import (
+    QueryResult,
+    QueryResults,
+    QueryRow,
 )
 from dbt_charts.core.dialects import get_dialect
 from dbt_charts.core.registered_views.expander import _TEMPLATE_ENV, render_template
@@ -51,6 +58,14 @@ from dbt_charts.core.registered_views.expander import _TEMPLATE_ENV, render_temp
 # name-only diff has, and exactly what `format` in labels_env.py does to
 # Jinja's own builtin filter of the same name.
 _BASELINE_ENV = BoardTemplateEnvironment()
+
+
+def _rows(*cells: dict[str, Any]) -> list[QueryRow]:
+    return QueryResult("columns", list(cells)).rows
+
+
+def _format_cell(value: Any, spec: str) -> str:
+    return f"{value}:{spec}"
 
 
 def _new_or_overridden(
@@ -195,14 +210,96 @@ class TestResolveJinjaTemplateContext:
             )
 
     def test_singleton_environments_add_or_override_nothing(self) -> None:
-        """jinja.py's two module-level environments are singletons, so a
+        """jinja.py's module-level environments are singletons, so a
         stray mutation in one test (e.g. registering a global) would leak
         into every other test in the process — cheap enough to pin
         directly rather than only through a render's own environment."""
-        for env in (_jinja_env, _jinja_env_lenient):
+        for env in (_jinja_env, _jinja_env_lenient, _jinja_env_text):
             assert _new_or_overridden(env.globals, _BASELINE_ENV.globals) == {}
             assert _new_or_overridden(env.filters, _BASELINE_ENV.filters) == {}
             assert _new_or_overridden(env.tests, _BASELINE_ENV.tests) == {}
+
+
+class TestBoardTextQueryResultsContext:
+    """resolve_jinja_template with ``query_results=``: the board-text path."""
+
+    def test_context_is_variables_plus_query_results_plus_survivors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = _capture_render_calls(monkeypatch)
+        results = {"summary": QueryResult("summary", [{"x": 1}])}
+        resolve_jinja_template(
+            "{{ region }}",
+            variables={"region": "north"},
+            strict=False,
+            query_results=results,
+            format_cell=_format_cell,
+        )
+        [call] = captured
+        assert call.context_keys == {"region", "queries", "filter", "filter_date_range"}
+        queries = call.context["queries"]
+        assert type(queries) is QueryResults
+        assert queries["summary"] is results["summary"]
+        assert call.new_or_overridden_globals == {}
+        assert call.new_or_overridden_tests == {}
+
+    def test_format_filter_is_the_injected_callable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = _capture_render_calls(monkeypatch)
+        resolve_jinja_template(
+            "{{ 1 | format('x') }}",
+            strict=False,
+            query_results={},
+            format_cell=_format_cell,
+        )
+        [call] = captured
+        assert call.new_or_overridden_filters == {"format": _format_cell}
+
+    def test_display_text_binds_its_own_format_filter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = _capture_render_calls(monkeypatch)
+        resolve_display_text(
+            "{{ region }} {{ 1 | format('percent') }}", {"region": "n"}, {}, None
+        )
+        [call] = captured
+        assert call.context_keys == {"region", "queries", "filter", "filter_date_range"}
+        assert set(call.new_or_overridden_filters) == {"format"}
+        assert call.new_or_overridden_globals == {}
+        assert call.new_or_overridden_tests == {}
+        assert call.new_or_overridden_filters["format"].__module__ == (
+            "dbt_charts.core.compile.template.display_text"
+        )
+
+    def test_the_shared_text_environment_is_not_mutated(self) -> None:
+        resolve_jinja_template(
+            "{{ 1 | format('x') }}",
+            strict=False,
+            query_results={},
+            format_cell=_format_cell,
+        )
+        assert _new_or_overridden(_jinja_env_text.filters, _BASELINE_ENV.filters) == {}
+
+    def test_strict_board_text_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="strict"):
+            resolve_jinja_template(
+                "{{ missing }}", query_results={}, format_cell=_format_cell
+            )
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"query_results": {}},
+            {"format_cell": _format_cell},
+            {"query_results": {}, "format_cell": _format_cell, "queries": {"q": {}}},
+        ],
+    )
+    def test_incomplete_or_conflicting_arguments_raise(
+        self, kwargs: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError, match="query_results"):
+            resolve_jinja_template("{{ 1 }}", strict=False, **kwargs)
 
 
 class TestRenderParameterizedContext:
@@ -461,14 +558,16 @@ class TestSurvivorsValidateAndReturnStrings:
             _plan_variables,
         )
 
-        variables = _plan_variables([{"name": "region", "actual_type": "string"}])
+        variables = _plan_variables(_rows({"name": "region", "actual_type": "string"}))
         assert variables == [{"name": "region", "input": "text"}]
         assert all(isinstance(v, dict) for v in variables)
 
-        key_variables = _plan_key_variables([{"name": "id", "actual_type": "integer"}])
+        key_variables = _plan_key_variables(
+            _rows({"name": "id", "actual_type": "integer"})
+        )
         assert key_variables == [{"name": "id", "input": "text"}]
 
-        profiles = _pivot_column_profiles([{"name": "region"}], [["Name", "name"]])
+        profiles = _pivot_column_profiles(_rows({"name": "region"}), [["Name", "name"]])
         assert profiles == [["Name", "region"]]
         assert all(isinstance(row, list) for row in profiles)
 

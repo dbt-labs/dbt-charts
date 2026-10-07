@@ -82,12 +82,10 @@ _FIXTURES: dict[str, dict[str, Any]] = {
         "query": "q",
         "value": "revenue",
         "label": "Revenue",
-        "style": {
-            "glyph": {"character": "▲"},
-        },
+        "glyph": "▲",
+        "style": {"support": {"tone": "positive"}},
         "support": {
             "label": "vs last month",
-            "tone": "positive",
         },
     },
     "conditional_formatting": {
@@ -148,7 +146,7 @@ def test_v2_kpi_svg_byte_identical_across_variants(variant: str) -> None:
         "query": "q",
         "value": "revenue",
         "label": "Revenue",
-        "variant": variant,
+        "style": {"variant": variant},
         "support": {
             "value": "delta",
             "label": "vs last month",
@@ -188,7 +186,7 @@ _OVERFLOW_CHART_DEF: dict[str, Any] = {
     "query": "q",
     "value": "value",
     "label": "Label, Value and Support",
-    "variant": "inline",
+    "style": {"variant": "inline"},
     "support": {
         "value": "delta",
         "label": "vs. prior period",
@@ -208,7 +206,7 @@ def test_kpi_inline_all_three_slots_falls_back_to_stacked_when_run_overflows_car
     and width would — same layout primitive, not a second one.
     """
     inline_svg = _render_inline_at_width(_OVERFLOW_CHART_DEF, _OVERFLOW_WIDTH)
-    stacked_def = {**_OVERFLOW_CHART_DEF, "variant": "stacked"}
+    stacked_def = {**_OVERFLOW_CHART_DEF, "style": {"variant": "stacked"}}
     stacked_svg = _render_inline_at_width(stacked_def, _OVERFLOW_WIDTH)
     assert inline_svg == stacked_svg, (
         f"expected the overflowing inline run to fall back to stacked geometry\n"
@@ -250,7 +248,7 @@ def test_kpi_inline_narrower_slot_combinations_keep_todays_geometry(
     overflow test above), so equality is the direct way to ask the question.
     """
     inline_svg = _render_inline_at_width(chart_def, _OVERFLOW_WIDTH)
-    stacked_def = {**chart_def, "variant": "stacked"}
+    stacked_def = {**chart_def, "style": {"variant": "stacked"}}
     stacked_svg = _render_inline_at_width(stacked_def, _OVERFLOW_WIDTH)
     assert inline_svg != stacked_svg, (
         f"expected this content to still fit inline at {_OVERFLOW_WIDTH}px, not "
@@ -279,7 +277,7 @@ _BARE_VALUE_OVERFLOW_CHART_DEF: dict[str, Any] = {
     "type": "kpi",
     "query": "q",
     "value": "headline",
-    "variant": "inline",
+    "style": {"variant": "inline"},
 }
 _BARE_VALUE_OVERFLOW_WIDTH = 200.0
 
@@ -308,7 +306,7 @@ def test_kpi_inline_bare_value_overflow_does_not_fall_back() -> None:
     inline_svg = _render_bare_value_at_width(
         _BARE_VALUE_OVERFLOW_CHART_DEF, _BARE_VALUE_OVERFLOW_WIDTH
     )
-    stacked_def = {**_BARE_VALUE_OVERFLOW_CHART_DEF, "variant": "stacked"}
+    stacked_def = {**_BARE_VALUE_OVERFLOW_CHART_DEF, "style": {"variant": "stacked"}}
     stacked_svg = _render_bare_value_at_width(stacked_def, _BARE_VALUE_OVERFLOW_WIDTH)
     assert inline_svg != stacked_svg, (
         "a bare-value overflow must not fall back to stacked — stacking cannot "

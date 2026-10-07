@@ -1,6 +1,6 @@
 """Tests for D3 formatting utilities.
 
-Tests the dbt_charts.render.format_utils module for formatting values
+Tests the dbt_charts.core.compile.format_value module for formatting values
 using D3-style format specifications and theme-defined format aliases.
 """
 
@@ -16,14 +16,14 @@ from dbt_charts.core.compile.format import (
     resolve_format_parts,
     resolve_label_format,
 )
-from dbt_charts.core.compile.models.primitives import FormatConfig, ResolvedFormat
-from dbt_charts.core.diagnostics.codes_render import ERR_PERCENT_RANGE
-from dbt_charts.core.render.errors import RenderError
-from dbt_charts.core.render.format_utils import (
+from dbt_charts.core.compile.format_value import (
     format_d3,
     format_kpi_parts,
     format_value,
 )
+from dbt_charts.core.compile.models.primitives import FormatConfig, ResolvedFormat
+from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_render import ERR_PERCENT_RANGE
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NUMBER_NAMES,
     PREDEFINED_SPECS,
@@ -635,7 +635,7 @@ class TestPercentRangeGuard:
     _FORMATS = {"percent": ".1%", "percent_whole": ".0%", "percent_delta": "+.1%"}
 
     def test_percent_whole_rejects_0_100_shaped_value(self):
-        with pytest.raises(RenderError) as exc_info:
+        with pytest.raises(DbtChartsError) as exc_info:
             format_value(18.2, "percent_whole", self._FORMATS)
         assert exc_info.value.code is ERR_PERCENT_RANGE
 
@@ -648,7 +648,7 @@ class TestPercentRangeGuard:
         assert format_value(9.9, "percent_whole", self._FORMATS) == "990%"
 
     def test_boundary_10_0_rejected(self):
-        with pytest.raises(RenderError) as exc_info:
+        with pytest.raises(DbtChartsError) as exc_info:
             format_value(10.0, "percent_whole", self._FORMATS)
         assert exc_info.value.code is ERR_PERCENT_RANGE
 
@@ -660,19 +660,19 @@ class TestPercentRangeGuard:
         assert format_value(-18.2, "percent_delta", self._FORMATS) == "−1820.0%"
 
     def test_negative_0_100_shaped_value_rejected(self):
-        with pytest.raises(RenderError) as exc_info:
+        with pytest.raises(DbtChartsError) as exc_info:
             format_value(-18.2, "percent_whole", self._FORMATS)
         assert exc_info.value.code is ERR_PERCENT_RANGE
 
     def test_percent_guarded_not_delta(self):
-        with pytest.raises(RenderError):
+        with pytest.raises(DbtChartsError):
             format_value(18.2, "percent", self._FORMATS)
         # percent_delta is exempt — same value renders without error
         assert format_value(18.2, "percent_delta", self._FORMATS) == "+1820.0%"
 
     def test_raw_d3_percent_spec_also_guarded(self):
         # Non-delta raw d3 "%" specs get the guard — failure mode identical.
-        with pytest.raises(RenderError):
+        with pytest.raises(DbtChartsError):
             format_value(18.2, ".0%")
 
     def test_raw_delta_d3_spec_not_guarded(self):
@@ -680,7 +680,7 @@ class TestPercentRangeGuard:
         assert format_value(18.2, "+.0%") == "+1820%"
 
     def test_error_message_mentions_dividing_by_100(self):
-        with pytest.raises(RenderError) as exc_info:
+        with pytest.raises(DbtChartsError) as exc_info:
             format_value(18.2, "percent_whole", self._FORMATS)
         assert "100" in str(exc_info.value)
 
@@ -691,7 +691,7 @@ class TestPercentRangeGuard:
         assert format_value(18.2, "percent_number") == "18.2%"
 
     def test_format_kpi_parts_also_guarded(self):
-        with pytest.raises(RenderError) as exc_info:
+        with pytest.raises(DbtChartsError) as exc_info:
             format_kpi_parts(18.2, "percent_whole", self._FORMATS)
         assert exc_info.value.code is ERR_PERCENT_RANGE
 
@@ -943,7 +943,7 @@ class TestFormatKpiPartsNative:
             formats={},
             native=True,
         )
-        from dbt_charts.core.render.format_utils import MAGNITUDE_SUFFIXES
+        from dbt_charts.core.compile.format_value import MAGNITUDE_SUFFIXES
 
         assert suffix == "G", f"expected raw d3 'G', got {suffix!r}"
         assert "G" in MAGNITUDE_SUFFIXES, "MAGNITUDE_SUFFIXES must include raw d3 'G'"

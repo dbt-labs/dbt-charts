@@ -14,6 +14,12 @@ expressions, chart labels, `where:` expressions.
 - `environment.py` — `BoardTemplateEnvironment`, the one sandboxed class every
   board-text renderer must build from; also governs `registered_views/expander.py`
   (outside this package, builds its own instance, enumerated below).
+- `query_result.py` — `QueryResult`/`QueryRow`/`QueryResults`, what `queries.<q>` is in
+  registered views and board text.
+- `markdown_fence.py` — masks fenced code so board text keeps it out of Jinja.
+- `display_text.py` — `resolve_display_text`, the one lenient resolution for board
+  `text:`, board titles, and chart title/subtitle/label/message, plus the `format`
+  filter it injects and `DisplayTextInputs`, what a chart's text reads.
 - `variables.py` — board-variable resolution; renders nothing.
 
 ## Implementation philosophy
@@ -35,10 +41,11 @@ below, is caught too):
 
 | Path | Context keys | `Environment.globals` | `Environment.filters` |
 |---|---|---|---|
-| `resolve_jinja_template` | board `variables`, `queries` (`_QueryNamespace`, when given), `filter`, `filter_date_range` | Jinja defaults | Jinja defaults |
+| `resolve_jinja_template` | board `variables`, `queries` (`_QueryNamespace`, only when `queries=` is given, never with `query_results=`), `filter`, `filter_date_range` | Jinja defaults | Jinja defaults |
+| `resolve_jinja_template` with `query_results=` (display text: board text and titles, chart title/subtitle/label/message, via `display_text.resolve_display_text`) | board `variables`, `queries` (`QueryResults`, slot-only, mapping only the statically referenced queries, since non-literal use is rejected at compile), `filter`, `filter_date_range` | Jinja defaults | Jinja defaults; `format` **overridden** by the callable `display_text._text_format_filter` builds; the undefined type raises when `first`/`last`/`min`/`max`/`random` get an empty list |
 | `render_parameterized` | board `variables` (wrapped in `_ParameterizedValue`, except `exclude_vars`), `queries` (verbatim from `variables["queries"]` — `render_parameterized_with_queries` wraps it in `_QueryNamespace` before delegating here), `filter`, `filter_date_range` | Jinja defaults | Jinja defaults |
 | `label_data.py`'s `prepare_label_data`/`prepare_pie_label_data` | raw per-row query values (scalar/`Decimal`/`datetime`/JSON, never callable), `index`/`is_first`/`is_last`, plus (pie, the only caller today) `percent`/`value`/`total`/`color` | Jinja defaults | Jinja defaults; `format` **overridden** by our own d3-format callable |
-| `expander.py`'s `render_template` | `path`, `queries` (dict of `ViewQueryResult`), `sql_identifier` (bound per-render) | Jinja defaults + `plan_variables`, `plan_key_variables`, `pivot_column_profiles`, `column_header_styles` (module-level, registered once at import) | Jinja defaults |
+| `expander.py`'s `render_template` | `path`, `queries` (dict of `QueryResult`), `sql_identifier` (bound per-render) | Jinja defaults + `plan_variables`, `plan_key_variables`, `pivot_column_profiles`, `column_header_styles` (module-level, registered once at import) | Jinja defaults |
 
 `filter`/`filter_date_range` are always exactly those two names: the raising
 stubs in `jinja.py`, or (via `filter_helpers=`) the real closures from
@@ -71,11 +78,11 @@ partial, `self`, anything with `__dict__`) — that widens the surface the
 sandbox polices instead of narrowing it. Exceptions, each safe for a stated
 reason: `_QueryNamespace`/`_QueryProxy` and `_ParameterizedValue` keep all
 state `_`-prefixed, so sandboxed `getattr` blocks it, leaving only
-`.cache`/`__str__`; `_NullValue` carries no state; `ViewQueryResult`
-(`expander.py`'s `queries` value type) exposes `.rows`/`.columns`/`.one` by
-design — result data for a page to iterate, the same trust level as row
-dicts. A helper that must exist but never be called is marked
-`@jinja2.sandbox.unsafe` — none currently need it; the raising stubs are
+`.cache`/`__str__`; `_NullValue` carries no state; `QueryResult`, `QueryRow` and
+`QueryResults` (`query_result.py`) expose only result data, are slot-only, and
+raise only `ChartDataError` (see its module docstring). A helper that
+must exist but never be called is marked `@jinja2.sandbox.unsafe` — none
+currently need it; the raising stubs are
 deliberately callable (they raise `CompilationError`, not silence).
 
 **Adding a name is deliberate:** update the pinning test first (it should

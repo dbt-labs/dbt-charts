@@ -28,6 +28,7 @@ import re
 import vl_convert as vlc
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedBarLabels
@@ -40,7 +41,6 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl
-from dbt_charts.core.render.format_utils import format_value
 
 _TEXT_RE = re.compile(r"<text[^>]*>(.*?)</text>", re.S)
 

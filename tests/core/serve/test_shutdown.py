@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import uvicorn
@@ -41,7 +42,7 @@ def uvicorn_shutdown_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
 def test_shutdown_closes_the_watch(uvicorn_shutdown_calls: list[None]) -> None:
     """Shutting down ends the live-reload streams by closing what feeds them."""
     watcher = FileWatcher("charts")
-    server = GracefulServer(uvicorn.Config(FastAPI()), watcher)
+    server = GracefulServer(uvicorn.Config(FastAPI()), watcher, lambda: None, None)
 
     asyncio.run(_shutdown_with_a_stream_open(server, watcher))
 
@@ -57,6 +58,7 @@ def test_build_server_takes_the_apps_own_watch(
 
     (tmp_path / "dbt_charts.yml").write_text("# project config\n")
     app = create_server(FilesystemProject(tmp_path))
+    app.state.adapter_registry = MagicMock()  # lifespan startup sets it
     server = build_server(app, host="localhost", port=0)
 
     asyncio.run(_shutdown_with_a_stream_open(server, app.state.watcher))

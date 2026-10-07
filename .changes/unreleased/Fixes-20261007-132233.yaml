@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board with only a title now renders, a board or layout item with only notes is rejected at parse, and editors flag the same cross-field mistakes dct does.
+time: 2026-10-07T13:22:33.739217-07:00

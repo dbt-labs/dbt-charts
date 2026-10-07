@@ -25,9 +25,6 @@ html_policy: safe-subset
 style:
   font:
     {font_key}: '{_PAYLOAD}'
-  text:
-    code:
-      background: '{_PAYLOAD}'
   variables:
     font:
       color: '{_PAYLOAD}'
@@ -97,12 +94,12 @@ def test_invalid_font_color_becomes_a_clean_board_diagnostic(
     that cannot parse as a CSS color — here, an attempted event-handler
     injection payload — must not reach the attribute at all: css_color
     raises, and the board render surfaces a structured
-    ERR-CSS-COLOR-INVALID-AT-RENDER diagnostic instead of a live style value
+    ERR-STYLE-CSS-VALUE-INVALID diagnostic instead of a live style value
     or an uncaught traceback."""
     rendered = _render_result(_board("color"), local_project)
     assert rendered.output is None
     assert rendered.board_error is not None
-    assert rendered.board_error.code == "ERR-CSS-COLOR-INVALID-AT-RENDER"
+    assert rendered.board_error.code == "ERR-STYLE-CSS-VALUE-INVALID"
 
 
 _STYLE_BLOCK_PAYLOAD = "x</style><img src=x onerror=alert(1)>"
@@ -162,12 +159,9 @@ rows: [t]
 
 
 @pytest.mark.parametrize("payload", [_STYLE_BLOCK_PAYLOAD, "red /* x"])
-def test_html_export_css_breaking_background_raises(
+def test_css_breaking_background_becomes_a_clean_board_diagnostic(
     payload: str, local_project: Callable[..., Project]
 ) -> None:
-    from dbt_charts.core.render.converters.html import to_html
-    from dbt_charts.core.render.errors import RenderError
-
     yaml = f"""\
 title: Report
 style:
@@ -178,9 +172,10 @@ charts:
   t: {{query: q, type: table}}
 rows: [t]
 """
-    svg = _render_svg(yaml, local_project)
-    with pytest.raises(RenderError):
-        to_html(svg)
+    rendered = _render_result(yaml, local_project)
+    assert rendered.output is None
+    assert rendered.board_error is not None
+    assert rendered.board_error.code == "ERR-STYLE-CSS-VALUE-INVALID"
 
 
 def test_html_export_css_function_background_exports_verbatim(
@@ -230,7 +225,7 @@ rows: [t]
     rendered = _render_result(yaml, local_project)
     assert rendered.output is None
     assert rendered.board_error is not None
-    assert rendered.board_error.code == "ERR-CSS-COLOR-INVALID-AT-RENDER"
+    assert rendered.board_error.code == "ERR-STYLE-CSS-VALUE-INVALID"
 
 
 def test_unicode_variable_name_renders_fine(
@@ -260,3 +255,25 @@ def test_attr_name_rejects_markup_breaking_characters() -> None:
     for name in ("a b", 'a="b"', "a<b", "a/b"):
         with pytest.raises(RenderError):
             attr_name(name)
+
+
+def test_callout_message_color_breakout_becomes_a_clean_chart_diagnostic(
+    local_project: Callable[..., Project],
+) -> None:
+    yaml = """\
+title: Report
+queries:
+  q: {type: values, rows: [{n: 1}]}
+charts:
+  c:
+    type: callout
+    title: Heads up
+    message: Something happened
+    style:
+      message:
+        font:
+          color: "red;} svg{background:url(//evil)}"
+rows: [c]
+"""
+    rendered = _render_result(yaml, local_project)
+    assert [d.code for d in rendered.chart_errors] == ["ERR-STYLE-CSS-VALUE-INVALID"]

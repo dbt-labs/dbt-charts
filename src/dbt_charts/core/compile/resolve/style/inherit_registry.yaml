@@ -114,26 +114,37 @@ Style.charts.histogram.preferred_width:
 - Style.charts.preferred_width
 Style.charts.histogram.support_table:
 - Style.charts.support_table
-Style.charts.kpi.affix.font:
-- Style.charts.kpi.font
-- Style.charts.font
-- Style.font
 Style.charts.kpi.font:
-- Style.charts.font
-- Style.font
-Style.charts.kpi.glyph.font:
-- Style.charts.kpi.font
 - Style.charts.font
 - Style.font
 Style.charts.kpi.label.font:
 - Style.charts.kpi.font
 - Style.charts.font
 - Style.font
+Style.charts.kpi.label.overflow:
+- Style.charts.title.overflow
 Style.charts.kpi.padding:
 - Style.charts.padding
 Style.charts.kpi.preferred_width:
 - Style.charts.preferred_width
+Style.charts.kpi.support.font:
+- Style.charts.kpi.font
+- Style.charts.font
+- Style.font
+Style.charts.kpi.support.glyph.font:
+- Style.charts.kpi.support.font
+- Style.charts.kpi.font
+- Style.charts.font
+- Style.font
+Style.charts.kpi.value.affix.font:
+- Style.charts.kpi.font
+- Style.charts.font
+- Style.font
 Style.charts.kpi.value.font:
+- Style.charts.kpi.font
+- Style.charts.font
+- Style.font
+Style.charts.kpi.value.glyph.font:
 - Style.charts.kpi.font
 - Style.charts.font
 - Style.font

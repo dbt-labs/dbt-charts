@@ -550,6 +550,44 @@
           "default": null,
           "description": "Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references."
         },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "currency",
+                      "currency_full",
+                      "currency_whole",
+                      "date_short",
+                      "delta",
+                      "integer",
+                      "number",
+                      "number_full",
+                      "percent",
+                      "percent_delta",
+                      "percent_whole",
+                      "time_short",
+                      "year"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own.",
+          "title": "Formats"
+        },
         "incremental": {
           "anyOf": [
             {
@@ -660,6 +698,44 @@
           ],
           "default": null,
           "description": "Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references."
+        },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "currency",
+                      "currency_full",
+                      "currency_whole",
+                      "date_short",
+                      "delta",
+                      "integer",
+                      "number",
+                      "number_full",
+                      "percent",
+                      "percent_delta",
+                      "percent_whole",
+                      "time_short",
+                      "year"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own.",
+          "title": "Formats"
         },
         "incremental": {
           "anyOf": [
@@ -852,6 +928,44 @@
           "default": null,
           "description": "Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references."
         },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "currency",
+                      "currency_full",
+                      "currency_whole",
+                      "date_short",
+                      "delta",
+                      "integer",
+                      "number",
+                      "number_full",
+                      "percent",
+                      "percent_delta",
+                      "percent_whole",
+                      "time_short",
+                      "year"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own.",
+          "title": "Formats"
+        },
         "incremental": {
           "anyOf": [
             {
@@ -998,6 +1112,44 @@
           "default": null,
           "description": "Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references."
         },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "currency",
+                      "currency_full",
+                      "currency_whole",
+                      "date_short",
+                      "delta",
+                      "integer",
+                      "number",
+                      "number_full",
+                      "percent",
+                      "percent_delta",
+                      "percent_whole",
+                      "time_short",
+                      "year"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own.",
+          "title": "Formats"
+        },
         "incremental": {
           "anyOf": [
             {
@@ -1070,6 +1222,7 @@
                 "clickhouse",
                 "databricks",
                 "duckdb",
+                "fabric",
                 "mysql",
                 "postgres",
                 "presto",
@@ -1155,6 +1308,44 @@
           ],
           "default": null,
           "description": "Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references."
+        },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "currency",
+                      "currency_full",
+                      "currency_whole",
+                      "date_short",
+                      "delta",
+                      "integer",
+                      "number",
+                      "number_full",
+                      "percent",
+                      "percent_delta",
+                      "percent_whole",
+                      "time_short",
+                      "year"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own.",
+          "title": "Formats"
         },
         "incremental": {
           "anyOf": [
@@ -3950,6 +4141,8 @@
                   }
                 ]
               },
+              "maxItems": 2,
+              "minItems": 2,
               "type": "array"
             },
             {
@@ -3964,6 +4157,7 @@
           "anyOf": [
             {
               "items": {},
+              "minItems": 1,
               "type": "array"
             },
             {
@@ -4976,7 +5170,7 @@
     },
     "FontStyle": {
       "additionalProperties": false,
-      "description": "Text appearance. Merged as a unit.\n\nAll fields Optional \u2014 FontStyle doubles as a patch at every level.\n\nA font slot also accepts a registry name (``font: label``) or\n``{extends: label, ...overrides}``; the cascade expands both before\nanything downstream reads the slot, so ``extends`` never survives it.",
+      "description": "Text appearance, including leading for text that wraps. Merged as a unit.",
       "properties": {
         "extends": {
           "anyOf": [
@@ -6203,6 +6397,22 @@
           "description": "Maximum number of rows to return.",
           "title": "Limit"
         },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Column -> format name, from the query's `formats:`. Names are checked against the rendering board's `style.formats` at compile.",
+          "title": "Formats"
+        },
         "ignore": {
           "anyOf": [
             {
@@ -6441,20 +6651,8 @@
     },
     "KpiChartStyle": {
       "additionalProperties": false,
-      "description": "Produced by cascade from theme YAML.\n\nFour per-slot font blocks (value, label, affix, glyph) plus a parent\n``font`` that cascades into every slot and doubles as the support-row\nfont. Concrete pixel values live in ``stark.yaml``.\n\n* ``font`` \u2014 parent font; also the support row (small text under value)\n* ``value.font`` \u2014 headline number typography; size/weight from theme (authoritative)\n* ``label.font`` \u2014 card label typography\n* ``affix.font`` \u2014 currency/percent affixes\n* ``glyph.font`` \u2014 indicator glyphs (\u25b2\u25bc\u25cf)\n* ``content_padding`` \u2014 per-side inner inset for the value/label/support text block\n\nKPI uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n``color`` is likewise absent by construction \u2014 KPI has no series axis and\nno gradient-eligible channel, so it has nothing for a paint config to\nconfigure; ``font.color`` / ``value.font.color`` / ``label.font.color``\nare how a KPI's text gets painted.",
+      "description": "Produced by cascade from theme YAML.\n\n``font`` is the parent every slot font fills from (except ``color``); each\nslot paints only from its own block. Concrete values live in ``_base.yaml``.\n\nKPI uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n``color`` is likewise absent by construction \u2014 KPI has no series axis and\nno gradient-eligible channel, so it has nothing for a paint config to\nconfigure; slot ``font.color`` is how a KPI's text gets painted.",
       "properties": {
-        "title": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Chart-level title style override; None inherits the theme title style."
-        },
         "preferred_width": {
           "anyOf": [
             {
@@ -6494,24 +6692,30 @@
           "title": "Background"
         },
         "font": {
-          "$ref": "#/$defs/FontStyle",
-          "description": "KPI chart-level font overrides."
+          "$ref": "#/$defs/SingleLineFontStyle",
+          "description": "Font every KPI text slot starts from."
+        },
+        "variant": {
+          "description": "Card layout. 'stacked' puts value, label, and support on three lines; 'inline' sets them on one baseline; 'compact' puts the value left and up to two lines right.",
+          "enum": [
+            "compact",
+            "inline",
+            "stacked"
+          ],
+          "title": "Variant",
+          "type": "string"
         },
         "value": {
           "$ref": "#/$defs/KpiValueStyle",
           "description": "KPI headline value slot."
         },
         "label": {
-          "$ref": "#/$defs/KpiSlotStyle",
+          "$ref": "#/$defs/KpiLabelStyle",
           "description": "KPI card label slot."
         },
-        "affix": {
-          "$ref": "#/$defs/KpiSlotStyle",
-          "description": "Currency/percent affix slot."
-        },
-        "glyph": {
-          "$ref": "#/$defs/KpiSlotStyle",
-          "description": "Indicator glyph (\u25b2\u25bc\u25cf) slot."
+        "support": {
+          "$ref": "#/$defs/KpiSupportStyle",
+          "description": "KPI support row slot."
         },
         "min_card_width": {
           "description": "Minimum KPI card width in pixels.",
@@ -6551,28 +6755,90 @@
         }
       },
       "required": [
-        "affix",
         "border",
         "content_padding",
         "default_height",
-        "glyph",
-        "label",
         "min_card_width",
-        "value"
+        "value",
+        "variant"
       ],
       "title": "KpiChartStyle",
       "type": "object"
     },
-    "KpiSlotStyle": {
+    "KpiLabelStyle": {
       "additionalProperties": false,
-      "description": "KPI per-slot style for label, affix, and glyph slots.",
+      "description": "KPI label slot: font and how a long label fits the card.",
       "properties": {
         "font": {
-          "$ref": "#/$defs/FontStyle",
-          "description": "Slot font style."
+          "$ref": "#/$defs/SingleLineFontStyle",
+          "description": "Label font."
         },
-        "character": {
+        "overflow": {
           "anyOf": [
+            {
+              "enum": [
+                "clip",
+                "truncate",
+                "wrap",
+                "wrap-two"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How a label too wide for the card is fit.",
+          "title": "Overflow"
+        }
+      },
+      "title": "KpiLabelStyle",
+      "type": "object"
+    },
+    "KpiSupportGlyphStyle": {
+      "additionalProperties": false,
+      "description": "KPI support-row glyph slot.",
+      "properties": {
+        "font": {
+          "$ref": "#/$defs/SingleLineFontStyle",
+          "description": "Glyph font."
+        }
+      },
+      "title": "KpiSupportGlyphStyle",
+      "type": "object"
+    },
+    "KpiSupportStyle": {
+      "additionalProperties": false,
+      "description": "KPI support row: font, format, tone, and its glyph.",
+      "properties": {
+        "font": {
+          "$ref": "#/$defs/SingleLineFontStyle",
+          "description": "Support row font; its color paints the support value."
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
+            {
+              "enum": [
+                "currency",
+                "currency_full",
+                "currency_whole",
+                "date_short",
+                "delta",
+                "integer",
+                "number",
+                "number_full",
+                "percent",
+                "percent_delta",
+                "percent_whole",
+                "time_short",
+                "year"
+              ],
+              "type": "string"
+            },
             {
               "type": "null"
             },
@@ -6581,16 +6847,51 @@
             }
           ],
           "default": null,
-          "description": "Glyph character to render (e.g. '\u25b2'). None = no glyph.",
-          "title": "Character"
+          "description": "How the support value is written: a D3 spec, a preset name, or a format block.",
+          "title": "Format"
+        },
+        "tone": {
+          "anyOf": [
+            {
+              "enum": [
+                "info",
+                "negative",
+                "positive",
+                "warning"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic color for the support value and glyph.",
+          "title": "Tone"
+        },
+        "glyph": {
+          "$ref": "#/$defs/KpiSupportGlyphStyle",
+          "description": "Glyph drawn before the support value."
         }
       },
-      "title": "KpiSlotStyle",
+      "title": "KpiSupportStyle",
+      "type": "object"
+    },
+    "KpiTextSlotStyle": {
+      "additionalProperties": false,
+      "description": "A KPI text slot styled by its font alone (affix, headline glyph).",
+      "properties": {
+        "font": {
+          "$ref": "#/$defs/SingleLineFontStyle",
+          "description": "Slot font."
+        }
+      },
+      "title": "KpiTextSlotStyle",
       "type": "object"
     },
     "KpiTonesStyle": {
       "additionalProperties": false,
-      "description": "Semantic tone palette shared by the KPI support row and table conditional glyphs.\n\nColors are theme tokens \u2014 the renderer reads them through this model\nrather than hardcoding hexes, so themes can rebrand the semantic\nvocabulary without touching the renderer. Lives on ``Style.tones``\n(board level) rather than under any one chart family, since both KPI\nand table read it.\n\nFour tones \u2014 positive, negative, warning, info (neutral blue). Tone\nlives on the block it paints: a KPI's headline value stays neutral by\ndesign (NYT/FT convention \u2014 the absolute number is direction-neutral),\nso only ``support.tone`` (KpiSupportConfig) reads this palette for KPI.\nA support row without a tone uses default chrome colors.",
+      "description": "Semantic tone palette shared by the KPI support row and table conditional glyphs.\n\nColors are theme tokens \u2014 the renderer reads them through this model\nrather than hardcoding hexes, so themes can rebrand the semantic\nvocabulary without touching the renderer. Lives on ``Style.tones``\n(board level) rather than under any one chart family, since both KPI\nand table read it.\n\nFour tones \u2014 positive, negative, warning, info (neutral blue). Tone\nlives on the block it paints: a KPI's headline value stays neutral by\ndesign (NYT/FT convention \u2014 the absolute number is direction-neutral),\nso only ``style.support.tone`` reads this palette for KPI.\nA support row without a tone uses default chrome colors.",
       "properties": {
         "positive": {
           "description": "Color for positive/good tone indicators.",
@@ -6624,10 +6925,10 @@
     },
     "KpiValueStyle": {
       "additionalProperties": false,
-      "description": "KPI headline value slot: font and format. Theme populates font.size directly.",
+      "description": "KPI headline value slot: font, format, and the affix and glyph beside it.",
       "properties": {
         "font": {
-          "$ref": "#/$defs/FontStyle",
+          "$ref": "#/$defs/SingleLineFontStyle",
           "description": "Headline value font."
         },
         "format": {
@@ -6663,6 +6964,14 @@
           "default": null,
           "description": "Format for the KPI headline value: D3 format string, preset name, or FormatConfig object. A date value defaults to date_short when unformatted.",
           "title": "Format"
+        },
+        "affix": {
+          "$ref": "#/$defs/KpiTextSlotStyle",
+          "description": "Currency or percent sign written around the headline number."
+        },
+        "glyph": {
+          "$ref": "#/$defs/KpiTextSlotStyle",
+          "description": "Indicator glyph drawn before the headline value."
         }
       },
       "title": "KpiValueStyle",
@@ -7639,6 +7948,7 @@
         "page_rows": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -8542,7 +8852,7 @@
     },
     "Projection": {
       "additionalProperties": true,
-      "description": "Structural contract for Vega-Lite projection definitions.",
+      "description": "A Vega-Lite projection; any other Vega-Lite projection property is accepted.",
       "properties": {
         "type": {
           "anyOf": [
@@ -8554,6 +8864,7 @@
             }
           ],
           "default": null,
+          "description": "Projection name, such as mercator.",
           "title": "Type"
         }
       },
@@ -13447,9 +13758,21 @@
           "default": null,
           "description": "Optional support line below the headline."
         },
+        "glyph": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Text drawn before the headline value; None draws none.",
+          "title": "Glyph"
+        },
         "variant": {
-          "default": "stacked",
-          "description": "Layout variant \u2014 dispatches to a distinct SVG emit path.",
+          "description": "Resolved `style.variant`; dispatches to a distinct SVG emit path.",
           "enum": [
             "compact",
             "inline",
@@ -13490,7 +13813,8 @@
         "resolved_channels",
         "style",
         "value",
-        "variable_dependencies"
+        "variable_dependencies",
+        "variant"
       ],
       "title": "ResolvedKpiChart",
       "type": "object"
@@ -13510,27 +13834,8 @@
           ],
           "default": null,
           "description": "Resolved KPI chart style (tone, font, border) from the cascade. Not yet populated; value is set during resolution."
-        },
-        "title_font": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ResolvedFontStyle"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Baked title font (size/weight/family/\u2026) from the width tier."
-        },
-        "title": {
-          "$ref": "#/$defs/TitleStyle",
-          "description": "Resolved KPI title style: any family or chart-level override already merged onto the board default."
         }
       },
-      "required": [
-        "title"
-      ],
       "title": "ResolvedKpiStyle",
       "type": "object"
     },
@@ -13563,18 +13868,6 @@
           "description": "Trailing explainer text rendered beside the support value.",
           "title": "Label"
         },
-        "format": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ResolvedFormat"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Resolved support value format; a date value defaults to date_short when None."
-        },
         "glyph": {
           "anyOf": [
             {
@@ -13588,24 +13881,17 @@
           "description": "Text shown before the value (e.g. '\u25b2', '\u25bc', '\u25cf').",
           "title": "Glyph"
         },
-        "tone": {
+        "format": {
           "anyOf": [
             {
-              "enum": [
-                "info",
-                "negative",
-                "positive",
-                "warning"
-              ],
-              "type": "string"
+              "$ref": "#/$defs/ResolvedFormat"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Semantic styling for the support value/glyph.",
-          "title": "Tone"
+          "description": "Resolved `style.support.format`; a date value defaults to date_short when None."
         },
         "rules": {
           "anyOf": [
@@ -17465,6 +17751,18 @@
           "title": "Chart Type",
           "type": "string"
         },
+        "x_tooltip_format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tooltip format for a numeric x the query names a format for; None when x takes the measure's digit spec."
+        },
         "size": {
           "anyOf": [
             {
@@ -18500,7 +18798,7 @@
             }
           ],
           "default": null,
-          "description": "Row label displayed in the strip's label gutter. When None and by_measure=True, the per_series column name is used. Has no effect when by_measure=False (series name is the label).",
+          "description": "Row label for a by_measure=True row; when None and by_measure=True, the per_series column name is used. Also the header of a horizontal grouped bar's single per_series column. Not allowed on a non-by_measure strip row or stacked-bar column.",
           "title": "Label"
         },
         "format": {
@@ -19025,6 +19323,7 @@
         "width": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
               "type": "integer"
             },
             {
@@ -19041,6 +19340,7 @@
         "max_width": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
               "type": "integer"
             },
             {
@@ -20428,6 +20728,22 @@
           "description": "Maximum number of rows to return.",
           "title": "Limit"
         },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Column -> format name, from the query's `formats:`. Names are checked against the rendering board's `style.formats` at compile.",
+          "title": "Formats"
+        },
         "ignore": {
           "anyOf": [
             {
@@ -20734,6 +21050,140 @@
         "font"
       ],
       "title": "SeriesLabelStyle",
+      "type": "object"
+    },
+    "SingleLineFontStyle": {
+      "additionalProperties": false,
+      "description": "Text appearance for a slot that always paints one line.\n\nAll fields Optional \u2014 it doubles as a patch at every level.\n\nA font slot also accepts a registry name (``font: label``) or\n``{extends: label, ...overrides}``; the cascade expands both before\nanything downstream reads the slot, so ``extends`` never survives it.",
+      "properties": {
+        "extends": {
+          "anyOf": [
+            {
+              "description": "Name of a ``style.fonts`` entry.",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of a ``style.fonts`` entry this slot starts from; the fields set beside it override that entry.",
+          "title": "Extends"
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Font family name (e.g., 'sans-serif', 'Roboto').",
+          "title": "Family"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Text color as a CSS color string.",
+          "title": "Color"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Font size in pixels.",
+          "title": "Size"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "How heavy the type is drawn (e.g., 'bold', 400, 700).",
+          "title": "Weight"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "enum": [
+                "italic",
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Upright or slanted type (normal or italic).",
+          "title": "Style"
+        },
+        "decoration": {
+          "anyOf": [
+            {
+              "enum": [
+                "line-through",
+                "none",
+                "underline"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Line drawn on the text (underline, line-through, or none).",
+          "title": "Decoration"
+        },
+        "case": {
+          "anyOf": [
+            {
+              "enum": [
+                "camel",
+                "lower",
+                "none",
+                "sentence",
+                "slug",
+                "title",
+                "upper"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Letter-case transform applied at render time. 'title' uses Chicago/Gruber rules and preserves tokens with internal capitals (ARR, iPhone). 'sentence' uppercases only the first character. 'none' (default) emits the string without any letter-case change.",
+          "title": "Case"
+        }
+      },
+      "title": "SingleLineFontStyle",
       "type": "object"
     },
     "SingleRowBoolProbe": {
@@ -21620,6 +22070,22 @@
           "description": "Maximum number of rows to return.",
           "title": "Limit"
         },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Column -> format name, from the query's `formats:`. Names are checked against the rendering board's `style.formats` at compile.",
+          "title": "Formats"
+        },
         "ignore": {
           "anyOf": [
             {
@@ -21725,6 +22191,7 @@
                 "clickhouse",
                 "databricks",
                 "duckdb",
+                "fabric",
                 "mysql",
                 "postgres",
                 "presto",
@@ -22552,6 +23019,7 @@
         "width": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
               "type": "integer"
             },
             {
@@ -22568,6 +23036,7 @@
         "max_width": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
               "type": "integer"
             },
             {
@@ -22731,6 +23200,7 @@
         "width": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
               "type": "integer"
             },
             {
@@ -24287,6 +24757,22 @@
           "default": null,
           "description": "Maximum number of rows to return.",
           "title": "Limit"
+        },
+        "formats": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Column -> format name, from the query's `formats:`. Names are checked against the rendering board's `style.formats` at compile.",
+          "title": "Formats"
         },
         "ignore": {
           "anyOf": [

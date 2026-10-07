@@ -24,8 +24,9 @@ so board-SQL query references survive to the compile stage.
 Template context:
 - ``path`` — dict of route path params; ``[[ path.source ]]`` resolves via
   Jinja's normal attribute/key lookup. ``StrictUndefined`` raises on missing keys.
-- ``queries`` — dict keyed by query name; each value is a ViewQueryResult
-  with ``.rows``, ``.one``, ``.columns``.
+- ``queries`` — dict keyed by query name; each value is a QueryResult
+  with ``.rows``, ``.one``, ``.columns``. Rows are QueryRow: cells by column
+  name (``row.name`` / ``row['name']``), raising on an unknown column.
 
 Template globals:
 - ``plan_variables(rows)`` — takes a list of column-query rows (each with ``name``
@@ -56,7 +57,6 @@ from __future__ import annotations
 
 import functools
 import pathlib
-import re
 from collections.abc import Callable
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
@@ -66,14 +66,15 @@ from jinja2 import (
     TemplateSyntaxError,
     UndefinedError,
 )
-from sqlglot import exp as _sqlglot_exp
 
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.dialects.identifier import sql_identifier
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
-    from dbt_charts.core.registered_views.query_runner import ViewQueryResult
+    from dbt_charts.core.compile.template.query_result import QueryResult, QueryRow
     from dbt_charts.core.registered_views.router import RouteMatch
 
 
@@ -108,7 +109,7 @@ _TEMPLATE_ENV = BoardTemplateEnvironment(
 
 
 def _plan_variables(
-    rows: list[dict[str, Any]],
+    rows: list[QueryRow],
 ) -> list[dict[str, str]]:
     """Convert column-query rows into a list of variable dicts for template iteration.
 
@@ -146,7 +147,7 @@ _TEMPLATE_ENV.globals["plan_variables"] = _plan_variables
 
 
 def _plan_key_variables(
-    rows: list[dict[str, Any]],
+    rows: list[QueryRow],
 ) -> list[dict[str, str]]:
     """Like ``plan_variables`` but selects row-identity *key* columns, not filters.
 
@@ -182,9 +183,7 @@ _TEMPLATE_ENV.globals["plan_key_variables"] = _plan_key_variables
 
 
 def _pivot_column_profiles(
-    cols: list[
-        dict[str, Any]  # type-state: explicit_any — heterogeneous DB row values
-    ],
+    cols: list[QueryRow],
     characteristics: list[list[str]],
 ) -> list[
     list[Any]  # type-state: explicit_any — pivoted row mixes label str with DB values
@@ -193,7 +192,11 @@ def _pivot_column_profiles(
     characteristic (from ``characteristics``, each a ``[label, field]`` pair),
     one column per entry in ``cols``.
     """
-    return [[label] + [c.get(field) for c in cols] for label, field in characteristics]
+    # QueryRow has no .get, and profile rows carry only the fields a source knows.
+    return [
+        [label] + [c[field] if field in c else None for c in cols]  # noqa: SIM401
+        for label, field in characteristics
+    ]
 
 
 _TEMPLATE_ENV.globals["pivot_column_profiles"] = _pivot_column_profiles
@@ -212,58 +215,6 @@ def _column_header_styles(
 
 
 _TEMPLATE_ENV.globals["column_header_styles"] = _column_header_styles
-
-
-# Runtime validation boundary (core/AGENTS.md "Two validation boundaries"):
-# `name` may come straight from an untrusted URL path param. Per-dialect
-# quoting is a formatting step, not a security boundary — sqlglot doubles an
-# embedded backtick on BigQuery but leaves a backslash untouched (its
-# IDENTIFIER_ESCAPES is empty), so a crafted `a\`,x#` payload can round-trip
-# through `.sql(dialect="bigquery")` as a different identifier than the one
-# quoted. Deny the characters that can terminate or escape a quoted
-# identifier on any supported dialect (the quote chars, backslash, brackets,
-# and control chars) instead of allowlisting a narrow charset — a dotted or
-# non-ASCII name has nothing left in it that could close the quote, so it
-# stays valid while the whole escape class stays dead.
-#
-# Braces are denied for a second reason: the board SQL this name lands in is
-# re-rendered as Jinja downstream. The sandbox stops escape to Python, not
-# template injection itself, so the denial still earns its place. Today every
-# route reaching here also declares a `type: schema` pre-query, whose
-# SchemaQuery._no_jinja rejects `{{`/`{%` on the same params — but that gate
-# lives in another package, and a future registered view without a schema
-# pre-query would lose it silently.
-_IDENTIFIER_FORBIDDEN_RE = re.compile(r"[\"'`\\\[\]{}\x00-\x1f\x7f-\x9f]")
-
-
-def _sql_identifier(name: str, dialect: str | None) -> str:
-    """Validate and quote a SQL identifier for the given source dialect.
-
-    Args:
-        name: Raw identifier string, possibly from an untrusted URL path param.
-        dialect: dbt charts source dialect name (e.g. ``"bigquery"``,
-            ``"sqlserver"``), or ``None`` for sqlglot's default (ANSI
-            double-quoting). Translated to the sqlglot dialect name via
-            ``sqlglot_dialect`` — the same translator ``sql_guard`` uses, so
-            there is exactly one dbt charts-name-to-sqlglot-name mapping.
-
-    Returns:
-        Quoted SQL identifier string, e.g. ``"orders"`` (ANSI) or
-        `` `orders` `` (BigQuery).
-
-    Raises:
-        ExpansionError: If `name` is empty or contains a quote, backslash,
-            bracket, brace, or control character.
-    """
-    if not name or _IDENTIFIER_FORBIDDEN_RE.search(name):
-        raise ExpansionError(
-            f"{name!r} is not a valid SQL identifier: quote characters, "
-            "backslashes, brackets, braces, and control characters are not "
-            "allowed."
-        )
-    return _sqlglot_exp.to_identifier(name, quoted=True).sql(
-        dialect=sqlglot_dialect(dialect)
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +276,7 @@ def load_template(rel_path: str) -> str:
 def render_template(
     text: str,
     path_params: dict[str, str],
-    query_results: dict[str, ViewQueryResult],
+    query_results: dict[str, QueryResult],
     resolve_dialect: Callable[[], str | None] = lambda: None,
 ) -> str:
     """Render a view template with path params and query results in context.
@@ -353,7 +304,8 @@ def render_template(
 
     Raises:
         ExpansionError: If the template has a syntax error, references an
-            absent path param or query result, an identifier fails
+            absent path param, or reads a query result wrongly (unknown
+            column, ``.one`` without exactly one row), an identifier fails
             validation, or ``resolve_dialect`` itself fails to resolve a
             usable dialect.
     """
@@ -367,7 +319,10 @@ def render_template(
     resolve_once = functools.lru_cache(maxsize=1)(resolve_dialect)
 
     def _sql_identifier_bound(name: str) -> str:
-        return _sql_identifier(name, resolve_once())
+        try:
+            return sql_identifier(name, sqlglot_dialect(resolve_once()))
+        except ValueError as exc:
+            raise ExpansionError(str(exc)) from exc
 
     try:
         return template.render(
@@ -375,7 +330,7 @@ def render_template(
             queries=query_results,
             sql_identifier=_sql_identifier_bound,
         )
-    except UndefinedError as exc:
+    except (UndefinedError, ChartDataError) as exc:
         raise ExpansionError(f"Template rendering failed: {exc}") from exc
 
 
@@ -386,7 +341,7 @@ def render_template(
 
 def expand_registered_view(
     match: RouteMatch,
-    query_results: dict[str, ViewQueryResult],
+    query_results: dict[str, QueryResult],
     resolve_dialect: Callable[[], str | None] = lambda: None,
 ) -> AuthoredBoard:
     """Expand a matched registered view into a normal authored board.

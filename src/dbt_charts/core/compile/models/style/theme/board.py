@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-import re
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from dbt_charts.core.compile.models.factories import (
     FontSlotBase,
@@ -24,17 +29,6 @@ from dbt_charts.core.compile.models.primitives import (
 )
 
 OverflowMode = Literal["clip", "truncate", "wrap-two", "wrap"]
-
-
-def _normalize_overflow_value(value: Any) -> Any:
-    """Normalize overflow mode casing/separator: snake_case → kebab-case, lower.
-
-    Membership is enforced by the field's ``OverflowMode``/``Literal`` type
-    itself — this only canonicalizes spelling before that check runs.
-    """
-    if value is None or not isinstance(value, str):
-        return value
-    return value.strip().lower().replace("_", "-")
 
 
 VALID_FONT_WEIGHTS: frozenset[str] = frozenset(
@@ -101,19 +95,6 @@ class TextColumnStyle(BaseModel):
             "than this limits the text first."
         ),
     )
-
-
-def coerce_gap(v: Any) -> float | None:
-    """Coerce gap value from int, float, or CSS px string."""
-    if v is None:
-        return None
-    if isinstance(v, (int, float)):
-        return float(v)
-    if isinstance(v, str):
-        m = re.search(r"(\d+(?:\.\d+)?)", v)
-        if m:
-            return float(m.group(1))
-    raise ValueError(f"Cannot parse gap from {v!r}")
 
 
 class RootFontStyle(FontStyle):
@@ -288,11 +269,6 @@ class TitleSubtitleStyle(BaseModel):
         "None means not set at this cascade level (theme floor is wrap-two).",
     )
 
-    @field_validator("overflow", mode="before")
-    @classmethod
-    def _normalize_overflow(cls, value: Any) -> Any:
-        return _normalize_overflow_value(value)
-
 
 class TitleStyle(BaseModel):
     """Board and board titles."""
@@ -360,11 +336,6 @@ class TitleStyle(BaseModel):
                 f"style.title.level must be 'auto' or a positive integer, got {value!r}"
             )
         return value
-
-    @field_validator("overflow", mode="before")
-    @classmethod
-    def _normalize_overflow(cls, value: Any) -> Any:
-        return _normalize_overflow_value(value)
 
 
 class BoxStyle(BaseModel):

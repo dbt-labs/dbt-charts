@@ -52,12 +52,13 @@ charts:
     style:
       value:
         format: "$,.2s"       # e.g. $1.84M
+      support:
+        format: +.1%
+        tone: positive
     support:
       value: delta
       label: vs last month
-      format: "+.1%"
       glyph: "▲"
-      tone: positive          # positive / negative / warning
 ```
 
 See `examples/single-metric-bignum.yml` for the worked example.
@@ -69,7 +70,7 @@ See `examples/single-metric-bignum.yml` for the worked example.
 | Large currency | `format: "$,.2s"` | Millions/billions (e.g., `$1.84M`) |
 | Plain count | `format: ",.0f"` | Raw integer |
 | Percent | `format: ".1%"` | Conversion rate, margin |
-| Negative delta | `tone: negative`, `glyph: "▼"` | Unfavorable direction |
+| Negative delta | `style.support.tone: negative`, `support.glyph: "▼"` | Unfavorable direction |
 | Status string | `query: { rows: [{ status: "On track" }] }` + `value: status` | Qualitative health status |
 | Sparkline | add a `spark` column in the query (array type) | Requires a warehouse that supports arrays |
 
@@ -79,7 +80,7 @@ See `examples/single-metric-bignum.yml` for the worked example.
 |---|---|---|
 | Query returns multiple rows | ChartDataError | Use `SUM()`/`MAX()` to collapse to exactly 1 row |
 | `format: "$,.2s"` on a small number | Rounds aggressively (e.g. `$175` → `$0.00k`) | Use `"$,.0f"` for values under $10k |
-| `tone:` without `glyph:` | Delta has semantic color but no directional icon | Add `glyph: "▲"` or `"▼"` |
+| `style.support.tone` without `support.glyph` | Delta has semantic color but no directional icon | Add `support.glyph: "▲"` or `"▼"` |
 | Overlong label | Label wraps awkwardly at large sizes | ≤ 4 words |
 
 ## Worked example

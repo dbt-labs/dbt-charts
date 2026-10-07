@@ -15,10 +15,12 @@ from pydantic import ValidationError
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.introspection import introspect
 from dbt_charts.core.compile.schema.renderers.json_schema import (
+    CROSS_FIELD_RULE,
     render_yaml_schema,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     canonical_schema_bytes,
+    compute_current_schema,
     load_yaml_schema_catalog,
     load_yaml_schema_catalog_from,
     next_minor,
@@ -1070,3 +1072,24 @@ def test_verify_rejects_dev_version_at_or_below_the_tag(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="0.7.0"):
         verify_released_yaml_schema(directory, version="0.7.0", candidate=candidate)
+
+
+def test_freeze_candidate_is_the_catalog_current_schema_with_its_rules() -> None:
+    catalog = load_yaml_schema_catalog()
+    candidate = compute_current_schema()
+    assert structural_schema_bytes(candidate) == structural_schema_bytes(
+        catalog.current_schema
+    )
+    assert CROSS_FIELD_RULE in json.dumps(candidate)
+
+
+def test_grammar_drops_exactly_the_cross_field_rules() -> None:
+    catalog = load_yaml_schema_catalog()
+    grammar = json.dumps(catalog.current_grammar)
+    assert CROSS_FIELD_RULE not in grammar
+    # Discriminated unions are allOf too; they carry no marker and stay.
+    assert '"if": {"properties": {"type"' in grammar
+    assert catalog.current_grammar is catalog.current_grammar
+    assert catalog.grammar_for(catalog.dev.version) is catalog.grammar_for(
+        catalog.dev.version
+    )

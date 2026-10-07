@@ -1,0 +1,5 @@
+kind: Fixes
+body: '`dct serve` stays responsive while a board renders, and Ctrl-C now stops it promptly and cancels running DuckDB and warehouse queries.'
+time: 2026-10-07T14:33:45.868527-07:00
+custom:
+    DbtChartsIssue: "61"

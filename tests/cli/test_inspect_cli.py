@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from dbt_charts.cli.main import app
@@ -29,36 +30,38 @@ runner = CliRunner()
 class TestInspectEject:
     """dct inspect eject."""
 
-    def test_happy_path_single_template(self, tmp_path: Path) -> None:
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(
-                app,
-                [
-                    "inspect",
-                    "eject",
-                    "model",
-                    "--output",
-                    str(tmp_path / "out"),
-                ],
-                catch_exceptions=False,
-            )
+    def test_happy_path_single_template(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "inspect",
+                "eject",
+                "model",
+                "--output",
+                str(tmp_path / "out"),
+            ],
+            catch_exceptions=False,
+        )
         assert result.exit_code == 0, result.output
         assert (tmp_path / "out" / "model.yml").exists()
 
-    def test_all_flag(self, tmp_path: Path) -> None:
+    def test_all_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         out_dir = tmp_path / "out"
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(
-                app,
-                [
-                    "inspect",
-                    "eject",
-                    "--all",
-                    "--output",
-                    str(out_dir),
-                ],
-                catch_exceptions=False,
-            )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "inspect",
+                "eject",
+                "--all",
+                "--output",
+                str(out_dir),
+            ],
+            catch_exceptions=False,
+        )
         assert result.exit_code == 0, result.output
         # All templates should have been ejected
         from dbt_charts.core.inspect import INSPECT_TEMPLATES
@@ -66,70 +69,78 @@ class TestInspectEject:
         for name in INSPECT_TEMPLATES:
             assert (out_dir / f"{name}.yml").exists()
 
-    def test_force_flag_overwrites(self, tmp_path: Path) -> None:
+    def test_force_flag_overwrites(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         out_dir = tmp_path / "out"
         out_dir.mkdir(parents=True)
         # Pre-create with dummy content
         (out_dir / "model.yml").write_text("# custom\n")
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(
-                app,
-                [
-                    "inspect",
-                    "eject",
-                    "model",
-                    "--force",
-                    "--output",
-                    str(out_dir),
-                ],
-                catch_exceptions=False,
-            )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "inspect",
+                "eject",
+                "model",
+                "--force",
+                "--output",
+                str(out_dir),
+            ],
+            catch_exceptions=False,
+        )
         assert result.exit_code == 0, result.output
         # Content should be overwritten with built-in template
         content = (out_dir / "model.yml").read_text()
         assert "# custom" not in content
 
-    def test_multiple_templates(self, tmp_path: Path) -> None:
+    def test_multiple_templates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         out_dir = tmp_path / "out"
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(
-                app,
-                [
-                    "inspect",
-                    "eject",
-                    "model",
-                    "quality",
-                    "--output",
-                    str(out_dir),
-                ],
-                catch_exceptions=False,
-            )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "inspect",
+                "eject",
+                "model",
+                "quality",
+                "--output",
+                str(out_dir),
+            ],
+            catch_exceptions=False,
+        )
         assert result.exit_code == 0, result.output
         assert (out_dir / "model.yml").exists()
         assert (out_dir / "quality.yml").exists()
 
-    def test_no_templates_no_all_exits_1(self, tmp_path: Path) -> None:
+    def test_no_templates_no_all_exits_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # No positional args and no --all → eject_command prints error and exits 1
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(
-                app,
-                ["inspect", "eject"],
-            )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            ["inspect", "eject"],
+        )
         assert result.exit_code == 1  # eject_command raises typer.Exit(1)
 
-    def test_unknown_template_exits_1(self, tmp_path: Path) -> None:
+    def test_unknown_template_exits_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         out_dir = tmp_path / "out"
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(
-                app,
-                [
-                    "inspect",
-                    "eject",
-                    "unknown_template_xyz",
-                    "--output",
-                    str(out_dir),
-                ],
-            )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "inspect",
+                "eject",
+                "unknown_template_xyz",
+                "--output",
+                str(out_dir),
+            ],
+        )
         assert result.exit_code == 1  # ValueError from eject_templates → typer.Exit(1)
 
 
@@ -162,15 +173,17 @@ class TestInspectTemplates:
 class TestInspectValidateTemplates:
     """dct inspect validate-templates."""
 
-    def test_happy_path_after_eject(self, tmp_path: Path) -> None:
+    def test_happy_path_after_eject(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         out_dir = tmp_path / "out"
         # First eject so there's a manifest to validate
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            eject_result = runner.invoke(
-                app,
-                ["inspect", "eject", "--all", "--output", str(out_dir)],
-                catch_exceptions=False,
-            )
+        monkeypatch.chdir(tmp_path)
+        eject_result = runner.invoke(
+            app,
+            ["inspect", "eject", "--all", "--output", str(out_dir)],
+            catch_exceptions=False,
+        )
         assert eject_result.exit_code == 0
 
         result = runner.invoke(

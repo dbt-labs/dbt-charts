@@ -39,8 +39,13 @@ from dbt_charts.core.compile.models.variable.authored import INTERNAL_VARIABLE_F
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.execute.chart_resolution import collect_layer_datasets
+from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
+from dbt_charts.core.execute.chart_resolution import (
+    collect_display_text_inputs,
+    collect_layer_datasets,
+)
 from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.render.boards import resolve_display_text_via
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 
 #: "No cap" for ``max_rows_per_query`` — every row is embedded. A named
@@ -100,7 +105,7 @@ CHART_FIELDS = (
     "value",
     # KPI quantitative-text-object fields (siblings of `value`).
     "support",
-    "variant",
+    "glyph",
     # Pivot-table channels (authored as field-name lists).
     "rows",
     "values",
@@ -228,7 +233,7 @@ def _cartesian_y_range_display(
     authored = value_axis_format.authored if value_axis_format is not None else None
     if authored is None or not isinstance(chart.y, str):
         return None
-    from dbt_charts.core.render.format_utils import format_value
+    from dbt_charts.core.compile.format_value import format_value
 
     values = [row[chart.y] for row in data if row.get(chart.y) is not None]
     if not values or not all(isinstance(v, (int, float)) for v in values):
@@ -265,13 +270,9 @@ def _kpi_text_parts(
         native=resolved.format_native,
         format_may_be_cascaded=True,
     )
-    # Headline glyph (e.g. "▲"): a style setting (chart/kpi.py:548 draws it
-    # from the same slot), distinct from the support glyph below, which is
-    # per-instance authored on the support block itself.
-    kpi_style = resolved.style.kpi
-    glyph_char = kpi_style.glyph.character if kpi_style is not None else None
-    if glyph_char:
-        display = f"{glyph_char} {display}"
+    # Headline glyph (e.g. "▲"), distinct from the support glyph below.
+    if resolved.glyph:
+        display = f"{resolved.glyph} {display}"
     parts: dict[str, str] = {"value": display}
 
     support = resolved.support
@@ -331,7 +332,11 @@ def _render_chart_item(
         # Resolve against the full result so data-aware resolution (auto type,
         # auto fields) is unaffected by the cap; only the emitted rows shrink.
         resolved = resolve(
-            chart, data, chart_style_context=chart_style_context, datasets=datasets
+            chart,
+            data,
+            chart_style_context=chart_style_context,
+            datasets=datasets,
+            display_text=collect_display_text_inputs(chart, executor, variables),
         )
         rows_truncated: dict[str, int] = {}
         if len(data) > max_rows_per_query:
@@ -379,14 +384,8 @@ def _render_chart_item(
                     item["y_range_display"] = y_range_display
             if isinstance(resolved, ResolvedKpiChart):
                 if not data:
-                    # Matches _render_kpi_svg_core's own guard (chart/kpi.py) —
-                    # a KPI with no data is an authoring mistake there, not a
-                    # blank card, so text must not silently render an empty
-                    # KPI section either.
-                    raise ChartDataError(
-                        f"KPI chart '{chart.id}' has no data — query returned 0 rows",
-                        chart_id=chart.id,
-                    )
+                    # Same error as the SVG KPI renderer, never a blank card.
+                    raise ChartDataError.from_code(ERR_KPI_NO_DATA, chart_id=chart.id)
                 item["kpi_text"] = _kpi_text_parts(
                     resolved, data[0], chart_style_context.formats
                 )
@@ -483,9 +482,12 @@ def board_to_dict(
                 f"max_rows_per_query must be a positive int, got {max_rows_per_query}"
             ),
         )
+    title = resolve_display_text_via(
+        executor, board.title, variables, resolved_style=board.resolved_style
+    )
     result: dict[str, Any] = {
         "id": board.id,
-        "title": board.title,
+        "title": title,
         "items": _render_board_items(
             board,
             executor,

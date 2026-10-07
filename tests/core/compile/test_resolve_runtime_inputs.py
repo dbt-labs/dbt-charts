@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.config import get_theme_style
@@ -20,6 +21,7 @@ from dbt_charts.core.compile.resolve import (
     should_synthesize_auto_link,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+from dbt_charts.core.compile.template.display_text import DisplayTextInputs
 
 
 def _style() -> ChartStyleContext:
@@ -88,7 +90,10 @@ def test_resolve_selects_authored_or_runtime_root_link_before_construction() -> 
     rows = [{"category": "A", "amount": 10.0}]
 
     automatic = resolve(
-        _bar(), rows, _style(), automatic_link_candidate="/auto/{{ x }}"
+        _bar(),
+        rows,
+        _style(),
+        automatic_link_candidate="/auto/{{ x }}",
     )
     authored = resolve(
         _bar(link="/authored/{{ x }}"),
@@ -235,22 +240,28 @@ def test_resolve_constructs_request_local_chart_text_without_mutating_normalized
         chart,
         rows,
         _style(),
-        variables={"region": "West", "comparison": "plan", "category": "wrong"},
+        display_text=DisplayTextInputs(
+            {"region": "West", "comparison": "plan", "category": "wrong"}, {}
+        ),
     )
     east = resolve(
         chart,
         rows,
         _style(),
-        variables={"region": "East", "comparison": "prior year"},
+        display_text=DisplayTextInputs(
+            {"region": "East", "comparison": "prior year"}, {}
+        ),
     )
-    no_runtime_variables = resolve(chart, rows, _style(), variables={})
-    static = resolve(chart, rows, _style())
+    no_runtime_variables = resolve(
+        chart, rows, _style(), display_text=DisplayTextInputs({}, {})
+    )
+    static = resolve(chart, rows, _style(), display_text="raw")
 
     assert west.title == "West revenue"
     assert west.subtitle == "Compared with plan"
     assert east.title == "East revenue"
     assert east.subtitle == "Compared with prior year"
-    assert no_runtime_variables.title == "{{ region }} revenue"
+    assert no_runtime_variables.title == " revenue"
     assert static.title == "{{ region }} revenue"
     assert west.link == "/regions/{{ category }}"
     assert east.link == "/regions/{{ category }}"
@@ -282,13 +293,13 @@ def test_resolve_constructs_final_kpi_and_callout_text() -> None:
         kpi,
         [{"amount": 10.0}],
         style,
-        variables={"region": "West"},
+        display_text=DisplayTextInputs({"region": "West"}, {}),
     )
     resolved_callout = resolve(
         callout,
         [],
         style,
-        variables={"region": "West", "date": "today"},
+        display_text=DisplayTextInputs({"region": "West", "date": "today"}, {}),
     )
 
     assert resolved_kpi.label == "West revenue"
@@ -306,7 +317,10 @@ def test_link_false_suppresses_auto_link_per_chart() -> None:
     assert should_synthesize_auto_link(_bar(link=None, color="region"), rows, True)
 
     resolved = resolve(
-        _bar(link=False), rows, _style(), automatic_link_candidate="/auto/{{ x }}"
+        _bar(link=False),
+        rows,
+        _style(),
+        automatic_link_candidate="/auto/{{ x }}",
     )
     assert resolved.link is None
 
@@ -319,3 +333,26 @@ def test_link_false_keeps_table_fk_links() -> None:
 
     assert not should_synthesize_auto_link(chart, [{"id": 1}], True)
     assert should_fetch_table_fk_links(chart, True)
+
+
+def test_resolve_without_display_text_rejects_jinja_text() -> None:
+    chart = _bar(title="{{ region }} revenue")
+    with pytest.raises(
+        ValueError,
+        match="chart '.*' title contains Jinja but resolve\\(\\) got no display_text",
+    ):
+        resolve(chart, [{"category": "a", "amount": 1.0}], _style())
+
+
+def test_resolve_without_display_text_keeps_plain_text() -> None:
+    chart = _bar(title="Revenue", subtitle="By category")
+    resolved = resolve(chart, [{"category": "a", "amount": 1.0}], _style())
+    assert (resolved.title, resolved.subtitle) == ("Revenue", "By category")
+
+
+def test_resolve_raw_display_text_keeps_jinja_literal() -> None:
+    chart = _bar(title="{{ region }} revenue")
+    resolved = resolve(
+        chart, [{"category": "a", "amount": 1.0}], _style(), display_text="raw"
+    )
+    assert resolved.title == "{{ region }} revenue"

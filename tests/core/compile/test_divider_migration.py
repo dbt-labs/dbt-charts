@@ -286,23 +286,6 @@ def test_chart_level_table_style_migrates() -> None:
     }
 
 
-def test_a_board_nested_in_a_board_migrates() -> None:
-    raw = {
-        "title": "t",
-        "rows": [
-            {
-                "text": "x",
-                "style": {"text": {"column": {"rule": {"color": "#f00"}}}},
-            }
-        ],
-    }
-    migrated = _migrate(raw)
-    assert migrated["rows"][0]["style"] == {
-        "text": {"column": {"divider": {"visible": True, "color": "#f00"}}}
-    }
-    AuthoredBoard.model_validate(migrated)
-
-
 def test_values_authored_at_two_levels_resolve_per_block() -> None:
     """The old renderer merged the board and chart table styles before choosing
     the line color, so the board's `row.rule.color` beat the chart's

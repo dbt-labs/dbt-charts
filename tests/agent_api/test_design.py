@@ -165,11 +165,10 @@ _PARSE_FIXTURES = {
         "rows:\n"
         "  - charts.k\n"
     ),
-    # The other half of every rule `reject_multi_series_channel_conflicts`
-    # enforces. The suppression it already had runs the other way — hide the
-    # second series source once `y` holds a list — so nothing exercised a chart
-    # that authors one *first*, which is the shape the `list` widget turns into
-    # a refusal.
+    # The other half of the multi-metric layers rule bar and area declare. The
+    # suppression runs the other way (hide the second series source once `y`
+    # holds a list), so this exercises a chart that authors one *first*, the
+    # shape the `list` widget turns into a refusal.
     "bar-with-color": (
         "rows:\n"
         "  - title: Bar\n"
@@ -425,11 +424,11 @@ def test_a_kpi_and_an_area_chart_expose_different_property_sets(targets) -> None
     kpi = _flat(targets["rows.0.cols.1"])
     area = _flat(targets["rows.0.cols.0"])
 
-    assert {"value", "label", "variant"} <= set(kpi)
+    assert {"value", "label", "style.variant"} <= set(kpi)
     assert "x" not in kpi and "y" not in kpi
 
     assert {"x", "title", "y_label"} <= set(area)
-    assert "variant" not in area and "value" not in area
+    assert "style.variant" not in area and "value" not in area
 
 
 def test_authored_values_are_distinguished_from_inherited_ones(targets) -> None:
@@ -443,7 +442,7 @@ def test_authored_values_are_distinguished_from_inherited_ones(targets) -> None:
 
 
 def test_enum_fields_carry_their_choices(targets) -> None:
-    variant = _flat(targets["rows.0.cols.1"])["variant"]
+    variant = _flat(targets["rows.0.cols.1"])["style.variant"]
     assert variant.widget == "select"
     assert variant.enum_values is not None
     assert "compact" in variant.enum_values
@@ -482,6 +481,25 @@ def test_axis_x_ticks_visible_widget_stays_a_checkbox() -> None:
     assert props["style.axis_quantitative.ticks.visible"].widget == "checkbox"
     assert props["style.axis_band.ticks.visible"].widget == "checkbox"
     assert props["style.axis.ticks.visible"].widget == "checkbox"
+
+
+def test_an_int_literal_field_is_a_select_of_its_ints() -> None:
+    targets = _targets(
+        "rows:\n"
+        "  - title: S\n"
+        "    type: line\n"
+        "    query: q\n"
+        "    x: month\n"
+        "    y: revenue\n"
+        "    style:\n"
+        "      axis_x:\n"
+        "        labels:\n"
+        "          clock: 12\n"
+    )
+    clock = _flat(targets["rows.0"])["style.axis_x.labels.clock"]
+    assert clock.widget == "select"
+    assert clock.enum_values == (24, 12)
+    assert clock.value == 12
 
 
 def test_a_required_field_offers_no_default(targets) -> None:
@@ -1030,9 +1048,10 @@ _RENDER_FIXTURES = {
     ),
     "line-bare": "rows:\n  - title: Line\n    type: line\n    query: q\n",
     "area-bare": "rows:\n  - title: Area\n    type: area\n    query: q\n",
-    # `render/chart/table.py` raises `ERR-INTERNAL` for a pivot declaring
-    # neither `rows` nor `values`, and every one of these three fields is a
-    # `list` control, so the sweep reaches that rule from both directions.
+    # `render/chart/table.py` raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` for
+    # a pivot declaring neither `rows` nor `values`, and every one of these three
+    # fields is a `list` control, so the sweep reaches that rule from both
+    # directions.
     "table-plain": "rows:\n  - title: T\n    type: table\n    query: q\n",
     "table-rows-only": (
         "rows:\n"
@@ -1306,8 +1325,8 @@ def _render_failures(board: str) -> list[str]:
 def test_no_list_control_can_commit_a_board_that_stops_rendering() -> None:
     """The parse gate's blind half: a rule the compiler enforces at resolve.
 
-    `reject_multi_series_channel_conflicts` is a parse-time validator for bar and
-    area only. Line and scatter enforce the identical rule from
+    The multi-metric layers rule is a parse-time constraint on bar and area
+    only. Line and scatter enforce the identical rule from
     `resolve_wide_measure_channels` (`resolve/chart/_wide_fields.py`), reached
     from `resolve/chart/line.py` and `resolve/chart/scatter.py` respectively —
     both past the save endpoint's re-parse. So the panel offered a multi-value
@@ -1567,10 +1586,10 @@ def test_the_multi_metric_rules_follow_the_families_that_enforce_them() -> None:
 def test_a_heatmap_spends_its_color_channel_on_the_measure_and_takes_no_list() -> None:
     """The wide fold has nowhere to go on a heatmap, and nothing says so.
 
-    `reject_multi_series_channel_conflicts` states the rule every wide family
+    Bar and area declare the multi-metric layers rule every wide family
     obeys — folding measures onto one mark family spends the mark fill —
     and a heatmap's color *is* its measure, so there is nothing left to fold
-    onto. It is the one cartesian family that neither calls that validator nor
+    onto. It is the one cartesian family that neither declares that rule nor
     refuses from its own resolver: `y: [region, revenue]` renders, with no
     diagnostic anywhere, as a chart whose y band stacks two columns' values
     against each other and whose cell color has stopped encoding magnitude.
@@ -1671,9 +1690,9 @@ def _table(chart: str) -> dict[str, DesignProperty]:
 class TestThePivotsArityRule:
     """A pivot needs a `rows:` or a `values:`, and only the render says so.
 
-    `render/chart/table.py` raises `ERR-INTERNAL` — "declare at least one of
-    `rows` or `values`" — for a table that sets `columns:` and neither of the
-    pair: with both omitted the row and measure dimensions are ambiguous. The
+    `render/chart/table.py` raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` —
+    "declare at least one of `rows` or `values`" — for a table that sets
+    `columns:` and neither of the pair: with both omitted the row and measure dimensions are ambiguous. The
     board parses, so the save endpoint's re-parse passes it and the panel is
     left showing a chart that no longer renders.
     """

@@ -48,12 +48,13 @@ charts:
     style:
       value:
         format: currency_whole
+      support:
+        format: percent_delta
+        tone: positive
     support:
       value: rev_delta
       label: vs last period
-      format: percent_delta
       glyph: "▲"
-      tone: positive
 
   orders_kpi:
     type: kpi
@@ -63,9 +64,11 @@ charts:
     support:
       value: ord_delta
       label: vs last period
-      format: percent_delta
       glyph: "▲"
-      tone: positive
+    style:
+      support:
+        format: percent_delta
+        tone: positive
 
 rows:
   - height: 120
@@ -81,7 +84,7 @@ See `examples/kpi-row.yml` for the full 3-KPI worked example.
 | No delta | omit `support:` | Prior period not available |
 | Currency | `style.value.format: currency_whole` | Revenue, spend, cost |
 | Percent | `style.value.format: percent` | Rate, conversion, margin |
-| Negative delta | `tone: negative`, `glyph: "▼"` | Unfavorable direction |
+| Negative delta | `style.support.tone: negative`, `support.glyph: "▼"` | Unfavorable direction |
 | Cap row height | `height: 120` on the row | Prevent KPIs growing taller than charts below. It is a ceiling, not a reservation — if the KPIs need less, the row shrinks to fit rather than leaving an empty band. |
 
 ## Common pitfalls
@@ -90,7 +93,7 @@ See `examples/kpi-row.yml` for the full 3-KPI worked example.
 |---|---|---|
 | Query returns multiple rows | `ChartDataError` — KPI expects exactly 1 row | Add `SUM()`/`COUNT()` to aggregate to one row |
 | Delta column missing from query | Render error — column not found | Include delta columns in the same query |
-| `glyph: "▲"` without `tone:` | Arrow renders but no semantic color | Add `tone: positive` or `tone: negative` |
+| `support.glyph: "▲"` without `style.support.tone` | Arrow renders but no semantic color | Add `style.support.tone: positive` or `negative` |
 | Overloaded label | Hard to scan at a glance | ≤ 3 words per label |
 
 ## Worked example

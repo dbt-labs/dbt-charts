@@ -30,6 +30,7 @@ from dbt_charts.core.render.column_packer import (
     grid_span,
     span_boxes,
 )
+from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.svg_utils import (
     divider_dash_attr,
     escape_attr,
@@ -422,25 +423,33 @@ def _item_lines(renderer: SVGRenderer, item: ListItem, width: float) -> int:
 
 
 def _run_grid(
-    run: list[Board], variable_values: VariableValues, board_width: float, gap: float
+    run: list[Board],
+    variable_values: VariableValues,
+    board_width: float,
+    gap: float,
+    drawn: set[int],
 ) -> Literal[1, 2, 3]:
     """Grid for a run: the narrowest any block needs, and halves if it is list-heavy.
 
     List-heavy means more than half of the run's list items fit on one line at
     the halves measure but wrap at the thirds measure, at the board's width.
     """
-    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
     from mdsvg.renderer import SVGRenderer
 
     items = one_line_at_halves = 0
     grid: Literal[1, 2, 3] = 3
     for block in run:
+        if id(block) not in drawn:
+            continue
         rs = block.resolved_style
         col = rs.text.column
         _, style, fonts, char_px = _prose_typography(rs.text, rs)
         pad = float(rs.frame.card_padding)
         grid = min(grid, choose_grid(board_width, gap, pad, char_px))
-        text = resolve_jinja_template(block.text, variable_values, strict=False)
+        text = resolve_display_text_from_provider(
+            block.text, variable_values, resolved_style=rs
+        )
         list_items = _list_items(text)
         if not list_items:
             continue
@@ -550,7 +559,7 @@ def _goes_multi_column(
 ) -> bool:
     """Whether ``block``, at its real ``slot`` width, lays out in two or more columns."""
     from dbt_charts.core.compile.image_assets import rewrite_board_markdown_images
-    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
     from mdsvg.renderer import SVGRenderer
 
     rs = block.resolved_style
@@ -561,7 +570,9 @@ def _goes_multi_column(
         fetch_image_sizes=False,
         allow_raw_html=block.html_policy == "trusted-raw",
     )
-    text = resolve_jinja_template(block.text, variable_values, strict=False)
+    text = resolve_display_text_from_provider(
+        block.text, variable_values, resolved_style=rs
+    )
     # The same degradation the sizing pass applies: a bad image becomes its error.
     blocks = rewrite_board_markdown_images(
         list(parse_markdown(text)), block.text, text, block.base_dir, None
@@ -577,12 +588,8 @@ def _drawn_text(board: Board, variable_values: VariableValues) -> set[int]:
     """``id`` of every board whose text is actually drawn.
 
     A tabs layout draws its active panel only, a collapsed details item draws
-    its summary only, and a ``visible:`` that resolves false draws nothing. A
-    query-backed ``visible:`` probe cannot be known before the data is read, so
-    it counts as drawn.
+    its summary only, and a hidden item draws nothing.
     """
-    from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
-    from dbt_charts.core.render.conditions import evaluate_visible
     from dbt_charts.core.render.sizing import (
         active_layout_items,
         is_item_collapsed_summary,
@@ -595,10 +602,6 @@ def _drawn_text(board: Board, variable_values: VariableValues) -> set[int]:
             drawn.add(id(node))
         for item in active_layout_items(node.layout, variable_values):
             if item.board is None or is_item_collapsed_summary(item, variable_values):
-                continue
-            if not isinstance(item.visible, SingleRowBoolProbe) and (
-                not evaluate_visible(item.visible, variable_values, None)
-            ):
                 continue
             pending.append(item.board)  # noqa: B909 — queue growth: BFS over the board tree
     return drawn
@@ -620,15 +623,15 @@ def plan_board_prose(
     card_gap = float(board.resolved_style.frame.card_gap) if board.card_gap else 0.0
     found = _Runs(card_gap, variable_values)
     found.close_unended(_gather_runs(board, [], found, is_root=True), board)
-    slots = prose_slot_widths(board, board_width)
+    slots = prose_slot_widths(board, board_width, variable_values, item_is_drawn)
+    drawn = _drawn_text(board, variable_values)
     grids: list[tuple[list[Board], Literal[1, 2, 3], float]] = [
-        (run, _run_grid(run, variable_values, board_width, gap), gap)
+        (run, _run_grid(run, variable_values, board_width, gap, drawn), gap)
         for run, gap in found.runs
     ]
     # Board-scoped: one block that really lays out in columns, at the slot the
     # layout gives it, snaps every lone column on the board to its span. Only
     # text that is drawn can do it.
-    drawn = _drawn_text(board, variable_values)
     snap = any(
         _goes_multi_column(
             block, slots[id(block)], grid, board_width, gap, variable_values

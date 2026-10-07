@@ -115,7 +115,7 @@ _ENUM_CELL_TRUNCATE_AT = (
 )
 
 
-def _enum_str(values: list[str | bool]) -> str:
+def _enum_str(values: list[str | int | bool]) -> str:
     """ "enum: ..." cell text, truncated past _ENUM_CELL_TRUNCATE_AT members.
 
     A long closed set (e.g. ScaleTargetConfig.palette's ~116 names) blown out
@@ -132,10 +132,12 @@ def _enum_str(values: list[str | bool]) -> str:
     return f"enum: {shown}, … ({len(values) - _ENUM_CELL_TRUNCATE_AT} more; see the JSON Schema)"
 
 
-def _enum_member(value: str | bool) -> str:
-    # Bool literals are authored as YAML `true`/`false`, not quoted strings.
+def _enum_member(value: str | int | bool) -> str:
+    # Bool and int literals are authored bare in YAML, not quoted strings.
     if isinstance(value, bool):
         return str(value).lower()
+    if isinstance(value, int):
+        return str(value)
     return f'"{value}"'
 
 

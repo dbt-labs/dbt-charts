@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field
 
+from dbt_charts.core.compile.models.constraints import Constraint, Forbids, ValueIn
 from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import PointMapChartStylePatch
 
@@ -16,6 +17,32 @@ class PointMapChart(_GeoChartFields):
     """Authored patch for point_map and bubble_map charts; the two type spellings are synonyms."""
 
     model_config = ConfigDict(extra="forbid")
+
+    # `collapse` emits VL's native `size: {aggregate: "count"}`: it binds the
+    # size channel, and VL groups it by every other non-aggregated encoded
+    # field, so a `color` column re-creates the pile `collapse` removes.
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Forbids(
+            ("size",),
+            "{type}: `collapse: true` and `size: <column>` both bind "
+            "the mark's size channel — they cannot be combined. Drop `size` "
+            "to size collapsed points by count, or drop `collapse` to keep "
+            "`size` as a bubble_map measure encoding.",
+            when=(ValueIn("collapse", (True,)),),
+        ),
+        Forbids(
+            ("color",),
+            "{type}: `collapse: true` and `color: <column>` cannot be "
+            "combined — VL's size:{{aggregate: count}} groups by every "
+            "other non-aggregated encoded field, so an authored `color` "
+            "reintroduces the exact pile `collapse` exists to remove. "
+            "Drop `color` to keep collapsed counts, or drop `collapse` "
+            "and aggregate per-category counts in SQL (`GROUP BY <lat>, <lon>, "
+            "<category>` producing a count column), then use `bubble_map` "
+            "with `size: <count column>, color: <category column>`.",
+            when=(ValueIn("collapse", (True,)),),
+        ),
+    )
 
     type: Annotated[
         Literal["point_map", "bubble_map"],
@@ -69,41 +96,3 @@ class PointMapChart(_GeoChartFields):
         PointMapChartStylePatch | None,
         Field(default=None, description="Appearance overrides for this chart alone."),
     ]
-
-    @model_validator(mode="after")
-    def _reject_collapse_with_size(self) -> PointMapChart:
-        if self.collapse and self.size is not None:
-            raise ValueError(
-                f"{self.type}: `collapse: true` and `size: <column>` both bind "
-                "the mark's size channel — they cannot be combined. Drop `size` "
-                "to size collapsed points by count, or drop `collapse` to keep "
-                "`size` as a bubble_map measure encoding."
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _reject_collapse_with_color(self) -> PointMapChart:
-        """Refuse `collapse` alongside a field-mode `color`.
-
-        `collapse` emits VL's native `size: {aggregate: "count"}`, which VL
-        groups by every other non-aggregated encoded field. Field-mode
-        `color` widens that groupby to (lat, lon, category) — re-creating
-        the exact pile `collapse` exists to remove.
-        """
-        if not self.collapse:
-            return self
-        sql_resolution = (
-            "aggregate per-category counts in SQL (`GROUP BY <lat>, <lon>, "
-            "<category>` producing a count column), then use `bubble_map` "
-            "with `size: <count column>, color: <category column>`."
-        )
-        if self.color is not None:
-            raise ValueError(
-                f"{self.type}: `collapse: true` and `color: <column>` cannot be "
-                "combined — VL's size:{aggregate: count} groups by every "
-                "other non-aggregated encoded field, so an authored `color` "
-                "reintroduces the exact pile `collapse` exists to remove. "
-                f"Drop `color` to keep collapsed counts, or drop `collapse` "
-                f"and {sql_resolution}"
-            )
-        return self

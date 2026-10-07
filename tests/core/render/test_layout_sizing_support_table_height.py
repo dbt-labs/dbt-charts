@@ -332,9 +332,9 @@ def test_compute_entry_dx_returns_none_for_empty_data():
 
 def test_compute_entry_dx_uses_aggregate_entry_format():
     # ResolvedSupportTableAggregate also has a .format field; dx computation must use it.
+    from dbt_charts.core.compile.format_value import format_value
     from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.font_measure import get_font_measurer
-    from dbt_charts.core.render.format_utils import format_value
 
     dt_style = get_theme_style().charts.support_table
     dt = ResolvedSupportTable.model_validate(
@@ -368,9 +368,9 @@ def test_compute_entry_dx_aggregates_multi_row_per_x():
     # Widest raw value → "$500" (3 chars + $); widest aggregate → "$1,000" (5 chars + $).
     # "$500" and "$1,000" have different rendered widths in the monospace font,
     # so the test can assert that the result reflects the aggregate width.
+    from dbt_charts.core.compile.format_value import format_value
     from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.font_measure import get_font_measurer
-    from dbt_charts.core.render.format_utils import format_value
 
     dt_style = get_theme_style().charts.support_table
     dt = ResolvedSupportTable.model_validate(

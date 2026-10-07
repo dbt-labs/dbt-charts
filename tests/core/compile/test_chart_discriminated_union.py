@@ -26,7 +26,6 @@ from dbt_charts.core.compile.models.chart.authored import (
     ScatterChart,
     SparkBarChart,
     TableChart,
-    _CartesianChartFields,
 )
 
 
@@ -427,18 +426,6 @@ def test_bar_accepts_layers():
     )
     assert p.layers is not None
     assert len(p.layers) == 1
-
-
-def test_histogram_layers_guard_scoped_to_barchart_not_shared_base():
-    """The histogram/layers guard must live on BarChart's own namespace, not
-    on the shared _CartesianChartFields base: HeatmapChart also inherits that
-    base but declares no `layers` field, so a hoisted validator would
-    AttributeError on every authored heatmap. `self.type == "histogram"`
-    short-circuits `and self.layers` before that attribute access ever
-    happens, so a plain `HeatmapChart(...)` construction can't detect a hoist
-    — assert the method's actual location instead."""
-    assert "_reject_histogram_layers" in BarChart.__dict__
-    assert "_reject_histogram_layers" not in _CartesianChartFields.__dict__
 
 
 def test_histogram_accepts_explicit_empty_layers():

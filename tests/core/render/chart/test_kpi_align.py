@@ -6,9 +6,8 @@ for why: cairosvg mis-renders `dy` chains, and every value/label/support
 10.5 treats as opening a new text chunk — an `end`/`middle` anchor would
 re-anchor each chunk independently and overlap the run).
 
-`kpi_align_baseline.json` pins the pre-`align` byte-for-byte output (captured
-from `origin/main` before this field existed) so omitting `align` must never
-change a single byte.
+`kpi_align_baseline.json` pins the unaligned byte-for-byte output so omitting
+`align` must never change a single byte.
 """
 
 from __future__ import annotations
@@ -58,11 +57,11 @@ def _chart_def(variant: str, align: str | None = None) -> dict[str, Any]:
         "query": "q",
         "value": "revenue",
         "label": "Revenue",
-        "variant": variant,
         "support": {"value": "delta", "label": "vs last month", "glyph": "▲"},
+        "style": {"variant": variant},
     }
     if align is not None:
-        chart_def["style"] = {"align": align}
+        chart_def["style"]["align"] = align
     return chart_def
 
 
@@ -199,8 +198,11 @@ def test_inline_bare_value_overflow_is_clamped(align: str) -> None:
         "type": "kpi",
         "query": "q",
         "value": "revenue",
-        "variant": "inline",
-        "style": {"align": align, "value": {"format": ",.0f"}},
+        "style": {
+            "variant": "inline",
+            "align": align,
+            "value": {"format": ",.0f"},
+        },
     }
 
     board_rs, board_ctx = _styles()
@@ -239,12 +241,14 @@ def test_align_is_all_or_nothing_across_the_card(align: str) -> None:
         "query": "q",
         "value": "revenue",
         "label": "Rev",
-        "variant": "stacked",
-        "style": {"align": align},
+        "style": {
+            "variant": "stacked",
+            "align": align,
+            "support": {"format": "percent_delta"},
+        },
         "support": {
             "value": "delta",
             "label": "versus the same period a year earlier, adjusted",
-            "format": "percent_delta",
         },
     }
 

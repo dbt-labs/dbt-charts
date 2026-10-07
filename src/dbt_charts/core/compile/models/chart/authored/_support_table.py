@@ -109,9 +109,10 @@ class ChartSupportTablePerSeries(BaseModel):
     label: Annotated[str | None, DisplayText()] = Field(
         default=None,
         description=(
-            "Row label displayed in the strip's label gutter. "
-            "When None and by_measure=True, the per_series column name is used. "
-            "Has no effect when by_measure=False (series name is the label)."
+            "Row label for a by_measure=True row; when None and by_measure=True, "
+            "the per_series column name is used. Also the header of a horizontal "
+            "grouped bar's single per_series column. Not allowed on a "
+            "non-by_measure strip row or stacked-bar column."
         ),
     )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(

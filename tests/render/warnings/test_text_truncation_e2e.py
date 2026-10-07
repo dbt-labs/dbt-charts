@@ -115,7 +115,7 @@ rows:
 
 
 def test_kpi_inline_fallback_fires_warning(tmp_path, local_project) -> None:
-    """variant: inline whose run overflows the card -> WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED.
+    """style.variant: inline whose run overflows the card -> WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED.
 
     HIGH-4 (review): the fallback from inline to stacked must be reported,
     not silent. Mirrors the label-truncation test above — same real-render
@@ -143,9 +143,10 @@ charts:
   k:
     query: q
     type: kpi
-    variant: inline
     value: value
     label: "Label, Value and Support"
+    style:
+      variant: inline
     support:
       value: delta
       label: vs. prior period
@@ -170,7 +171,7 @@ rows:
         for w in result.warnings
         if w.code == WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED.code
     )
-    assert fallback_warn.path == "charts.k.variant"
+    assert fallback_warn.path == "charts.k.style.variant"
 
     # A run short enough to fit the default 300px card must NOT fire.
     clean_board = InMemoryBoard(
@@ -182,9 +183,10 @@ charts:
   k:
     query: q
     type: kpi
-    variant: inline
     value: value
     label: "Revenue"
+    style:
+      variant: inline
     support:
       value: delta
       label: vs LQ
@@ -605,10 +607,10 @@ charts:
   k:
     query: q
     type: kpi
-    variant: compact
     value: value
     label: "Revenue"
     style:
+      variant: compact
       align: right
       value:
         format: ",.0f"
@@ -643,10 +645,10 @@ charts:
   k:
     query: q
     type: kpi
-    variant: compact
     value: value
     label: "Revenue"
     style:
+      variant: compact
       align: right
       value:
         format: currency
@@ -666,3 +668,53 @@ rows:
         result_cache=None,
     )
     assert WARN_KPI_ALIGN_OVERFLOW.code not in {w.code for w in clean.warnings}
+
+
+def test_support_table_cell_overflow_fires_warning(tmp_path, local_project) -> None:
+    """Dense strip cells wider than their band -> WARN_SUPPORT_TABLE_CELL_OVERFLOW.
+
+    Real-render path, so dropping the detector from the registry or the record
+    call from the post-pass fails it; the sparse board pins the quiet half.
+    """
+    from dbt_charts.core.board import render_dashboard
+    from dbt_charts.core.diagnostics import WARN_SUPPORT_TABLE_CELL_OVERFLOW
+    from dbt_charts.core.project import InMemoryBoard
+
+    project = local_project(tmp_path)
+
+    def warn_codes(n_rows: int) -> set[str]:
+        registry = _mock_adapter(
+            [{"month": f"m{i:02d}", "revenue": 1234567.0 + i} for i in range(n_rows)]
+        )
+        board = InMemoryBoard(
+            """
+source: examples_db
+queries:
+  q: SELECT month, revenue FROM t
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    support_table:
+      - source: revenue
+        format: ",.0f"
+    style:
+      orientation: vertical
+rows:
+  - c
+""",
+            path=project.path("charts/_t.yml"),
+        )
+        result = render_dashboard(
+            board=board,
+            adapter_registry=registry,
+            format="svg",
+            project=project,
+            result_cache=None,
+        )
+        return {w.code for w in result.warnings}
+
+    assert WARN_SUPPORT_TABLE_CELL_OVERFLOW.code in warn_codes(27)
+    assert WARN_SUPPORT_TABLE_CELL_OVERFLOW.code not in warn_codes(3)

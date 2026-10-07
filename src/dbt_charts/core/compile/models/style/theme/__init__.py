@@ -102,8 +102,6 @@ from dbt_charts.core.compile.models.style.theme.board import (
     TitleStyle,
     TitleSubtitleStyle,
     TitleWidthOffsetsStyle,
-    _normalize_overflow_value,
-    coerce_gap,
     font_weight_as_css,
 )
 from dbt_charts.core.compile.models.style.theme.callout import (
@@ -128,7 +126,10 @@ from dbt_charts.core.compile.models.style.theme.histogram import (
 )
 from dbt_charts.core.compile.models.style.theme.kpi import (
     KpiChartStyle,
-    KpiSlotStyle,
+    KpiLabelStyle,
+    KpiSupportGlyphStyle,
+    KpiSupportStyle,
+    KpiTextSlotStyle,
     KpiTonesStyle,
     KpiValueStyle,
 )
@@ -311,7 +312,10 @@ __all__ = [
     "InputStyle",
     "InputWidths",
     "KpiChartStyle",
-    "KpiSlotStyle",
+    "KpiLabelStyle",
+    "KpiSupportGlyphStyle",
+    "KpiSupportStyle",
+    "KpiTextSlotStyle",
     "KpiTonesStyle",
     "KpiValueStyle",
     "LabelsDefaultTemplate",
@@ -413,7 +417,5 @@ __all__ = [
     "_PaintedChartStyleBaseAllOptional",
     "_QuantitativeAxisChartStyleMixin",
     "_RadialChartStyle",
-    "_normalize_overflow_value",
-    "coerce_gap",
     "font_weight_as_css",
 ]

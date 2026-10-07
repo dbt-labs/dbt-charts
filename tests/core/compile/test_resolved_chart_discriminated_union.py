@@ -89,7 +89,7 @@ def _default_charts():
 
 
 _DEFAULT_CHARTS = _default_charts()
-_KPI_STYLE = ResolvedKpiStyle(title=_DEFAULT_CHARTS.title)
+_KPI_STYLE = ResolvedKpiStyle()
 
 # Required base fields (no defaults on non-None resolved model fields).
 _B: dict = {
@@ -106,7 +106,8 @@ _C: dict = dict(_B)
 # ResolvedKpiChart inherits _BaseResolvedChartFields directly (extra="forbid"),
 # not _SharedResolvedChartFields — it has neither background nor title_style.
 _KPI_B: dict = {
-    k: v for k, v in _B.items() if k not in ("background", "canvas", "title_style")
+    **{k: v for k, v in _B.items() if k not in ("background", "canvas", "title_style")},
+    "variant": "stacked",
 }
 
 
@@ -347,7 +348,10 @@ _BD: dict = {
 }
 _CD: dict = {**_BD, "panel_axes": []}
 _KPI_BD: dict = {
-    k: v for k, v in _BD.items() if k not in ("background", "canvas", "title_style")
+    **{
+        k: v for k, v in _BD.items() if k not in ("background", "canvas", "title_style")
+    },
+    "variant": "stacked",
 }
 # Resolved mark dicts.
 _LINE_MARK_D = {"stroke": {"width": 2.0}, "halo_multiplier": 2.0, "labels": {}}
@@ -501,7 +505,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                 "id": "k",
                 "chart_type": "kpi",
                 "value": "rev",
-                "style": {"title": _DEFAULT_CHARTS.title},
+                "style": {},
                 **_KPI_BD,
             },
             ResolvedKpiChart,

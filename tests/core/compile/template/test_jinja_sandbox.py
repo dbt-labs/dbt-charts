@@ -27,6 +27,8 @@ from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 from dbt_charts.core.compile.template.labels_env import label_jinja_env
 from dbt_charts.core.compile.template.parameterized import render_parameterized
+from dbt_charts.core.compile.template.query_result import QueryResult
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.registered_views.expander import render_template
 
 runner = CliRunner()
@@ -100,6 +102,46 @@ class TestResolveJinjaTemplateSandbox:
         with pytest.raises(JinjaError) as exc_info:
             resolve_jinja_template(payload, variables={}, queries={}, strict=False)
         assert isinstance(exc_info.value.__cause__, SecurityError)
+
+
+class TestBoardTextQueryResultSandbox:
+    """query_results= exposes QueryResult/QueryRow; only data attributes survive."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "{{ queries.q.__class__ }}",
+            "{{ queries.q.one.__class__ }}",
+            "{{ queries.q.__init__.__globals__ }}",
+        ],
+    )
+    def test_dunder_access_renders_empty(self, payload: str) -> None:
+        result = resolve_jinja_template(
+            payload,
+            strict=False,
+            query_results={"q": QueryResult("q", [{"x": 1}])},
+            format_cell=lambda value, spec: str(value),
+        )
+        assert result == ""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "{{ queries.q|attr('_rows') }}",
+            "{{ queries.q.rows[0]|attr('_cells') }}",
+            "{{ queries|attr('_results') }}",
+        ],
+    )
+    def test_private_state_access_raises(self, payload: str) -> None:
+        with pytest.raises(ChartDataError) as exc:
+            resolve_jinja_template(
+                payload,
+                strict=False,
+                query_results={"q": QueryResult("q", [{"x": 1}])},
+                format_cell=lambda value, spec: str(value),
+            )
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-TEXT-QUERY-ACCESS"
 
 
 class TestResolveJinjaTemplatePositiveControls:

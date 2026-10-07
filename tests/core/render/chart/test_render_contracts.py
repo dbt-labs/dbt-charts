@@ -169,7 +169,8 @@ def test_get_emitter_raises_for_kpi() -> None:
         id="k1",
         chart_type="kpi",
         value="total",
-        style=ResolvedKpiStyle(title=_default_title()),
+        variant="stacked",
+        style=ResolvedKpiStyle(),
         **{
             k: v
             for k, v in _B.items()

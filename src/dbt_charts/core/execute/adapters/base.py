@@ -29,6 +29,7 @@ from dbt_charts.core.connections import classify_connection_error
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_QUERY_INTERRUPTED,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
 )
@@ -193,6 +194,11 @@ def plain_error(message: str) -> QueryResult:
     classify_warehouse_error instead.
     """
     return QueryResult(data=[], error=QueryError(message))
+
+
+def interrupted() -> QueryResult:
+    """A query stopped or refused by `BaseAdapter.interrupt()`."""
+    return QueryResult(data=[], error=QueryError.from_code(ERR_QUERY_INTERRUPTED))
 
 
 def handle_adapter_error(operation: str, error: Exception) -> QueryResult:
@@ -398,6 +404,9 @@ class BaseAdapter(ABC):
             True if this adapter can execute the query, False otherwise
         """
         return True
+
+    def interrupt(self) -> None:  # noqa: B027 — optional hook, no-op by default
+        """Cancel in-flight queries and refuse new ones; one-way, for shutdown."""
 
     def execute(
         self,

@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Tuple
 
 import nh3
 
+from .css import css_font_family_stack
+
 # Precise text measurement
 from .fonts import (
     FontFace,
@@ -1343,7 +1345,7 @@ class SVGRenderer:
 
         # blockquote font overrides
         bq_family = self.style.blockquote_font_family or self.style.font_family
-        bq_extra = f" font-family: {escape_xml(bq_family)};"
+        bq_extra = f" font-family: {escape_xml(css_font_family_stack(bq_family))};"
         if self.style.blockquote_font_weight:
             bq_extra += (
                 f" font-weight: {escape_xml(self.style.blockquote_font_weight)};"
@@ -1362,17 +1364,17 @@ class SVGRenderer:
 
         return {
             "text": (
-                f"font-family: {escape_xml(self.style.font_family)}; "
+                f"font-family: {escape_xml(css_font_family_stack(self.style.font_family))}; "
                 f"fill: {escape_xml(self.style.text_color)};" + text_weight
             ),
-            "mono": f"font-family: {escape_xml(self.style.mono_font_family)};",
+            "mono": f"font-family: {escape_xml(css_font_family_stack(self.style.mono_font_family))};",
             "heading": (
-                f"font-family: {escape_xml(heading_family)}; "
+                f"font-family: {escape_xml(css_font_family_stack(heading_family))}; "
                 f"fill: {escape_xml(self.style.get_heading_color())}; "
                 f"font-weight: {escape_xml(str(self.style.heading_font_weight))};"
             ),
             "code": (
-                f"font-family: {escape_xml(code_family)}; "
+                f"font-family: {escape_xml(css_font_family_stack(code_family))}; "
                 f"fill: {escape_xml(self.style.code_color)};" + code_extra
             ),
             "link": f"fill: {escape_xml(self.style.link_color)};",
@@ -1463,7 +1465,7 @@ class SVGRenderer:
         """
         s = self.style
         parts = [
-            f"font-family: {s.code_font_family or s.mono_font_family}",
+            f"font-family: {css_font_family_stack(s.code_font_family or s.mono_font_family)}",
             f"fill: {s.code_color}",
             f"font-size: {format_number(self._inline_code_size(host_font_size))}px",
         ]
@@ -1691,7 +1693,7 @@ class SVGRenderer:
             f'<foreignObject x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
             f'width="{format_number(fo_width)}" height="{format_number(fo_height)}">'
             f'<div xmlns="http://www.w3.org/1999/xhtml" '
-            f'style="font-family: {escape_xml(self.style.font_family)}; '
+            f'style="font-family: {escape_xml(css_font_family_stack(self.style.font_family))}; '
             f"font-size: {format_number(self.style.base_font_size)}px; "
             f'color: {escape_xml(self.style.text_color)};">'
             f"{sanitized}"
@@ -3006,6 +3008,7 @@ class SVGRenderer:
                         separator=separator,
                         separator_width=measure(separator) if separator else 0.0,
                         meta=run,
+                        glued=not separator and bool(pieces),
                     )
                 )
                 separator = ""
@@ -3025,6 +3028,7 @@ class SVGRenderer:
                         separator=separator,
                         separator_width=measure(separator) if separator else 0.0,
                         meta=run,
+                        glued=not separator and bool(pieces),
                     )
                 )
                 separator = ""
@@ -3047,6 +3051,7 @@ class SVGRenderer:
                                 separator_width if chunk_index == 0 else 0.0
                             ),
                             meta=run,
+                            glued=chunk_index == 0 and not separator and bool(pieces),
                         )
                     )
                     separator = ""

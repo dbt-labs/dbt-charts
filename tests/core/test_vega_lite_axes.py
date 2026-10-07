@@ -969,7 +969,9 @@ class TestAxisYLabelAlignInvasion:
             {"category": "B", "series": "X", "value": 3_000_000},
             {"category": "B", "series": "Y", "value": 4_000_000},
         ]
-        resolved = _resolve_bar(chart, partition(None, data), ctx, 800.0, {}, None, {})
+        resolved = _resolve_bar(
+            chart, partition(None, data), ctx, 800.0, {}, None, None
+        )
         ay = resolved.style.axis_y
         # The bake sets domain=[0.0, 1.0] on the resolved axis scale.
         # Without the bake, ay.scale is None or ay.scale.continuous is None,
@@ -1017,7 +1019,9 @@ class TestAxisYLabelAlignInvasion:
             {"category": "B", "series": "X", "value": 3_000_000},
             {"category": "B", "series": "Y", "value": 4_000_000},
         ]
-        resolved = _resolve_area(chart, partition(None, data), ctx, 800.0, {}, None, {})
+        resolved = _resolve_area(
+            chart, partition(None, data), ctx, 800.0, {}, None, None
+        )
         ay = resolved.style.axis_y
         assert ay.scale is not None, "normalize-stack must bake a scale onto the axis"
         assert ay.scale.continuous is not None, (
@@ -1243,8 +1247,8 @@ class TestChartFormatApplied:
         Board overrides theme; "revenue" alias resolves via cascade, not code fallback.
         Checks both the VL render path (axis.format in spec) and the Python format_value path.
         """
+        from dbt_charts.core.compile.format_value import format_kpi_parts, format_value
         from dbt_charts.core.compile.models.style.authored import StylePatch
-        from dbt_charts.core.render.format_utils import format_kpi_parts, format_value
 
         base_style = get_theme_style()
         resolved_rs, resolved_ctx = resolve_style_and_context(

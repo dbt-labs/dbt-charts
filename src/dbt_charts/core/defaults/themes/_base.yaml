@@ -700,25 +700,26 @@ style:
       # (see `themes/clarity.yaml`).
       # Weight 500 (heading-tier) for the whole card text — the per-tier
       # hierarchy is carried by size + color, not weight. This cascades
-      # into every slot (value, label, affix, glyph) unless overridden.
+      # into every slot unless overridden.
       font:
         extends: numeral
         size: 11
         weight: 500
+      variant: stacked
       value:
         font:
           size: 24
+        affix:
+          font: label
+        glyph:
+          # Indicator glyphs (▲▼●) sit next to the value as markers, not
+          # second headlines — drawn at body/narrow tier so a triangle's
+          # visual mass doesn't compete with the digits.
+          font: label
       label:
         font:
           extends: label
           case: title
-      affix:
-        font: label
-      glyph:
-        # Indicator glyphs (▲▼●) sit next to the value as markers, not
-        # second headlines — drawn at body/narrow tier so a triangle's
-        # visual mass doesn't compete with the digits.
-        font: label
       min_card_width: 100.0
       preferred_width: 300.0
       default_height: 48.0

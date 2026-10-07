@@ -11,6 +11,7 @@ and can be loaded as BoardPatch instances for use with merge_patches.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.board.authored import AUTHORED_BOARD_ADAPTER
 from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
@@ -25,11 +26,11 @@ class TestThemeAliasDesugars:
         )
         assert board.extends == "dark"
 
-    def test_theme_none_is_ignored(self) -> None:
-        board = AUTHORED_BOARD_ADAPTER.validate_python(
-            {"title": "test", "rows": [], "theme": None}
-        )
-        assert board.extends is None
+    def test_theme_none_raises(self) -> None:
+        with pytest.raises(ValidationError, match="must be a theme name string"):
+            AUTHORED_BOARD_ADAPTER.validate_python(
+                {"title": "test", "rows": [], "theme": None}
+            )
 
     def test_extends_still_works_without_theme(self) -> None:
         board = AUTHORED_BOARD_ADAPTER.validate_python(

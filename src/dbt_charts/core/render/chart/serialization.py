@@ -56,6 +56,7 @@ def build_dbt_charts_json(
         "geo_source",
         "lookup",
         "value",
+        "glyph",
         "projection",
         "latitude",
         "longitude",

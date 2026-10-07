@@ -76,9 +76,11 @@ class Axis(VegaLiteBaseModel):
 
 
 class Projection(VegaLiteBaseModel):
-    """Structural contract for Vega-Lite projection definitions."""
+    """A Vega-Lite projection; any other Vega-Lite projection property is accepted."""
 
-    type: str | None = None
+    type: str | None = Field(
+        default=None, description="Projection name, such as mercator."
+    )
 
 
 # ---------------------------------------------------------------------------

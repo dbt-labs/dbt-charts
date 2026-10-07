@@ -56,6 +56,13 @@ class CalloutChart(BaseModel):
         default_factory=frozenset,
         description="Variable names this chart depends on.",
     )
+    text_queries: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Queries this chart's display text reads, keyed by the name the "
+            "template uses; the value is the query registry key."
+        ),
+    )
     query_name: None = Field(
         default=None,
         description="Always None — callout has no query. Present so build_resolved_board "

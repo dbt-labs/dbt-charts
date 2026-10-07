@@ -470,7 +470,7 @@ Types: `dbt_profile`, `postgres`, `snowflake`, `bigquery`, `redshift`, `mysql`, 
 
 ## Queries
 
-Queries are the data layer. Charts reference queries by name; queries never embed display logic.
+Queries are the data layer. Charts reference queries by name; queries own what a column means, including the format name it prints with (`formats:`), and nothing about how it is painted.
 
 ```yaml
 source: my_profile             # Optional: default source for every query below
@@ -522,6 +522,8 @@ queries:
     values:
       - [Alice, 92.4]
       - [Bob, 87.1]
+    formats:                     # How each column prints, everywhere; names only
+      score: number_full
 ```
 
 Query types (`type:` literals): `sql`, `http`, `values`, `schema`.
@@ -548,6 +550,7 @@ Common fields (all query types):
 | Field | Description |
 |-------|-------------|
 | `notes` | Metadata sentence about the query, for AI search and context. Never drawn on the board. |
+| `formats` | `column: format name` map: how each column prints on every chart, table and KPI that shows it. A name is an engine format (`currency`, `percent`, `integer`, `year`, …) or a `style.formats` key; a d3 spec is rejected (`ERR-QUERY-FORMAT-SPEC`). Beats board-level slot formats and the chart-wide `number_format`/`time_format`; loses to a chart's own slot `format:` (KPI `value.format`, table column `format`, `axis_*.labels.format`). A key the query does not return is `ERR-QUERY-FORMAT-COLUMN-MISSING` |
 | `source` | Source name (from `dbt_charts.yml`'s `sources:` registry), or an inline file path (`./data/x.csv`) for a single colocated CSV/JSON/Parquet. An inline connection dict (`{type: postgres, ...}`) is rejected — reference a named source instead. Not accepted on `http` queries. |
 | `target` | dbt target name (defaults to `dev`) |
 | `cache` | Result-cache override for this query — `5m`, `forever`, `true`, `false` — refines the board/source/project policy (see [Caching](#caching)) |
@@ -809,13 +812,13 @@ The family slots:
 | same — the dimension, when its ticks are numbers | `style.axis_x.labels.format` — `number_format` never reaches the dimension axis |
 | `heatmap` | no axis format applies — the value is on the color channel |
 | `kpi` value | `style.value.format` |
-| `kpi` support | `support.format` |
+| `kpi` support | `style.support.format` |
 | `table` column | `style.columns.<col>.format` |
 
 #### Number format aliases
 
 `number_format`, `style.value.format`, table column `format`, and
-`support.format` accept a D3 format string, a named alias (engine-owned
+`style.support.format` accept a D3 format string, a named alias (engine-owned
 specs shown), or an object with `spec`, `prefix`, `suffix` and `notation`
 keys (see "Currency and other affixes" below). The three *native* aliases at
 the bottom are Python-formatted and valid only in KPI value/support and
@@ -880,7 +883,7 @@ notation composed in. Write the symbol into the expression itself (e.g.
 
 `time_format` takes D3 time specs or `date_short` (`%-d %b %Y` → `5 Mar 2026`).
 
-`glyph` and `tone` at chart root are also rejected on KPI — use `style.glyph.character` for the glyph. `tone` has no style-level home: it lives only on `support.tone`, since the support row is the block it paints (the headline value stays neutral). Override the value/glyph color with `style.value.font.color`, or the whole card's ink with `style.font.color`.
+KPI content sits at the chart root (`value`, `label`, `glyph`, `support`); everything about how it looks sits under `style:`. `tone` at chart root is rejected: it lives only on `style.support.tone`, since the support row is the block it paints (the headline value stays neutral). Each slot paints with its own `font` (`style.value.font`, `style.value.affix.font`, `style.value.glyph.font`, `style.label.font`, `style.support.font`, `style.support.glyph.font`); `style.font` is the font they all start from. KPI fonts take no `line_height`: every slot is one line.
 
 Top-level chart fields shared by all types: `id`, `query`, `type`, `title`, `subtitle`, `notes`, `height`, `aspect_ratio`, `style`, `link`, `warnings_ignore`.
 
@@ -946,28 +949,32 @@ total:
 type: kpi
 value: total_revenue    # column name (always a column reference)
 label: "Total Revenue"  # NOT `title:` — `title:` is rejected on KPI
-variant: stacked        # stacked (default) | inline (one baseline row) | compact (2-column)
+glyph: "●"              # optional; drawn before the headline value
+support:                # Optional support line
+  value: prev_revenue
+  label: "vs last month"
+  glyph: "▲"
 style:
+  variant: stacked       # stacked (default) | inline (one baseline row) | compact (2-column)
   value:
     format: ",.0f"       # number format; `format:`/`formatter:` at chart root is rejected on KPI
     font:
-      color: "#c2410c"   # optional; paints the headline value and its glyph
+      color: "#c2410c"   # optional; paints the headline value, its affix and glyph
+    glyph:
+      font:
+        color: "#626366" # optional; paints the headline glyph only
   label:
+    overflow: wrap       # clip | truncate | wrap-two | wrap; defaults to the chart title's
     font:
       color: "#2563eb"   # optional; paints the label only
-  glyph:
-    character: "▲"       # glyph character; moved from chart root (ADR-001)
+  support:
+    format: percent_delta
+    tone: positive       # positive | negative | warning | info; colors the support value and glyph
   align: right           # left (default) | center | right — one field for the
                           # whole card; value/label/support move together
-# style.font.color is the whole-card fallback under the two keys above.
+# style.font.color is the whole-card fallback under the slot colors above.
 # The headline value has no tone field — it stays neutral by design (NYT/FT
 # convention). Tone lives on the block it paints: the support row.
-support:                # Optional support line (same shape: value/label/format/glyph/tone)
-  value: prev_revenue
-  label: "vs last month"
-  format: percent_delta
-  glyph: "▲"
-  tone: positive         # positive | negative | warning — colors this row only
 
 # table — always renders every query column, in query order; `style.columns`
 # is styling-only (keyed by column name) and `visible: false` is the sole way
@@ -1254,7 +1261,7 @@ dbt charts composes charts in three ways:
    - `aggregate:` + `source:` — apply an aggregate per x-group (`sum`, `avg`, `min`, `max`, `median`, `count`, `count_distinct` — exact names only, no aliases).
    - `per_series:` — expand into one row per `color:` series (requires the chart to have a `color:` channel).
 
-   Optional per-entry fields: `format` (D3 format string), `label` (left-stub row label; not allowed on `per_series:`).
+   Optional per-entry fields: `format` (D3 format string), `label` (left-stub row label; on `per_series:` only with `by_measure: true`, or as the column header of a horizontal grouped bar).
 
    `style.support_table.position` places the strip: `top` (the default on a horizontal category axis — vertical bar, line, area) or `bottom`; on a horizontal bar the categories run down the y-axis, so the strip becomes a column block on `left`/`right` and defaults to the side the category labels are on. Two things to know about `top`:
    - Rows read bottom-up — the first authored entry is the row nearest the plot, the last one sits at the top of the strip.

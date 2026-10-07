@@ -14,8 +14,10 @@ format always wins.
 from __future__ import annotations
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.render.chart.table_support import format_table_cell_value
-from dbt_charts.core.render.format_utils import format_kpi_parts
+from dbt_charts.core.compile.format_value import (
+    format_kpi_parts,
+    format_table_cell_value,
+)
 
 # Any non-empty formats dict.
 _FORMATS = {"mine": ",.2f"}

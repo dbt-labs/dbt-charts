@@ -32,7 +32,8 @@ import hashlib
 import json
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path  # noqa: TID251 — resolves the DuckDB database file on disk
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -71,6 +72,7 @@ from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
     connection_failure,
     handle_adapter_error,
+    interrupted,
     plain_error,
     resolve_effective_row_limit,
     resolve_setup_sql,
@@ -193,6 +195,8 @@ def _classify_duckdb_error(
 
     import duckdb
 
+    if isinstance(exc, duckdb.InterruptException):
+        return interrupted()
     detail = str(exc)
     if isinstance(exc, (duckdb.BinderException, duckdb.CatalogException)):
         code = ERR_BINDER_UNKNOWN_COLUMN
@@ -571,6 +575,9 @@ class DuckDBAdapter(BaseAdapter):
         # Track all connections opened across all threads so close() can clean up.
         self._all_conns: list[duckdb.DuckDBPyConnection] = []
         self._all_conns_lock = threading.Lock()
+        self._interrupt_lock = threading.Lock()
+        self._interrupted = False
+        self._running: duckdb.DuckDBPyConnection | None = None
 
     @property
     def supported_types(self) -> set[str]:
@@ -707,7 +714,7 @@ class DuckDBAdapter(BaseAdapter):
         """Execute setup_sql on the query's connection. Returns None on success."""
         try:
             validate_setup_sql(resolved_setup_sql, dialect="duckdb")
-            with _DUCKDB_EXECUTE_LOCK:
+            with self._executing(conn):
                 conn.execute(resolved_setup_sql)
         except Exception as e:  # noqa: BLE001
             return _classify_duckdb_error(e, "setup_sql")
@@ -731,7 +738,7 @@ class DuckDBAdapter(BaseAdapter):
         row_fetch_limit = resolve_effective_row_limit(query.limit)
         try:
             validate_select_only(sql, dialect="duckdb")
-            with _DUCKDB_EXECUTE_LOCK:
+            with self._executing(conn):
                 result = conn.execute(sql, params)
                 # Snapshot description INSIDE the lock. conn.execute() returns
                 # the connection itself, so result.description reflects whichever
@@ -1045,6 +1052,28 @@ class DuckDBAdapter(BaseAdapter):
         if self._connection is None:
             self._connection = self._connect(None, self._resolved_path(None))
         return self._connection
+
+    @contextmanager
+    def _executing(self, conn: duckdb.DuckDBPyConnection) -> Generator[None]:
+        """Hold the execute lock with `conn` visible to `interrupt()`."""
+        import duckdb
+
+        with _DUCKDB_EXECUTE_LOCK:
+            with self._interrupt_lock:
+                if self._interrupted:
+                    raise duckdb.InterruptException("the server is shutting down")
+                self._running = conn
+            try:
+                yield
+            finally:
+                with self._interrupt_lock:
+                    self._running = None
+
+    def interrupt(self) -> None:
+        with self._interrupt_lock:
+            self._interrupted = True
+            if self._running is not None:
+                self._running.interrupt()
 
     def close(self) -> None:
         """Close all DuckDB connections."""

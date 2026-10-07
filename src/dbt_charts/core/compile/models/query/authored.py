@@ -27,11 +27,12 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.cache import CachePatch
-from dbt_charts.core.compile.models.markers import DisplayText, ExplicitTag
+from dbt_charts.core.compile.models.markers import DisplayText, ExplicitTag, Format
 from dbt_charts.core.compile.models.primitives import (
     IncrementalValue,
     validate_incremental_value,
 )
+from dbt_charts.core.compile.models.schema_names import FormatAlias
 from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 
 # ============================================================================
@@ -48,6 +49,7 @@ QueryDialect = Literal[
     "clickhouse",
     "databricks",
     "duckdb",
+    "fabric",
     "mysql",
     "postgres",
     "presto",
@@ -108,6 +110,15 @@ class _BaseQueryFields(BaseModel):
             "cache: false opts out of result caching entirely. Queries with "
             "cache: false cannot be used as {{ queries.X.cache }} upstream "
             "references."
+        ),
+    )
+    formats: Annotated[dict[str, FormatAlias | str] | None, Format()] = Field(
+        default=None,
+        description=(
+            "How the query's columns print, as column: format name. A name is "
+            "an engine format (`currency`, `percent`, `year`, ...) or one the "
+            "board defines in `style.formats`; a d3 spec is rejected. Every "
+            "chart showing the column uses the format unless it sets its own."
         ),
     )
     incremental: IncrementalValue = Field(

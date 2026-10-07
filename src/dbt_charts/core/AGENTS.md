@@ -207,11 +207,14 @@ wide_measure_labels), `wide_dimension_values()`, `raw_wide_series_names()`,
 `resolve_wide_measure_labels()`): the one definition of how `y: [a, b]` (crossed with
 a `color:` dimension) becomes series, shared so the resolver's rail-crowding check,
 the emitters' VL fold, and the endpoint-label feature can never name a wide chart's
-series differently. All eight are data types
+series differently. Plus `compile.format_value` (`format_value()`, `format_kpi_parts()`,
+`format_table_cell_value()`): the one value-to-text formula, shared with the `format`
+filter in `compile/template/display_text.py`, so a table cell and a title can never
+format a value differently. All nine are data types
 / pure formulas keyed off a `Resolved*` field or an already-baked partition, not a
 reach-back into cascade logic — see `render/chart/AGENTS.md` philosophy #3 for why
 this doesn't reopen the data-belongs-to-queries rule. Don't add further reach-backs
-beyond these eight; if you need a dbt charts value at render time, add it to
+beyond these nine; if you need a dbt charts value at render time, add it to
 `Resolved*` at the resolved boundary.
 
 **Enforced, empty, no allowlist.** `tests/core/render/chart/test_render_boundary.py`
@@ -296,7 +299,7 @@ Small multiples: `multiples` (cartesian-only — bar/line/area/scatter/heatmap; 
 
 Geo: `projection` (legitimate dbt charts geo surface — NOT a VL escape hatch), `collapse` (point_map/bubble_map only — collapses marks sharing an exact latitude/longitude into one mark sized by count via VL's native `size: {aggregate: "count"}`; mutually exclusive with `size` and with a color channel, field or conditional — both would widen VL's implicit groupby)
 
-KPI: `glyph`, `support` (its `tone` sub-field colors the support row; the headline value has no tone field — it stays neutral), `variant` (`stacked` default / `inline` / `compact` — selects the card layout), `background` (channel field — `{column, scale}` shape; gradient-paints the card background by value position in the scale)
+KPI: `glyph` (drawn before the headline value), `support` (`value`, `label`, `glyph`; its `format`, `tone`, and fonts live under `style.support`, and the headline value has no tone — it stays neutral), `background` (channel field — `{column, scale}` shape; gradient-paints the card background by value position in the scale). The layout is `style.variant`.
 
 Cartesian overlays: `layers` on any bar/line/area/scatter chart (each typed overlay layer accepts: `type`, `query`, `x`, `y`, `label`, `color`, `axis_y`, `style`; a bar layer also takes `y_start`)
 

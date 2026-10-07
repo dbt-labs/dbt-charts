@@ -86,24 +86,88 @@ def emit_diagnostics_jsonl(diags: list[Diagnostic]) -> None:
         print(json.dumps(d.model_dump(mode="json")), file=sys.stderr)
 
 
+def _blank_names(text: str, d: Diagnostic) -> str:
+    # Only quoted names and the "(query: x)" suffix: messages quote names with
+    # repr, while a bare substring match would blank "int" inside "expected int".
+    for name in (d.chart, d.query):
+        if name:
+            for spelled in (f"'{name}'", f'"{name}"', f"(query: {name})"):
+                text = text.replace(spelled, "<name>")
+    return text
+
+
+def _signature(d: Diagnostic) -> tuple[str, ...]:
+    """Every human-visible text of `d` with its own chart/query name blanked, so
+    instances of one code that differ only by which chart they hit compare equal."""
+    evidence = "; ".join(d.fields.get("evidence") or [])
+    texts = (
+        display_message(d),
+        d.fix,
+        d.hint,
+        d.detail,
+        d.fields.get("detail"),
+        evidence,
+    )
+    return tuple(_blank_names(str(text or ""), d) for text in texts)
+
+
+def group_diagnostics(
+    diags: list[Diagnostic], *, path: str | None = None
+) -> list[list[Diagnostic]]:
+    """Group diagnostics for the human text output: one group per code.
+
+    A diagnostic with no chart, query, range, or caller `path` has nothing to
+    tell it apart from its siblings, so it stays its own group rather than being
+    folded into a count that hides which one fired. Errors also split on text:
+    their messages are specific enough that collapsing differing ones would hide
+    a problem the reader has to fix, and errors are few. Insertion order is kept.
+    """
+    groups: dict[tuple[str, tuple[str, ...] | None, int | None], list[Diagnostic]] = {}
+    for index, d in enumerate(diags):
+        located = path or d.range or d.chart or d.query
+        key = (
+            d.code,
+            _signature(d) if d.level == "error" else None,
+            None if located else index,
+        )
+        groups.setdefault(key, []).append(d)
+    return list(groups.values())
+
+
 def print_diagnostics(
     diags: list[Diagnostic],
     *,
     path: str | None = None,
 ) -> None:
-    """Print Diagnostics as Rich panels to stderr.
+    """Print Diagnostics as Rich panels to stderr, one entry per code.
+
+    Repeats of a code share one entry carrying a count, the chart or query
+    names it applies to, and the first instance's message and fix. Machine
+    consumers (`--json`, `--diagnostics-json`, LSP) keep every instance.
 
     `path` is a fallback "At:" location used only when a diagnostic has no
     `range` of its own (e.g. compile-time warnings that don't carry position
     data yet).
     """
     console = dct_console(stderr=True)
-    for d in diags:
+    for group in group_diagnostics(diags, path=path):
+        d = group[0]
+        n = len(group)
         style = "red" if d.level == "error" else "yellow"
-        chart_prefix = f"{d.chart}: " if d.chart else ""
-        body_parts = [
-            f"[bold {style}]{d.code}[/]  {chart_prefix}{escape(display_message(d))}"
-        ]
+        if n == 1:
+            chart_prefix = f"{d.chart}: " if d.chart else ""
+            title = f"[bold {style}]{d.code}[/]  {chart_prefix}"
+        else:
+            title = f"[bold {style}]{d.code} ×{n}[/]  "
+        body_parts = [f"{title}{escape(display_message(d))}"]
+        if n > 1:
+            names = dict.fromkeys(i.chart or i.query for i in group)
+            if applies_to := [name for name in names if name]:
+                joined = escape(", ".join(applies_to))
+                body_parts.append(f"[dim]Applies to:[/] {joined}")
+            unshown = sum(_signature(i) != _signature(d) for i in group)
+            if unshown:
+                body_parts.append(f"[dim]and {unshown} more with different details[/]")
         if d.hint:
             body_parts.append(f"[dim]Hint:[/] {escape(d.hint)}")
         if d.fix:
@@ -119,9 +183,18 @@ def print_diagnostics(
             body_parts.append(f"[dim]Detail:[/] {escape(str(detail))}")
         if evidence := d.fields.get("evidence"):
             body_parts.append(f"[dim]Evidence:[/] {escape('; '.join(evidence))}")
-        at = _display_path(d.range.file, d.range.start_line) if d.range else path
-        if at is not None:
-            body_parts.append(f"[dim]At:[/] {at}")
+        locations = dict.fromkeys(
+            _display_path(i.range.file, i.range.start_line) if i.range else path
+            for i in group
+        )
+        if shown := [loc for loc in locations if loc is not None]:
+            # Every error location matters; warnings show the first.
+            if style == "red":
+                body_parts.append(f"[dim]At:[/] {', '.join(shown)}")
+            elif len(shown) > 1:
+                body_parts.append(f"[dim]At:[/] {shown[0]} (+{len(shown) - 1} more)")
+            else:
+                body_parts.append(f"[dim]At:[/] {shown[0]}")
         body_parts.append(f"[dim]Docs:[/] dct docs {REGISTRY.get(d.code).docs_topic}")
         body = "\n".join(body_parts)
         if console.no_color:

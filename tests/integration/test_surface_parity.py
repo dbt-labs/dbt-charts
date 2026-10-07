@@ -49,13 +49,13 @@ _EXEMPT_TOOLS: set[str] = {
 
 def _cli_commands() -> set[str]:
     """Return the set of top-level `dct` subcommand names."""
-    import click
+    from typer.core import TyperGroup
     from typer.main import get_command
 
     from dbt_charts.cli.main import app
 
     click_app = get_command(app)
-    assert isinstance(click_app, click.Group)
+    assert isinstance(click_app, TyperGroup)
     return set(click_app.commands)
 
 
@@ -98,13 +98,13 @@ def test_all_verbs_have_mcp_tools() -> None:
 @pytest.mark.parametrize(("tool_name", "cli_name"), sorted(_TOOL_TO_CLI.items()))
 def test_verb_help_is_not_empty(tool_name: str, cli_name: str) -> None:
     """Each registered CLI command must have a non-empty help string."""
-    import click
+    from typer.core import TyperGroup
     from typer.main import get_command
 
     from dbt_charts.cli.main import app
 
     click_app = get_command(app)
-    assert isinstance(click_app, click.Group)
+    assert isinstance(click_app, TyperGroup)
     cmd = click_app.commands.get(cli_name)
     assert cmd is not None, f"`dct {cli_name}` not found in CLI app"
     assert cmd.help and len(cmd.help) > 20, (

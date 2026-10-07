@@ -9,12 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from dbt_charts._install_hint import install_hint
 from dbt_charts.core.compile.models.source import (
     BigQuerySourceConfig,
+    DatabricksSourceConfig,
+    DbtTargetSourceConfig,
     DuckDBSourceConfig,
     PostgresSourceConfig,
     RedshiftSourceConfig,
@@ -35,6 +38,7 @@ from dbt_charts.core.connections import (
     bulk_schema_for_config,
     classify_connection_error,
     dataset_location,
+    list_catalogs,
     list_datasets,
     probe_relation_readability,
     test_connection as probe_connection,
@@ -679,6 +683,194 @@ def _failing(monkeypatch: pytest.MonkeyPatch, open_error: Exception) -> None:
     )
 
 
+class _RecordingAdapter:
+    def __init__(self, fail_on: str | None = None, fail_with: Exception | None = None):
+        self.statements: list[str] = []
+        self._fail_on = fail_on
+        self._fail_with = fail_with
+        self.connections = SimpleNamespace(
+            get_thread_connection=lambda: SimpleNamespace(handle=object())
+        )
+
+    @contextmanager
+    def connection_named(self, name: str) -> Generator[None, None, None]:
+        yield
+
+    def execute(self, sql: str, **kwargs: Any) -> None:
+        self.statements.append(sql)
+        if self._fail_on is not None and sql.startswith(self._fail_on):
+            assert self._fail_with is not None
+            raise self._fail_with
+
+
+def _recording(monkeypatch: pytest.MonkeyPatch, adapter: _RecordingAdapter) -> None:
+    monkeypatch.setattr(
+        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        lambda creds, **kwargs: adapter,
+    )
+
+
+def _databricks_config(catalog: str) -> DatabricksSourceConfig:
+    return DatabricksSourceConfig(
+        type="databricks",
+        host="dbc-1.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="t",
+        catalog=catalog,
+    )
+
+
+_NO_SUCH_CATALOG = (
+    "Database Error\n  [NO_SUCH_CATALOG_EXCEPTION] Catalog 'does_not_exist_xyz' "
+    "was not found. Please verify the catalog name and then retry the query or "
+    "command again. SQLSTATE: 42704"
+)
+
+
+def test_list_catalogs_connects_without_a_catalog_and_returns_show_catalogs_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connect = MagicMock()
+    cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__
+    cursor.return_value.fetchall.return_value = [("workspace",), ("samples",)]
+    monkeypatch.setattr("databricks.sql.connect", connect)
+
+    names = list_catalogs(
+        _databricks_config("").model_copy(update={"socket_timeout": 7})
+    )
+
+    assert names == ["workspace", "samples"]
+    cursor.return_value.execute.assert_called_once_with("SHOW CATALOGS")
+    connect.assert_called_once_with(
+        server_hostname="dbc-1.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        access_token="t",
+        _socket_timeout=7,
+        _retry_stop_after_attempts_duration=7,
+    )
+
+
+def test_list_catalogs_classifies_a_driver_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from databricks.sql.exc import RequestError
+
+    def _connect(**_kwargs: Any) -> None:
+        raise RequestError("401 Unauthorized for token dapi-secret-1234")
+
+    monkeypatch.setattr("databricks.sql.connect", _connect)
+
+    with pytest.raises(WarehouseProbeError) as exc_info:
+        list_catalogs(_databricks_config(""))
+
+    exc = exc_info.value
+    assert "dapi-secret-1234" not in str(exc)
+    assert "dapi-secret-1234" in exc.detail
+
+
+def test_list_catalogs_is_databricks_only() -> None:
+    with pytest.raises(ValueError, match="Databricks-only"):
+        list_catalogs(_bq_config())
+
+
+def test_test_connection_probes_the_databricks_catalog_after_select_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter()
+    _recording(monkeypatch, adapter)
+
+    success, exc = probe_connection(_databricks_config("workspace"))
+
+    assert (success, exc) == (True, None)
+    assert adapter.statements == ["SELECT 1", "USE CATALOG `workspace`"]
+
+
+def test_test_connection_classifies_a_missing_databricks_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter(
+        fail_on="USE CATALOG", fail_with=RuntimeError(_NO_SUCH_CATALOG)
+    )
+    _recording(monkeypatch, adapter)
+
+    success, exc = probe_connection(_databricks_config("does_not_exist_xyz"))
+
+    assert success is False
+    assert type(exc) is WarehouseDatabaseNotFoundError
+    assert str(exc) == "The catalog does not exist, or this token cannot see it."
+    assert "does_not_exist_xyz" not in str(exc)
+    assert _NO_SUCH_CATALOG in exc.detail
+
+
+def test_test_connection_rejects_a_databricks_catalog_with_a_backtick_before_any_sql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter()
+    _recording(monkeypatch, adapter)
+
+    success, exc = probe_connection(_databricks_config("a`; DROP CATALOG main; --"))
+
+    assert success is False
+    assert type(exc) is WarehouseProbeError
+    assert "DROP" not in str(exc)
+    assert adapter.statements == []
+
+
+def test_test_connection_skips_the_probe_for_a_dbt_target_with_no_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter()
+    _recording(monkeypatch, adapter)
+
+    success, exc = probe_connection(
+        DbtTargetSourceConfig(
+            type="databricks",
+            host="dbc-1.cloud.databricks.com",
+            http_path="/sql/1.0/warehouses/abc",
+            token="t",
+            schema="s",
+        )
+    )
+
+    assert (success, exc) == (True, None)
+    assert adapter.statements == ["SELECT 1"]
+
+
+def test_test_connection_skips_the_probe_for_a_spark_target_with_a_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter()
+    _recording(monkeypatch, adapter)
+
+    success, exc = probe_connection(
+        DbtTargetSourceConfig(
+            type="spark",
+            host="spark.example.com",
+            schema="s",
+            catalog="x",
+        )
+    )
+
+    assert (success, exc) == (True, None)
+    assert adapter.statements == ["SELECT 1"]
+
+
+def test_test_connection_sends_only_select_1_for_a_non_databricks_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter()
+    _recording(monkeypatch, adapter)
+
+    success, exc = probe_connection(
+        PostgresSourceConfig(
+            type="postgres", host="h", dbname="d", user="u", password="p"
+        )
+    )
+
+    assert (success, exc) == (True, None)
+    assert adapter.statements == ["SELECT 1"]
+
+
 def test_test_connection_propagates_a_missing_adapter_package_unclassified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -765,6 +957,21 @@ def test_test_connection_classifies_postgres_auth_failure(
     assert type(exc) is WarehouseAuthError
     assert driver_text not in str(exc)
     assert str(exc) != ""
+    assert driver_text in exc.detail
+
+
+def test_classify_connection_error_fabric_database_not_found() -> None:
+    driver_text = (
+        "Database Error\n  Driver Error: Invalid authorization specification;"
+        " DDBC Error: [Microsoft][SQL Server]Login failed for user"
+        " '<token-identified principal>'.Reason: Authentication was successful,"
+        " but the database was not found or you have insufficient permissions"
+        " to connect to it."
+    )
+    exc = classify_connection_error("fabric", RuntimeError(driver_text))
+
+    assert type(exc) is WarehouseDatabaseNotFoundError
+    assert driver_text not in str(exc)
     assert driver_text in exc.detail
 
 

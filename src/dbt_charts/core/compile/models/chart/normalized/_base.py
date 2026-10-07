@@ -53,6 +53,13 @@ class _BaseChartFields(BaseModel):
         default_factory=frozenset,
         description="Variable names this chart depends on.",
     )
+    text_queries: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Queries this chart's display text reads, keyed by the name the "
+            "template uses; the value is the query registry key."
+        ),
+    )
     source_path: str = Field(
         default="",
         description="YAML path for edit-back support (e.g. 'charts.revenue').",

@@ -13,7 +13,9 @@ time series with non-zero x values but an all-zero measure must render without e
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -31,7 +33,6 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
-from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.render.chart.mark_extents import (
     all_marks_degenerate,
     mark_extents,
@@ -66,7 +67,7 @@ def _link_examples_board_chart(chart_id: str) -> tuple[Chart, Executor]:
             allow_external_access_in_readonly=True,
             duckdb_config={"enable_external_access": True},
         ),
-        file_materializer=FileSourceMaterializer(project, TrivialDuckDBCache()),
+        file_materializer=FileSourceMaterializer(project),
     )
     return board.charts[chart_id], executor
 
@@ -140,6 +141,54 @@ def test_guard_fires_and_routes_through_the_error_card(
     assert "ERR-CHART-PAINTED-NO-MARKS" in svg
     assert chart.id in svg
     assert f"{len(data)} row" in svg
+
+
+_NARROW_COLS_BOARD = """
+style:
+  frame:
+    width: 700
+queries:
+  q:
+    type: values
+    rows:
+      - {{label: a_fairly_long_label_number_00, n: 10}}
+      - {{label: a_fairly_long_label_number_01, n: 20}}
+      - {{label: a_fairly_long_label_number_02, n: 30}}
+      - {{label: a_fairly_long_label_number_03, n: 40}}
+charts:
+{charts}
+cols:
+{cols}
+"""
+
+
+def test_guard_message_states_the_measured_card_width(tmp_path: Path) -> None:
+    """Four horizontal bar charts with long labels across a 700px frame leave
+    the plot no room and paint nothing; the error must say how wide the card
+    was, not only blame the x/y fields and scale types."""
+    from dbt_charts.core.render import render
+
+    ids = [f"c{i}" for i in range(4)]
+    yaml_text = _NARROW_COLS_BOARD.format(
+        charts="\n".join(
+            f"  {i}:\n    type: bar\n    query: q\n    x: label\n    y: n" for i in ids
+        ),
+        cols="\n".join(f"  - {i}" for i in ids),
+    )
+    project = FilesystemProject(tmp_path)
+    result = compile_yaml(yaml_text, base_dir=project.directory())
+    assert result.success, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(project),
+        query_registry=result.query_registry,
+    )
+
+    out = render(result.board, executor, format="svg")
+
+    errors = [e for e in out.chart_errors if e.code == "ERR-CHART-PAINTED-NO-MARKS"]
+    assert len(errors) == 4
+    assert re.search(r"Its card is \d+px wide", errors[0].message)
 
 
 def _render_chart(

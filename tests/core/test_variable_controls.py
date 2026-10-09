@@ -406,3 +406,74 @@ rows:
     assert [(e.code, e.message.split(" references")[0]) for e in result.errors] == [
         ("ERR-UNKNOWN-VARIABLE", "Query 'base'")
     ]
+
+
+def test_layer_query_variables_are_chart_dependencies() -> None:
+    from dbt_charts.core.compile import compile
+    from dbt_charts.core.compile.normalize.chart_focus import focus_on_chart
+
+    result = compile(
+        """
+title: Test
+source: test
+variables:
+  region:
+    input: text
+  show_recent:
+    input: checkbox
+    default: true
+queries:
+  base:
+    sql: select 1 as day, 10 as n where {{ show_recent }}
+  target:
+    sql: select 1 as day, 5 as t from {{ queries.base }}
+  main:
+    sql: select 1 as day, 10 as n
+charts:
+  named_layer:
+    query: main
+    type: line
+    x: day
+    y: n
+    layers:
+      - type: line
+        query: target
+        y: t
+  inline_layer:
+    query: main
+    type: line
+    x: day
+    y: n
+    layers:
+      - type: line
+        query: select 1 as day, 5 as t where '{{ region }}' = 'x'
+        y: t
+  composed_inline_layer:
+    query: main
+    type: line
+    x: day
+    y: n
+    layers:
+      - type: line
+        query: select 1 as day, 5 as t from {{ queries.base }}
+        y: t
+  plain:
+    query: main
+    type: line
+    x: day
+    y: n
+rows:
+  - named_layer
+  - inline_layer
+  - composed_inline_layer
+  - plain
+"""
+    )
+    assert result.success
+    charts = result.board.charts
+    assert charts["named_layer"].variable_dependencies == {"show_recent"}
+    assert charts["inline_layer"].variable_dependencies == {"region"}
+    assert charts["composed_inline_layer"].variable_dependencies == {"show_recent"}
+    assert not charts["plain"].variable_dependencies
+    focused = focus_on_chart(result.board, "inline_layer")
+    assert set(focused.variables) == {"region"}

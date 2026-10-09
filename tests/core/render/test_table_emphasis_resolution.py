@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     ScaleTargetConfig,
     TableColumnConfig,
 )
+from dbt_charts.core.compile.models.style.authored import ColumnScaleTargetConfig
 from dbt_charts.core.render.chart.table_support import (
     _parse_hex,
     compute_scale_domain,
@@ -792,7 +793,7 @@ class TestResolveCellConditionalStylesScaleCsvString:
     def _make_col_config(self) -> TableColumnConfig:
         return TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=["#ffffff", "#0000ff"],
                     min=0,
                     max=100,
@@ -848,7 +849,7 @@ class TestResolveCellConditionalStylesDiverging:
     ) -> TableColumnConfig:
         return TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig.model_validate(
+                background=ColumnScaleTargetConfig.model_validate(
                     {
                         "palette": self._DIV_PALETTE,
                         "min": -100,
@@ -889,7 +890,7 @@ class TestResolveCellConditionalStylesDiverging:
         # Diverging: value=0 is at the hinge → MUST return neutral (#ffffff).
         col_asym_domain = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=self._DIV_PALETTE,
                     min=-10,
                     max=100,
@@ -914,7 +915,7 @@ class TestResolveCellConditionalStylesDiverging:
         # They must produce different interpolated colors.
         col_asym = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=self._DIV_PALETTE,
                     min=-10,
                     max=100,
@@ -925,7 +926,7 @@ class TestResolveCellConditionalStylesDiverging:
         )
         col_sym = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=self._DIV_PALETTE,
                     min=-10,
                     max=100,
@@ -951,7 +952,7 @@ class TestResolveCellConditionalStylesDiverging:
         # test passes whether col_format is wired through or not (theater).
         col = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=self._DIV_PALETTE,
                     min=0.5,
                     max=2.0,
@@ -973,7 +974,7 @@ class TestResolveCellConditionalStylesDiverging:
         # Distinct from the percent path above, proving the two branches differ.
         col = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=self._DIV_PALETTE,
                     min=0.5,
                     max=2.0,
@@ -1003,7 +1004,7 @@ class TestResolveCellConditionalStylesRowRole:
     def _make_scale_col(self) -> TableColumnConfig:
         return TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=self._SCALE_PALETTE,
                     min=0,
                     max=100,
@@ -1057,7 +1058,7 @@ class TestResolveCellConditionalStylesRowRole:
         """scale.color channel must also be skipped on summary rows."""
         col = TableColumnConfig(
             scale=ColumnScaleConfig(
-                color=ScaleTargetConfig(
+                color=ColumnScaleTargetConfig(
                     palette=self._SCALE_PALETTE,
                     min=0,
                     max=100,
@@ -1097,7 +1098,7 @@ class TestWithResolvedScaleStops:
         columns = {
             "val": TableColumnConfig(
                 scale=ColumnScaleConfig(
-                    background=ScaleTargetConfig(palette="dbt-seq-blue"),
+                    background=ColumnScaleTargetConfig(palette="dbt-seq-blue"),
                 )
             )
         }
@@ -1121,10 +1122,12 @@ class TestWithResolvedScaleStops:
         assert bg.resolved_stops == expected
 
     def test_inline_list_palette_produces_plain_resolved_config(self) -> None:
-        """An inline stop list produces ResolvedScaleTargetConfig (no resolved_stops)."""
+        """An inline stop list produces the plain resolved target (no resolved_stops)."""
         from dbt_charts.core.compile.models.primitives import (
             ResolvedNamedPaletteScaleTargetConfig,
-            ResolvedScaleTargetConfig,
+        )
+        from dbt_charts.core.compile.models.style.resolved.table import (
+            ResolvedColumnScaleTargetConfig,
         )
         from dbt_charts.core.compile.resolve.chart._table import (
             _with_resolved_scale_stops,
@@ -1135,7 +1138,7 @@ class TestWithResolvedScaleStops:
         columns = {
             "val": TableColumnConfig(
                 scale=ColumnScaleConfig(
-                    background=ScaleTargetConfig(palette=stops),
+                    background=ColumnScaleTargetConfig(palette=stops),
                 )
             )
         }
@@ -1152,7 +1155,7 @@ class TestWithResolvedScaleStops:
         )
         assert result is not None
         bg = result["val"].scale.background
-        assert type(bg) is ResolvedScaleTargetConfig
+        assert type(bg) is ResolvedColumnScaleTargetConfig
         assert not isinstance(bg, ResolvedNamedPaletteScaleTargetConfig)
         assert bg.palette == stops
 

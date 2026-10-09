@@ -497,15 +497,6 @@ class _DuckDBResultCacheBase:
         with self._lock:
             self.conn.close()
 
-    def disable_external_access(self) -> None:
-        """Set enable_external_access = false on the DuckDB connection.
-
-        Idempotent — safe to call multiple times. Prevents author SQL from
-        reaching the filesystem or network (read_csv('http://...'), httpfs, etc.).
-        """
-        with self._lock:
-            self.conn.execute("SET enable_external_access = false")
-
     # ── Cache-ref composition ({{ queries.X.cache }}) ────────────────────────
     # Composition runs in an isolated in-process DuckDB fed the upstream rows by
     # the executor (dbt_charts.core.execute.cache_composition); this backend only
@@ -514,33 +505,6 @@ class _DuckDBResultCacheBase:
     def supports_cache_refs(self) -> bool:
         """DuckDB-backed cache always supports cache-ref composition."""
         return True
-
-    def execute_file_source_sql(
-        self, sql: str, params: list[Any]
-    ) -> list[dict[str, Any]]:
-        """Run parameterized file-source SQL on the DuckDB connection where file VIEWs live.
-
-        File views are registered on self.conn by register_file_table (as DuckDB VIEWs
-        pointing at the _r_<hash> result tables). Running the SQL on the same connection
-        lets DuckDB resolve those view names against the materialized data.
-
-        Args:
-            sql: Parameterized SQL with $1/$2/… placeholders.
-            params: Positional parameter values.
-
-        Returns:
-            List of row dicts.
-
-        Raises:
-            RuntimeError: Wraps any DuckDB execution error with context.
-        """
-        with self._lock:
-            try:
-                return _rows_from_result(self.conn.execute(sql, params))
-            except Exception as e:  # noqa: BLE001 — duckdb raises various internal exception types; catching broadly at the file-source execution boundary
-                # SQL context only — naming the operation is the caller's job.
-                # Saying it here too stuttered the phrase twice in one message.
-                raise RuntimeError(f"{e}\nSQL:\n{sql}") from e
 
     def _drop_stale_outcomes_and_payloads(self, reason: str) -> None:
         """Drop _query_outcomes and its orphaned _r_* payload tables.

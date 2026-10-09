@@ -5,12 +5,26 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from dbt_charts.core.colors import is_color_token, is_sanitizable_color
+from dbt_charts.core.colors import TOKEN_OR_SANITIZABLE_COLOR_PATTERN
+from dbt_charts.core.compile.models.primitives import ErrorHint
 from dbt_charts.core.compile.models.schema_names import CategorySlotToken
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
+# Whether a well-formed token actually resolves needs the theme's palettes and
+# roles, which arrive later in the cascade; an unresolvable token raises
+# ``UnknownColorError`` there, like every other style token.
+TokenOrSanitizableColor = Annotated[
+    str,
+    StringConstraints(pattern=TOKEN_OR_SANITIZABLE_COLOR_PATTERN),
+    ErrorHint(
+        "category_colors color {value!r} is neither a palette token (e.g. "
+        "`category[1]`, `dbt-grays.muted`) nor a CSS hex color (e.g. `#1f77b4`)."
+    ),
+]
 
 
 class CategoryColorBinding(BaseModel):
@@ -28,32 +42,14 @@ class CategoryColorBinding(BaseModel):
 
     # CategorySlotToken names the `category[N]` slots so editors complete them
     # — the form worth reaching for, since a slot re-skins with the theme while
-    # a hex does not. The `str` arm is what keeps dotted palette tokens and
-    # literal hex legal; the validator below is the real gate.
-    values: dict[str, CategorySlotToken | str] = Field(
+    # a hex does not. The pattern arm keeps dotted palette tokens and literal
+    # hex legal.
+    values: dict[str, CategorySlotToken | TokenOrSanitizableColor] = Field(
         description=(
             "Data value → palette token (`category[1]`, `dbt-grays.muted`) "
             "or literal hex. Tokens resolve against the board's theme."
         ),
     )
-
-    @field_validator("values")
-    @classmethod
-    def _validate_colors(cls, values: dict[str, str]) -> dict[str, str]:
-        """Reject anything that is neither a color token nor literal hex.
-
-        Whether a *well-formed* token actually resolves needs the theme's
-        palettes/roles, which arrive later in the cascade — an unresolvable
-        token raises ``UnknownColorError`` there, like every other style token.
-        """
-        for value, color in values.items():
-            if not is_color_token(color) and not is_sanitizable_color(color):
-                raise ValueError(
-                    f"category_colors value {value!r} is {color!r}, which is "
-                    "neither a palette token (e.g. `category[1]`, "
-                    "`dbt-grays.muted`) nor a CSS hex color (e.g. `#1f77b4`)."
-                )
-        return values
 
 
 @dataclass(frozen=True)

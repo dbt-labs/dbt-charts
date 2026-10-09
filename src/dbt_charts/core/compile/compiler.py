@@ -45,11 +45,12 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.errors import (
     CompilationError,
-    MergeValidationError,
+    FileValidationError,
     ParseError,
     ReferenceError,
 )
 from dbt_charts.core.compile.file_refs import (
+    migrated_ref_files,
     read_section,
     resolve_ref,
     split_external_query_ref,
@@ -77,7 +78,10 @@ from dbt_charts.core.compile.models.refs import (
     VariableRef,
     normalize_query_value,
 )
-from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.models.variable.authored import (
+    Variable,
+    reject_internal_variable_keys,
+)
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
     display_text_fields,
@@ -141,10 +145,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.migrations import MigrationNotice
-    from dbt_charts.core.inspect.query_validator import (
-        QueryDiagnostic,
-        RelationshipContext,
-    )
+    from dbt_charts.core.inspect.query_validator import QueryDiagnostic
     from dbt_charts.core.project import BoardFile, ProjectDirectory, ProjectPath
 
 
@@ -366,6 +367,8 @@ def compile_authored_board(
     except ReferenceError as e:
         _set_reference_error_field_path(e, authored)
         return CompileResult(errors=[e.to_diagnostic(file=file)])
+    except FileValidationError as e:
+        return CompileResult(errors=e.diagnostics)
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
@@ -556,7 +559,11 @@ def compile(
     )
 
     options = options or {}
-    with collect_migration_notices() as notices, migration_notice_file(file):
+    with (
+        collect_migration_notices() as notices,
+        migration_notice_file(file),
+        migrated_ref_files(),
+    ):
         # ════════════════════════════════════════════════════════════════
         # STEP 1: Parse YAML
         # ════════════════════════════════════════════════════════════════
@@ -645,6 +652,7 @@ def _compile_with_text(
     meta_lint: MetaLintConfig | None,
     host_default_source: str | None = None,
     file: str | None = None,
+    merge_warnings: Sequence[Diagnostic] = (),
 ) -> CompileResult:
     """Run the shared compile pipeline for an already-parsed board.
 
@@ -662,7 +670,7 @@ def _compile_with_text(
         _yaml_content=yaml_content,
         file=file,
     )
-    result.warnings = authoring_warnings + result.warnings
+    result.warnings = authoring_warnings + [*merge_warnings, *result.warnings]
     result.meta_lint = meta_lint
     # Layout dimensions are calculated later in the render pipeline
     # (after query execution) so table heights can use actual row counts.
@@ -767,10 +775,7 @@ def _x_columns_by_query(
     return {name: frozenset(cols) for name, cols in by_query.items()}
 
 
-def validate_compiled_queries(
-    result: CompileResult,
-    relationship_context: RelationshipContext | None = None,
-) -> None:
+def validate_compiled_queries(result: CompileResult) -> None:
     """Run query validation on all SQL queries in a compile result (mutates in place).
 
     Calls ``validate_query`` for each authored SQL query, appends structured
@@ -791,7 +796,6 @@ def validate_compiled_queries(
 
     Args:
         result: CompileResult to enrich.
-        relationship_context: Optional RelationshipContext for severity calibration.
     """
     if not result.success or result.board is None or not result.query_registry:
         return
@@ -829,7 +833,6 @@ def validate_compiled_queries(
         diags, suppressed_diags = validate_query(
             query.sql,
             dialect=dialect,
-            relationship_context=relationship_context,
             x_columns=x_columns[name],
             suppress=query_suppress,
             return_suppressed=True,
@@ -901,6 +904,7 @@ def compile_file(
     with (
         collect_migration_notices() as notices,
         migration_notice_file(board_path.relpath),
+        migrated_ref_files(),
     ):
         result = _compile_file(
             board,
@@ -965,6 +969,7 @@ def _compile_file(
     # nested structures merge recursively). Lint is extracted separately from the
     # meta chain so it still reaches result.meta_lint.
     meta_lint: MetaLintConfig | None = None
+    merge_warnings: list[Diagnostic] = []
     try:
         board_data = load_yaml_mapping(yaml_content)
         from dbt_charts.core.compile.migrations import prepare_board_mapping
@@ -989,9 +994,16 @@ def _compile_file(
             board_node = BOARD_PATCH_ADAPTER.validate_python(board_data)
             theme_sink: list[str] = []
             merged = merged_patch(
-                board_node, board_path, project.directory("."), theme_sink
+                board_node,
+                board_path,
+                project.directory("."),
+                theme_sink,
+                merge_warnings,
             )
             merged_board_data = merged.model_dump(exclude_unset=True)
+            # See CachePatch._serialize_as_authored: its dump does not re-validate.
+            if "cache" in merged.model_fields_set:
+                merged_board_data["cache"] = dict(merged)["cache"]
             # Identity + routing fields are dropped during merge so they never
             # inherit from meta/extends. id and aliases are re-attached so
             # parse_mapping can identify this board; _schema_version (the YAML
@@ -1017,10 +1029,9 @@ def _compile_file(
             yaml_content,
             relpath,
         )
-    except MergeValidationError as e:
-        # Extends/meta validation errors already carry structured diagnostics with hints.
+    except FileValidationError as e:
         return _stamp_compile_result(
-            CompileResult(errors=e.merge_diagnostics), yaml_content, relpath
+            CompileResult(errors=e.diagnostics), yaml_content, relpath
         )
     except CompilationError as e:
         return _stamp_compile_result(
@@ -1043,6 +1054,7 @@ def _compile_file(
         project_cache=project.cache,
         meta_lint=meta_lint,
         file=relpath,
+        merge_warnings=merge_warnings,
     )
 
 
@@ -1505,7 +1517,13 @@ def load_from_reference(
     if isinstance(item_def, Variable):
         return item_def
     if isinstance(item_def, dict):
-        return Variable(**item_def)
+        try:
+            return Variable(**reject_internal_variable_keys(item_def))
+        except ValueError as e:
+            raise CompilationError(
+                f"Invalid variable definition for '{item_name}' in "
+                f"{resolved_path.relpath}: {e}"
+            ) from e
     raise CompilationError(
         f"Invalid variable definition for '{item_name}' in {resolved_path.relpath}"
     )
@@ -1730,13 +1748,27 @@ def _load_chart_ref_with_lexical_queries(
             onto a resolution failure so its `Diagnostic.range` can be
             resolved via the central source-map stamping.
     """
-    item_def, _item_name, resolved_path, content = _resolve_ref_item(
+    item_def, item_name, resolved_path, content = _resolve_ref_item(
         chart_ref.ref, "charts", base_dir, yaml_path
     )
     file_dir = resolved_path.parent
     if not isinstance(item_def, dict):
         # Invalid, and left for downstream validation to report.
         return RegisteredChart(item_def, file_dir)
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
+
+    # Wrapped as a board patch so pydantic's `loc` is board-rooted
+    # (`charts.<name>...`) — the formatter's key hints and the source map both
+    # resolve paths from the board root.
+    try:
+        BOARD_PATCH_ADAPTER.validate_python({"charts": {item_name: item_def}})
+    except PydanticValidationError as e:
+        raise FileValidationError.from_pydantic(
+            f"{chart_ref.ref!r}: schema error in {resolved_path.relpath}",
+            e,
+            resolved_path.read_text(),
+            resolved_path.relpath,
+        ) from e
 
     queries_section = content.get("queries")
     if not isinstance(queries_section, dict):
@@ -1822,7 +1854,7 @@ def _load_chart_ref_with_lexical_queries(
             if "#" not in ref and ref not in queries_section:
                 raise CompilationError.from_code(
                     ERR_TEXT_UNKNOWN_QUERY,
-                    surface=f"Chart '{_item_name}' {text_field}",
+                    surface=f"Chart '{item_name}' {text_field}",
                     query_name=ref,
                     defined=sorted(queries_section),
                 )

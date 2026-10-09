@@ -25,7 +25,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
-    FormatAliases,
+    FormatTable,
     ResolvedFontStyle,
     ResolvedFormat,
 )
@@ -326,7 +326,7 @@ def _base_kwargs(
 def _resolve_text(
     value: str,
     display_text: ChartDisplayText,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     chart_id: str,
     field: str,
 ) -> str:
@@ -366,7 +366,7 @@ def _title_font(
 
 
 def _resolved_chart_format(
-    chart_format: AuthoredFormat | None, formats: FormatAliases | None
+    chart_format: AuthoredFormat | None, formats: FormatTable | None
 ) -> ResolvedFormat | None:
     if chart_format is None:
         return None
@@ -497,7 +497,7 @@ def _resolved_support_table(
     support_table: ChartSupportTable | None,
     y: str | list[str] | None,
     data: list[dict[str, Any]],
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> ResolvedSupportTable | None:
     """Bake the final support_table, entry formats included.
 

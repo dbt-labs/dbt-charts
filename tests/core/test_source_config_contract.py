@@ -200,11 +200,7 @@ class TestDatabaseSourceConfigContracts:
             settings={"memory_limit": "4GB"},
             secrets=[{"type": "s3", "key_id": "key", "provider": "credential_chain"}],
             external_root="data",
-            use_credential_provider="aws",
             attach=[{"path": "other.duckdb", "read_only": True}],
-            filesystems=[{"fs": "memory"}],
-            remote={"host": "remote.example.com", "port": 443, "user": "reader"},
-            plugins=[{"module": "my_plugin", "config": {"enabled": True}}],
             disable_transactions=True,
             keep_open=False,
             module_paths=["plugins"],
@@ -212,6 +208,14 @@ class TestDatabaseSourceConfigContracts:
             is_ducklake=True,
         )
         assert config.duckdb_config == {"enable_external_access": True}
+
+    @pytest.mark.parametrize(
+        "field",
+        ["plugins", "filesystems", "remote", "use_credential_provider"],
+    )
+    def test_duckdb_rejects_unsupported_field_at_parse(self, field: str) -> None:
+        with pytest.raises(ValidationError, match=f"'{field}' is not supported"):
+            DuckDBSourceConfig.model_validate({"type": "duckdb", field: "x"})
 
     def test_duckdb_extensions_accept_old_dict_shape_with_no_repo(self) -> None:
         """extensions: [{name: json}] (no repo) must keep parsing."""

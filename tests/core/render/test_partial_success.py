@@ -1786,7 +1786,7 @@ title: Cartesian Board
 queries:
   revenue:
     sql: |
-      -- dct:ignore WARN-MISSING-JOIN-PREDICATE WARN-FANOUT-RISK
+      -- dct:ignore WARN-MISSING-JOIN-PREDICATE WARN-REAGGREGATION
       SELECT SUM(o.amount), SUM(oi.qty)
       FROM orders o, order_items oi
       GROUP BY o.id

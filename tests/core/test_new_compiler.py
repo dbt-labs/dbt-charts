@@ -16,6 +16,9 @@ from dbt_charts.core.compile import (
 )
 from dbt_charts.core.compile.models.chart.normalized import _BaseChartFields
 from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.resolve.chart.label_data import (
+    default_slice_label_template,
+)
 
 
 class TestCompileBasic:
@@ -1917,7 +1920,12 @@ rows:
         assert chart.style.slice_mark.labels is not None, (
             "donut with color + theta must auto-fill labels"
         )
-        theme_template = resolved_style.marks.slice.labels.default_template.with_color
+        theme_template = default_slice_label_template(
+            resolved_style.marks.slice.labels,
+            True,
+            chart.style.tooltip_format,
+            chart.id,
+        )
         assert chart.style.slice_mark.labels.template == theme_template
 
     def test_pie_auto_fills_default_labels_template_when_omitted(self):
@@ -1942,7 +1950,12 @@ rows:
 """
         chart, resolved_style = self._resolved_chart(yaml_content, "my_pie")
         assert chart.style.slice_mark.labels is not None
-        theme_template = resolved_style.marks.slice.labels.default_template.with_color
+        theme_template = default_slice_label_template(
+            resolved_style.marks.slice.labels,
+            True,
+            chart.style.tooltip_format,
+            chart.id,
+        )
         assert chart.style.slice_mark.labels.template == theme_template
 
     def test_arc_without_color_auto_fills_template_without_segment_line(self):
@@ -1974,7 +1987,12 @@ rows:
 """
         chart, resolved_style = self._resolved_chart(yaml_content, "my_donut")
         assert chart.style.slice_mark.labels is not None
-        theme_template = resolved_style.marks.slice.labels.default_template.no_color
+        theme_template = default_slice_label_template(
+            resolved_style.marks.slice.labels,
+            False,
+            chart.style.tooltip_format,
+            chart.id,
+        )
         assert chart.style.slice_mark.labels.template == theme_template
 
     def test_board_can_override_theme_default_template_via_style_cascade(self):

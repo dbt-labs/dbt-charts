@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.constraints import (
     Constraint,
@@ -20,8 +20,9 @@ from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 from ._base import SUPPORT_TABLE_TYPE_RULE, _CartesianChartFields
 from ._layer import (
     CARTESIAN_LAYER_SUPPORTED_CHART_TYPES,
+    Y_START_NOT_NULL,
     CartesianLayer,
-    reject_blank_y_start,
+    YStartColumn,
 )
 
 
@@ -32,6 +33,7 @@ class BarChart(_CartesianChartFields):
 
     __constraints__: ClassVar[tuple[Constraint, ...]] = (
         SUPPORT_TABLE_TYPE_RULE,
+        Y_START_NOT_NULL,
         Forbids(
             ("layers",),
             "chart.layers is not supported for chart type {type!r}. "
@@ -94,7 +96,7 @@ class BarChart(_CartesianChartFields):
         Field(description="Selects the chart family."),
     ]
     y_start: Annotated[
-        str | None,
+        YStartColumn | None,
         Channel(),
         Field(
             default=None,
@@ -117,11 +119,3 @@ class BarChart(_CartesianChartFields):
             ),
         ),
     ]
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_blank_y_start(
-        cls,
-        data: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
-    ) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
-        return reject_blank_y_start(data)

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Validate no longer warns about a missing join predicate when one side is a single row (an aggregate with no GROUP BY, LIMIT 1) or a table function, and now flags JOIN ... ON TRUE between multi-row sources like a cross join.
+time: 2026-10-07T16:31:00.000000-07:00

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import FormatConfig, FormatTable
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.project import Project
@@ -395,7 +395,7 @@ _ALIASES: dict[str, str | FormatConfig] = {
         (0.042, "percent", "4.2%"),
         (1234.5, ",.0f", "1,235"),
         (1234.5, "mine", "$1.23k"),
-        (4210000.5, "analytic_alias", "$4.21 M"),
+        (4210000.5, "analytic_alias", "$4.21\u00a0M"),
         (Decimal("1234.5"), ",.0f", "1,235"),
         (None, "percent", "—"),
         ("2026-01-05", "%b %Y", "Jan 2026"),
@@ -406,13 +406,18 @@ def test_format_accepts_presets_aliases_d3_and_strftime(
 ) -> None:
     from dbt_charts.core.compile.template.display_text import _text_format_filter
 
-    assert _text_format_filter(_ALIASES)(value, spec) == expected
+    assert (
+        _text_format_filter(FormatTable(aliases=_ALIASES, currency="USD"))(value, spec)
+        == expected
+    )
 
 
 def test_affix_only_alias_keeps_its_affixes_with_narrative_notation() -> None:
     from dbt_charts.core.compile.template.display_text import _text_format_filter
 
-    out = _text_format_filter(_ALIASES)(1234.5, "eur")
+    out = _text_format_filter(FormatTable(aliases=_ALIASES, currency="USD"))(
+        1234.5, "eur"
+    )
     assert out == "EUR 1.23k net"
 
 

@@ -182,13 +182,15 @@ _ANCHORING_STRIPS = {
         "      - {month: Jan, s: A, net: -50}\n      - {month: Feb, s: A, net: -40}",
     ),
 }
-_REPEATING_STRIPS = {
+_SORTED_STRIPS = {
     "engine-sorted-horizontal-bar": ("    type: bar", _CATEGORY),
     "authored-sort-band-axis": (
         "    type: bar\n    sort:\n      by: net\n      order: desc\n"
         "    style:\n      orientation: vertical",
         _CATEGORY,
     ),
+}
+_REPEATING_STRIPS = {
     "left-axis": (
         "    type: line\n    style:\n      axis_y:\n        position: left",
         _TEMPORAL,
@@ -227,11 +229,10 @@ rows:
 """
 
 
-@pytest.mark.parametrize("strip", _ANCHORING_STRIPS)
+@pytest.mark.parametrize("strip", {**_ANCHORING_STRIPS, **_SORTED_STRIPS})
 def test_before_prefix_on_an_anchoring_strip_fails_render(strip) -> None:
-    svg = html.unescape(
-        render_board_to_svg(_strip_board(*_ANCHORING_STRIPS[strip], "before_prefix"))
-    )
+    board = {**_ANCHORING_STRIPS, **_SORTED_STRIPS}[strip]
+    svg = html.unescape(render_board_to_svg(_strip_board(*board, "before_prefix")))
     assert _CODE in svg, svg
     assert "charts.c.support_table.entries[0].format" in svg
 
@@ -242,6 +243,13 @@ def test_an_anchoring_strip_leads_the_sign_with_the_prefix(strip) -> None:
         render_board_to_svg(_strip_board(*_ANCHORING_STRIPS[strip], None))
     )
     assert ">€−50<" in svg and ">−40<" in svg, svg
+    assert "ERR-" not in svg
+
+
+@pytest.mark.parametrize("strip", _SORTED_STRIPS)
+def test_a_sorted_strip_leads_its_first_sorted_cell_with_the_prefix(strip) -> None:
+    svg = html.unescape(render_board_to_svg(_strip_board(*_SORTED_STRIPS[strip], None)))
+    assert ">€−40<" in svg and ">−50<" in svg, svg
     assert "ERR-" not in svg
 
 

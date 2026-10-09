@@ -759,3 +759,26 @@ def test_histogram_count_axis_emits_the_resolved_tick_min_step() -> None:
     reset_config()
     top = spec["hconcat"][0] if "hconcat" in spec else spec
     assert top["encoding"]["y"]["axis"]["tickMinStep"] == 1.0
+
+
+def test_histogram_count_axis_never_ticks_between_counts() -> None:
+    """A row count is whole: its axis steps by at least 1 and has no more ticks
+    than the tallest bin has rows."""
+    reset_config()
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "histogram",
+            "x": "x",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "style": {"number_format": "currency"},
+        }
+    )
+    rows = [{"x": v} for v in (0.3, 0.6, 0.9)]
+    resolve(chart, rows, chart_style_context=_BOARD_STYLE)
+    spec = generate_vega_lite_spec(chart, rows, width=400)
+    reset_config()
+    axis = (spec["hconcat"][0] if "hconcat" in spec else spec)["encoding"]["y"]["axis"]
+    assert axis["tickMinStep"] == 1
+    assert "domain('y')[1]" in axis["tickCount"]["expr"]

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A file-source query that fails now reports its specific error instead of being listed as unchecked.
+time: 2026-10-08T02:22:52.43802-07:00

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import (
     ResolvedFontStyle,
+    ResolvedFormat,
     ResolvedScaleTarget,
     StaticGradientColorStyle,
 )
@@ -59,8 +60,8 @@ class ResolvedGeoshapeStyle(BaseModel):
         default=None,
         description="Scatter overlay style for point marks on geo families.",
     )
-    tooltip_format: str = Field(
-        description="Pre-resolved tooltip format string (empty = no format).",
+    tooltip_format: ResolvedFormat = Field(
+        description="Resolved tooltip format; an affix composes on the hover card.",
     )
     title_font: ResolvedFontStyle | None = Field(
         default=None,

@@ -24,14 +24,14 @@ from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
     SparkBarChart,
 )
-from dbt_charts.core.compile.models.primitives import FormatAliases
+from dbt_charts.core.compile.models.primitives import FormatTable
 from dbt_charts.core.compile.models.style.theme import KpiValueStyle
 from dbt_charts.core.compile.resolve.chart.channel import parse_style_channel
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_KPI_MULTIROW, ERR_KPI_NO_DATA
 from dbt_charts.core.render.chart.kpi import kpi_value_text
 from dbt_charts.core.render.utils import normalize_data_types, slug_to_text
-from dbt_charts.core.text.format_d3 import NULL_DISPLAY
+from dbt_charts.core.text.format_d3 import NULL_DISPLAY, d3_format
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ def render_chart_terminal(
     height: int | None = None,
     colors: bool = True,
     *,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> str:
     """Render a chart to terminal output.
 
@@ -296,9 +296,9 @@ def render_table_terminal(
                 if isinstance(value, float) and value.is_integer():
                     display_value = str(int(value))
                 else:
-                    display_value = (
-                        f"{value:,.2f}" if isinstance(value, float) else f"{value:,}"
-                    )
+                    display_value = d3_format(
+                        ",.2f" if isinstance(value, float) else ",d"
+                    )(value)
             else:
                 display_value = str(value)
             values.append(display_value)
@@ -320,7 +320,7 @@ def render_kpi_terminal(
     data: list[dict[str, Any]],  # type-state: explicit_any — raw query row dicts
     display_title: str,
     *,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> str:
     """Render a KPI chart as text.
 
@@ -365,9 +365,9 @@ def render_kpi_terminal(
                 format_may_be_cascaded=True,
             )
         elif isinstance(cell, float) and cell.is_integer():
-            display_value = f"{int(cell):,}"
+            display_value = d3_format(",d")(int(cell))
         else:
-            display_value = f"{cell:,.2f}"
+            display_value = d3_format(",.2f")(cell)
     else:
         display_value = "" if cell is None else str(cell)
 

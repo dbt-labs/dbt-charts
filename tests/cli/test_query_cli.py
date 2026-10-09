@@ -331,8 +331,8 @@ class TestQueryOptionVariety:
         """--show-suppressed with --json emits {diagnostics, suppressed} dict."""
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
         sql = (
-            "-- dct:ignore fanout_risk\n"
-            "SELECT SUM(o.x), SUM(li.y) FROM orders o JOIN li ON o.id = li.oid GROUP BY o.id"
+            "-- dct:ignore WARN-REAGGREGATION\n"
+            "SELECT SUM(t) FROM (SELECT region, SUM(x) AS t FROM orders GROUP BY region) s"
         )
         sql_file = tmp_path / "q.sql"
         sql_file.write_text(sql)

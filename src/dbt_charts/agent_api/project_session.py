@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 from dataclasses import dataclass
 from functools import cached_property
@@ -61,13 +60,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.execute.adapters.base import BaseAdapter
     from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
     from dbt_charts.core.execute.source_resolver import SourceResolver
-    from dbt_charts.core.inspect.query_validator import RelationshipContext
     from dbt_charts.core.render_format import RenderFormat
-
-# Probe at module load time — single find_spec call per process.
-_SUPER_SCHEMA_AVAILABLE: bool = (
-    importlib.util.find_spec("dbt_charts_super_schema") is not None
-)
 
 
 @dataclass(init=False)
@@ -288,7 +281,6 @@ class ProjectSession:
         if self._lazy_built and "adapter_registry" in self.__dict__:
             self.adapter_registry.close()
             del self.__dict__["adapter_registry"]
-        self.__dict__.pop("_relationship_context", None)
         # Invalidate Project's cached_property caches in place. Reconstructing
         # via `self.project = Project(self.project.root)` would type-erase any
         # subclass — notably CloudManagedProject, whose `sources` overrides
@@ -300,10 +292,16 @@ class ProjectSession:
             vars(self.project).pop(key, None)
 
     def close(self) -> None:
-        """Close the adapter registry iff we own it. The cache is the caller's to close."""
-        if self._owns_registry and "adapter_registry" in self.__dict__:
-            self.adapter_registry.close()
-            del self.__dict__["adapter_registry"]
+        """Close session-owned execution resources; leave the result cache alone."""
+        materializer = self._file_materializer
+        self._file_materializer = None
+        try:
+            if self._owns_registry and "adapter_registry" in self.__dict__:
+                self.adapter_registry.close()
+                del self.__dict__["adapter_registry"]
+        finally:
+            if materializer is not None:
+                materializer.close()
 
     # Read-only views: project lifecycle owns these; external writers go through refresh().
     @property
@@ -321,21 +319,6 @@ class ProjectSession:
         # (ai/context.py's resolve_dashboard_path) is a CLI/MCP-only path.
         # Same reasoning as the adapter_registry cast above.
         return cast("FilesystemProject", self.project).charts_dir
-
-    @cached_property
-    def _relationship_context(self) -> RelationshipContext | None:
-        """Load relationship context from the super-schema cache (lazy, per-instance).
-
-        Returns None when dbt_charts_super_schema is not installed or the cache
-        has no relationship data.
-        """
-        if not _SUPER_SCHEMA_AVAILABLE:
-            return None
-        from dbt_charts_super_schema.inspect.relationship_context import (  # noqa: PLC0415
-            load_relationship_context,
-        )
-
-        return load_relationship_context(self.project)
 
     # ── Verb forwarders ──────────────────────────────────────────────────────
 
@@ -399,16 +382,12 @@ class ProjectSession:
         suppress: set[str] | None = None,
         return_suppressed: bool = False,
     ) -> list[QueryDiagnostic] | tuple[list[QueryDiagnostic], list[QueryDiagnostic]]:
-        """Run SQL validation with relationship context for calibrated severity.
+        """Run SQL validation against the project's source dialects.
 
         ``dialect`` wins; otherwise the project source named by ``source``
         supplies its own sqlglot dialect. A source that is unnamed, unknown
         here, or of a type with no sqlglot dialect (file sources,
         ``dbt_profile``) lints with sqlglot's generic dialect.
-
-        Loads relationship context from the project's super-schema cache (when
-        dbt_charts_super_schema is installed) and forwards it to core, so
-        WARN-FANOUT-RISK diagnostics reflect known join multiplicities.
 
         Stateless — requires no adapter or warehouse connection.
         """
@@ -421,14 +400,12 @@ class ProjectSession:
                 sql,
                 dialect=dialect,
                 suppress=suppress,
-                relationship_context=self._relationship_context,
                 return_suppressed=True,
             )
         return _core_validate_query(
             sql,
             dialect=dialect,
             suppress=suppress,
-            relationship_context=self._relationship_context,
         )
 
     def describe_paths(self, paths: list[Path]) -> list[_describe.DescribeBoardResult]:

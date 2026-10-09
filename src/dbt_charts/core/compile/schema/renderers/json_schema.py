@@ -13,7 +13,7 @@ import itertools
 from collections import defaultdict
 from typing import Any
 
-from pydantic_core import PydanticUndefined
+from pydantic_core import PydanticUndefined, to_jsonable_python
 
 from dbt_charts.core.compile.models.constraints import (
     AtLeastOneOf,
@@ -24,6 +24,7 @@ from dbt_charts.core.compile.models.constraints import (
     IsList,
     IsSet,
     ItemsMatch,
+    NotNull,
     Requires,
     ValueIn,
 )
@@ -42,17 +43,23 @@ _PRIMITIVES: dict[str, dict[str, Any]] = {
 }
 
 
-def _schema_for_token(token: str) -> dict[str, Any]:
-    """Map a single non-union type token to a JSON Schema dict."""
+def _schema_for_token(
+    token: str, patterns: dict[str, str]
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    """Map a single non-union type token to a JSON Schema dict.
+
+    `patterns` constrains primitive items of a list/dict token the same way it
+    constrains a top-level arm (`_map_type_repr`).
+    """
     if token in _PRIMITIVES:
         return _PRIMITIVES[token]
     if token.startswith(("list[", "set[", "frozenset[")):
         item_repr = token[token.index("[") + 1 : -1]
-        return _container_schema("array", "items", _map_type_repr(item_repr, {}))
+        return _container_schema("array", "items", _map_type_repr(item_repr, patterns))
     if token.startswith("dict["):
         value_repr = ", ".join(_split_union(token[5:-1], ", ")[1:])
         return _container_schema(
-            "object", "additionalProperties", _map_type_repr(value_repr, {})
+            "object", "additionalProperties", _map_type_repr(value_repr, patterns)
         )
     return {}
 
@@ -197,7 +204,7 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
         # arm (e.g. `ThemeName | str | list[str]`) — add its shape so it
         # isn't dropped from the anyOf, deduped on the mapped shape.
         for token in sibling_container_tokens(field.type_repr):
-            arm = _schema_for_token(token)
+            arm = _schema_for_token(token, field.extra_union_type_patterns)
             if arm and arm not in branches:
                 branches.append(arm)
         if nullable:
@@ -293,7 +300,7 @@ def _map_type_repr(
         schema = (
             _primitive_schema(token, patterns)
             if token in _PRIMITIVES
-            else _schema_for_token(token)
+            else _schema_for_token(token, patterns)
         )
         if not schema:
             return {}
@@ -307,7 +314,6 @@ _BOUND_KEYWORDS = {
     "ge": "minimum",
     "lt": "exclusiveMaximum",
     "le": "maximum",
-    "pattern": "pattern",
 }
 _LENGTH_KEYWORD_SUFFIX = {
     "str": "Length",
@@ -322,14 +328,17 @@ _LENGTH_KEYWORD_SUFFIX = {
 def _constraint_keywords(
     field: SchemaField,
 ) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
-    """JSON Schema keywords for field.constraints, set beside its type schema.
+    """JSON Schema keywords for field.bounds and field.constraints, set beside
+    its type schema.
 
     Each keyword only constrains its own JSON type, so it leaves other arms free.
     """
-    keywords: dict[str, Any] = {}  # type-state: explicit_any — see _ref
+    keywords: dict[str, Any] = {  # type-state: explicit_any — see _ref
+        _BOUND_KEYWORDS[name]: value for name, value in field.bounds.items()
+    }
     for name, value in field.constraints.items():
-        if name in _BOUND_KEYWORDS:
-            keywords[_BOUND_KEYWORDS[name]] = value
+        if name == "pattern":
+            keywords["pattern"] = value
             continue
         prefix = name.removesuffix("_length")
         suffixes = {
@@ -458,6 +467,9 @@ def _condition(
             return _is_set(key, nonempty=False)
         case ValueIn(key, values, negate):
             matches = _at(key, {"enum": list(values)})
+            if None in values:
+                # An absent key (or object on its path) reads as null.
+                matches = {"anyOf": [matches, {"not": _is_set(key, nonempty=False)}]}
             return {"not": matches} if negate else matches
         case IsList(key):
             return _at(key, {"type": "array"})
@@ -499,6 +511,12 @@ def _constraint(
             return _when(
                 when, {"not": {"anyOf": [_is_set(k, k in nonempty) for k in keys]}}
             )
+        case NotNull(keys, _):
+            return {
+                "allOf": [
+                    _at(k, {"not": {"type": "null"}}, required=False) for k in keys
+                ]
+            }
         case ItemsMatch(key, pattern, _, when):
             items = {"items": {"type": "string", "pattern": pattern}}
             return _when(when, _at(key, items, required=False))
@@ -567,7 +585,7 @@ def _model_to_def(model_name: str, ir: AuthorableSchema) -> dict[str, Any]:
             and field.default is not PydanticUndefined
         ):
             prop = dict(prop)
-            prop["default"] = field.default
+            prop["default"] = to_jsonable_python(field.default)
         if field.is_extra_key:
             additional_properties = prop
         else:

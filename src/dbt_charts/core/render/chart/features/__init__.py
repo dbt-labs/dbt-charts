@@ -11,6 +11,9 @@ from dbt_charts.core.render.chart.features.click_interactivity import (
 from dbt_charts.core.render.chart.features.endpoint_labels import EndpointLabelFeature
 from dbt_charts.core.render.chart.features.facet import FacetFeature
 from dbt_charts.core.render.chart.features.mirror_axis import MirrorAxisFeature
+from dbt_charts.core.render.chart.features.native_tooltip import (
+    NativeTooltipAffixFeature,
+)
 from dbt_charts.core.render.chart.features.structured_tooltip import (
     StructuredTooltipFeature,
 )
@@ -39,6 +42,8 @@ DEFAULT_FEATURES: list[ChartFeature] = [
     ValueLabelFeature(),
     ClickInteractivityFeature(),
     StructuredTooltipFeature(),
+    # After StructuredTooltipFeature: writes only the cards it leaves unwritten.
+    NativeTooltipAffixFeature(),
     # LATE: runs after EndpointLabelFeature so it can detect the endpoint
     # composition and refuse the incompatible mirror+endpoint combination.
     MirrorAxisFeature(),
@@ -58,5 +63,6 @@ __all__ = [
     "ZeroValueLabelFeature",
     "ClickInteractivityFeature",
     "MirrorAxisFeature",
+    "NativeTooltipAffixFeature",
     "StructuredTooltipFeature",
 ]

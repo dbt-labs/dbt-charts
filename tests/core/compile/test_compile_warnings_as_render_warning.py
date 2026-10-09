@@ -57,7 +57,7 @@ class TestOrphanChartEmitsDiagnostic:
 class TestValidateCompiledQueriesEmitsDiagnostic:
     """validate_compiled_queries must produce Diagnostic objects, not strings."""
 
-    def test_fanout_risk_diagnostic_becomes_render_warning(
+    def test_reaggregation_diagnostic_becomes_render_warning(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         result = compile(
@@ -83,7 +83,7 @@ rows:
             return (
                 [
                     QueryDiagnostic(
-                        code="WARN-FANOUT-RISK",
+                        code="WARN-REAGGREGATION",
                         severity="warning",
                         message="Join may cause row multiplication",
                         recommendation="Verify join keys",
@@ -98,12 +98,14 @@ rows:
         )
         validate_compiled_queries(result)
 
-        assert result.warnings, "WARN-FANOUT-RISK diagnostic must surface as a warning"
+        assert result.warnings, (
+            "WARN-REAGGREGATION diagnostic must surface as a warning"
+        )
         # All entries must be Diagnostic.
         for w in result.warnings:
             assert isinstance(w, Diagnostic)
         codes = [w.code for w in result.warnings]
-        assert "WARN-FANOUT-RISK" in codes
+        assert "WARN-REAGGREGATION" in codes
 
     def test_suppressed_warnings_are_render_warning(
         self, monkeypatch: pytest.MonkeyPatch
@@ -114,7 +116,7 @@ source: examples_db
 queries:
   q:
     sql: SELECT 1 AS x
-    ignore: [WARN-FANOUT-RISK]
+    ignore: [WARN-REAGGREGATION]
 charts:
   c:
     query: q
@@ -134,11 +136,11 @@ rows:
             **_kw: object,
         ) -> tuple[list[QueryDiagnostic], list[QueryDiagnostic]]:
             suppressed = QueryDiagnostic(
-                code="WARN-FANOUT-RISK",
+                code="WARN-REAGGREGATION",
                 severity="warning",
-                message="fanout suppressed",
+                message="reaggregation suppressed",
             )
-            if suppress and "WARN-FANOUT-RISK" in suppress:
+            if suppress and "WARN-REAGGREGATION" in suppress:
                 return ([], [suppressed])
             return ([suppressed], [])
 
@@ -147,6 +149,8 @@ rows:
             fake_validate_query,
         )
         validate_compiled_queries(result)
-        assert result.suppressed_warnings, "expected WARN-FANOUT-RISK to be suppressed"
+        assert result.suppressed_warnings, (
+            "expected WARN-REAGGREGATION to be suppressed"
+        )
         assert all(isinstance(w, Diagnostic) for w in result.suppressed_warnings)
-        assert "WARN-FANOUT-RISK" in {w.code for w in result.suppressed_warnings}
+        assert "WARN-REAGGREGATION" in {w.code for w in result.suppressed_warnings}

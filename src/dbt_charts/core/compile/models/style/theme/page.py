@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from dbt_charts.core.compile.models.constraints import (
+    ConstrainedModel,
+    Constraint,
+    Requires,
+    ValueIn,
+)
 from dbt_charts.core.compile.models.markers import (
     Color,
     Inherit,
@@ -20,6 +26,24 @@ from dbt_charts.core.compile.models.primitives import (
     SpacingValues,
 )
 from dbt_charts.core.text.format_d3 import portable_strftime
+
+
+def _font_size_and_color_rules(slot: str) -> tuple[Constraint, ...]:
+    """The renderer writes font-size and fill directly into SVG, so both are
+    required unless a named font (``extends``) supplies them."""
+    no_named_font = (ValueIn("font.extends", (None,)),)
+    return (
+        Requires(
+            ("font.size",),
+            f"style.{slot}.font.size is required (float)",
+            when=no_named_font,
+        ),
+        Requires(
+            ("font.color",),
+            f"style.{slot}.font.color is required (color string)",
+            when=no_named_font,
+        ),
+    )
 
 
 class InputWidths(BaseModel):
@@ -62,10 +86,14 @@ class InputStyle(BaseModel):
     range: RangeDefaults = Field(description="Range input default min/max/step values.")
 
 
-class FooterStyle(BaseModel):
+class FooterStyle(ConstrainedModel):
     """Page footer chrome: visibility, attribution text, font, and divider."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = _font_size_and_color_rules(
+        "footer"
+    )
 
     visible: bool = Field(description="Show the footer attribution line.")
     text: str = Field(description="Attribution text shown in the footer.")
@@ -84,26 +112,15 @@ class FooterStyle(BaseModel):
     y_offset: float = Field(description="Vertical offset from bottom edge in pixels.")
     divider: DividerStyle = Field(description="Hairline above the footer text.")
 
-    @model_validator(mode="after")
-    def _require_font_size_and_color(self) -> FooterStyle:
-        """The footer renderer writes font-size and fill directly into SVG.
 
-        Require both at cascade-resolve time so misconfiguration fails loudly
-        rather than emitting empty or literal-None attribute values.
-        """
-        if self.font.extends is not None:
-            return self  # the named font supplies size and color
-        if self.font.size is None:
-            raise ValueError("style.footer.font.size is required (float)")
-        if self.font.color is None:
-            raise ValueError("style.footer.font.color is required (color string)")
-        return self
-
-
-class TimestampStyle(BaseModel):
+class TimestampStyle(ConstrainedModel):
     """Authored data-freshness chrome: visibility, placement, strftime format, font, and y-offset."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = _font_size_and_color_rules(
+        "timestamp"
+    )
 
     visible: bool = Field(description="Show the data-freshness line.")
     position: Literal["top", "footer"] = Field(
@@ -123,21 +140,6 @@ class TimestampStyle(BaseModel):
         default_factory=FontStyle,
         description="Timestamp font style overrides (size, color, weight, ...).",
     )
-
-    @model_validator(mode="after")
-    def _require_font_size_and_color(self) -> TimestampStyle:
-        """The timestamp renderer writes font-size and fill directly into SVG.
-
-        Require both at cascade-resolve time so misconfiguration fails loudly
-        rather than emitting empty or literal-None attribute values.
-        """
-        if self.font.extends is not None:
-            return self  # the named font supplies size and color
-        if self.font.size is None:
-            raise ValueError("style.timestamp.font.size is required (float)")
-        if self.font.color is None:
-            raise ValueError("style.timestamp.font.color is required (color string)")
-        return self
 
     @model_validator(mode="after")
     def _clock_format_discloses_zone(self) -> TimestampStyle:

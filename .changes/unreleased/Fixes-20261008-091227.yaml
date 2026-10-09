@@ -1,0 +1,3 @@
+kind: Fixes
+body: DuckDB sources now reject the unsupported plugins, filesystems, remote and use_credential_provider fields when the config is read.
+time: 2026-10-08T09:12:27.898042-07:00

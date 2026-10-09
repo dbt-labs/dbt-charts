@@ -31,6 +31,9 @@ from dbt_charts.core.render.chart.features.click_interactivity import (
 from dbt_charts.core.render.chart.features.endpoint_labels import EndpointLabelFeature
 from dbt_charts.core.render.chart.features.facet import FacetFeature
 from dbt_charts.core.render.chart.features.mirror_axis import MirrorAxisFeature
+from dbt_charts.core.render.chart.features.native_tooltip import (
+    NativeTooltipAffixFeature,
+)
 from dbt_charts.core.render.chart.features.structured_tooltip import (
     StructuredTooltipFeature,
 )
@@ -275,6 +278,7 @@ def test_default_features_pins_concrete_production_order() -> None:
         ValueLabelFeature,
         ClickInteractivityFeature,
         StructuredTooltipFeature,
+        NativeTooltipAffixFeature,
         MirrorAxisFeature,
         FacetFeature,
     ]

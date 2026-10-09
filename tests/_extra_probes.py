@@ -28,6 +28,15 @@ EXTRA_PROBES: dict[str, str] = {
         "create_server(DbtChartsAIContext(project_session=session))\n"
         "print('ok')\n"
     ),
+    # The extra's packages are only imported lazily, on first query, so installing
+    # it proves nothing until something checks they are all importable.
+    "lakecompute": (
+        "from dbt_charts.core.execute.drivers.lakecompute import "
+        "require_lakecompute_extra\n"
+        "require_lakecompute_extra()\n"
+        "import adbc_driver_manager, platformdirs, zstandard\n"
+        "print('ok')\n"
+    ),
     "streamlit": (
         "from dbt_charts.integrations.streamlit import st_board\nprint('ok')\n"
     ),

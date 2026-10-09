@@ -488,7 +488,7 @@ def test_percent_suffix_never_classifies_as_currency(suffix: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Table columns: unformatted 0-1 fractions render as SI ("437m")
+# Table columns: unformatted 0-1 fractions render as bare digits ("0.44")
 # ---------------------------------------------------------------------------
 
 _FRACTION_ROWS = [

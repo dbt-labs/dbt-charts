@@ -31,7 +31,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import (
     AUTHORED_FORMATS,
-    FormatAliases,
+    FormatTable,
     ResolvedFormat,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -222,7 +222,7 @@ def _cartesian_y_range_display(
     chart: _CartesianValueAxisChart,
     data: list[dict[str, Any]],  # type-state: explicit_any — query row
     value_axis_format: ResolvedFormat | None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> str | None:
     """Format the y column's min-max range as a standalone value.
 
@@ -247,7 +247,7 @@ def _cartesian_y_range_display(
 def _kpi_text_parts(
     resolved: ResolvedKpiChart,
     row: dict[str, Any],  # type-state: explicit_any — a query row, dynamically typed
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> dict[str, str]:
     """Format a KPI's headline value and support line as the SVG renderer draws them.
 

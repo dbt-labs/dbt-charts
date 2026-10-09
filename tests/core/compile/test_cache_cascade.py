@@ -23,7 +23,7 @@ from dbt_charts.core.compile.normalize.dispatch import normalize_board
 from dbt_charts.core.compile.normalize.queries import normalize_query
 from dbt_charts.core.compile.parse.parser import parse_yaml
 
-from .conftest import compile_with_board_sources
+from .conftest import cache_layer, compile_with_board_sources
 
 _SOURCES: dict[str, Any] = {
     "db": {"type": "duckdb", "path": "warehouse.duckdb"},
@@ -54,7 +54,7 @@ def test_authored_query_accepts_cache_block() -> None:
     ("authored", "enabled", "ttl"),
     [(False, False, None), (True, True, None), ("5m", True, "5m")],
 )
-def test_authored_query_accepts_scalar_cache(
+def test_authored_query_accepts_scalarcache_layer(
     authored: bool | str, enabled: bool, ttl: str | None
 ) -> None:
     query = TypeAdapter(AuthoredQuery).validate_python(
@@ -82,7 +82,7 @@ def test_source_config_accepts_cache_block() -> None:
     assert config.cache.ttl == "1h"
 
 
-def test_source_config_accepts_scalar_cache() -> None:
+def test_source_config_accepts_scalarcache_layer() -> None:
     config = parse_source_config(
         {"type": "duckdb", "path": "warehouse.duckdb", "cache": False}
     )
@@ -104,7 +104,7 @@ def test_normalized_query_defaults_to_never_cached() -> None:
     assert query.cache is NEVER_CACHED
 
 
-def test_normalized_query_rejects_bool_cache() -> None:
+def test_normalized_query_rejects_boolcache_layer() -> None:
     """The bool-coercing convenience is gone along with the authored `cache:
     false` shorthand above — a direct constructor needs an explicit
     CachePolicy, never a bare bool."""
@@ -429,7 +429,7 @@ def _nested_board(board: Any) -> Any:
     return nested
 
 
-def test_nested_board_inherits_the_parent_board_cache() -> None:
+def test_nested_board_inherits_the_parent_boardcache_layer() -> None:
     """A `cache:` on the outer dashboard covers the boards composed inside it."""
     board = _board(
         """
@@ -582,7 +582,7 @@ def _compile_board(
     return result
 
 
-def _compiled_query_cache(
+def _compiled_querycache_layer(
     tmp_path: Path,
     board_yaml: str,
     meta_yaml: str | None = None,
@@ -632,7 +632,7 @@ def test_scalar_cache_survives_a_real_compile(
     this, the board scope rejected every one of them and the query scope dropped
     `false` on the floor.
     """
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path,
         _BOARD.format(
             board_cache=f"cache: {authored}" if scope == "board" else "",
@@ -650,7 +650,7 @@ def test_query_cache_false_survives_a_caching_root(tmp_path: Path) -> None:
     not a missing optimization — it serves day-old numbers to someone who
     explicitly asked for live ones.
     """
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path, _BOARD.format(board_cache="cache: 24h", query_cache="cache: false")
     )
     assert policy.enabled is False
@@ -668,7 +668,7 @@ def test_project_root_ttl_reaches_the_query_without_load_config(
     `load_config` from those surfaces is not the fix — `_config` is a process
     global and one Cloud worker serves many orgs.
     """
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path,
         _BOARD.format(board_cache="", query_cache=""),
         project_yaml="cache: 37m\n",
@@ -686,7 +686,7 @@ def test_project_cache_false_reaches_the_query_without_load_config(
     to the shipped 24h root instead — caching turned *on* by the act of asking
     for it to be off.
     """
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path,
         _BOARD.format(board_cache="", query_cache=""),
         project_yaml="cache: false\n",
@@ -773,7 +773,7 @@ def test_board_cache_in_meta_yaml_reaches_the_query(tmp_path: Path) -> None:
     This is the layer the string-compile helper cannot reach at all, and the
     one an author would use to say "this whole folder is hourly".
     """
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path,
         _BOARD.format(board_cache="", query_cache=""),
         meta_yaml="cache: 30m\n",
@@ -784,7 +784,7 @@ def test_board_cache_in_meta_yaml_reaches_the_query(tmp_path: Path) -> None:
 
 def test_board_cache_beats_meta_yaml(tmp_path: Path) -> None:
     """Nearest scope wins: the board's own `cache:` refines the directory's."""
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path,
         _BOARD.format(board_cache="cache: 5m", query_cache=""),
         meta_yaml="cache: 30m\n",
@@ -801,7 +801,7 @@ def test_board_cache_true_keeps_the_meta_ttl(tmp_path: Path) -> None:
     docs promise "anything you leave out is inherited". The source scope, which
     merges field-by-field, has always read it this way.
     """
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path,
         _BOARD.format(board_cache="cache: true", query_cache=""),
         meta_yaml="cache: 5m\n",
@@ -819,7 +819,7 @@ def test_a_board_opt_out_keeps_the_meta_ttl_for_a_query_that_opts_back_in(
     into the layer a query can turn back on — the same field-by-field rule
     `merge_cache_layers` applies to the source and query scopes.
     """
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path,
         _BOARD.format(board_cache="cache: false", query_cache="cache: true"),
         meta_yaml="cache: 1h\n",
@@ -848,9 +848,7 @@ def test_normalize_board_builds_its_own_registry_with_the_inherited_layer() -> N
             """
         )
     )
-    compiled = normalize_board(
-        board, parent_context={"board_cache": CachePatch.model_validate("1h")}
-    )
+    compiled = normalize_board(board, parent_context={"board_cache": cache_layer("1h")})
     assert compiled.queries["main"].cache.ttl == "1h"
 
 
@@ -864,7 +862,7 @@ def test_an_empty_board_cache_block_does_not_replace_the_meta_one(
     replacement turns a no-op edit into a silent jump from the directory's ttl
     to the project root's.
     """
-    policy = _compiled_query_cache(
+    policy = _compiled_querycache_layer(
         tmp_path,
         _BOARD.format(board_cache="cache: {}", query_cache=""),
         meta_yaml="cache: 1h\n",
@@ -872,7 +870,7 @@ def test_an_empty_board_cache_block_does_not_replace_the_meta_one(
     assert policy.ttl == "1h"
 
 
-def _imported_query_cache(
+def _imported_querycache_layer(
     tmp_path: Path,
     board_yaml: str,
     query_key: str,
@@ -923,7 +921,7 @@ def test_board_cache_reaches_a_cross_file_query_import(tmp_path: Path) -> None:
     entirely — so the one-line board policy quietly meant "every query except
     the ones you can't see from here".
     """
-    cache = _imported_query_cache(
+    cache = _imported_querycache_layer(
         tmp_path,
         """
         title: T
@@ -946,7 +944,7 @@ def test_board_cache_reaches_an_anchored_cross_file_query_ref(tmp_path: Path) ->
     above, so it needs the board layer threaded separately — the two spellings
     of one concept must not disagree about whether the board's `cache:` applies.
     """
-    cache = _imported_query_cache(
+    cache = _imported_querycache_layer(
         tmp_path,
         """
         title: T
@@ -993,7 +991,9 @@ def test_source_cache_reaches_an_imported_query(
     pass the source registry silently drops this layer and falls through to the
     project root instead.
     """
-    cache = _imported_query_cache(tmp_path, board_yaml, query_key, source_cache="5m")
+    cache = _imported_querycache_layer(
+        tmp_path, board_yaml, query_key, source_cache="5m"
+    )
     assert cache.ttl == "5m"
 
 
@@ -1011,11 +1011,13 @@ def test_source_cache_false_is_never_re_enabled_for_an_imported_query(
     on an import doesn't merely forget an optimization — it replaces "never
     cache this" with the project root's ttl and serves day-old numbers.
     """
-    cache = _imported_query_cache(tmp_path, board_yaml, query_key, source_cache="false")
+    cache = _imported_querycache_layer(
+        tmp_path, board_yaml, query_key, source_cache="false"
+    )
     assert cache.enabled is False
 
 
-def _imported_chart_query_cache(
+def _imported_chart_querycache_layer(
     tmp_path: Path,
     board_yaml: str,
     *,
@@ -1073,7 +1075,7 @@ def test_source_cache_reaches_a_cross_board_imported_chart(tmp_path: Path) -> No
     either import lane above, so it needs the source registry threaded through
     the chart-registry build — a third place the layer can go missing.
     """
-    cache = _imported_chart_query_cache(
+    cache = _imported_chart_querycache_layer(
         tmp_path, _CHART_IMPORT.format(board_cache=""), source_cache="5m"
     )
     assert cache.ttl == "5m"
@@ -1083,7 +1085,7 @@ def test_board_cache_reaches_a_cross_board_imported_chart(tmp_path: Path) -> Non
     """An imported chart is a chart of *this* board, so the board's `cache:`
     covers the query behind it — the same rule the two query-import lanes
     already follow."""
-    cache = _imported_chart_query_cache(
+    cache = _imported_chart_querycache_layer(
         tmp_path, _CHART_IMPORT.format(board_cache="cache: 30s")
     )
     assert cache.ttl == "30s"
@@ -1121,7 +1123,7 @@ class TestTtlValueIsBounded:
         self, value: str, label: str
     ) -> None:
         with pytest.raises(ValidationError) as exc:
-            CachePatch.model_validate({"ttl": value})
+            cache_layer({"ttl": value})
         message = str(exc.value)
         assert "too large" in message, (
             f"{label}: the author must be told the duration is out of range, "
@@ -1134,7 +1136,7 @@ class TestTtlValueIsBounded:
 
     def test_the_ceiling_is_named_so_the_author_can_act(self) -> None:
         with pytest.raises(ValidationError) as exc:
-            CachePatch.model_validate({"ttl": "999999999w"})
+            cache_layer({"ttl": "999999999w"})
         message = str(exc.value)
         assert "3650d" in message, (
             "the error must name the ceiling — 'too large' alone leaves the "
@@ -1143,4 +1145,4 @@ class TestTtlValueIsBounded:
 
     def test_a_long_but_sane_ttl_still_parses(self) -> None:
         """The ceiling must not reject a real authoring intent."""
-        assert CachePatch.model_validate({"ttl": "52w"}).ttl == "52w"
+        assert cache_layer({"ttl": "52w"}).ttl == "52w"

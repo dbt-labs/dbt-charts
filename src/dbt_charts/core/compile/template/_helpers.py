@@ -8,7 +8,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from jinja2 import Undefined
+from jinja2 import TemplateSyntaxError, Undefined
+from jinja2.exceptions import TemplateError
+
+
+def template_error_location(template: str, exc: TemplateError) -> str:
+    """The template line a Jinja failure came from; Jinja's own message names no line."""
+    lineno = exc.lineno if isinstance(exc, TemplateSyntaxError) else None
+    tb = exc.__traceback__
+    while lineno is None and tb is not None:
+        if tb.tb_frame.f_code.co_filename == "<template>":
+            lineno = tb.tb_lineno
+        tb = tb.tb_next
+    if lineno is None:
+        return ""
+    # Jinja counts only \n, \r\n and \r; str.splitlines() also splits on \x0c etc.
+    lines = template.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return f" (template line {lineno}: {lines[lineno - 1].strip()})"
 
 
 class _LenientUndefined(Undefined):

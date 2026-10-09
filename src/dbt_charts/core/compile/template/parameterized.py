@@ -55,7 +55,11 @@ from jinja2 import (
 )
 
 from dbt_charts.core.compile.errors import JinjaError, TemplateOutputTooLargeError
-from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
+from dbt_charts.core.compile.template._helpers import (
+    _LenientUndefined,
+    _QueryNamespace,
+    template_error_location,
+)
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.compile.template.output_budget import (
     TemplateOutputBudgetExceeded,
@@ -529,9 +533,14 @@ def render_parameterized(
             emitted_bytes=e.emitted_bytes, ceiling=e.ceiling
         ) from e
     except UndefinedError as e:
-        raise JinjaError(f"Undefined variable: {e}", template) from e
+        raise JinjaError(
+            f"Undefined variable: {e}{template_error_location(template, e)}", template
+        ) from e
     except TemplateSyntaxError as e:
-        raise JinjaError(f"Template syntax error: {e}", template) from e
+        raise JinjaError(
+            f"Template syntax error: {e}{template_error_location(template, e)}",
+            template,
+        ) from e
     except TemplateError as e:
         # Catches the sandbox's SecurityError, a TemplateRuntimeError sibling of
         # UndefinedError rather than a subclass. Uncoded it reaches the executor

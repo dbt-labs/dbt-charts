@@ -7,8 +7,11 @@ the escape rule, the existence check, the per-kind suffix rule, and the error.
 
 from __future__ import annotations
 
+import copy
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
@@ -16,11 +19,19 @@ import yaml
 
 from dbt_charts.core.compile.errors import CompilationError, ReferenceError
 from dbt_charts.core.compile.markdown_blocks import image_urls
+from dbt_charts.core.compile.migrations.migrations import (
+    migration_notice_file,
+    prepare_board_mapping,
+)
+from dbt_charts.core.compile.models.board.patch import BoardPatch
 from dbt_charts.core.diagnostics.codes_compile import ERR_FILE_SOURCE_AMBIGUOUS
 from dbt_charts.core.diagnostics.codes_render import ERR_IMAGE_REF_UNRESOLVED
 from dbt_charts.core.utils import IMAGE_SUFFIXES
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+        JsonObject,
+    )
     from dbt_charts.core.compile.validate.authoring_warnings import YamlValue
     from dbt_charts.core.project import ProjectDirectory, ProjectPath
 
@@ -302,19 +313,54 @@ def anchor_images(data: dict[str, YamlValue], written_in: ProjectDirectory) -> N
         mapping[key] = anchored
 
 
+# One compile's migrated referenced files, by relpath: a board imports many
+# queries and charts from the same large file, and migrating it per ref
+# dominates compile time.
+_MIGRATED_FILES: ContextVar[dict[str, JsonObject] | None] = ContextVar(
+    "migrated_ref_files", default=None
+)
+
+
+@contextmanager
+def migrated_ref_files() -> Generator[None]:
+    """Share migrated referenced files across one compile."""
+    token = _MIGRATED_FILES.set({})
+    try:
+        yield
+    finally:
+        _MIGRATED_FILES.reset(token)
+
+
 def read_section(
     path: ProjectPath, section: str, ref: str, ref_path: Sequence[str] = ()
-) -> tuple[dict[str, YamlValue], dict[str, YamlValue]]:
+) -> tuple[JsonObject, JsonObject]:
     """The `section:` mapping of the file a cross-file *ref* resolved to, and the
-    file's whole mapping (whose board-level `source:` its queries inherit)."""
-    try:
-        content = path.read_yaml()
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
-        raise CompilationError(f"{ref!r}: failed to load {path.relpath}: {e}") from e
-    if not isinstance(content, dict):
-        raise ReferenceError(ref, f"{path.relpath!r} — not a YAML mapping", ref_path)
-    if not isinstance(content.get(section), dict):
+    file's whole mapping (whose board-level `source:` its queries inherit), both
+    migrated to the current grammar."""
+    memo = _MIGRATED_FILES.get()
+    migrated = None if memo is None else memo.get(path.relpath)
+    if migrated is None:
+        try:
+            raw = path.read_yaml()
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+            raise CompilationError(
+                f"{ref!r}: failed to load {path.relpath}: {e}"
+            ) from e
+        if not isinstance(raw, dict):
+            raise ReferenceError(
+                ref, f"{path.relpath!r} — not a YAML mapping", ref_path
+            )
+        with migration_notice_file(path.relpath):
+            # A ref target may be a queries-only file, which AuthoredBoard's
+            # layout requirement would mark stale on every compile.
+            migrated = prepare_board_mapping(raw, model=BoardPatch)
+        if memo is not None:
+            memo[path.relpath] = migrated
+    # Callers rewrite fields of what they import; the memo must stay pristine.
+    content = copy.deepcopy(migrated)
+    section_mapping = content.get(section)
+    if not isinstance(section_mapping, dict):
         raise ReferenceError(
             ref, f"{path.relpath!r} — that file has no {section}: section", ref_path
         )
-    return content[section], content
+    return section_mapping, content

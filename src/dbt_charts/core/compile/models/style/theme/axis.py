@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.constraints import (
     AtMostOneOf,
     ConstrainedModel,
     Constraint,
+    Forbids,
     ItemsMatch,
     ValueIn,
 )
@@ -259,7 +260,7 @@ class AxisTicksStyle(BaseModel):
     )
 
 
-class DimensionTicksStyle(AxisTicksStyle):
+class DimensionTicksStyle(AxisTicksStyle, ConstrainedModel):
     """axis_x-only: adds the calendar unit that anchors a step cadence.
 
     Distinct from ``DimensionLabelStyle.time_unit`` (label-cadence override)
@@ -268,6 +269,22 @@ class DimensionTicksStyle(AxisTicksStyle):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # A bare `step` is deliberately NOT rejected: it is the quantitative-axis
+    # cadence lever (VL's tickMinStep), and whether this axis resolves to
+    # quantitative, temporal, or ordinal is data-dependent. The gate lives in
+    # render/chart/type_inference.py's apply_x_tick_cadence, which every
+    # cartesian x path routes through.
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtMostOneOf(
+            ("time_unit", "count"),
+            "ticks.time_unit and ticks.count cannot both be set — they "
+            "are two different ways to express tick cadence. Use "
+            "ticks.time_unit/step for a step-anchored cadence (every N "
+            "years/quarters/months), or ticks.count for VL's advisory "
+            "tick-count hint, not both.",
+        ),
+    )
 
     # Override base's `visible` type: "auto" (the tick-stub geometry rule) is
     # meaningful only on the bottom axis -- build_cartesian_axes resolves it
@@ -285,24 +302,6 @@ class DimensionTicksStyle(AxisTicksStyle):
         default=None,
         description="Step-anchored tick cadence unit; None disables step-anchored ticks.",
     )
-
-    @model_validator(mode="after")
-    def _validate_cadence(self) -> DimensionTicksStyle:
-        # A bare `step` is deliberately NOT rejected here: it is the
-        # quantitative-axis cadence lever (VL's tickMinStep), and whether this
-        # axis resolves to quantitative, temporal, or ordinal is a
-        # data-dependent answer no model validator has. The gate lives in
-        # render/chart/type_inference.py's apply_x_tick_cadence, which every
-        # cartesian x path routes through.
-        if self.time_unit is not None and self.count is not None:
-            raise ValueError(
-                "ticks.time_unit and ticks.count cannot both be set — they "
-                "are two different ways to express tick cadence. Use "
-                "ticks.time_unit/step for a step-anchored cadence (every N "
-                "years/quarters/months), or ticks.count for VL's advisory "
-                "tick-count hint, not both."
-            )
-        return self
 
 
 class AxisTitleStyle(BaseModel):
@@ -543,13 +542,8 @@ class ScaleDomainValidationMixin(ConstrainedModel):
 
     Inherited by both ``ScaleContinuousStyle`` and its generated Patch so
     chart-local authored patches enforce the same domain rules as
-    theme-stage input — ``build_patch_model_ext`` only carries over
-    validators that live on the patch model's base class.
-
-    The 2-element shape, per-bound typing, and the bool exclusion are on the
-    ``domain`` field's own inner ``Annotated`` layer: ``build_patch_model_ext``
-    copies a field's raw annotation into the Patch but rebuilds its outer
-    ``FieldInfo``, dropping outer ``Field(...)`` constraints.
+    theme-stage input: ``build_patch_model_ext`` carries over field
+    constraints, but not class validators or ``__constraints__``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -617,18 +611,43 @@ class ScaleSymlogStyle(BaseModel):
     )
 
 
-# Carries two validators moved from the old flat BaseScaleStyle:
-# - ScaleDomainValidationMixin: the domain temporal-type check (applies to
-#   both this class and its generated Patch via build_patch_model_ext).
-# - _validate_log_pow_symlog_params: defined DIRECTLY here, NOT on a mixin —
-#   this validator fires on the fully-merged result; it must NOT carry into
-#   the generated Patch since a theme layer may set type: log and a
-#   chart-local patch layer may set only base. The cross-field check fires
-#   once, on the merged result.
 class ScaleContinuousStyle(ScaleDomainValidationMixin):
     """Continuous-scale-only config: type, domain, zero-baseline, log/pow/symlog params."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # NOT on ScaleDomainValidationMixin: these rules and _validate_log_scale
+    # can legitimately span two cascade layers (a theme sets the log type, a
+    # chart overlay sets only log.base). merge_onto_base re-validates the
+    # fully-merged ScaleContinuousStyle, so they fire on the merged result; the
+    # generated Patch, built on the mixin, does not inherit them.
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Forbids(
+            ("log.base",),
+            "scale.continuous.log.base is only meaningful with type: log — "
+            "set axis_y.scale.continuous.type: log, or remove log.base.",
+            when=(ValueIn("type", ("log",), negate=True),),
+        ),
+        Forbids(
+            ("pow.exponent",),
+            "scale.continuous.pow.exponent is only meaningful with type: pow "
+            "— set axis_y.scale.continuous.type: pow, or remove pow.exponent.",
+            when=(ValueIn("type", ("pow",), negate=True),),
+        ),
+        Forbids(
+            ("symlog.constant",),
+            "scale.continuous.symlog.constant is only meaningful with type: "
+            "symlog — set axis_y.scale.continuous.type: symlog, or remove "
+            "symlog.constant.",
+            when=(ValueIn("type", ("symlog",), negate=True),),
+        ),
+        Forbids(
+            ("zero",),
+            "scale.continuous.type: log is incompatible with zero: true — a log "
+            "domain cannot include 0. Remove zero or drop the log scale.",
+            when=(ValueIn("type", ("log",)), ValueIn("zero", (True,))),
+        ),
+    )
 
     zero: bool | Literal["auto"] | None = Field(
         default=None,
@@ -701,44 +720,8 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
         description="Symlog-scale param (constant); only meaningful with type: symlog.",
     )
 
-    # NOT on ScaleDomainValidationMixin: unlike the domain temporal-type check,
-    # this pairing can legitimately span two cascade layers (a theme sets the
-    # log type, a chart overlay sets only log.base) — merge_onto_base
-    # re-validates the fully-merged
-    # ScaleContinuousStyle via model_validate, so this fires on the merged
-    # result, not on an isolated authored patch fragment (the generated Patch
-    # does not inherit it — it is defined directly here, not on a mixin).
     @model_validator(mode="after")
-    def _validate_log_pow_symlog_params(self) -> ScaleContinuousStyle:
-        if self.log is not None and self.log.base is not None and self.type != "log":
-            raise ValueError(
-                "scale.continuous.log.base is only meaningful with type: log — "
-                "set axis_y.scale.continuous.type: log, or remove log.base."
-            )
-        if (
-            self.pow is not None
-            and self.pow.exponent is not None
-            and self.type != "pow"
-        ):
-            raise ValueError(
-                "scale.continuous.pow.exponent is only meaningful with type: pow "
-                "— set axis_y.scale.continuous.type: pow, or remove pow.exponent."
-            )
-        if (
-            self.symlog is not None
-            and self.symlog.constant is not None
-            and self.type != "symlog"
-        ):
-            raise ValueError(
-                "scale.continuous.symlog.constant is only meaningful with type: "
-                "symlog — set axis_y.scale.continuous.type: symlog, or remove "
-                "symlog.constant."
-            )
-        if self.type == "log" and self.zero is True:
-            raise ValueError(
-                "scale.continuous.type: log is incompatible with zero: true — a log "
-                "domain cannot include 0. Remove zero or drop the log scale."
-            )
+    def _validate_log_scale(self) -> ScaleContinuousStyle:
         if (
             self.type == "log"
             and self.domain is not None
@@ -1100,6 +1083,8 @@ class AxisXStyle(BaseAxisStyle):
     # yearmonthdate bucket boundaries are fixed regardless of this value.
     # SkipInheritSlots: matches fill/time_unit/type (x-axis-only fields).
     fiscal_year_start_month: Annotated[int, SkipInheritSlots()] = Field(
+        ge=1,
+        le=12,
         description=(
             "Calendar month (1=Jan..12=Dec) that opens a fiscal year/quarter "
             "for year/yearquarter bucketing; theme default 1 is the calendar "
@@ -1109,16 +1094,6 @@ class AxisXStyle(BaseAxisStyle):
             "would otherwise silently discard the offset."
         ),
     )
-
-    @field_validator("fiscal_year_start_month")
-    @classmethod
-    def _validate_fiscal_year_start_month(cls, value: int) -> int:
-        if not 1 <= value <= 12:
-            raise ValueError(
-                "axis.fiscal_year_start_month must be between 1 and 12 "
-                f"(1=Jan..12=Dec) — got {value}"
-            )
-        return value
 
     @field_validator("fill", mode="before")
     @classmethod

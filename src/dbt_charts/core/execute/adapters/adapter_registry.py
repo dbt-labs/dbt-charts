@@ -45,8 +45,8 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 # won).
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
 from dbt_charts.core.diagnostics.codes_execute import (
-    ERR_NO_DEFAULT_SOURCE,
     ERR_SOURCE_NOT_FOUND_EMPTY,
+    ERR_SOURCE_NOT_NAMED,
 )
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.adapters.base import (
@@ -986,15 +986,15 @@ class AdapterRegistry:
             sources[name] = source_info
         return [sources[name] for name in sorted(sources)]
 
-    def _no_default_source_error(self) -> DbtChartsError:
-        """Build (not raise) ERR-NO-DEFAULT-SOURCE — the single message
+    def _source_not_named_error(self) -> DbtChartsError:
+        """Build (not raise) ERR-SOURCE-NOT-NAMED — the single message
         for "source is None and there is no default to fall back to". Shared
         by ``resolve_source_config(None)`` (raises it) and the sourceless-SQL
         guard in ``execute()`` (returns it as a QueryResult error) so there is
         exactly one place that builds this error.
         """
         return DbtChartsError.from_code(
-            ERR_NO_DEFAULT_SOURCE,
+            ERR_SOURCE_NOT_NAMED,
             available=[s["name"] for s in self.list_sql_sources()],
         )
 
@@ -1017,7 +1017,7 @@ class AdapterRegistry:
         schema list-all): those have no connection and must not be gated on one.
 
         Raises:
-            DbtChartsError: ERR-NO-DEFAULT-SOURCE when SQL names no source
+            DbtChartsError: ERR-SOURCE-NOT-NAMED when SQL names no source
                 (there is no build-time default connection to fall back to), or
                 whatever the resolver raises for an unresolvable name.
         """
@@ -1025,7 +1025,7 @@ class AdapterRegistry:
         if authored is None:
             if not is_sql_query(query):
                 return None
-            raise self._no_default_source_error()
+            raise self._source_not_named_error()
         return self._resolver.resolve(
             authored=authored,
             board_sources=board.sources if board is not None else {},
@@ -1049,13 +1049,13 @@ class AdapterRegistry:
             source_config dict with at least a 'type' key.
 
         Raises:
-            DbtChartsError: ERR-NO-DEFAULT-SOURCE if source is None;
+            DbtChartsError: ERR-SOURCE-NOT-NAMED if source is None;
                 ERR-SOURCE-NOT-FOUND if the named source is missing but
                 others are configured; ERR-SOURCE-NOT-FOUND-EMPTY if no
                 sources are configured.
         """
         if source is None:
-            raise self._no_default_source_error()
+            raise self._source_not_named_error()
 
         config = self._sources.get(source)
         if config and config.get("type"):

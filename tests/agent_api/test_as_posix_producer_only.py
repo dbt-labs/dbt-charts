@@ -43,12 +43,12 @@ ALLOWED: dict[tuple[str, int], str] = {
         "_describe_one_path() except ValueError: same shape as "
         "describe_board() above — resolution failed, nothing to relativize."
     ),
-    ("agent_api/validate.py", 149): (
+    ("agent_api/validate.py", 150): (
         "_validate_one_path() except ValueError: resolve_board_path failed, "
         "raw_path never became a ProjectPath — no root to relativize "
         "against. Echoes the raw caller input, POSIX-normalized."
     ),
-    ("agent_api/validate.py", 192): (
+    ("agent_api/validate.py", 193): (
         "validate() except ValueError: same shape — resolution failed, "
         "nothing to relativize against."
     ),

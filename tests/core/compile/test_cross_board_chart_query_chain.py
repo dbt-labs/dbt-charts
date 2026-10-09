@@ -792,3 +792,55 @@ def test_raw_ref_chain_splits_a_dotted_target_name_on_its_section(
     )
     assert result.success, result.errors
     assert [q.sql for q in result.board.queries.values()] == ["select 1 as x"]
+
+
+def test_imported_chart_from_a_retired_grammar_board_is_migrated(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """The source board compiles on its own because it is migrated in memory;
+    a chart imported from it sees the same migrated grammar, and every compile
+    says which file needs `dct migrate`."""
+    source = tmp_path / "sales" / "weekly_funnel.yaml"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """
+title: Weekly funnel
+queries:
+  mqls_by_week:
+    sql: |
+      SELECT '2026-01-01' AS week, 10 AS mqls
+    source: db
+charts:
+  mqls_by_week:
+    type: bar
+    x: week
+    y: mqls
+    query: mqls_by_week
+    style:
+      legend:
+        visible: true
+        position: bottom
+rows:
+  - mqls_by_week
+"""
+    )
+    project = local_project(root=tmp_path)
+    main_yaml = """
+title: Slide
+charts:
+  mqls_by_week: sales/weekly_funnel.yaml.charts.mqls_by_week
+rows:
+  - mqls_by_week
+"""
+    for _ in range(2):
+        result = compile(main_yaml, base_dir=project.directory())
+
+        assert result.success, [str(e) for e in result.errors]
+        assert result.board is not None
+        legend = result.board.charts["mqls_by_week"].style.legend
+        assert legend.position.edge == "bottom"
+        assert any(
+            w.code == "WARN-SCHEMA-MIGRATED"
+            and w.message.startswith("sales/weekly_funnel.yaml:")
+            for w in result.warnings
+        ), [w.message for w in result.warnings]

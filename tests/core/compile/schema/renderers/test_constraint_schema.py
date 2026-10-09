@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.constraints import (
     IsList,
     IsSet,
     ItemsMatch,
+    NotNull,
     Requires,
     ValueIn,
 )
@@ -42,6 +43,7 @@ class _Probe(ConstrainedModel):
         ItemsMatch(
             "items", "^[0-9]+$", "{item!r} is not digits", when=(IsList("items"),)
         ),
+        NotNull(("n",), "n is null: omit it"),
     )
 
     a: str | None = None
@@ -50,6 +52,7 @@ class _Probe(ConstrainedModel):
     flag: bool | None = None
     inner: _Inner | None = None
     items: list[str] | str | None = None
+    n: str | None = None
 
 
 _VALIDATOR = Draft202012Validator(
@@ -78,6 +81,8 @@ _CASES: list[dict[str, Any]] = [
     {"items": "z"},
     {"a": "x", "flag": False},
     {"a": "x", "flag": False, "kind": "z"},
+    {"a": "x", "n": None},
+    {"a": "x", "n": "x"},
 ]
 
 
@@ -164,3 +169,44 @@ def test_misspelled_nonempty_key_fails_at_class_creation() -> None:
             )
 
             b: str | None = None
+
+
+def test_not_null_rejects_only_a_written_null() -> None:
+    with pytest.raises(ValidationError, match="n is null"):
+        _Probe.model_validate({"a": "x", "n": None})
+    _Probe.model_validate({"a": "x", "n": "x"})
+    _Probe.model_validate({"a": "x"})
+
+
+def test_not_null_refuses_a_dotted_key_at_class_creation() -> None:
+    with pytest.raises(TypeError, match="top-level keys"):
+
+        class _Dotted(ConstrainedModel):
+            __constraints__: ClassVar[tuple[Constraint, ...]] = (
+                NotNull(("inner.c",), "m"),
+            )
+            inner: _Inner | None = None
+
+
+class _NullProbe(ConstrainedModel):
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Requires(("b",), "no inner.c needs b", when=(ValueIn("inner.c", (None,)),)),
+    )
+
+    b: str | None = None
+    inner: _Inner | None = None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"inner": None}, {"inner": {}}, {"inner": {"c": None}}, {"inner": {"c": "x"}}],
+    ids=str,
+)
+def test_value_in_none_matches_an_absent_key(payload: dict[str, Any]) -> None:
+    validator = Draft202012Validator(constraint_schema(_NullProbe.__constraints__))
+    try:
+        _NullProbe.model_validate(payload)
+        python_ok = True
+    except ValidationError:
+        python_ok = False
+    assert validator.is_valid(payload) == python_ok

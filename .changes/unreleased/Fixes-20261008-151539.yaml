@@ -1,0 +1,3 @@
+kind: Fixes
+body: The design API offers a variable's min, max and step only on inputs that read them, and number inputs keep them.
+time: 2026-10-08T15:15:39.691472-07:00

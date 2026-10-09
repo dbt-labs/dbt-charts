@@ -40,7 +40,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
-    FormatAliases,
+    FormatTable,
     ResolvedFormat,
     resolved_as,
 )
@@ -251,7 +251,7 @@ def apply_measure_format_to_support_table(
 
 def resolve_support_table(
     support_table: ChartSupportTable,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
     y: str | list[str] | None,
     *,

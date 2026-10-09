@@ -35,10 +35,10 @@ class TestSubqueryReaggregation:
     """Detect aggregation applied to columns that are already aggregate-derived
     in a subquery."""
 
-    def test_sum_of_derived_sum(self) -> None:
-        """SUM(total) where total = SUM(amount) in subquery."""
+    def test_avg_of_derived_sum_by_group(self) -> None:
+        """AVG(total) where total = SUM(amount) in subquery."""
         sql = """
-            SELECT region, SUM(total) AS grand_total
+            SELECT region, AVG(total) AS grand_total
             FROM (
                 SELECT region, SUM(amount) AS total
                 FROM orders
@@ -64,10 +64,10 @@ class TestSubqueryReaggregation:
         codes = [d.code for d in diags]
         assert "WARN-REAGGREGATION" in codes
 
-    def test_count_of_derived_count(self) -> None:
-        """SUM(cnt) where cnt = COUNT(*) in subquery."""
+    def test_avg_of_derived_count(self) -> None:
+        """AVG(cnt) where cnt = COUNT(*) in subquery."""
         sql = """
-            SELECT SUM(cnt) AS total_count
+            SELECT AVG(cnt) AS mean_count
             FROM (
                 SELECT customer_id, COUNT(*) AS cnt
                 FROM orders
@@ -94,9 +94,9 @@ class TestSubqueryReaggregation:
 
     def test_severity_is_warning(self) -> None:
         sql = """
-            SELECT SUM(total)
+            SELECT AVG(total)
             FROM (
-                SELECT SUM(amount) AS total
+                SELECT AVG(amount) AS total
                 FROM orders
                 GROUP BY region
             ) sub
@@ -108,9 +108,9 @@ class TestSubqueryReaggregation:
 
     def test_recommendation_present(self) -> None:
         sql = """
-            SELECT SUM(total)
+            SELECT AVG(total)
             FROM (
-                SELECT SUM(amount) AS total FROM orders GROUP BY region
+                SELECT AVG(amount) AS total FROM orders GROUP BY region
             ) sub
         """
         diags = validate_query(sql)
@@ -127,14 +127,14 @@ class TestSubqueryReaggregation:
 class TestCTEReaggregation:
     """Detect re-aggregation through Common Table Expressions."""
 
-    def test_sum_of_cte_aggregate(self) -> None:
+    def test_avg_of_cte_aggregate(self) -> None:
         sql = """
             WITH totals AS (
                 SELECT region, SUM(amount) AS total
                 FROM orders
                 GROUP BY region
             )
-            SELECT SUM(total) FROM totals
+            SELECT AVG(total) FROM totals
         """
         diags = validate_query(sql)
         codes = [d.code for d in diags]
@@ -301,7 +301,7 @@ class TestAliasReuseAcrossScopes:
                 SELECT a.k, total
                 FROM a JOIN b ON a.k = b.k
               )
-            SELECT SUM(total) FROM combined
+            SELECT AVG(total) FROM combined
         """
         diags = validate_query(sql)
         reagg = [d for d in diags if d.code == "WARN-REAGGREGATION"]
@@ -381,7 +381,7 @@ class TestReaggregationEdgeCases:
     def test_deeply_nested_reaggregation(self) -> None:
         """Two levels of nesting — inner aggregate re-aggregated at outer."""
         sql = """
-            SELECT SUM(mid_total)
+            SELECT AVG(mid_total)
             FROM (
                 SELECT SUM(total) AS mid_total
                 FROM (
@@ -398,7 +398,7 @@ class TestReaggregationEdgeCases:
     def test_mixed_safe_and_unsafe(self) -> None:
         """One aggregate on raw column, one on derived aggregate."""
         sql = """
-            SELECT SUM(total), MAX(region)
+            SELECT AVG(total), MAX(region)
             FROM (
                 SELECT region, SUM(amount) AS total
                 FROM orders
@@ -407,14 +407,14 @@ class TestReaggregationEdgeCases:
         """
         diags = validate_query(sql)
         reagg = [d for d in diags if d.code == "WARN-REAGGREGATION"]
-        # Should flag SUM(total) but not MAX(region)
+        # Should flag AVG(total) but not MAX(region)
         assert len(reagg) == 1
         assert "total" in reagg[0].message.lower()
 
     def test_same_column_name_different_sources_both_flagged(self) -> None:
         """Same column name from two sources — both should be flagged."""
         sql = """
-            SELECT SUM(a.total), SUM(b.total)
+            SELECT AVG(a.total), AVG(b.total)
             FROM (SELECT SUM(x) AS total FROM t1 GROUP BY k) a
             JOIN (SELECT SUM(y) AS total FROM t2 GROUP BY k) b ON a.k = b.k
         """
@@ -432,7 +432,7 @@ class TestReaggregationEdgeCases:
                 GROUP BY region
             ) sub
             GROUP BY region
-            HAVING SUM(total) > 100
+            HAVING AVG(total) > 100
         """
         diags = validate_query(sql)
         reagg = [d for d in diags if d.code == "WARN-REAGGREGATION"]
@@ -441,7 +441,7 @@ class TestReaggregationEdgeCases:
     def test_detail_mentions_column(self) -> None:
         """Diagnostic detail should mention the offending column."""
         sql = """
-            SELECT SUM(total)
+            SELECT AVG(total)
             FROM (
                 SELECT SUM(amount) AS total FROM orders GROUP BY region
             ) sub
@@ -474,7 +474,7 @@ class TestReaggregationEdgeCases:
             passthrough AS (
                 SELECT region, total FROM base
             )
-            SELECT SUM(total) FROM passthrough
+            SELECT AVG(total) FROM passthrough
         """
         diags = validate_query(sql)
         assert _has_reaggregation(diags)
@@ -485,10 +485,151 @@ class TestReaggregationEdgeCases:
             WITH base AS (
                 SELECT region, SUM(amount) AS total FROM orders GROUP BY region
             )
-            SELECT SUM(total) FROM (SELECT region, total FROM base) sub
+            SELECT AVG(total) FROM (SELECT region, total FROM base) sub
         """
         diags = validate_query(sql)
         assert _has_reaggregation(diags)
+
+
+# ---------------------------------------------------------------------------
+# Composable vs non-composable pairs
+# ---------------------------------------------------------------------------
+
+_MONTHLY = """
+    WITH monthly AS (
+        SELECT month, SUM(amount) AS total, COUNT(*) AS n,
+               MAX(amount) AS peak, MIN(amount) AS low, AVG(amount) AS mean
+        FROM orders
+        GROUP BY month
+    )
+"""
+
+
+def _reaggregation_messages(sql: str) -> list[str]:
+    return [d.message for d in validate_query(sql) if d.code == "WARN-REAGGREGATION"]
+
+
+class TestComposablePairs:
+    """Only pairs whose result depends on the grouping fire."""
+
+    def test_lag_over_a_monthly_total_is_not_flagged(self) -> None:
+        sql = (
+            _MONTHLY
+            + "SELECT month, total / LAG(total) OVER (ORDER BY month) - 1 FROM monthly"
+        )
+        assert _reaggregation_messages(sql) == []
+
+    def test_running_sum_over_a_total_is_not_flagged(self) -> None:
+        sql = _MONTHLY + "SELECT month, SUM(total) OVER (ORDER BY month) FROM monthly"
+        assert _reaggregation_messages(sql) == []
+
+    def test_windowed_avg_over_a_total_is_not_flagged(self) -> None:
+        sql = (
+            _MONTHLY
+            + "SELECT month, AVG(total) OVER (ORDER BY month ROWS 2 PRECEDING) "
+            + "FROM monthly"
+        )
+        assert _reaggregation_messages(sql) == []
+
+    def test_filter_pivot_is_not_flagged(self) -> None:
+        sql = (
+            _MONTHLY
+            + "SELECT AVG(total) FILTER (WHERE month = DATE '2026-07-01') FROM monthly"
+        )
+        assert _reaggregation_messages(sql) == []
+
+    def test_sum_of_count_is_not_flagged(self) -> None:
+        assert _reaggregation_messages(_MONTHLY + "SELECT SUM(n) FROM monthly") == []
+
+    def test_sum_of_sum_is_not_flagged(self) -> None:
+        assert (
+            _reaggregation_messages(_MONTHLY + "SELECT SUM(total) FROM monthly") == []
+        )
+
+    def test_count_of_sum_is_not_flagged(self) -> None:
+        assert (
+            _reaggregation_messages(_MONTHLY + "SELECT COUNT(total) FROM monthly") == []
+        )
+
+    def test_max_of_max_and_min_of_min_are_not_flagged(self) -> None:
+        sql = _MONTHLY + "SELECT MAX(peak), MIN(low) FROM monthly"
+        assert _reaggregation_messages(sql) == []
+
+
+class TestDistinctOverAggregate:
+    """DISTINCT collapses equal pre-aggregated values, so it never composes."""
+
+    def test_sum_distinct_of_sum_names_both(self) -> None:
+        messages = _reaggregation_messages(
+            _MONTHLY + "SELECT SUM(DISTINCT total) FROM monthly"
+        )
+        assert len(messages) == 1
+        assert "SUM DISTINCT over SUM" in messages[0]
+
+    def test_count_distinct_of_sum_fires(self) -> None:
+        messages = _reaggregation_messages(
+            _MONTHLY + "SELECT COUNT(DISTINCT total) FROM monthly"
+        )
+        assert len(messages) == 1
+        assert "COUNT DISTINCT over SUM" in messages[0]
+
+    def test_avg_distinct_of_count_fires(self) -> None:
+        messages = _reaggregation_messages(
+            _MONTHLY + "SELECT AVG(DISTINCT n) FROM monthly"
+        )
+        assert len(messages) == 1
+        assert "AVG DISTINCT over COUNT" in messages[0]
+
+    def test_plain_sum_of_the_same_column_stays_quiet(self) -> None:
+        assert (
+            _reaggregation_messages(_MONTHLY + "SELECT SUM(total) FROM monthly") == []
+        )
+
+    def test_distinct_over_a_raw_column_stays_quiet(self) -> None:
+        sql = "SELECT SUM(DISTINCT amount) FROM (SELECT amount FROM orders) s"
+        assert _reaggregation_messages(sql) == []
+
+
+class TestNonComposablePairs:
+    """The message names the outer function and the aggregate it sits on."""
+
+    def test_avg_of_avg_names_both(self) -> None:
+        messages = _reaggregation_messages(_MONTHLY + "SELECT AVG(mean) FROM monthly")
+        assert len(messages) == 1
+        assert "AVG over AVG" in messages[0]
+
+    def test_avg_of_sum_names_both(self) -> None:
+        messages = _reaggregation_messages(_MONTHLY + "SELECT AVG(total) FROM monthly")
+        assert len(messages) == 1
+        assert "AVG over SUM" in messages[0]
+
+    def test_median_of_count_names_both(self) -> None:
+        messages = _reaggregation_messages(_MONTHLY + "SELECT MEDIAN(n) FROM monthly")
+        assert len(messages) == 1
+        assert "MEDIAN over COUNT" in messages[0]
+
+    def test_percentile_of_sum_names_both(self) -> None:
+        sql = (
+            _MONTHLY
+            + "SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY total) FROM monthly"
+        )
+        messages = _reaggregation_messages(sql)
+        assert len(messages) == 1
+        assert "PERCENTILE_CONT over SUM" in messages[0]
+
+    def test_sum_of_avg_names_both(self) -> None:
+        messages = _reaggregation_messages(_MONTHLY + "SELECT SUM(mean) FROM monthly")
+        assert len(messages) == 1
+        assert "SUM over AVG" in messages[0]
+
+    def test_inner_function_survives_a_passthrough_cte(self) -> None:
+        sql = (
+            _MONTHLY
+            + ", pass AS (SELECT month, mean FROM monthly) SELECT SUM(mean) FROM pass"
+        )
+        messages = _reaggregation_messages(sql)
+        assert len(messages) == 1
+        assert "SUM over AVG" in messages[0]
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +643,7 @@ class TestReaggregationCLI:
     def test_cli_shows_reaggregation_warning(self, tmp_path: Path) -> None:
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
         sql = (
-            "SELECT SUM(total) FROM "
+            "SELECT AVG(total) FROM "
             "(SELECT SUM(amount) AS total FROM orders GROUP BY region) sub"
         )
         result = runner.invoke(
@@ -514,7 +655,7 @@ class TestReaggregationCLI:
     def test_cli_json_includes_reaggregation(self, tmp_path: Path) -> None:
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
         sql = (
-            "SELECT SUM(total) FROM "
+            "SELECT AVG(total) FROM "
             "(SELECT SUM(amount) AS total FROM orders GROUP BY region) sub"
         )
         result = runner.invoke(
@@ -531,130 +672,3 @@ class TestReaggregationCLI:
         )
         parsed = json.loads(result.output)
         assert any(d["code"] == "WARN-REAGGREGATION" for d in parsed)
-
-
-# ===========================================================================
-# Looker symmetric-aggregate carve-out
-# ===========================================================================
-
-# Looker's fan-out-safe measure: pack the measure with a hash of the dedup key,
-# SUM(DISTINCT ...) to collapse duplicate keys, then subtract a second
-# SUM(DISTINCT hash-only) to remove the packed hash mass. The subtraction is what
-# makes it the identity `sum of M over distinct K` rather than a second summation.
-# Reduced from the real emission in the Fivetran `revenue_change` TV board; the
-# sibling emitter is libs/looker/likeml/src/likeml/symmetric.py.
-_OFFSET = (
-    "(CAST(CAST(CONCAT('0x', SUBSTR(TO_HEX(MD5(CAST(g.goal_name AS STRING))), 1, 15))"
-    " AS INT64) AS NUMERIC) * 4294967296 + CAST(CAST(CONCAT('0x',"
-    " SUBSTR(TO_HEX(MD5(CAST(g.goal_name AS STRING))), 16, 8)) AS INT64) AS NUMERIC))"
-    " * 0.000000001"
-)
-
-_GOALS_CTE = """
-    WITH goals AS (
-        SELECT date, goal_name, SUM(goal) AS goal
-        FROM raw_goals
-        GROUP BY 1, 2
-    )
-"""
-
-
-def _symmetric_query(measure: str = "g.goal") -> str:
-    """A symmetric aggregate over the pre-aggregated `goals` CTE."""
-    return f"""{_GOALS_CTE}
-        SELECT
-            r.month,
-            ROUND(COALESCE(CAST((
-                SUM(DISTINCT (CAST(ROUND(COALESCE({measure}, 0) * (1/1000*1.0), 9)
-                    AS NUMERIC) + {_OFFSET}))
-                - SUM(DISTINCT ({_OFFSET}))
-            ) / (1/1000*1.0) AS NUMERIC), 0), 6) AS goal_amount
-        FROM revenue r
-        LEFT JOIN goals g ON r.month = g.date
-        GROUP BY 1
-    """
-
-
-class TestLookerSymmetricAggregate:
-    """Looker's symmetric aggregate reads a per-key value across a fan-out join.
-
-    It is an algebraic identity, not a second aggregation, so it must not trip
-    WARN-REAGGREGATION — but the exemption is keyed to that exact shape, not to
-    SUM(DISTINCT ...) in general.
-    """
-
-    def test_symmetric_aggregate_over_aggregated_cte_not_flagged(self) -> None:
-        diags = validate_query(_symmetric_query(), dialect="bigquery")
-        assert not _has_reaggregation(diags)
-
-    def test_plain_sum_of_pre_summed_column_still_flagged(self) -> None:
-        """The bug the check exists for — same CTE, no symmetric aggregate."""
-        sql = f"""{_GOALS_CTE}
-            SELECT r.month, SUM(g.goal) AS goal_amount
-            FROM revenue r
-            LEFT JOIN goals g ON r.month = g.date
-            GROUP BY 1
-        """
-        diags = validate_query(sql, dialect="bigquery")
-        assert _has_reaggregation(diags)
-
-    def test_sum_distinct_without_hash_still_flagged(self) -> None:
-        """DISTINCT alone does not make re-aggregation safe."""
-        sql = f"""{_GOALS_CTE}
-            SELECT r.month, SUM(DISTINCT g.goal) AS goal_amount
-            FROM revenue r
-            LEFT JOIN goals g ON r.month = g.date
-            GROUP BY 1
-        """
-        diags = validate_query(sql, dialect="bigquery")
-        assert _has_reaggregation(diags)
-
-    def test_hashed_sum_distinct_without_paired_half_still_flagged(self) -> None:
-        """A measure half with no subtracted hash-only half is not an identity —
-        it is a meaningless number, and worth warning about."""
-        sql = f"""{_GOALS_CTE}
-            SELECT
-                r.month,
-                SUM(DISTINCT (CAST(ROUND(COALESCE(g.goal, 0) * (1/1000*1.0), 9)
-                    AS NUMERIC) + {_OFFSET})) AS goal_amount
-            FROM revenue r
-            LEFT JOIN goals g ON r.month = g.date
-            GROUP BY 1
-        """
-        diags = validate_query(sql, dialect="bigquery")
-        assert _has_reaggregation(diags)
-
-    def test_farm_fingerprint_variant_not_flagged(self) -> None:
-        """Non-BigQuery-MD5 Looker dialects hash with FARM_FINGERPRINT."""
-        offset = "CAST(FARM_FINGERPRINT(CAST(g.goal_name AS STRING)) AS NUMERIC) * 1e18"
-        sql = f"""{_GOALS_CTE}
-            SELECT
-                r.month,
-                (SUM(DISTINCT (CAST(g.goal AS NUMERIC) + {offset}))
-                 - SUM(DISTINCT ({offset}))) AS goal_amount
-            FROM revenue r
-            LEFT JOIN goals g ON r.month = g.date
-            GROUP BY 1
-        """
-        diags = validate_query(sql, dialect="bigquery")
-        assert not _has_reaggregation(diags)
-
-    def test_sibling_operand_must_itself_be_the_hash_half(self) -> None:
-        """The pairing requires the other operand to BE a hash-only half.
-
-        Searching its subtree instead would let any hashed `SUM(DISTINCT ...)`
-        buried anywhere inside the sibling satisfy the pairing, carrying a real
-        re-aggregation along with it.
-        """
-        sql = f"""{_GOALS_CTE}
-            SELECT
-                r.month,
-                (SUM(DISTINCT (CAST(ROUND(COALESCE(g.goal, 0), 9) AS NUMERIC)
-                    + {_OFFSET}))
-                 - (SUM(DISTINCT ({_OFFSET})) + SUM(r.amount))) AS goal_amount
-            FROM revenue r
-            LEFT JOIN goals g ON r.month = g.date
-            GROUP BY 1
-        """
-        diags = validate_query(sql, dialect="bigquery")
-        assert _has_reaggregation(diags)

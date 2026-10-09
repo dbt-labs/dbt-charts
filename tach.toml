@@ -69,19 +69,25 @@ exclude = [
     "dbt_adapters",
     "dbt_common",
     "dbt_core",
-    # Pillow ships the `PIL` import; declared as a direct dependency in
-    # pyproject.toml (core/compile/sizing uses PIL.ImageFont at compile
-    # time for title-width measurement). Excluded from tach's external
-    # check because tach looks up the import name `PIL`, not the
-    # PyPI-normalized name `pillow`.
+    # Pillow ships the `PIL` import and is a dev dependency (tests only).
+    # Excluded from tach's external check because tach looks up the import
+    # name `PIL`, not the PyPI-normalized name `pillow`.
     "pillow",
+    # `adbc-driver-manager`, `zstandard` and `platformdirs` are declared in
+    # [project.optional-dependencies] lakecompute (tach 0.35.0 only reads
+    # [project] dependencies, not optional-deps). All three are imported by
+    # `execute/drivers/`, which `open_driver` imports lazily — so a wheel
+    # without the extra never loads any of them.
+    "adbc_driver_manager",
+    "zstandard",
+    "platformdirs",
     # `google-cloud-bigquery` is declared in [project.optional-dependencies]
     # bigquery (tach 0.35.0 only reads [project] dependencies, not optional-deps).
     # Imported lazily in _SourcePool._ensure_connected when type==bigquery.
     # Tach normalizes the PyPI name: `google-cloud-bigquery` → `google_cloud_bigquery`.
     "google_cloud_bigquery",
-    # `import databricks.sql` (used in databricks_connection_manager.py and
-    # connections.py's list_catalogs) is pulled via the databricks optional-dep;
+    # `import databricks.sql` (used in databricks_connection_manager.py) is
+    # pulled via the databricks optional-dep;
     # tach reads only [project] deps. The top-level
     # `databricks` namespace is owned by `databricks-sdk` (the dist whose top_level
     # is `databricks`), so tach resolves the import to `databricks_sdk`.

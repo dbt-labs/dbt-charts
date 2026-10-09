@@ -253,7 +253,6 @@ class TestQueryResultCacheProtocol:
                 query_name,
                 source_name="",
                 truncated_reason=None,
-                arrow=None,
             ):
                 pass
 
@@ -265,15 +264,6 @@ class TestQueryResultCacheProtocol:
 
             def supports_cache_refs(self):
                 return False
-
-            def execute_file_source_sql(self, sql, params):
-                raise RuntimeError("not supported")
-
-            def register_file_table(self, table_name, source_hash, fingerprint_hash):
-                pass
-
-            def disable_external_access(self) -> None:
-                pass
 
         fake = FakeCache()
         assert isinstance(fake, QueryResultCache)
@@ -298,7 +288,6 @@ class TestQueryResultCacheProtocol:
                 query_name,
                 source_name="",
                 truncated_reason=None,
-                arrow=None,
             ):
                 pass
 
@@ -310,15 +299,6 @@ class TestQueryResultCacheProtocol:
 
             def supports_cache_refs(self):
                 return False
-
-            def execute_file_source_sql(self, sql, params):
-                raise RuntimeError("not supported")
-
-            def register_file_table(self, table_name, source_hash, fingerprint_hash):
-                pass
-
-            def disable_external_access(self) -> None:
-                pass
 
         assert isinstance(NoopCache(), QueryResultCache)
 

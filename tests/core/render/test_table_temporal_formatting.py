@@ -190,7 +190,7 @@ class TestFormatTableCellValueTemporal:
         # Integer: not temporal — formats via the theme's number spec
         # (SI here), not the date path.
         result = format_table_cell_value(1234, None, {"date_short": _DATE_SHORT_FORMAT})
-        assert result == "1.23 K"
+        assert result == "1.23\u00a0K"
 
     def test_single_digit_day_no_leading_zero(self) -> None:
         # %-d suppresses leading zero: "5 Jan 2024" not "05 Jan 2024"

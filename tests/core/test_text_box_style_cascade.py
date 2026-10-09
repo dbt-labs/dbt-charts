@@ -182,7 +182,7 @@ class TestGetCompactStyleMapper:
 
         data = get_theme_style().text.code.model_dump(mode="python")
         data["theme"] = "definitely-not-a-pygments-theme"
-        with pytest.raises(ValueError, match="Invalid Pygments code theme"):
+        with pytest.raises(ValueError, match="monokai"):
             TextCodeStyle.model_validate(data)
 
     def test_link_color_from_accent(self) -> None:
@@ -661,7 +661,7 @@ class TestBoldFontWeightCascade:
 
         data = get_theme_style().text.bold.model_dump(mode="python")
         data["weight"] = "semibold"
-        with pytest.raises(ValueError, match="not a valid CSS font-weight"):
+        with pytest.raises(ValueError, match="'normal', 'bold'"):
             TextBoldStyle.model_validate(data)
 
     def test_resolved_callout_bold_font_weight_from_theme_token(self) -> None:

@@ -29,6 +29,8 @@ from dbt_charts.core.compile.models.chart.normalized import (
     SVG_LAYOUT_PADDED_TYPES,
 )
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved.callout import ResolvedCalloutChart
+from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic, display_message
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -36,22 +38,28 @@ from dbt_charts.core.diagnostics.registry import REGISTRY
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
+from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.layout_sizing import RenderCache
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.primitives import BorderStyle
     from dbt_charts.core.compile.models.style.resolved import ResolvedCalloutStyle
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.render.conditions import evaluate_visible
 from dbt_charts.core.render.svg_utils import (
+    CardShadow,
     attr_name,
     authored_attrs,
     border_dash_attrs,
+    border_rect,
     escape_attr,
     extract_svg_dimensions,
     extract_svg_inner_content,
     padded_authoring_content,
     px,
+    round_clipped,
     selection_boxes,
+    shadow_rect,
 )
 
 _ZERO_PADDING: dict[str, float] = {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
@@ -270,6 +278,8 @@ def _render_callout_block(
         resolved_title=chart.id,
         extra_classes=("dbt-chart-callout",),
         is_error_fallback=True,
+        card_border=None,
+        card_shadow=None,
         inset=None,
         # The placard draws at the full available size — no padding is baked
         # into it, so there is nothing for its box to sit outside of.
@@ -329,6 +339,8 @@ def _render_chart_resolve_failure(
         resolved_title=failure.identity.id,
         extra_classes=("dbt-chart-callout",),
         is_error_fallback=True,
+        card_border=None,
+        card_shadow=None,
         inset=None,
         # The placard draws at the full available size — no padding is baked
         # into it, so there is nothing for its box to sit outside of.
@@ -508,54 +520,16 @@ def _render_chart_item_inner(
             padding=padding,
             title_shift=title_shift,
         )
-        from dbt_charts.core.render.layout_sizing import (
-            _support_table_of,
-            _support_table_title_corrected_offset,
+        shift_artifact_title(artifact, title_shift)
+        chart_svg = render_chart_artifact(
+            artifact,
+            "svg",
+            resolved_style,
+            width=available_width,
+            height=available_height,
+            is_placeholder=False,
+            chart_id=chart.id,
         )
-
-        def draw() -> str:
-            return render_chart_artifact(
-                artifact,
-                "svg",
-                resolved_style,
-                width=available_width,
-                height=available_height,
-                is_placeholder=False,
-                chart_id=chart.id,
-            )
-
-        # Calibrate title.offset for titled top support_table charts so both the
-        # sizing pass (dct render) and artifact replay (dct artifact render) apply
-        # the same correction. The sizing pass caches the calibrated SVG and this
-        # path is only reached on a cache miss (empty render_cache in artifact replay).
-        # The row's title shift goes on after the calibration, which measures the
-        # unshifted title.
-        if (
-            _support_table_of(chart) is not None
-            and artifact.kind == "vega_spec"
-            and isinstance(artifact.payload, dict)
-        ):
-            chart_svg = draw()
-            spec = artifact.payload
-            spec_target = spec["hconcat"][0] if "hconcat" in spec else spec
-            redraw = not title_shift.is_zero
-            if isinstance(spec_target, dict):
-                title_block = spec_target.get("title")
-                if isinstance(title_block, dict):
-                    raw_offset = title_block.get("offset")
-                    if isinstance(raw_offset, (int, float)):
-                        corrected_offset = _support_table_title_corrected_offset(
-                            chart_svg, float(raw_offset)
-                        )
-                        if corrected_offset is not None:
-                            title_block["offset"] = corrected_offset
-                            redraw = True
-            if redraw:
-                shift_artifact_title(artifact, title_shift)
-                chart_svg = draw()
-        else:
-            shift_artifact_title(artifact, title_shift)
-            chart_svg = draw()
 
     if paints_marks and v2_data:
         from dbt_charts.core.diagnostics.codes_render import ERR_CHART_PAINTED_NO_MARKS
@@ -575,6 +549,7 @@ def _render_chart_item_inner(
                 ERR_CHART_PAINTED_NO_MARKS,
                 chart_id=chart.id,
                 row_count=len(v2_data),
+                card_width=f"{available_width:g}",
             )
 
     # KPI charts carry their authored text in ``label``; every other chart type
@@ -583,6 +558,7 @@ def _render_chart_item_inner(
     # tied to the YAML field name).
     chart_title_source = chart.label if chart.chart_type == "kpi" else chart.title
     chart_title = chart_title_source or chart.id
+    card_border = _card_border(chart, resolved_style)
 
     return _wrap_rendered_chart_svg(
         ChartIdentity.from_resolved(chart),
@@ -596,7 +572,56 @@ def _render_chart_item_inner(
             else _ZERO_PADDING
         ),
         inset=inset,
+        card_border=card_border,
+        card_shadow=_card_shadow(chart, card_border, resolved_style),
     )
+
+
+def _card_border(
+    chart: ResolvedChart, resolved_style: ResolvedStyle
+) -> BorderStyle | None:
+    """The border framing this chart's card; ``None`` for a callout, which draws its own."""
+    if chart.chart_type == "callout":
+        return None
+    own: BorderStyle | None = None
+    if chart.chart_type == "kpi" and chart.style.kpi is not None:
+        own = chart.style.kpi.border
+    elif chart.chart_type == "table":
+        own = chart.style.table.border
+    elif chart.chart_type == "geoshape" and chart.style.geoshape is not None:
+        own = chart.style.geoshape.border
+    elif chart.chart_type == "point_map" and chart.style.point_map is not None:
+        own = chart.style.point_map.border
+    elif chart.chart_type not in ("kpi", "geoshape", "point_map"):
+        return resolved_style.chart_defaults.border
+    if own is None:
+        raise RenderError.from_code(
+            ERR_INTERNAL,
+            message=f"chart {chart.id!r}: card border was not filled by the cascade",
+        )
+    return own
+
+
+def _card_shadow(
+    chart: ResolvedChart, border: BorderStyle | None, resolved_style: ResolvedStyle
+) -> CardShadow | None:
+    """The shadow under this chart's card, filled with the canvas it paints on.
+
+    KPI and callout carry no composited canvas of their own, so they take the board's.
+    """
+    shadow = resolved_style.box_shadow
+    if shadow is None:
+        return None
+    if isinstance(chart, ResolvedCalloutChart):
+        return CardShadow(
+            shadow, resolved_style.chart_defaults.ink_canvas, chart.style.border.radius
+        )
+    if isinstance(chart, ResolvedKpiChart):
+        canvas = resolved_style.chart_defaults.ink_canvas
+    else:
+        canvas = chart.canvas
+    radius = (border or resolved_style.chart_defaults.border).radius
+    return CardShadow(shadow, canvas, radius)
 
 
 def _ink_carries_padding(chart: ResolvedChart) -> bool:
@@ -629,6 +654,9 @@ def _wrap_rendered_chart_svg(
     resolved_subtitle: str | None = None,
     extra_classes: tuple[str, ...] = (),
     is_error_fallback: bool = False,
+    *,
+    card_border: BorderStyle | None,
+    card_shadow: CardShadow | None,
 ) -> tuple[str, float]:
     dims = extract_svg_dimensions(chart_svg)
     # Internal SVG-family renderers embed directly in the chart wrapper <g>;
@@ -675,6 +703,22 @@ def _wrap_rendered_chart_svg(
         # while a hand-drawn card paints full-bleed at 0,0.
         boundary = selection_boxes(outer_width, dims.height, ink_inset) + chart_content
         actual_height = dims.height
+
+    radius = (
+        card_border.radius
+        if card_border is not None
+        else card_shadow.radius
+        if card_shadow is not None
+        else 0.0
+    )
+    if radius > 0:
+        boundary = round_clipped(boundary, outer_width, actual_height, radius)
+    if card_shadow is not None:
+        boundary = shadow_rect(outer_width, actual_height, card_shadow) + boundary
+    if card_border is not None:
+        boundary += border_rect(
+            outer_width, actual_height, card_border, "dbt-card-border"
+        )
 
     var_deps = identity.variable_dependencies
     notes = identity.notes

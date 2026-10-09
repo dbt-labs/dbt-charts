@@ -111,7 +111,7 @@ def test_height_provider_uses_nested_board_resolved_style() -> None:
     ) -> tuple[str, float, float]:
         rs = kwargs.get("resolved_style")
         rendered_style_ids.append(id(rs))
-        return f'<svg viewBox="0 0 {width} 300"></svg>', float(width), 300.0, None
+        return f'<svg viewBox="0 0 {width} 300"></svg>', float(width), 300.0
 
     style_contexts = {id(outer_rs): outer_ctx, id(nested_rs): nested_ctx}
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
@@ -236,7 +236,7 @@ def test_sibling_nested_boards_different_themes_get_correct_resolved_styles() ->
     ) -> tuple[str, float, float]:
         rs = kwargs.get("resolved_style")
         rendered_styles[resolved_v2.id] = id(rs)
-        return f'<svg viewBox="0 0 {width} 300"></svg>', float(width), 300.0, None
+        return f'<svg viewBox="0 0 {width} 300"></svg>', float(width), 300.0
 
     style_contexts = {id(cream_rs): cream_ctx, id(stark_rs): stark_ctx}
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
@@ -330,7 +330,7 @@ def test_height_provider_resolved_style_param_propagated_to_render(
 
     def fake_render(_rv2, _ex, _vars, width: float, **kw) -> tuple[str, float, float]:
         captured_styles.append(id(kw.get("resolved_style")))
-        return f'<svg viewBox="0 0 {width} 300"></svg>', float(width), 300.0, None
+        return f'<svg viewBox="0 0 {width} 300"></svg>', float(width), 300.0
 
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
         provider = _make_data_aware_height_provider(

@@ -16,15 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
-from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
-from dbt_charts.core.compile.models.chart.normalized import (
-    AreaChart,
-    BarChart,
-    HeatmapChart,
-    LineChart,
-    ScatterChart,
-)
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -52,9 +44,6 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import build_resolved_axis
 from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
-from dbt_charts.core.diagnostics.codes_compile import (
-    ERR_FORMAT_AFFIX_NATIVE_TOOLTIP_UNSUPPORTED,
-)
 
 __all__ = [
     "CartesianPlan",
@@ -183,54 +172,6 @@ def plan_cartesian(
     return CartesianPlan(primary=primary, channels=channels, axes=baked)
 
 
-def has_structured_tooltip(
-    chart: BarChart | LineChart | AreaChart | ScatterChart | HeatmapChart,
-    *,
-    heatmap_color_field: str | None = None,
-) -> bool:
-    """Whether ``StructuredTooltipFeature.applies_to`` will give this chart a
-    structured tooltip; ``heatmap_color_field`` is the heatmap's color channel.
-    """
-    if chart.multiples is not None:
-        return False
-    if isinstance(chart, ScatterChart):
-        return (
-            isinstance(chart.x, str) and isinstance(chart.y, str) and not chart.layers
-        )
-    if isinstance(chart, HeatmapChart):
-        return (
-            isinstance(chart.x, str)
-            and isinstance(chart.y, str)
-            and heatmap_color_field is not None
-        )
-    return chart.y is not None
-
-
-def _reject_unstructured_tooltip_affix(
-    chart_id: str,
-    chart_type: str,
-    tooltip_format: ResolvedFormat,
-    structured_tooltip_eligible: bool,
-    *,
-    field_path: str,
-) -> None:
-    """Raise when a chart without a structured tooltip authors an affix.
-
-    Such a chart falls back to Vega-Lite's native ``format``, a plain d3 spec
-    that cannot compose a prefix/suffix/notation. ``field_path`` is the
-    caller's, since only it knows which key the winning format came from.
-    """
-    if structured_tooltip_eligible:
-        return
-    if tooltip_format.has_affix:
-        raise CompilationError.from_code(
-            ERR_FORMAT_AFFIX_NATIVE_TOOLTIP_UNSUPPORTED,
-            field_path=field_path,
-            chart_id=chart_id,
-            chart_type=chart_type,
-        )
-
-
 def build_cartesian_axes(
     chart_id: str,
     chart_type: str,
@@ -242,7 +183,6 @@ def build_cartesian_axes(
     column_forming: bool,
     measure_tooltip_format: ResolvedFormat | None,
     tooltip_format_values: Iterable[float | None],
-    structured_tooltip_eligible: bool,
     zero_anchor: bool,
     endpoint_rail_may_discard_domain: bool,
     ax_is_quantitative: bool,
@@ -350,18 +290,6 @@ def build_cartesian_axes(
     )
     tail = _cartesian_style_tail(chart_style_context, ax, ay, measure_values)
     final_tooltip_format = measure_tooltip_format or tail["tooltip_format"]
-    _reject_unstructured_tooltip_affix(
-        chart_id,
-        chart_type,
-        final_tooltip_format,
-        structured_tooltip_eligible,
-        field_path=(
-            f"charts.{chart_id}.style.number_format"
-            if measure_tooltip_format is not None
-            # style.tooltip is board-level only: no chart_id prefix.
-            else "style.charts.tooltip.format"
-        ),
-    )
     style_tail: _StyleTail = {
         "tooltip_format": final_tooltip_format,
         "axis_x": tail["axis_x"],

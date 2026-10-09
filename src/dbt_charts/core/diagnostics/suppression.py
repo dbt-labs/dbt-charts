@@ -18,11 +18,21 @@ from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.diagnostics.registry import REGISTRY
 
 
+def warn_retired_codes(codes: Iterable[str], *, source: str) -> None:
+    """Warn once per retired code: it can no longer fire, so it suppresses nothing."""
+    for code in codes:
+        if code in RETIRED_WARNING_CODES:
+            warnings.warn(
+                f"{source}: {code} no longer exists and suppresses nothing; "
+                "remove it from the ignore list.",
+                stacklevel=2,
+            )
+
+
 def validate_suppression_codes(
     codes: Iterable[str],
     *,
     source: str,
-    forbid_domains: frozenset[str] = frozenset(),
 ) -> None:
     """Raise if any code isn't a registered WARN-* code — typo guard.
 
@@ -30,17 +40,11 @@ def validate_suppression_codes(
     missing the trailing S) matches nothing in ``partition()``'s plain set
     lookup — it silently suppresses no warnings, and the author believes the
     warning is off. Call this at every point suppression codes come in from
-    YAML (per-chart ``warnings_ignore:``, project ``dbt_charts.yml
-    warnings.ignore``, per-query ``ignore:``, meta.yml ``lint.ignore`` /
-    ``lint.ignore_queries``) so the typo is a loud compile error instead.
-
-    ``forbid_domains`` catches a second, quieter trap (FR-79): a code that is
-    registered but can never actually be suppressed at ``source``'s scope. A
-    chart-scoped ``warnings_ignore:`` naming a query-domain code (e.g.
-    WARN-FANOUT-RISK) validates clean and then does nothing — query-lint
-    diagnostics never carry a chart id (a query can back more than one
-    chart), so ``partition()``'s per-chart match can never fire. That is
-    accepted-and-ignored, the worst outcome, so it's rejected here instead.
+    YAML outside the typed board fields (project ``dbt_charts.yml
+    warnings.ignore``, meta.yml ``lint.ignore`` / ``lint.ignore_queries``) so
+    the typo is a loud compile error instead. A board's per-chart
+    ``warnings_ignore:`` and per-query ``ignore:`` are typed by their Literal
+    code lists.
 
     Not covered: inline SQL ``-- dct:ignore <CODE>`` comments. Those are
     parsed at query-validation time (``query_validator.parse_inline_
@@ -50,29 +54,14 @@ def validate_suppression_codes(
     Args:
         codes: Candidate suppression codes to check.
         source: Human-readable location for the error message (e.g. "chart 'revenue'").
-        forbid_domains: Diagnostic domains that can never be suppressed at
-            this scope.
     """
     warning_codes = REGISTRY.codes(level="warning")
     error_codes = REGISTRY.codes(level="error")
     for code in codes:
         if code in RETIRED_WARNING_CODES:
-            warnings.warn(
-                f"{source}: {code} no longer exists and suppresses nothing; "
-                "remove it from the ignore list.",
-                stacklevel=2,
-            )
+            warn_retired_codes([code], source=source)
             continue
         if code in warning_codes:
-            domain = REGISTRY.get(code).domain
-            if domain in forbid_domains:
-                raise ValueError(
-                    f"{source}: {code} is a {domain}-domain diagnostic — it "
-                    "never carries a chart id, so a chart-scoped "
-                    "`warnings_ignore` can never match it and would silently "
-                    "do nothing. Suppress it where it's emitted instead: "
-                    f"`queries.<name>.ignore: [{code}]`."
-                )
             continue
         if code in error_codes:
             raise ValueError(

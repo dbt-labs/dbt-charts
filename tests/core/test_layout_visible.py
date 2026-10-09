@@ -17,9 +17,10 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile import compile
+from dbt_charts.core.compile import compile, compile_file
 from dbt_charts.core.compile.config import (
     get_theme_style,
+    reset_config,
 )
 from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.resolve.style.board import resolve_style
@@ -650,3 +651,102 @@ charts:
             f"Expected empty output for hidden item, got: {hidden_output!r}"
         )
         assert shown_output != "", "Expected non-empty output for shown item"
+
+
+_Q = "queries:\n  q:\n    type: values\n    rows:\n      - n: 1\n"
+
+
+def _chart_body(indent: int, visible: str) -> str:
+    pad = " " * indent
+    return f"type: kpi\n{pad}query: q\n{pad}value: n\n{pad}visible: {visible}\n"
+
+
+def _board_with_chart(placement: str, visible: str) -> str:
+    head = f"title: T\n{_Q}"
+    tab = "tabs:\n  items:\n    - title: One\n      rows:\n"
+    return {
+        "inline": f"{head}rows:\n  - {_chart_body(4, visible)}",
+        "named-dict": f"{head}rows:\n  - c:\n      {_chart_body(6, visible)}",
+        "tab-inline": f"{head}{tab}        - {_chart_body(10, visible)}",
+        "tab-named-dict": f"{head}{tab}        - c:\n            {_chart_body(12, visible)}",
+        "top-level": f"{head}charts:\n  c:\n    {_chart_body(4, visible)}rows:\n  - c\n",
+    }[placement]
+
+
+class TestChartVisibleAuthoredOnTheChart:
+    """`visible:` written on the chart itself hides it wherever it sits."""
+
+    @pytest.mark.parametrize(
+        ("placement", "hidden", "shown"),
+        [
+            (placement, "false", "true")
+            for placement in ("inline", "named-dict", "top-level")
+        ]
+        + [("top-level", "'{{ 1 == 2 }}'", "'{{ 1 == 1 }}'")],
+    )
+    def test_chart_visible_hides_the_chart(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        placement: str,
+        hidden: str,
+        shown: str,
+    ) -> None:
+        heights: dict[str, float] = {}
+        for state, visible in (("hidden", hidden), ("shown", shown)):
+            reset_config()
+            (tmp_path / "dbt_charts.yml").write_text(
+                "sources:\n  db:\n    type: duckdb\n    path: w.duckdb\n"
+            )
+            (tmp_path / "charts").mkdir(exist_ok=True)
+            (tmp_path / "charts" / "board.yml").write_text(
+                _board_with_chart(placement, visible)
+            )
+            result = compile_file(
+                FilesystemProject(tmp_path).path("charts/board.yml").read_board()
+            )
+            assert result.success, f"Compile failed: {result.errors}"
+            _, heights[state] = _render_rows(
+                local_project, result.board, result.query_registry, {}
+            )
+        assert heights["hidden"] < heights["shown"]
+
+    @pytest.mark.parametrize("placement", ["tab-inline", "tab-named-dict"])
+    def test_tab_chart_visible_reaches_the_layout_item(
+        self, tmp_path: Path, placement: str
+    ) -> None:
+        reset_config()
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  db:\n    type: duckdb\n    path: w.duckdb\n"
+        )
+        (tmp_path / "charts").mkdir(exist_ok=True)
+        (tmp_path / "charts" / "board.yml").write_text(
+            _board_with_chart(placement, "false")
+        )
+        result = compile_file(
+            FilesystemProject(tmp_path).path("charts/board.yml").read_board()
+        )
+        assert result.success, f"Compile failed: {result.errors}"
+        (tab,) = result.board.layout.items
+        assert [item.visible for item in tab.board.layout.items] == [False]
+
+
+def test_cross_file_chart_ref_visible_hides_the_chart(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  db:\n    type: duckdb\n    path: w.duckdb\n"
+    )
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "shared.yml").write_text(
+        f"title: S\n{_Q}charts:\n  c:\n    {_chart_body(4, 'false')}rows:\n  - c\n"
+    )
+    (tmp_path / "charts" / "board.yml").write_text(
+        f"title: T\n{_Q}charts:\n  c: shared.yml.charts.c\nrows:\n  - c\n"
+    )
+    reset_config()
+    result = compile_file(
+        FilesystemProject(tmp_path).path("charts/board.yml").read_board()
+    )
+    assert result.success, f"Compile failed: {result.errors}"
+    assert [item.visible for item in result.board.layout.items] == [False]

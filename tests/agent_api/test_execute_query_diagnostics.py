@@ -18,19 +18,19 @@ def _registry(rows=None, error=None):
     return registry
 
 
-def test_fanout_query_warns_but_still_returns_rows() -> None:
+def test_reaggregation_query_warns_but_still_returns_rows() -> None:
     from dbt_charts.agent_api.query import execute_query
 
     registry = _registry(rows=[{"n": 5}])
-    # COUNT(*) over a join is the structural signal for double-counting.
+    # SUM over an already-summed column is a statistical error, not a failure.
     result = execute_query(
-        "SELECT COUNT(*) AS n FROM a JOIN b ON a.id = b.id",
+        "SELECT AVG(t) AS n FROM (SELECT region, SUM(x) AS t FROM a GROUP BY region) s",
         source="db",
         adapter_registry=registry,
     )
     assert result.success is True  # not blocked
     assert result.data == [{"n": 5}]
-    assert any(d.code == "WARN-FANOUT-RISK" for d in result.diagnostics)
+    assert any(d.code == "WARN-REAGGREGATION" for d in result.diagnostics)
 
 
 def test_clean_query_has_no_diagnostics() -> None:
@@ -47,14 +47,14 @@ def test_diagnostics_attached_on_execution_error() -> None:
 
     registry = _registry(error="no such column: foo")
     result = execute_query(
-        "SELECT COUNT(*) FROM a JOIN b ON a.id = b.id",
+        "SELECT AVG(t) FROM (SELECT region, SUM(x) AS t FROM a GROUP BY region) s",
         source="db",
         adapter_registry=registry,
     )
     assert result.success is False
     assert result.errors == ["no such column: foo"]
     # Structural diagnostics still surface even when execution failed.
-    assert any(d.code == "WARN-FANOUT-RISK" for d in result.diagnostics)
+    assert any(d.code == "WARN-REAGGREGATION" for d in result.diagnostics)
 
 
 def test_validator_failure_degrades_gracefully(monkeypatch) -> None:

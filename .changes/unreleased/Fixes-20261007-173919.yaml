@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart or query imported from another board now compiles when that board uses retired grammar.
+time: 2026-10-07T17:39:19.871914-07:00

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from dbt_charts.core.compile.models.constraints import Constraint, Forbids, IsSet
 from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 
@@ -35,6 +36,17 @@ class TableChart(_SharedChartFields, _ConditionalFormattingField):
     """Authored patch for table charts."""
 
     model_config = ConfigDict(extra="forbid")
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Forbids(
+            ("rows", "columns", "values"),
+            "'spanners' cannot be combined with the pivot channels "
+            "rows/columns/values: a pivot already draws its own spanners "
+            "from its column dimensions.",
+            when=(IsSet("spanners"),),
+            nonempty=("rows", "columns", "values"),
+        ),
+    )
 
     type: Annotated[Literal["table"], Field(description="Selects the chart family.")]
     style: Annotated[
@@ -106,12 +118,6 @@ class TableChart(_SharedChartFields, _ConditionalFormattingField):
                         "one spanner."
                     )
                 owner[col] = spanner
-        if self.spanners and (self.rows or self.columns or self.values):
-            raise ValueError(
-                "'spanners' cannot be combined with the pivot channels "
-                "rows/columns/values: a pivot already draws its own spanners "
-                "from its column dimensions."
-            )
         # A field may appear on at most one channel.
         seen: dict[str, str] = {}
         for channel, fields in (

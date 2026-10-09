@@ -286,6 +286,63 @@ def card_box(
     return -left, -top, width + left + inset["right"], height + top + inset["bottom"]
 
 
+def border_rect(
+    width: float, height: float, border: "BorderStyle", css_class: str = ""
+) -> str:
+    """Stroke-only rect tracing a ``width`` x ``height`` box, inset by half the
+    stroke so the border stays inside the box; ``""`` when it draws nothing.
+    """
+    stroke = border.width
+    if stroke <= 0 or not border.color:
+        return ""
+    inset = stroke / 2.0
+    class_attr = f' class="{escape_attr(css_class)}"' if css_class else ""
+    return (
+        f'<rect{class_attr} x="{escape_attr(inset)}" y="{escape_attr(inset)}" '
+        f'width="{escape_attr(max(width - stroke, 0))}" '
+        f'height="{escape_attr(max(height - stroke, 0))}" '
+        f'fill="none" stroke="{escape_attr(border.color)}" stroke-width="{escape_attr(stroke)}"'
+        f"{border_dash_attrs(border)} "
+        f'rx="{escape_attr(max(border.radius - inset, 0))}"/>'
+    )
+
+
+def round_clipped(content: str, width: float, height: float, radius: float) -> str:
+    """``content`` clipped to a rounded box, so a square background inside it
+    cannot poke out past the corners.
+
+    The clip id is the geometry itself: two boxes sharing an id share a shape,
+    so a page holding several boards cannot make one clip stand in for another.
+    """
+    clip_id = f"dbt-card-clip-{format_svg_numeric(width)}-{format_svg_numeric(height)}-{format_svg_numeric(radius)}"
+    return (
+        f'<clipPath id="{escape_attr(clip_id)}"><rect width="{escape_attr(width)}" '
+        f'height="{escape_attr(height)}" rx="{escape_attr(radius)}"/></clipPath>'
+        f'<g clip-path="url(#{escape_attr(clip_id)})">{content}</g>'
+    )
+
+
+@dataclass(frozen=True)
+class CardShadow:
+    shadow: "BoxShadow"
+    fill: str
+    radius: float
+
+
+def shadow_rect(width: float, height: float, card: CardShadow) -> str:
+    """Box ``fill``ed with the canvas under a ``drop-shadow`` filter, so the
+    shadow falls outside the box and the card's own paint covers the rest.
+    """
+    shadow = card.shadow
+    return (
+        f'<rect class="dbt-card-shadow" width="{escape_attr(width)}" '
+        f'height="{escape_attr(height)}" rx="{escape_attr(card.radius)}" '
+        f'fill="{escape_attr(card.fill)}" '
+        f'style="filter: drop-shadow({shadow.dx:g}px {shadow.dy:g}px '
+        f'{shadow.blur:g}px {escape_attr(css_color(shadow.color))})"/>'
+    )
+
+
 def divider_dash_attr(dasharray: str | None) -> str:
     """`` stroke-dasharray`` attribute for a divider; "" when solid."""
     if dasharray is None:
@@ -312,7 +369,7 @@ def border_dash_attrs(border: "BorderStyle") -> str:
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import VariableValues
-    from dbt_charts.core.compile.models.primitives import BorderStyle
+    from dbt_charts.core.compile.models.primitives import BorderStyle, BoxShadow
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 

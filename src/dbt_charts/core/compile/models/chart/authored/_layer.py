@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from dbt_charts.core.compile.models.constraints import (
+    ConstrainedModel,
+    Constraint,
+    NotNull,
+)
 from dbt_charts.core.compile.models.markers import DisplayText, Format
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import (
+    CHANNEL_COLUMN,
+    NON_BLANK,
+    ErrorHint,
+    FormatConfig,
+)
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 
 
@@ -96,22 +106,26 @@ from dbt_charts.core.compile.models.style.authored._base import (
     ScatterLayerStylePatch,
 )
 
+LayerColorColumn = Annotated[
+    str,
+    StringConstraints(pattern=CHANNEL_COLUMN),
+    ErrorHint(
+        "Layer.color is a data channel (bare field name only). Paint belongs "
+        "under the layer's `style.marks`, and '{value}' should be a palette "
+        "token there (`category[1]`, `negative.solid`) — the mark key differs "
+        "per layer type, so see `dct docs charts`."
+    ),
+]
 
-def reject_blank_y_start(
-    data: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
-) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
-    """Refuse a y_start key with no column: YAML parses a blank value as None,
-    which would otherwise read as unset and quietly draw the bar from zero."""
-    if isinstance(data, dict) and "y_start" in data:
-        value = data["y_start"]
-        if value is None or (isinstance(value, str) and not value.strip()):
-            raise ValueError(
-                "y_start names no column; remove it for bars that start at zero."
-            )
-    return data
+Y_START_NO_COLUMN = "y_start names no column; remove it for bars that start at zero."
+YStartColumn = Annotated[
+    str, StringConstraints(pattern=NON_BLANK), ErrorHint(Y_START_NO_COLUMN)
+]
+# A bare `y_start:` is null, which must not read as "start at zero".
+Y_START_NOT_NULL = NotNull(("y_start",), Y_START_NO_COLUMN)
 
 
-class TypedLayerBase(BaseModel):
+class TypedLayerBase(ConstrainedModel):
     """Common identity fields and validators shared by all typed layer variants."""
 
     model_config = ConfigDict(extra="forbid")
@@ -130,31 +144,14 @@ class TypedLayerBase(BaseModel):
         default=None,
         description="Name for this layer's measure wherever the layer is identified. Defaults to its y column name.",
     )
-    color: str | None = Field(
+    color: LayerColorColumn | None = Field(
         default=None,
-        description="Column whose values split this layer into colored series; bare column name only.",
+        description="Column whose values split this layer into colored series; bare column name only. Paint belongs under the layer's `style.marks`.",
     )
     axis_y: LayerAxisYStyle | None = Field(
         default=None,
         description="This layer's own y axis: which side it sits on, its title, scale, ticks, grid.",
     )
-
-    @field_validator("color", mode="before")
-    @classmethod
-    def _reject_non_column_color(cls, v: Any) -> Any:
-        if isinstance(v, str) and v.startswith("#"):
-            raise ValueError(
-                "Layer.color is a data channel (bare field name only). Paint "
-                f"belongs under the layer's `style.marks`, and '{v}' should be "
-                "a palette token there (`category[1]`, `negative.solid`) — the "
-                "mark key differs per layer type, so see `dct docs charts`."
-            )
-        if isinstance(v, dict):
-            raise ValueError(
-                "Layer.color only accepts a bare field name (string). "
-                "Dicts (value, scale, when forms) are not supported on layers."
-            )
-        return v
 
     @model_validator(mode="before")
     @classmethod
@@ -170,6 +167,8 @@ class TypedLayerBase(BaseModel):
 class BarLayer(TypedLayerBase):
     """A bar-type layer on a cartesian chart."""
 
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (Y_START_NOT_NULL,)
+
     type: Annotated[Literal["bar"], Field(description="Selects the layer's mark.")]
     style: Annotated[
         BarLayerStylePatch | None,
@@ -177,18 +176,13 @@ class BarLayer(TypedLayerBase):
             default=None, description="Appearance overrides for this layer's bar marks."
         ),
     ] = None
-    y_start: str | None = Field(
-        default=None,
-        description="Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as the chart's y: both numeric, or both dates.",
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_blank_y_start(
-        cls,
-        data: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
-    ) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
-        return reject_blank_y_start(data)
+    y_start: Annotated[
+        YStartColumn | None,
+        Field(
+            default=None,
+            description="Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as the chart's y: both numeric, or both dates.",
+        ),
+    ]
 
 
 class LineLayer(TypedLayerBase):

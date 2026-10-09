@@ -41,7 +41,7 @@ def _reset():
 class TestFiscalYearStartMonthValidation:
     @pytest.mark.parametrize("value", [0, 13, -1, 100])
     def test_out_of_range_value_raises(self, value: int) -> None:
-        with pytest.raises(ValidationError, match="between 1 and 12"):
+        with pytest.raises(ValidationError, match="fiscal_year_start_month"):
             AxisXStyle(fill="null", fiscal_year_start_month=value)
 
     @pytest.mark.parametrize("value", [1, 4, 12])

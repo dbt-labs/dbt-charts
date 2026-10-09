@@ -101,7 +101,6 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
-    has_structured_tooltip,
     plan_cartesian,
     quantitative_channel_values,
 )
@@ -1116,7 +1115,6 @@ def _resolve_bar(
             normalized, primary, chart_style_context, values=tooltip_format_values
         ),
         tooltip_format_values=tooltip_format_values,
-        structured_tooltip_eligible=has_structured_tooltip(normalized),
         ax_is_quantitative=x_ch_type == "quantitative",
         # Bar semantics fix y=measure regardless of orientation (see the
         # _bake_cartesian_axes docstring above), so the published channel-type
@@ -1327,8 +1325,6 @@ def _resolve_histogram(
             normalized, primary, chart_style_context, values=()
         ),
         tooltip_format_values=(),
-        # Histogram is always excluded from the structured tooltip.
-        structured_tooltip_eligible=False,
         # Histogram's binned x column is always numeric; its y (row count)
         # is always the measure, regardless of the x column's own type.
         ax_is_quantitative=x_ch_type == "quantitative",

@@ -30,6 +30,7 @@ import yaml
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_MUTATING_SQL,
     ERR_UNPARSEABLE_SQL,
@@ -39,6 +40,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
 from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.execution import MutatingSqlError, UnparseableSqlError
 from dbt_charts.core.execute.adapters.base import (
+    WarehouseStatementError,
     classify_warehouse_error,
     resolve_effective_row_limit,
 )
@@ -472,3 +474,45 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
         assert result.error.detail is not None
         assert "Could not automatically determine credentials" in result.error.detail
         assert result.error.code is ERR_WAREHOUSE_CONNECTION
+
+
+class TestClassifyWarehouseErrorBySqlstate:
+    """The Arrow driver seam carries the warehouse's own SQLSTATE, so
+    classification there is a lookup rather than a message-pattern guess.
+
+    Only the SQL-standard classes are mapped. The generic 42000 class is also
+    what engines answer a plain syntax error with, so it stays on the runtime
+    fallback rather than being read as an unknown-reference verdict.
+    """
+
+    def test_object_not_found_is_an_unknown_reference(self) -> None:
+        error = WarehouseStatementError("42S02", "Table 'no_such' does not exist")
+        result = classify_warehouse_error(
+            "lakecompute SQL execution", error, "lakecompute"
+        )
+        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
+        assert "no_such" in str(result.error)
+
+    def test_column_not_found_is_an_unknown_reference(self) -> None:
+        error = WarehouseStatementError("42S22", "column not found")
+        result = classify_warehouse_error(
+            "lakecompute SQL execution", error, "lakecompute"
+        )
+        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
+
+    def test_invalid_cast_is_a_type_mismatch(self) -> None:
+        error = WarehouseStatementError("22018", "Could not convert 'abc'")
+        result = classify_warehouse_error(
+            "lakecompute SQL execution", error, "lakecompute"
+        )
+        assert result.error.code is ERR_BINDER_TYPE_MISMATCH
+
+    @pytest.mark.parametrize("sqlstate", ["42000", "22012"])
+    def test_an_unmapped_sqlstate_stays_on_the_runtime_fallback(
+        self, sqlstate: str
+    ) -> None:
+        error = WarehouseStatementError(sqlstate, "rejected")
+        result = classify_warehouse_error(
+            "lakecompute SQL execution", error, "lakecompute"
+        )
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME

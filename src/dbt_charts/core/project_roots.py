@@ -125,7 +125,7 @@ def find_project_root(
 
 
 def resolve_profiles_path(
-    project_dir: Path,
+    project_dir: Path | None,
     profiles_dir: Path | None,
 ) -> Path:
     """Locate profiles.yml using the canonical resolution order.
@@ -133,7 +133,7 @@ def resolve_profiles_path(
     Resolution order:
       1. ``profiles_dir/profiles.yml`` — explicit field from DbtProfileSourceConfig
       2. ``$DBT_PROFILES_DIR/profiles.yml`` — env var
-      3. ``project_dir/profiles.yml`` — project-local
+      3. ``project_dir/profiles.yml`` — project-local (skipped without a project)
       4. ``~/.dbt/profiles.yml`` — global fallback
 
     Raises ``FileNotFoundError`` with a clear message when none contains
@@ -141,7 +141,7 @@ def resolve_profiles_path(
     explicitly named (profiles_dir set but missing → error, not next step).
 
     Args:
-        project_dir: The dbt charts project root (where dbt_charts.yml lives).
+        project_dir: The dbt project root, or None when no dbt project is linked.
         profiles_dir: Explicit directory from the ``profiles_dir`` source field,
             already resolved to an absolute Path. None means not set.
     """
@@ -166,18 +166,20 @@ def resolve_profiles_path(
             "Create profiles.yml there or unset DBT_PROFILES_DIR."
         )
 
-    # Step 3: project-local profiles.yml
-    candidate = project_dir / "profiles.yml"
-    if candidate.exists():
-        return candidate
+    checked = []
+    if project_dir is not None:
+        candidate = project_dir / "profiles.yml"
+        if candidate.exists():
+            return candidate
+        checked.append(f"{project_dir}/profiles.yml")
 
-    # Step 4: global ~/.dbt/profiles.yml
     candidate = Path.home() / ".dbt" / "profiles.yml"
     if candidate.exists():
         return candidate
+    checked.append("~/.dbt/profiles.yml")
 
     raise FileNotFoundError(
-        f"No profiles.yml found. Checked: {project_dir}/profiles.yml, ~/.dbt/profiles.yml. "
+        f"No profiles.yml found. Checked: {', '.join(checked)}. "
         "Set profiles_dir in your dbt_profile source or export DBT_PROFILES_DIR."
     )
 
@@ -242,6 +244,58 @@ def resolve_dbt_project_dir(project_dir: Path, explicit: Path | None) -> Path:
     return project_dir
 
 
+def read_dbt_project_profile(project_dir: Path) -> str | None:
+    """Return the ``profile:`` named by ``project_dir/dbt_project.yml``, else None.
+
+    None means the file is absent, is not a mapping, or sets no ``profile:``.
+
+    Raises:
+        ValueError: The file cannot be read or parsed, or ``profile:`` is not a
+            non-empty string.
+    """
+    dbt_project_path = project_dir / "dbt_project.yml"
+    if not dbt_project_path.exists():
+        return None
+    try:
+        dbt_config = yaml.safe_load(dbt_project_path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Cannot read {dbt_project_path}: {exc}") from exc
+    if not isinstance(dbt_config, dict) or "profile" not in dbt_config:
+        return None
+    profile_name = dbt_config["profile"]
+    if not isinstance(profile_name, str) or not profile_name:
+        raise ValueError(
+            f"{dbt_project_path}: `profile:` must be a non-empty string, "
+            f"got {profile_name!r}"
+        )
+    return profile_name
+
+
+def resolve_dbt_profile_name(explicit: str | None, project_dir: Path | None) -> str:
+    """The dbt profile to connect with, in dbt's own precedence.
+
+    ``explicit``, then ``$DBT_PROFILE``, then ``profile:`` in the linked dbt
+    project's dbt_project.yml (skipped when ``project_dir`` is None).
+
+    Raises:
+        ValueError: No rung names a profile, or dbt_project.yml is unreadable or
+            names a non-string profile.
+    """
+    if explicit is not None:
+        return explicit
+    env_profile = os.environ.get("DBT_PROFILE")  # noqa: TID251 — dbt-convention parity
+    if env_profile:
+        return env_profile
+    if project_dir is not None:
+        project_profile = read_dbt_project_profile(project_dir)
+        if project_profile is not None:
+            return project_profile
+    raise ValueError(
+        "No dbt profile name. Set `profile:` on the source, export DBT_PROFILE, or "
+        "set `profile:` in the linked dbt project's dbt_project.yml."
+    )
+
+
 def infer_dialect_from_dbt(
     project_dir: Path,
     target_name: str | None = None,
@@ -255,19 +309,9 @@ def infer_dialect_from_dbt(
     """
     import yaml
 
-    dbt_project_path = project_dir / "dbt_project.yml"
-    if not dbt_project_path.exists():
-        return None
-
     try:
-        dbt_config = yaml.safe_load(dbt_project_path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
-        return None
-
-    if not isinstance(dbt_config, dict):
-        return None
-    profile_name = dbt_config.get("profile")
-    if not profile_name:
+        profile_name = resolve_dbt_profile_name(None, project_dir)
+    except ValueError:
         return None
 
     try:

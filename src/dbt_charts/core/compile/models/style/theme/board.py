@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, get_args
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    field_validator,
     model_validator,
 )
 
@@ -26,14 +25,72 @@ from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     DividerStyle,
     FontStyle,
+    one_error,
 )
 
 OverflowMode = Literal["clip", "truncate", "wrap-two", "wrap"]
 
 
+FontWeight = Literal[
+    "normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900",
+    100, 200, 300, 400, 500, 600, 700, 800, 900,
+]  # fmt: skip
 VALID_FONT_WEIGHTS: frozenset[str] = frozenset(
-    {"normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900"}
+    w for w in get_args(FontWeight) if isinstance(w, str)
 )
+
+# Pygments' built-in styles as of 2.18, the floor in pyproject.toml.
+PygmentsTheme = Literal[
+    "abap",
+    "algol",
+    "algol_nu",
+    "arduino",
+    "autumn",
+    "borland",
+    "bw",
+    "coffee",
+    "colorful",
+    "default",
+    "dracula",
+    "emacs",
+    "friendly",
+    "friendly_grayscale",
+    "fruity",
+    "github-dark",
+    "gruvbox-dark",
+    "gruvbox-light",
+    "igor",
+    "inkpot",
+    "lightbulb",
+    "lilypond",
+    "lovelace",
+    "manni",
+    "material",
+    "monokai",
+    "murphy",
+    "native",
+    "nord",
+    "nord-darker",
+    "one-dark",
+    "paraiso-dark",
+    "paraiso-light",
+    "pastie",
+    "perldoc",
+    "rainbow_dash",
+    "rrt",
+    "sas",
+    "solarized-dark",
+    "solarized-light",
+    "staroffice",
+    "stata-dark",
+    "stata-light",
+    "tango",
+    "trac",
+    "vim",
+    "vs",
+    "xcode",
+    "zenburn",
+]
 
 
 def font_weight_as_css(w: str | float) -> str:
@@ -271,7 +328,7 @@ class TitleSubtitleStyle(BaseModel):
 
 
 class TitleStyle(BaseModel):
-    """Board and board titles."""
+    """Typography shared by every heading: board, prose, chart, table, and spark titles."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -308,7 +365,10 @@ class TitleStyle(BaseModel):
     # Author/theme override for heading level. "auto" = compute from titled-ancestor count;
     # an integer locks all titles in this scope to that H-level and propagates to descendants.
     # Theme YAML supplies "auto" as the universal default.
-    level: int | Literal["auto"] = Field(
+    level: Annotated[
+        Annotated[int, Field(ge=1)] | Literal["auto"],
+        one_error("title.level must be 'auto' or a positive integer, got {value}"),
+    ] = Field(
         description=(
             "Heading level override for board titles. ``'auto'`` (default) computes the "
             "level semantically as the count of titled ancestors. An integer value "
@@ -321,21 +381,6 @@ class TitleStyle(BaseModel):
         default_factory=TitleSubtitleStyle,
         description="Subtitle font styles.",
     )
-
-    @field_validator("level", mode="before")
-    @classmethod
-    def _validate_level(cls, value: Any) -> Any:
-        if value == "auto":
-            return value
-        if isinstance(value, int):
-            if value < 1:
-                raise ValueError(f"style.title.level must be >= 1, got {value!r}")
-            return value
-        if isinstance(value, str):
-            raise ValueError(
-                f"style.title.level must be 'auto' or a positive integer, got {value!r}"
-            )
-        return value
 
 
 class BoxStyle(BaseModel):
@@ -363,21 +408,9 @@ class TextCodeStyle(BoxStyle):
     """Inline and fenced code spans in markdown prose. Box group; mono font by default."""
 
     highlight: bool = Field(description="Syntax-highlight fenced markdown code blocks.")
-    theme: str = Field(
+    theme: PygmentsTheme = Field(
         description="Pygments style name for fenced markdown code tokens."
     )
-
-    @field_validator("theme")
-    @classmethod
-    def _validate_pygments_theme(cls, value: str) -> str:
-        from pygments.styles import get_style_by_name
-        from pygments.util import ClassNotFound
-
-        try:
-            get_style_by_name(value)
-        except ClassNotFound as exc:
-            raise ValueError(f"Invalid Pygments code theme: {value!r}") from exc
-        return value
 
 
 class TextBlockquoteStyle(BoxStyle):
@@ -389,19 +422,9 @@ class TextBoldStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    weight: str | float = Field(
+    weight: FontWeight = Field(
         description="CSS font-weight for bold text runs and bold table cells."
     )
-
-    @field_validator("weight")
-    @classmethod
-    def _validate_weight(cls, value: str | float) -> str | float:
-        if font_weight_as_css(value) not in VALID_FONT_WEIGHTS:
-            raise ValueError(
-                f"text.bold.weight {value!r} is not a valid CSS font-weight; "
-                "use a numeric string (e.g. '700') or 'normal'/'bold'."
-            )
-        return value
 
 
 class BlockMarginStyle(BaseModel):

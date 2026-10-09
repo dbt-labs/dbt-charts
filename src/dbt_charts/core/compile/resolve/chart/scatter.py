@@ -69,7 +69,6 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
-    has_structured_tooltip,
     plan_cartesian,
     quantitative_channel_values,
 )
@@ -289,7 +288,6 @@ def _resolve_scatter(
             values=tooltip_format_values,
         ),
         tooltip_format_values=tooltip_format_values,
-        structured_tooltip_eligible=has_structured_tooltip(normalized),
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=y_ch_type == "quantitative",
         ay_floors_tick_step=True,

@@ -24,7 +24,7 @@ from dbt_charts.core.compile.models.chart.normalized._base import (
 )
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
 from dbt_charts.core.compile.models.primitives import (
-    FormatAliases,
+    FormatTable,
     ResolvedFormat,
 )
 from dbt_charts.core.compile.models.style.authored import (
@@ -175,7 +175,7 @@ def _bake_axis(
     merged: _S,
     band_position: float | None,
     *,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     chart_id: str,
     axis: str,
     channel_type: str,
@@ -298,7 +298,7 @@ def _bake_cartesian_axes(
         # temporal, so step-anchored cadence never applies there.
         raise CompilationError.from_code(ERR_TICKS_INTERVAL_MEASURE_AXIS)
     # time_unit+count is enforced in the model itself
-    # (DimensionTicksStyle._validate_cadence) — no compile-pass check needed.
+    # (DimensionTicksStyle.__constraints__) — no compile-pass check needed.
     # step-without-time_unit is not a model rule: a bare step is the
     # quantitative-axis cadence lever, so the check needs the resolved axis
     # type and lives in render (apply_x_tick_cadence).

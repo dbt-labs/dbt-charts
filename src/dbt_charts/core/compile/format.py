@@ -30,8 +30,8 @@ from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
-    FormatAliases,
     FormatConfig,
+    FormatTable,
     Notation,
     ResolvedFormat,
     signs_before_prefix,
@@ -40,13 +40,19 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
 )
 from dbt_charts.core.font_measure import compose_decimal_units
+from dbt_charts.core.text.currencies import CURRENCIES
 from dbt_charts.core.text.format_d3 import (
     SignPlacement,
     is_d3_si_spec,
     is_time_format,
     round_aware_spec,
 )
-from dbt_charts.core.text.numeral_scale import build_decimal_pad_table
+from dbt_charts.core.text.numeral_scale import (
+    SUB_UNIT_SCIENTIFIC_FLOOR,
+    build_decimal_pad_table,
+    sub_unit_digit_format,
+    sub_unit_scientific_format,
+)
 from dbt_charts.core.text.predefined_formats import (
     ALL_PREDEFINED_NAMES,
     PREDEFINED_NUMBER_NAMES,
@@ -54,9 +60,10 @@ from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SUB_UNIT_FALLBACK,
     PREDEFINED_TIME_NAMES,
     PREDEFINED_TIME_SPECS,
+    SUB_UNIT_FLOOR,
     PredefinedNumberFormat,
     PredefinedTimeFormat,
-    si_sub_unit_floor,
+    is_money_format,
 )
 
 
@@ -79,7 +86,7 @@ def resolve_format(
     format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
 ) -> str:
     """Convert format input to a d3 format string.
 
@@ -109,9 +116,12 @@ def resolve_format(
     if not format_str:
         return ""
 
-    if (preset := _alias_preset(format_str, formats)) is not None:
-        return resolve_format(preset)
-    if formats and format_str in formats:
+    preset = _alias_preset(format_str, formats)
+    if preset is not None and preset != format_str:
+        # Through the board's own table, so `revenue: currency` prints what the
+        # board made of `currency`. A name aliased to itself is the engine's own.
+        return resolve_format(preset, formats)
+    if preset is None and formats is not None and format_str in formats:
         aliased = formats[format_str]
         if isinstance(aliased, FormatConfig):
             return aliased.spec or ""  # type-state: silent_fallback — no spec authored
@@ -123,7 +133,7 @@ def resolve_format(
     if format_str in PREDEFINED_NUMBER_NAMES:
         if format_str not in PREDEFINED_SPECS:
             return format_str  # native formatter — pass through
-        return round_aware_spec(PREDEFINED_SPECS[format_str])
+        return round_aware_spec(_engine_spec(format_str, formats))
     if format_str in PREDEFINED_TIME_NAMES:
         return PREDEFINED_TIME_SPECS[format_str]
 
@@ -131,11 +141,22 @@ def resolve_format(
     return format_str
 
 
-def _alias_preset(
-    name: str | None, formats: Mapping[str, AuthoredFormat] | None
-) -> str | None:
+def _engine_spec(name: str, formats: FormatTable | None) -> str:
+    """The engine's spec for ``name``; a currency with no minor unit prints
+    ``currency_full`` as whole units."""
+    if (
+        name == PredefinedNumberFormat.currency_full
+        and formats is not None
+        and formats.currency is not None
+        and not CURRENCIES[formats.currency].digits
+    ):
+        name = PredefinedNumberFormat.currency_whole
+    return PREDEFINED_SPECS[name]
+
+
+def _alias_preset(name: str | None, formats: FormatTable | None) -> str | None:
     """The preset an alias names, if its target is one."""
-    if not formats or name is None or name not in formats:
+    if formats is None or name is None or name not in formats:
         return None
     target = formats[name]
     spec = target.spec if isinstance(target, FormatConfig) else target
@@ -144,34 +165,49 @@ def _alias_preset(
     return None
 
 
-def _resolved_raw(
-    raw: str | None, formats: Mapping[str, AuthoredFormat] | None
-) -> str | None:
+def _resolved_raw(raw: str | None, formats: FormatTable | None) -> str | None:
     """The identity downstream rules key on: the preset a name resolves to, the
     author's literal spec when a board redefined an engine name (so the engine's
     rules for that name stop applying), else the name itself."""
     if (preset := _alias_preset(raw, formats)) is not None:
         return preset
-    if raw in ALL_PREDEFINED_NAMES and formats and raw in formats:
+    if raw in ALL_PREDEFINED_NAMES and formats is not None and raw in formats:
         target = formats[raw]
         return (target.spec if isinstance(target, FormatConfig) else target) or None
     return raw
 
 
-def sub_unit_spec(raw: str, formats: FormatAliases | None) -> str:
+def sub_unit_spec(raw: str, formats: FormatTable | None) -> str:
     """The plain-digit spec an engine SI member swaps to below 1: the board's own
     spec for the ``_full`` sibling if it redefined it, else the engine's."""
     sibling = PREDEFINED_SUB_UNIT_FALLBACK[raw]
-    if formats and sibling in formats:
+    if formats is not None and sibling in formats:
         return resolve_format(sibling, formats)
-    return PREDEFINED_SPECS[sibling]
+    return _engine_spec(sibling, formats)
 
 
-def _alias_target(
-    spec: str | None, formats: Mapping[str, AuthoredFormat] | None
-) -> FormatConfig | None:
+def sub_unit_spec_for_value(
+    raw: str | None, spec: str, value: float, formats: FormatTable | None
+) -> str:
+    """The spec a per-value surface paints ``value`` with: an engine SI member
+    never prints an SI prefix below 1 (zero keeps ``spec``)."""
+    magnitude = abs(value)
+    if raw not in PREDEFINED_SUB_UNIT_FALLBACK or magnitude == 0 or magnitude >= 1:
+        return spec
+    if _in_sub_unit_band(value):
+        return sub_unit_spec(raw, formats)
+    if magnitude < SUB_UNIT_SCIENTIFIC_FLOOR:
+        return sub_unit_scientific_format(spec)
+    return sub_unit_digit_format(spec)
+
+
+def _in_sub_unit_band(value: float) -> bool:
+    return SUB_UNIT_FLOOR <= abs(value) < 1.0
+
+
+def _alias_target(spec: str | None, formats: FormatTable | None) -> FormatConfig | None:
     """The ``FormatConfig`` alias target of ``spec``, if any."""
-    if formats and spec is not None and spec in formats:
+    if formats is not None and spec is not None and spec in formats:
         aliased = formats[spec]
         if isinstance(aliased, FormatConfig):
             return aliased
@@ -179,7 +215,7 @@ def _alias_target(
 
 
 def _alias_prefix_suffix(
-    spec: str | None, formats: Mapping[str, AuthoredFormat] | None
+    spec: str | None, formats: FormatTable | None
 ) -> tuple[str, str]:
     """The alias target's prefix/suffix, empty when it has none."""
     aliased = _alias_target(spec, formats)
@@ -232,7 +268,7 @@ def get_format_prefix_suffix(
     format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
-    formats: Mapping[str, AuthoredFormat] | None = None,
+    formats: FormatTable | None = None,
 ) -> tuple[str, str]:
     """The prefix/suffix of ``format_input``; an explicit affix wins over its alias's."""
     if format_input is None:
@@ -262,7 +298,7 @@ def _format_options(
     format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
-    formats: Mapping[str, AuthoredFormat] | None,
+    formats: FormatTable | None,
 ) -> dict[str, Any]:  # type-state: explicit_any — ResolvedFormat constructor kwargs
     """The authored ``_OPTIONS``; an unset one follows the alias the spec names."""
     if isinstance(format_input, FormatConfig):
@@ -285,7 +321,7 @@ def _format_fields(
     format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> dict[str, Any]:  # type-state: explicit_any — ResolvedFormat constructor kwargs
     if isinstance(format_input, ResolvedFormat):
         fields = dict(format_input)
@@ -323,7 +359,7 @@ def _is_other_kind(fields: _Fields, kind: Literal["number", "time"]) -> bool:
 
 def _merge_tiers(
     kind: Literal["number", "time"],
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     tiers: Sequence[AuthoredFormat | _AnyFormat | None],
     engine_default: Callable[[], str] | None,
 ) -> tuple[_Fields, bool]:
@@ -367,7 +403,7 @@ def _merge_tiers(
 
 def column_format(
     kind: Literal["number", "time"],
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     fmt: AuthoredFormat | _AnyFormat | None = None,
     *,
     board: AuthoredFormat | _AnyFormat | None = None,
@@ -405,22 +441,29 @@ def column_format(
 
 def _finished(
     fields: _Fields,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     values: Iterable[float | None] | None,
     notation: Notation | None,
 ) -> _Fields:
-    """``fields`` with the destination's notation and the sub-unit vote applied."""
+    """``fields`` with the destination's notation and the sub-unit vote applied.
+
+    Money only: a Vega-painted ``number`` slot already paints its sub-1 values
+    per value (the guarded digit register), so a slot-wide swap would strip SI
+    compaction from the slot's larger values for nothing."""
     if notation is not None and fields["notation"] is None:
         fields = fields | {"notation": notation}
-    if values is not None and fields["raw"] in PREDEFINED_SUB_UNIT_FALLBACK:
-        floor = si_sub_unit_floor(fields["spec"], fields["prefix"], fields["suffix"])
-        if any(v is not None and floor < abs(v) < 1.0 for v in values):
-            fields = fields | {"spec": sub_unit_spec(fields["raw"], formats)}
+    if (
+        values is not None
+        and fields["raw"] in PREDEFINED_SUB_UNIT_FALLBACK
+        and is_money_format(fields["spec"], fields["prefix"], fields["suffix"])
+        and any(v is not None and _in_sub_unit_band(v) for v in values)
+    ):
+        fields = fields | {"spec": sub_unit_spec(fields["raw"], formats)}
     return fields
 
 
 def authored_sign_placement(
-    authored: AuthoredFormat | None, formats: FormatAliases | None
+    authored: AuthoredFormat | None, formats: FormatTable | None
 ) -> SignPlacement | None:
     """The ``sign_placement`` the author wrote, inline or via the alias the spec
     names. A ``ResolvedFormat`` input (a synthesized column) carries another
@@ -455,7 +498,7 @@ def resolve_format_parts(
     format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
     *,
     spec: str | None = None,
     notation: Notation | None = None,
@@ -474,7 +517,7 @@ def resolve_format_parts(
 
 def resolve_label_format(
     raw: AuthoredFormat | None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     values: Iterable[float | None] = (),
 ) -> tuple[ResolvedFormat | None, bool]:
     """Resolve a label format over ``values``; ``(None, False)`` when it has no spec.
@@ -492,7 +535,7 @@ def resolve_label_format(
 
 
 def kpi_format_native(
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     fmt: AuthoredFormat | None = None,
     *,
     board: AuthoredFormat | None = None,
@@ -514,7 +557,7 @@ def kpi_format_native(
 def finalize_kpi_value_format(
     fmt: AuthoredFormat | None,
     value: float | None,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
     *,
     board: AuthoredFormat | None = None,
     column: AuthoredFormat | None = None,

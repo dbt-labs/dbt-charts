@@ -83,7 +83,7 @@ class _ChartStyleBase(BaseModel):
 
     ``font``/``border`` are deliberately NOT declared here. Only families with a
     hand-drawn per-chart card render surface (kpi, table, spark_bar, callout,
-    the geo families via ``_GeoChartStyle``) consume a per-chart font/border —
+    the geo families via ``_GeoChartStyle``) consume a per-chart font —
     each of those declares its own ``font``/``border`` field directly. Bar,
     line, area, scatter, histogram, heatmap, pie, and donut have no such
     surface: ``ChartsStyle`` (the board-level authoritative source) declares
@@ -156,7 +156,7 @@ else:
 
 
 class _ChartCardStyleMixin(BaseModel):
-    """font/border for families with a hand-drawn per-chart card render surface.
+    """font for families with a hand-drawn per-chart card render surface.
 
     Not part of ``_ChartStyleBase`` (see its docstring) — kpi/table/spark_bar/
     callout declare font/border directly on their own theme classes, and
@@ -173,7 +173,6 @@ class _ChartCardStyleMixin(BaseModel):
         default_factory=FontStyle,
         description="Chart-level font overrides.",
     )
-    border: BorderStyle = Field(description="Chart card border style.")
 
 
 if TYPE_CHECKING:
@@ -392,13 +391,19 @@ class _GeoChartStyle(
 
     ``geo_source`` is intentionally absent — it is a chart-root channel field
     (on ``_GeoChartFields``), not a style concern. Mixes in
-    ``_ChartCardStyleMixinAllOptional`` for font/border — geo is out of scope
+    ``_ChartCardStyleMixinAllOptional`` for font — geo is out of scope
     for the cartesian/pie/donut card-style narrowing (see ``_ChartStyleBase``'s
     docstring); this keeps geoshape/point_map accepting both fields exactly as
     before.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Cascade tier sentinel: None means "not authored"; the cascade fills it from
+    # charts.border, so no theme populates it.
+    border: Annotated[
+        BorderStyle | None, InheritSlot(from_path="Style.charts.border")
+    ] = Field(default=None, description="Chart card border style.")
 
     # Override: geo families do not support categorical color (extra_forbidden via StaticGradientColorStyle).
     color: StaticGradientColorStyle | None = Field(  # type: ignore[assignment]

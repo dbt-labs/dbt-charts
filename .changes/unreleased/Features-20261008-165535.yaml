@@ -1,0 +1,5 @@
+kind: Features
+body: A dbt_profile source no longer needs a dbt project or a profile name; the name defaults to DBT_PROFILE, then the dbt project's own profile.
+time: 2026-10-08T16:55:35.294966-07:00
+custom:
+    DbtChartsIssue: "62"

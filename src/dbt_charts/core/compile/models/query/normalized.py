@@ -26,7 +26,7 @@ See also:
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from typing import Annotated, Any, Literal, TypeGuard, get_args
+from typing import Annotated, Any, ClassVar, Literal, TypeGuard, get_args
 
 from pydantic import (
     BaseModel,
@@ -35,10 +35,15 @@ from pydantic import (
     Field,
     PrivateAttr,
     field_validator,
-    model_validator,
 )
 
 from dbt_charts.core.compile.models.cache import NEVER_CACHED, CachePolicy
+from dbt_charts.core.compile.models.constraints import (
+    ConstrainedModel,
+    Constraint,
+    IsSet,
+    Requires,
+)
 from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredQuery,
@@ -111,7 +116,7 @@ class Query(BaseModel, ABC):
     ignore: list[str] | None = Field(
         default=None,
         description=(
-            "Diagnostic codes to suppress (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION'])."
+            "Diagnostic codes to suppress (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION'])."
         ),
     )
 
@@ -404,7 +409,7 @@ class ValuesQuery(Query):
         return self._source_description
 
 
-class SchemaQuery(Query):
+class SchemaQuery(Query, ConstrainedModel):
     """Query the LayeredSchemaResolver in-process.
 
     Dispatches to list_sources / list_schemas / list_tables / profile_table /
@@ -423,6 +428,24 @@ class SchemaQuery(Query):
     validated at construction time: ``table`` requires ``schema``; ``column``
     requires both ``schema`` and ``table``.
     """
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Requires(
+            ("source",),
+            "schema: 'schema' requires 'source' to be set",
+            when=(IsSet("schema"),),
+        ),
+        Requires(
+            ("schema",),
+            "schema: 'table' requires 'schema' to be set",
+            when=(IsSet("table"),),
+        ),
+        Requires(
+            ("table",),
+            "schema: 'column' requires 'table' (and 'schema') to be set",
+            when=(IsSet("column"),),
+        ),
+    )
 
     query_type: Literal["schema"] = Field(
         default="schema",
@@ -476,18 +499,6 @@ class SchemaQuery(Query):
                 )
         return v
 
-    @model_validator(mode="after")
-    def _field_prerequisites(self) -> "SchemaQuery":
-        if self.schema_name is not None and self.source is None:
-            raise ValueError("schema: 'schema' requires 'source' to be set")
-        if self.table is not None and self.schema_name is None:
-            raise ValueError("schema: 'table' requires 'schema' to be set")
-        if self.column is not None and self.table is None:
-            raise ValueError(
-                "schema: 'column' requires 'table' (and 'schema') to be set"
-            )
-        return self
-
     def project(
         self,
         data: list[dict[str, Any]],  # type-state: explicit_any — raw query rows
@@ -538,7 +549,10 @@ def _derive_query_types() -> set[str]:
     types: set[str] = set()
     union = get_args(AuthoredQuery)[0]  # strip Annotated → the Union
     for member in get_args(union):
-        types.update(get_args(member.model_fields["type"].annotation))
+        # `Literal["schema", None]`: the None is "type not written", not a tag.
+        types.update(
+            t for t in get_args(member.model_fields["type"].annotation) if t is not None
+        )
     return types
 
 

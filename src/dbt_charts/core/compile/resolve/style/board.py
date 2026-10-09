@@ -25,10 +25,12 @@ from pydantic import BaseModel
 
 from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
 from dbt_charts.core.compile.models.primitives import (
+    DEFAULT_REGIONAL,
     FontStyle,
-    FormatAliases,
+    FormatTable,
     ResolvedFontStyle,
     ToneLiteral,
+    parse_box_shadow,
 )
 from dbt_charts.core.compile.models.style.authored import (
     ChartsStylePatch,
@@ -80,6 +82,7 @@ from dbt_charts.core.compile.resolve.style.tokens import (
 )
 from dbt_charts.core.compile.vega_lite.mapping import effective_vega_config
 from dbt_charts.core.fonts import font_is_tabular
+from dbt_charts.core.text.currencies import CurrencyCode
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -257,6 +260,13 @@ def _build_resolved_callout_chart(
     )
 
 
+def _format_table(cascaded: Style, currency: CurrencyCode | None) -> FormatTable:
+    return FormatTable(
+        aliases=cascaded.formats if cascaded.formats is not None else {},
+        currency=currency,
+    )
+
+
 def _build_chart_style_context(
     charts: ChartsStyle,
     base_background: str,
@@ -273,7 +283,7 @@ def _build_chart_style_context(
     charts_board_overrides: ChartsStylePatch,
     card_padding: float,
     heading_sizes: list[float],
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
 ) -> ChartStyleContext:
     # Deferred: a module-level import here would cycle back through
     # context.py -> resolved._base/.callout -> resolved/__init__.py ->
@@ -429,7 +439,9 @@ def _build_chart_style_context(
     )
 
 
-_RESOLVED_STYLE_CACHE: dict[int, tuple[Style, ResolvedStyle, ChartStyleContext]] = {}
+_RESOLVED_STYLE_CACHE: dict[
+    tuple[int, CurrencyCode | None], tuple[Style, ResolvedStyle, ChartStyleContext]
+] = {}
 
 
 def clear_resolve_style_cache() -> None:
@@ -499,6 +511,7 @@ def _finalize_chart_style_context(
     pre_style: Style,
     charts_board_overrides: ChartsStylePatch,
     base_background: str,
+    currency: CurrencyCode | None,
 ) -> ChartStyleContext:
     """Build ChartStyleContext from an already-seeded, already-cascaded Style.
 
@@ -535,7 +548,7 @@ def _finalize_chart_style_context(
         roles=cascaded.roles,
         tones=cascaded.tones,
         pre_style=pre_style,
-        formats=cascaded.formats,
+        formats=_format_table(cascaded, currency),
         charts_board_overrides=charts_board_overrides,
         card_padding=cascaded.frame.card_padding,
         heading_sizes=pre_style.heading_ramp(),
@@ -546,6 +559,7 @@ def _finalize_style(
     merged: Style,
     charts_board_overrides: ChartsStylePatch,
     base_background: str,
+    currency: CurrencyCode | None,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
     """Apply a single inherit cascade to a merged Style; return final style + context.
 
@@ -573,6 +587,7 @@ def _finalize_style(
         pre_style,
         charts_board_overrides,
         base_background,
+        currency,
     )
     # ResolvedChartDefaults is exactly ChartStyleContext minus its sparse/
     # cascade-only fields (see the class docstring) — every remaining field
@@ -584,7 +599,7 @@ def _finalize_style(
         }
     )
 
-    _TRANSFORMED = {"font", "emoji_mode", "vega_config", "chart_defaults"}
+    _TRANSFORMED = {"font", "emoji_mode", "vega_config", "chart_defaults", "box_shadow"}
     passthrough = {
         name: getattr(cascaded, name)
         for name in (f.name for f in dataclasses.fields(ResolvedStyle))
@@ -599,6 +614,11 @@ def _finalize_style(
         **passthrough,
         font=resolved_root_font,
         emoji_mode=cascaded.font.emoji,
+        box_shadow=(
+            None
+            if cascaded.box_shadow is None
+            else parse_box_shadow(cascaded.box_shadow)
+        ),
         vega_config=effective_vega_config(base_vl, chart_context),
         chart_defaults=chart_defaults,
     )
@@ -623,6 +643,7 @@ def resolve_style_and_context(
     base: Style,
     *patches: Any,  # type-state: explicit_any — heterogeneous patch types (StylePatch, ChartsStylePatch, ...) merged in sequence
     base_background: str | None = None,
+    currency: CurrencyCode | None = DEFAULT_REGIONAL.currency,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
     """Shared cascade entry point behind resolve_style()/resolve_chart_style_context().
 
@@ -648,16 +669,15 @@ def resolve_style_and_context(
     """
     background = base.background if base_background is None else base_background
     if patches:
-        return _finalize_style(*merge_style(base, *patches), background)
+        return _finalize_style(*merge_style(base, *patches), background, currency)
 
-    # The no-patch fast path is only ever reached today with base_background
-    # unset (a nested board with a cascade to run always has own_patch, so it
-    # takes the patches branch above) -- id(base) alone is the correct key.
-    cache_key = id(base)
+    # Reached only with base_background unset (a nested board with a cascade
+    # always has own_patch), so id(base) and currency are the whole key.
+    cache_key = (id(base), currency)
     cached = _RESOLVED_STYLE_CACHE.get(cache_key)
     if cached is not None and cached[0] is base:
         return cached[1], cached[2]
 
-    resolved, chart_context = _finalize_style(*merge_style(base), background)
+    resolved, chart_context = _finalize_style(*merge_style(base), background, currency)
     _RESOLVED_STYLE_CACHE[cache_key] = (base, resolved, chart_context)
     return resolved, chart_context

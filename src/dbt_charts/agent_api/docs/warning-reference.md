@@ -488,7 +488,7 @@ Chart {chart_id!r}: field {field!r} looks like {kind} but the {surface} {format_
 
 **Fix:** Set `{format_key}` to {suggestion} to match the field's meaning.
 
-Fires when a chart's y-encoding field name looks like money or a percentage but the chart's baked y-axis format is unfit to render that kind. Detection is name-based: fields ending in _usd, _revenue, _amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) trigger when the resolved y-axis format is unfit for that kind. A percent-classified field needs a `%` in the resolved format or in an authored FormatConfig prefix/suffix (a column already in percent points, `suffix: '%'`, is labeled); any other affix does not satisfy it. A currency-classified field is satisfied either by a `$` in the resolved format OR by an authored FormatConfig prefix/suffix (e.g. `€`, `EUR `) with no `$` anywhere: d3's grammar admits only `$`/`#` as a spec's own symbol character, so a non-dollar currency can only ever reach the axis through that authored affix. The fix suggests the dollar spec (`$,.2f`), except for a currency-classified field whose trailing `_<code>` names a currency dbt Charts recognizes (`_eur`, `_gbp`): it suggests `,.2f` with `prefix: '€'` (that currency's own symbol). Also fires on a visible table column with no number format whose non-null values are all numbers between 0 and 1, and not all exactly 0 or 1 (a flag): left unformatted it renders in SI notation (0.4367 shows as `437m`). The fix is to set `style.columns.<name>.format`, e.g. `.1%`. Pivot measure columns are not checked.
+Fires when a chart's y-encoding field name looks like money or a percentage but the chart's baked y-axis format is unfit to render that kind. Detection is name-based: fields ending in _usd, _revenue, _amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) trigger when the resolved y-axis format is unfit for that kind. A percent-classified field needs a `%` in the resolved format or in an authored FormatConfig prefix/suffix (a column already in percent points, `suffix: '%'`, is labeled); any other affix does not satisfy it. A currency-classified field is satisfied either by a `$` in the resolved format OR by an authored FormatConfig prefix/suffix (e.g. `€`, `EUR `) with no `$` anywhere: d3's grammar admits only `$`/`#` as a spec's own symbol character, so a non-dollar currency can only ever reach the axis through that authored affix. The fix suggests the dollar spec (`$,.2f`), except for a currency-classified field whose trailing `_<code>` names a currency dbt Charts recognizes (`_eur`, `_gbp`): it suggests `,.2f` with `prefix: '€'` (that currency's own symbol). Also fires on a visible table column with no number format whose non-null values are all numbers between 0 and 1, and not all exactly 0 or 1 (a flag): left unformatted it renders as a bare fraction (0.4367 shows as `0.44`). The fix is to set `style.columns.<name>.format`, e.g. `.1%`. Pivot measure columns are not checked.
 
 ### WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS: Authored axis label expression uses local time on a bucketed axis
 
@@ -858,7 +858,7 @@ Chart {chart_id!r} ({chart_type}): temporal x-axis has exactly one data point; a
 
 Fires on line and area charts where the x-axis is temporal and the query result has exactly one row. A one-point line is rendered as a single dot; a one-point area is a vertical line. Both render but convey nothing about a trend; this almost always means the date filter is too narrow.
 
-### WARN-TOO-MANY-COLOR-CATEGORIES: Color encoding has more categories than the palette can distinguish
+### WARN-TOO-MANY-COLOR-CATEGORIES: Color encoding has more categories than a reader can tell apart
 
 - **Level:** warning
 - **Domain:** render
@@ -867,12 +867,12 @@ Fires on line and area charts where the x-axis is temporal and the query result 
 **Message template:**
 
 ```
-Chart {chart_id!r}: color encoding on {field!r} yields {count} distinct series; the palette only has {max_categories} distinct colors before recycling.
+Chart {chart_id!r}: color encoding on {field!r} yields {count} distinct series, more than the {max_categories} a reader can tell apart.
 ```
 
 **Fix:** Reduce the number of color categories by grouping small values into 'Other', or filter the data to the most significant categories.
 
-Fires when a categorical color encoding has more distinct values than the palette can distinguish; colors recycle and the legend becomes unreadable. Gated on the Vega-Lite color encoding type so a continuous (quantitative) color gradient never trips it. A wide chart (y: [a, b]) is counted by the series its fold renders -- the measures, crossed with the color: dimension's values when one is authored.
+Fires when a categorical color encoding has more distinct values than the larger of the chart's palette length and eight; past that a reader cannot match legend entries to marks, and a short palette recycles colors. A handful of series on a short palette stays quiet. The message states the series count and the threshold. Gated on the Vega-Lite color encoding type so a continuous (quantitative) color gradient never trips it. A wide chart (y: [a, b]) is counted by the series its fold renders -- the measures, crossed with the color: dimension's values when one is authored.
 
 ### WARN-TOO-MANY-X-CATEGORIES: x-axis has too many distinct values to read
 
@@ -956,6 +956,22 @@ Fires on any chart where the y-encoding field is more than 50% NULL in the query
 
 ## layout
 
+
+### WARN-EXTENDS-LAYOUT-APPENDED: A board's rows or cols are appended to the ones it extends
+
+- **Level:** warning
+- **Domain:** compile
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+`{axis}:` here is appended to the {inherited_count} {axis} inherited from {parents}, not substituted for them.
+```
+
+**Fix:** To replace the inherited layout, use a different layout axis, or move the shared parts into a partial and import it from both boards.
+
+Fired when a board sets `rows:` or `cols:` and a board it `extends:` already sets the same one. Same-axis layouts append, so the board shows the parent's items followed by its own.
 
 ### WARN-FLAT-COLS-UNSIZED-OVERFLOW: Flat cols: row has too many unsized non-KPI cells
 
@@ -1072,22 +1088,6 @@ Query {query_name!r} uses dbt ref()/source() but the columns it reads could not 
 
 Fired when a board query that calls ref()/source() cannot be statically analyzed for the (table, column) pairs it consumes: a `SELECT *`, a templated identifier, an ambiguous unqualified column, or SQL that does not parse. The model-column drift check makes no claim either way for such a query; this warning keeps that gap visible instead of passing it in silence. Queries with no dbt calls are out of scope; the SQL lint tiers own those.
 
-### WARN-FANOUT-RISK: Join may multiply rows beyond chart aggregation
-
-- **Level:** warning
-- **Domain:** query
-- **Suppressible:** yes
-
-**Message template:**
-
-```
-Query {query_name!r}: {message}
-```
-
-**Fix:** Add a GROUP BY or aggregation in the query to collapse the duplicate rows before they reach the chart.
-
-Fires when query validation detects a join that may multiply rows beyond what the chart's aggregation can recover. When a cached relationship context (super-schema profiles) is available, severity is calibrated against known multiplicities. Emitted by `validate_compiled_queries` for every named query.
-
 ### WARN-MISSING-JOIN-PREDICATE: Join is missing a predicate and may produce a cross join
 
 - **Level:** warning
@@ -1100,9 +1100,11 @@ Fires when query validation detects a join that may multiply rows beyond what th
 Query {query_name!r}: {message}
 ```
 
-**Fix:** Add an ON clause to the join to specify how the tables relate.
+**Fix:** Add an ON clause that relates the tables, or join a source that returns one row (an aggregate with no GROUP BY, or LIMIT 1).
 
-Fires when query validation detects an implicit cross join or an explicit CROSS JOIN without a predicate. These almost always indicate a missing ON clause and produce wildly fanned-out result sets. Emitted by `validate_compiled_queries` via the query validator.
+Fires when query validation detects a CROSS JOIN, a comma join, or a join on a constant (`ON TRUE`, `ON 1 = 1`) between two sources that can each return many rows. That multiplies every row of one by every row of the other; it almost always means a missing ON clause.
+
+A source that returns one row by construction never multiplies rows, so a join against it stays quiet: a subquery or CTE that aggregates with no `GROUP BY`, a `SELECT` with no `FROM`, or a `LIMIT 1`. So does a table function such as `generate_series`. A filter that merely happens to match one row does not count. Emitted by `validate_compiled_queries` via the query validator.
 
 ### WARN-PARSE-ERROR: SQL query could not be parsed for semantic validation
 
@@ -1116,11 +1118,11 @@ Fires when query validation detects an implicit cross join or an explicit CROSS 
 Query {query_name!r}: {message}
 ```
 
-**Fix:** Check the SQL syntax. The query may still execute, but semantic validation (fanout detection, reaggregation) cannot run on unparseable SQL.
+**Fix:** Check the SQL syntax. The query may still execute, but semantic validation (reaggregation, missing join predicates) cannot run on unparseable SQL.
 
-Fires when a SQL query cannot be parsed as a structured AST. The query may still execute against the warehouse; this warning surfaces that semantic validation (fanout, reaggregation) cannot run on unparseable SQL. Emitted by `compile()` for authored queries whose dialect resolves and whose failure carries a specific position.
+Fires when a SQL query cannot be parsed as a structured AST. The query may still execute against the warehouse; this warning surfaces that semantic validation (reaggregation, missing join predicates) cannot run on unparseable SQL. Emitted by `compile()` for authored queries whose dialect resolves and whose failure carries a specific position.
 
-### WARN-REAGGREGATION: Aggregation applied on top of an already-aggregated input
+### WARN-REAGGREGATION: Grouping-dependent aggregate applied on top of an aggregated input
 
 - **Level:** warning
 - **Domain:** query
@@ -1132,11 +1134,11 @@ Fires when a SQL query cannot be parsed as a structured AST. The query may still
 Query {query_name!r}: {message}
 ```
 
-**Fix:** Refactor the query to aggregate only once at the correct level, or verify the double-aggregation is intentional.
+**Fix:** Compute the aggregate once over the underlying rows, or carry the SUM and COUNT up and divide them in the outer query.
 
-Fires when query validation detects aggregation applied on top of an already-aggregated input (e.g. SUM(SUM(...)) patterns or aggregation over a query result that itself aggregates). The result is usually not what the author intended. Emitted by `validate_compiled_queries` via the query validator.
+Fires when an outer query applies an aggregate whose result depends on how rows were grouped to a column that a CTE or subquery already aggregated: `AVG`, `MEDIAN`, or a percentile over any aggregate, and `SUM` over an `AVG`, `MEDIAN`, or percentile, and any `DISTINCT` aggregate, which collapses equal pre-aggregated values. An average of averages weights every group equally, so it differs from the average of the underlying rows. The message names both functions, for example `AVG over AVG`. Emitted by `validate_compiled_queries` via the query validator.
 
-Looker's symmetric aggregate is exempt. Migrated Looker queries read a measure across a fan-out join by packing it with a hash of the dedup key, `SUM(DISTINCT ...)`-ing so duplicate keys collapse, then subtracting a second `SUM(DISTINCT hash-only)`: an identity over a per-key value, not a second aggregation. Both halves of that subtraction must be present for the exemption to apply, so a plain `SUM(DISTINCT already_summed_column)` still warns.
+Pairs that compose exactly stay quiet: `SUM` or `COUNT` over `SUM` or `COUNT`, `MAX` over `MAX`, and `MIN` over `MIN`. So do window functions (`LAG`, a running `SUM(...) OVER`), which run per row, and aggregates with a `FILTER (WHERE ...)` clause, which pick a subset of rows.
 
 ### WARN-WAREHOUSE-CHECK-UNAVAILABLE: Warehouse check unavailable on this adapter
 

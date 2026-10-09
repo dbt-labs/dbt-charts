@@ -170,7 +170,7 @@ class TestLinePointSizeWiring:
     def test_theme_tier_size_zero_disables_points(self):
         """A theme-level point.size=0 must turn points off board/theme-wide.
 
-        Regression for the tier bug: size_authored used to read only the
+        Regression for the tier bug: the authored-size check used to read only the
         chart's own style: block, so a theme (or board) setting size=0 was
         indistinguishable from the unset global default and got silently
         overridden by the density-driven auto-size -- the exact surface

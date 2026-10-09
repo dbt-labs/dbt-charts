@@ -33,6 +33,7 @@ from dbt_charts.core.render.chart.text_truncation import record_text_truncation
 from dbt_charts.core.render.svg_utils import authored_kind_attr, escape_attr
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import apply_case
+from dbt_charts.core.text.format_d3 import d3_format
 
 
 def _auto_detect_spark_bar_fields(
@@ -231,9 +232,9 @@ def _render_spark_bar_row(
     if isinstance(count_value, float) and count_value.is_integer():
         display_count = str(int(count_value))
     elif isinstance(count_value, float):
-        display_count = f"{count_value:,.1f}"
+        display_count = d3_format(",.1f")(count_value)
     else:
-        display_count = f"{count_value:,}"
+        display_count = d3_format(",d")(count_value)
 
     # Render label
     if labels_visible:

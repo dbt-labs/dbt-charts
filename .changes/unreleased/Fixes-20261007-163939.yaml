@@ -1,0 +1,3 @@
+kind: Fixes
+body: The board schema now rejects blank incremental and glyph values, non-absolute aliases, malformed refs, hex colors on chart color channels, blank y_start, unknown ignore codes, junk category colors, numeric table scale palettes, and mixed-type static options.
+time: 2026-10-07T16:39:39.238549-07:00

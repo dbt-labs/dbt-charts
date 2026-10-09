@@ -39,9 +39,9 @@ Detection rule (v1, name-match only):
 
 Table columns (value-range signal, not name-based): a visible column with no
 resolved format whose non-null values are all real numbers in [0, 1], and not all
-exactly 0 or 1 (a flag), is a likely fraction; unformatted it renders as SI
-("0.4367" -> "437m"). Pivot measure columns are not materialized at resolve and
-are not checked.
+exactly 0 or 1 (a flag), is a likely fraction; unformatted it renders as plain digits ("0.4367" ->
+"0.44"). Pivot measure columns are not materialized at resolve and are not
+checked.
 
 Out of scope for v1: value-range secondary signal for the y-axis (median >100 for
 currency; all values in [0,1] for percent). Add as a tightener if precision

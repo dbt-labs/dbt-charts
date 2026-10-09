@@ -36,3 +36,11 @@ class MySQLDialect(SQLDialect):
             Parameter placeholder '%s'
         """
         return "%s"
+
+    def quote(self, identifier: str) -> str:
+        """Backtick-quote an identifier. Double quotes only work under the
+        non-default ANSI_QUOTES mode, so backticks are the portable form.
+
+        https://dev.mysql.com/doc/refman/8.4/en/identifiers.html
+        """
+        return "`" + identifier.replace("`", "``") + "`"

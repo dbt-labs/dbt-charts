@@ -23,10 +23,9 @@ way — but it is the one row in this table where DESCRIBE is not free: it must
 read and parse the files first. Still far cheaper than executing (DESCRIBE
 returns column metadata, not the result set), and it warms the cache for the
 rest of the current process — not for a later, separate process, since the
-cache is in-memory and dies with it. Its row also can't report ``invalid``:
-materialization failures reach this module as a bare ``RuntimeError`` with no
-``error_code`` (``execute_file_source_sql`` flattens whatever DuckDB raised),
-so ``_is_query_defect`` can't classify them and they fall back to
+cache is in-memory and dies with it. A DuckDB rejection of the SQL reports
+``invalid`` (``FileSourceMaterializer`` classifies it); a materialization fault
+such as a missing file carries no query-defect code and stays
 ``unchecked``.
 
 The last row is the point: an adapter with no primitive that runs without
@@ -121,6 +120,8 @@ class _PrefixCheck(NamedTuple):
 # instead of failing (see the module docstring and the dispatch below).
 _PREFIX_CHECKS: dict[str, _PrefixCheck] = {
     "duckdb": _PrefixCheck("DESCRIBE", ("column_name", "column_type")),
+    # Lake compute's engine is DuckDB, and its rows read the same.
+    "lakecompute": _PrefixCheck("DESCRIBE", ("column_name", "column_type")),
     # A bare DESCRIBE prefix leads a SELECT in ClickHouse too, and it binds the
     # query (an unknown column is a rejection, not a plan note), so the row is
     # the result schema exactly as on DuckDB.
@@ -227,7 +228,7 @@ def warehouse_check(
     query = resolved
 
     # None usually means a source-less *non*-SQL query (source-less SQL raises
-    # ERR-NO-DEFAULT-SOURCE) — but a SqlQuery can land here too: an authored
+    # ERR-SOURCE-NOT-NAMED) — but a SqlQuery can land here too: an authored
     # `source:` that names no board/project source falls through to
     # DefaultSourceResolver's dbt fallback whenever a dbt project is in scope,
     # with no ResolvedSourceConfig to read a type off. Must run against the
@@ -349,7 +350,7 @@ def warehouse_check(
         )
     # The remaining adapters are unchecked because dbt charts implements no
     # non-executing check for them — a claim about us, not the warehouse
-    # (mysql and trino have EXPLAIN too, just no branch here yet). Databricks
+    # (trino has EXPLAIN too, just no branch here yet). Databricks
     # is the exception with a reason of its own: adding it to the table above
     # would silently shadow this refusal, and the refusal is the point.
     if adapter_type == "databricks":
@@ -414,10 +415,11 @@ def check_ad_hoc_query(
         Layout,
         LayoutType,
     )
+    from dbt_charts.core.compile.models.primitives import DEFAULT_REGIONAL
     from dbt_charts.core.compile.normalize.dispatch import compile_board_resolved_style
 
     resolved_style, chart_style_context, _ = compile_board_resolved_style(
-        None, None, None
+        None, None, None, currency=DEFAULT_REGIONAL.currency
     )
     board = Board(
         id=AD_HOC_QUERY_NAME,

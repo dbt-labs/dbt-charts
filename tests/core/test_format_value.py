@@ -420,7 +420,7 @@ class TestFormatValue:
         assert format_value(1234567.89, "money", formats) == "$1,234,567.89"
         assert format_value(0.123, "percent", formats) == "12.3%"
         # .2s = 2 significant figures via d3_format lib
-        assert format_value(1500000, "number", formats) == "1.5 M"
+        assert format_value(1500000, "number", formats) == "1.5\u00a0M"
 
     def test_d3_formatting_without_formats(self):
         assert format_value(1234.56, "$,.2f") == "$1,234.56"
@@ -464,7 +464,7 @@ class TestNewAliases:
         assert resolve_format("currency") == "$.3~s"
 
     def test_currency_formats_value(self):
-        assert format_value(1_500_000, "currency") == "$1.5 M"
+        assert format_value(1_500_000, "currency") == "$1.5\u00a0M"
 
     def test_percent_whole_resolves(self):
         assert resolve_format("percent_whole") == ".0%"
@@ -551,8 +551,8 @@ class TestNotationFamilies:
         assert format_d3(4_500_000_000_000, ",.2s") == "4.5T"
 
     def test_analytic_notation_explicit(self):
-        assert format_d3(1_500, ",.2s", notation="analytic") == "1.5 K"
-        assert format_d3(2_500_000, ",.2s", notation="analytic") == "2.5 M"
+        assert format_d3(1_500, ",.2s", notation="analytic") == "1.5\u00a0K"
+        assert format_d3(2_500_000, ",.2s", notation="analytic") == "2.5\u00a0M"
 
     # --- Narrative notation ---
 
@@ -714,7 +714,7 @@ class TestNotationRenameRegression:
             FormatConfig(notation="default")
 
     def test_format_d3_analytic_renders_analytic_register(self):
-        assert format_d3(1_500, "$.2s", notation="analytic") == "$1.5 K"
+        assert format_d3(1_500, "$.2s", notation="analytic") == "$1.5\u00a0K"
 
     def test_format_d3_narrative_renders_narrative_register(self):
         assert format_d3(1_500_000_000, ".2s", notation="narrative") == "1.5bn"
@@ -765,7 +765,7 @@ class TestAboveTrillionsNarrativeFallback:
     house register."""
 
     def test_peta_falls_back_to_analytic_form(self):
-        assert format_d3(1e15, ",.2~s", notation="narrative") == "1 P"
+        assert format_d3(1e15, ",.2~s", notation="narrative") == "1\u00a0P"
 
     def test_fallback_is_never_the_bare_d3_letter(self):
         # d3's own raw SI output for 1e15 is "1P" -- the house register must
@@ -773,12 +773,12 @@ class TestAboveTrillionsNarrativeFallback:
         assert format_d3(1e15, ",.2~s", notation="narrative") != "1P"
 
     def test_exa_zetta_yotta_all_fall_back(self):
-        assert format_d3(1e18, ",.2~s", notation="narrative") == "1 E"
-        assert format_d3(1e21, ",.2~s", notation="narrative") == "1 Z"
-        assert format_d3(1e24, ",.2~s", notation="narrative") == "1 Y"
+        assert format_d3(1e18, ",.2~s", notation="narrative") == "1\u00a0E"
+        assert format_d3(1e21, ",.2~s", notation="narrative") == "1\u00a0Z"
+        assert format_d3(1e24, ",.2~s", notation="narrative") == "1\u00a0Y"
 
     def test_analytic_unaffected_by_the_fallback(self):
-        assert format_d3(1e15, ",.2~s", notation="analytic") == "1 P"
+        assert format_d3(1e15, ",.2~s", notation="analytic") == "1\u00a0P"
 
     def test_kpi_parts_headline_fallback_has_no_leading_space(self):
         # format_kpi_parts splits the magnitude into its own lane; visual
@@ -933,7 +933,7 @@ class TestFormatKpiPartsNative:
     def test_native_true_billions_keeps_g_suffix(self):
         """native=True: 3.2e9 with ~s → suffix "G" (raw d3 giga, not house "B").
 
-        MAGNITUDE_SUFFIXES must include raw d3 keys (k/M/G/T/…) in addition to
+        magnitude_suffixes() must include raw d3 keys (k/M/G/T/…) in addition to
         house notation values (K/M/B/T/…). Without "G", table symbol_mode:anchors
         strips the suffix from non-first rows, making 3.2B render as "3.2".
         """
@@ -943,10 +943,10 @@ class TestFormatKpiPartsNative:
             formats={},
             native=True,
         )
-        from dbt_charts.core.compile.format_value import MAGNITUDE_SUFFIXES
+        from dbt_charts.core.compile.format_value import magnitude_suffixes
 
         assert suffix == "G", f"expected raw d3 'G', got {suffix!r}"
-        assert "G" in MAGNITUDE_SUFFIXES, "MAGNITUDE_SUFFIXES must include raw d3 'G'"
+        assert "G" in magnitude_suffixes(), "must include raw d3 'G'"
 
 
 class TestJinjaFormatFilter:
@@ -976,7 +976,7 @@ class TestJinjaFormatFilter:
         assert result == "1M", f"expected '1M', got {result!r}"
 
     def test_no_analytic_notation_applied(self) -> None:
-        """No house notation — '1.5G' not rewritten to '1.5 B'."""
+        """No house notation — '1.5G' not rewritten to '1.5\u00a0B'."""
         result = self._render("{{ value | format('.2s') }}", 1_500_000_000.0)
         assert result == "1.5G", f"expected raw d3 '1.5G', got {result!r}"
 
@@ -994,10 +994,10 @@ class TestCompactNamesAreActuallyCompact:
     @pytest.mark.parametrize(
         ("name", "value", "expected"),
         [
-            ("number", 50_752.9, "50.8 K"),
-            ("currency", 50_752.9, "$50.8 K"),
-            ("number", 1_234_567.89, "1.23 M"),
-            ("currency", 1_234_567.89, "$1.23 M"),
+            ("number", 50_752.9, "50.8\u00a0K"),
+            ("currency", 50_752.9, "$50.8\u00a0K"),
+            ("number", 1_234_567.89, "1.23\u00a0M"),
+            ("currency", 1_234_567.89, "$1.23\u00a0M"),
         ],
     )
     def test_compact_name_trims_to_three_significant_digits(
@@ -1013,8 +1013,8 @@ class TestCompactNamesAreActuallyCompact:
         [
             ("number", 999, "999"),
             ("currency", 999, "$999"),
-            ("number", 1_500, "1.5 K"),
-            ("currency", 2_000_000, "$2 M"),
+            ("number", 1_500, "1.5\u00a0K"),
+            ("currency", 2_000_000, "$2\u00a0M"),
         ],
     )
     def test_already_short_values_are_unchanged(
@@ -1029,21 +1029,21 @@ class TestCompactNamesAreActuallyCompact:
         assert "50.7529" in format_d3(50_752.9, spec)
 
 
-class TestSubCentMoneyKeepsSi:
+class TestSubCentValuesPaintDigits:
     """Below half a cent the two-decimal fallback cannot represent the value.
 
-    `$,.2f` renders anything under 0.005 as `$0.00`, so applying the floor
-    there would paint an entire CPC, per-token-pricing or FX column as zero on
-    every row — visually identical to the genuine zeros this same band is
-    careful to leave as `$0`. `$670m` is a misread a reader can catch; `$0.00`
-    is not. The floor is therefore 0.005, not 0.0: it confines the swap to the
-    range the fallback can actually express, and sub-cent money keeps the SI
-    rendering it had before this rule existed.
+    `$,.2f` renders anything under 0.005 as `$0.00`, so a CPC, per-token-pricing
+    or FX column would paint as zero on every row. Those values take the
+    significant-digit register instead, and past `SUB_UNIT_SCIENTIFIC_FLOOR`
+    the scientific one: never an SI prefix, below 1.
     """
 
-    def test_sub_cent_money_keeps_its_si_rendering(self):
-        assert format_value(0.0023, "currency") == "$2.3m"
-        assert format_value(0.0001, "currency") == "$100µ"
+    def test_sub_cent_money_paints_significant_digits(self):
+        assert format_value(0.0023, "currency") == "$0.0023"
+        assert format_value(0.0001, "currency") == "$0.0001"
+
+    def test_sub_floor_value_paints_scientific(self):
+        assert format_value(1e-11, "number") == "1e-11"
 
     def test_the_floor_engages_where_the_fallback_can_represent_the_value(self):
         assert format_value(0.0051, "currency") == "$0.01"
@@ -1059,18 +1059,14 @@ class TestSubCentMoneyKeepsSi:
             )
 
     def test_kpi_parts_takes_the_same_floor(self):
-        # Milli stays glued in the number lane — it is not in the house suffix
-        # vocabulary, which is the whole reason this rule exists.
-        assert format_kpi_parts(0.0023, "currency", None) == ("$", "2.3m", "")
+        assert format_kpi_parts(0.0023, "currency", None) == ("$", "0.0023", "")
 
 
 class TestSiSubUnitFloor:
-    """Money below $1 has no sub-cent unit to name, so it must not take an SI
-    spec — d3's `m` (milli) glues onto the number as e.g. `$670m` for 67
-    cents, colliding case-only with the house million grammar. A plain
-    quantity's fraction reads correctly as milli (`0.671` -> `671m`) and must
-    keep its SI spec unchanged. Money at or above $1 is unchanged too — the
-    `$13` for `$12.99` rounding case is a separate, tracked issue.
+    """A predefined SI member never paints an SI prefix below 1: d3's `m`
+    (milli) collides case-only with the house million grammar, so `0.671`
+    must not read `671m`. Money and plain quantities share the one rule.
+    Values at or above 1 are unchanged.
     """
 
     def test_money_below_one_falls_back_to_currency_full(self) -> None:
@@ -1086,8 +1082,10 @@ class TestSiSubUnitFloor:
         config = FormatConfig(spec="number", suffix=" USD")
         assert format_value(0.67, config) == "0.67 USD"
 
-    def test_plain_quantity_fraction_keeps_milli_reading(self) -> None:
-        assert format_value(0.671, "number") == "671m"
+    def test_plain_quantity_fraction_paints_digits(self) -> None:
+        assert format_value(0.671, "number") == "0.67"
+        assert format_value(0.2, "number") == "0.20"
+        assert format_value(-0.2, "number") == "−0.20"
 
     def test_money_at_or_above_one_is_unchanged(self) -> None:
         assert format_value(1.0, "currency") == "$1"
@@ -1096,29 +1094,16 @@ class TestSiSubUnitFloor:
     def test_format_kpi_parts_money_below_one_falls_back(self) -> None:
         assert format_kpi_parts(0.67, "currency") == ("$", "0.67", "")
 
-    def test_format_kpi_parts_plain_quantity_keeps_milli(self) -> None:
-        # "m" (milli) is not a house magnitude suffix (_D3_TO_ANALYTIC has no
-        # entry for it), so it stays glued to the number, unaffected by the
-        # money-only floor.
-        assert format_kpi_parts(0.671, "number") == ("", "671m", "")
+    def test_format_kpi_parts_plain_quantity_paints_digits(self) -> None:
+        assert format_kpi_parts(0.671, "number") == ("", "0.67", "")
 
     def test_negative_money_below_one_falls_back(self) -> None:
         assert format_value(-0.67, "currency") == "−$0.67"
 
-    def test_kg_suffix_keeps_si_reading(self) -> None:
-        # A non-blank suffix alone must NOT be enough to call this money --
-        # "kg" is a unit, not a currency. Two grams must render as an SI
-        # milli reading, not get zeroed out by the money-only fallback.
-        config = FormatConfig(spec="number", suffix=" kg")
-        assert format_value(0.002, config) == "2m kg"
-
-    def test_ms_suffix_keeps_si_reading(self) -> None:
-        config = FormatConfig(spec="number", suffix=" ms")
-        assert format_value(0.002, config) == "2m ms"
-
-    def test_unrecognized_suffix_keeps_si_reading(self) -> None:
-        config = FormatConfig(spec="number", suffix=" rpm")
-        assert format_value(0.002, config) == "2m rpm"
+    @pytest.mark.parametrize("suffix", [" kg", " ms", " rpm"])
+    def test_unit_suffix_paints_digits_not_milli(self, suffix: str) -> None:
+        config = FormatConfig(spec="number", suffix=suffix)
+        assert format_value(0.002, config) == f"0.002{suffix}"
 
     def test_euro_prefix_below_one_falls_back(self) -> None:
         config = FormatConfig(spec="number", prefix="€")
@@ -1197,21 +1182,19 @@ class TestSubUnitFloorVote:
             == (PREDEFINED_SPECS["currency"])
         )
 
-    def test_sub_cent_money_keeps_si_spec(self) -> None:
-        # Below MONEY_SUB_UNIT_FLOOR the fallback can't represent the value
-        # either ($,.2f would print $0.00) -- stays on SI, same as the
-        # per-value predicate.
+    def test_sub_cent_only_slot_keeps_si_spec(self) -> None:
+        # ``$,.2f`` would print $0.00 for every value.
         assert (
             resolve_format_parts_for_values("currency", None, [0.0023]).spec
             == (PREDEFINED_SPECS["currency"])
         )
 
-    def test_plain_quantity_fraction_keeps_si_spec(self) -> None:
-        # "number" below 1 reads correctly as an SI milli value -- only
-        # money is wrong below the floor.
+    def test_plain_quantity_slot_never_votes(self) -> None:
+        # A plain-number slot paints sub-1 values per value; a slot-wide swap
+        # to ``,.2f`` would print 2500000 as "2,500,000.00".
         assert (
-            resolve_format_parts_for_values("number", None, [0.671]).spec
-            == (PREDEFINED_SPECS["number"])
+            resolve_format_parts_for_values("number", None, [0.5, 2_500_000]).spec
+            == PREDEFINED_SPECS["number"]
         )
 
     def test_money_prefix_below_one_falls_back(self) -> None:

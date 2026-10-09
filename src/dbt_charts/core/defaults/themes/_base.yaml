@@ -610,9 +610,11 @@ style:
           # has a ``color:`` channel, ``no_color`` otherwise. Use the
           # generic Jinja context vars (``percent``, ``color``, ``value``)
           # so templates work regardless of theta/color column names.
+          # ``{value_line}`` is the slice value in the slice tooltip's format;
+          # pie resolve replaces it with the matching ``value | format(...)`` line.
           default_template:
-            with_color: "{{ '{:.0%}'.format(percent) }} {{ color }}\n{{ '{:,.0f}'.format(value) }}"
-            no_color: "{{ '{:.0%}'.format(percent) }}\n{{ '{:,.0f}'.format(value) }}"
+            with_color: "{{ percent | format('.0%') }} {{ color }}\n{value_line}"
+            no_color: "{{ percent | format('.0%') }}\n{value_line}"
       text:
         font: label
         align: center
@@ -738,10 +740,6 @@ style:
         right: 0.0
         bottom: 4.0
         left: 0.0
-      border:
-        width: 0.0
-        color: transparent
-        radius: 0.0
 
     spark_bar:
       preferred_width: 200.0

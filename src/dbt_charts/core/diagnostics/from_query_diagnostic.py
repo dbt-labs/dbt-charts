@@ -22,8 +22,8 @@ def from_query_diagnostic(query_name: str, diag: QueryDiagnostic) -> Diagnostic:
     """Convert a query validator diagnostic into a Diagnostic.
 
     ``message`` carries only the templated head; ``severity``, ``confidence``,
-    ``detail``, and ``evidence`` (table names and relationship info for
-    fanout/join diagnostics) land in ``fields`` so consumers can render them
+    ``detail``, and ``evidence`` (source names and lineage for
+    re-aggregation and join diagnostics) land in ``fields`` so consumers can render them
     without parsing a concatenated string.
     """
     wc = REGISTRY.get(diag.code)  # also validates diag.code is registered

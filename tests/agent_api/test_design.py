@@ -278,6 +278,27 @@ _PARSE_FIXTURES = {
 }
 
 
+def _in_bounds(prop: DesignProperty) -> float:
+    """A number the control's own bounds allow, whole where one fits."""
+    low = prop.minimum if prop.minimum is not None else prop.exclusive_minimum
+    high = prop.maximum if prop.maximum is not None else prop.exclusive_maximum
+    candidates: list[float] = [100]
+    if low is not None:
+        candidates.append(low + 1)
+    if high is not None:
+        candidates.append(high - 1)
+    if low is not None and high is not None:
+        candidates.append((low + high) / 2)
+    return next(
+        value
+        for value in candidates
+        if (prop.minimum is None or value >= prop.minimum)
+        and (prop.exclusive_minimum is None or value > prop.exclusive_minimum)
+        and (prop.maximum is None or value <= prop.maximum)
+        and (prop.exclusive_maximum is None or value < prop.exclusive_maximum)
+    )
+
+
 def _panel_interactions(prop):
     """Every edit one panel interaction can produce for this control.
 
@@ -316,7 +337,7 @@ def _panel_interactions(prop):
     elif prop.widget == "checkbox":
         edits.append(not prop.value)
     elif prop.widget == "number":
-        edits.append(100)
+        edits.append(_in_bounds(prop))
     elif prop.widget == "list":
         # Both shapes the control can produce. The multi-value one is the whole
         # reason it exists, and it is what makes the compiler's multi-metric
@@ -760,6 +781,17 @@ def test_a_numeric_union_still_projects_to_a_number_control() -> None:
         "rows:\n  - title: R\n    type: area\n    query: q\n    x: m\n    y: v\n"
     )
     assert _flat(targets["rows.0"])["height"].widget == "number"
+
+
+def test_a_number_control_carries_its_fields_bounds() -> None:
+    targets = _targets(
+        "rows:\n  - title: R\n    type: pie\n    query: q\n    theta: v\n    color: m\n"
+    )
+    radius = _flat(targets["rows.0"])["style.inner_radius"]
+    assert (radius.minimum, radius.maximum) == (0, 1)
+    assert (radius.exclusive_minimum, radius.exclusive_maximum) == (None, None)
+    width = _flat(targets[""])["style.frame.width"]
+    assert (width.exclusive_minimum, width.minimum, width.maximum) == (0, None, None)
 
 
 def test_a_union_mixing_a_string_arm_stays_text() -> None:
@@ -2637,9 +2669,8 @@ def test_a_variable_offers_required_only_once_it_has_a_default() -> None:
 def test_a_bound_control_is_offered_only_where_it_cannot_strand_the_default() -> None:
     """The other half of the same two-fields-one-decision problem.
 
-    `min:`/`max:` and `default:` are one decision, and only slider and range
-    read them — so the same numeric bound is a live hazard on one input and
-    inert YAML on every other. It fails the way `required` does rather than the
+    `min:`/`max:` and `default:` are one decision on the inputs that read them.
+    It fails the way `required` does rather than the
     way `input` does: the board stops compiling, Cloud renders the error with no
     SVG, and nothing stamps the path the panel would need to offer the undo.
 
@@ -2675,8 +2706,8 @@ def test_a_bound_control_is_offered_only_where_it_cannot_strand_the_default() ->
     assert "min" in unbounded
     assert "max" in unbounded
 
-    # And an input that never reads a bound keeps them for the same reason: the
-    # question asked is the compiler's, not the field name's.
+    # A number field reads authored bounds too, and a numeric default sits
+    # inside no bound yet, so nothing is stranded.
     numeric = _flat(
         build_design_target(
             slider.replace("input: slider", "input: number"), "variables.size"
@@ -2697,22 +2728,10 @@ def test_a_bound_control_is_offered_only_where_it_cannot_strand_the_default() ->
     assert "min" not in boolean
 
 
-def test_the_bound_guard_reads_the_input_the_compiler_will_resolve() -> None:
-    """The hazard is reachable from a variable whose text never says `slider`.
-
-    `input:` defaults to `auto`, and `dispatch.py` resolves it through
-    `detect_variable_input_type` *before* it validates the default. That
-    detector promotes an auto variable to `slider` the moment any one of
-    `min`/`max`/`step` is set — so writing a bound is not "editing a slider's
-    bound", it is *making the variable a slider* and then bounding it, in one
-    edit. A probe that skips the resolution asks the validator about an `auto`
-    variable, which it accepts unconditionally, and the guard passes everything.
-
-    Two boards, and the second is why `step` cannot be exempted by name: with a
-    string default, every one of the three fields breaks the board — not by
-    crossing a bound, but by promoting the variable to an input its default was
-    never valid for.
-    """
+def test_an_auto_scalar_variable_resolves_to_text_and_gets_no_bounds() -> None:
+    """`input:` defaults to `auto`; `detect_variable_input_type` resolves a bare
+    scalar default to `text`, which draws no bounds. Writing one would silently
+    promote the variable to a slider instead."""
     auto = (
         "variables:\n"
         "  size:\n"
@@ -2728,9 +2747,7 @@ def test_the_bound_guard_reads_the_input_the_compiler_will_resolve() -> None:
     numeric = _flat(build_design_target(auto, "variables.size"))
     assert "min" not in numeric
     assert "max" not in numeric
-    # Nothing to strand in the other direction: a numeric default survives the
-    # promotion, so the field that only promotes is still an ordinary control.
-    assert "step" in numeric
+    assert "step" not in numeric
 
     worded = _flat(
         build_design_target(
@@ -2740,6 +2757,65 @@ def test_the_bound_guard_reads_the_input_the_compiler_will_resolve() -> None:
     assert "min" not in worded
     assert "max" not in worded
     assert "step" not in worded
+
+
+_BOUNDS_BOARD = (
+    "variables:\n"
+    "  x:\n"
+    "{body}"
+    "rows:\n"
+    "  - title: Area\n"
+    "    type: area\n"
+    "    query: q\n"
+    "    x: month\n"
+    "    y: revenue\n"
+)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    input: select\n    options:\n      static: [a, b]\n",
+        "    input: radio\n    options:\n      static: [a, b]\n",
+        "    input: multiselect\n    options:\n      static: [a, b]\n",
+        "    input: checkbox\n",
+        "    input: date\n",
+        "    input: daterange\n",
+        "    input: text\n",
+        "    default: [a]\n    options:\n      static: [a, b]\n",
+    ],
+)
+def test_bounds_are_withheld_where_the_renderer_reads_none(body: str) -> None:
+    offered = _flat(build_design_target(_BOUNDS_BOARD.format(body=body), "variables.x"))
+    assert not {"min", "max", "step"} & offered.keys()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    input: slider\n",
+        "    input: range\n",
+        "    input: number\n",
+        # `auto` resolves to a slider from the authored bounds.
+        "    min: 0\n    max: 500\n",
+    ],
+)
+def test_bounds_are_offered_where_the_renderer_reads_them(body: str) -> None:
+    offered = _flat(build_design_target(_BOUNDS_BOARD.format(body=body), "variables.x"))
+    assert {"min", "max", "step"} <= offered.keys()
+
+
+def test_a_migrated_variable_gets_the_same_bounds_as_a_clean_one() -> None:
+    clean = "    input: select\n    options:\n      static: [a, b]\n"
+    legacy = clean + "    dimension: channel\n"
+    assert (
+        _flat(
+            build_design_target(_BOUNDS_BOARD.format(body=legacy), "variables.x")
+        ).keys()
+        == _flat(
+            build_design_target(_BOUNDS_BOARD.format(body=clean), "variables.x")
+        ).keys()
+    )
 
 
 def test_a_boolean_default_keeps_the_numeric_inputs_off_its_list() -> None:
@@ -3527,7 +3603,7 @@ def test_a_scale_parameter_block_is_refused_without_its_own_scale_type() -> None
     """`_design._CONDITIONAL_GROUPS`, and the render sweep cannot see it twice over.
 
     `log.base` draws a *number*, and the sweep is bounded to the `list` widget;
-    and the raise is `_validate_log_pow_symlog_params`' on the merged style, so
+    and the raise comes from `ScaleContinuousStyle.__constraints__` on the merged style, so
     the board parses either way. A line chart, not a bar: bar refuses a log scale
     outright (`ERR-BAR-LOG-SCALE-NOT-SUPPORTED`) and would pass this test for the
     wrong reason.
@@ -3773,3 +3849,17 @@ def test_format_config_display_shows_sign_placement_and_repeat() -> None:
         FormatConfig(sign_placement="after_prefix", repeat="every")
     )
     assert shown == "sign_placement=after_prefix repeat=every"
+
+
+def test_incremental_keeps_a_text_control_for_a_watermark_column() -> None:
+    """`incremental` is `<column> | false`; its non-blank guard is not a shorthand
+    pattern, so the column name stays typeable: `false` is a suggestion, not the
+    only option (a select of it would disable incremental refresh)."""
+    board = (
+        "incremental: updated_at\n"
+        "rows:\n  - title: B\n    type: bar\n    query: q\n    x: a\n    y: b\n"
+    )
+    prop = _flat(build_design_target(board, ""))["incremental"]
+    assert prop.widget == "combo"
+    assert not prop.options_complete
+    assert prop.value == "updated_at"

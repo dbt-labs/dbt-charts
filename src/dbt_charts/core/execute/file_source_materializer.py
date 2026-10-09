@@ -1,40 +1,10 @@
-"""FileSourceMaterializer — load file sources into any QueryResultCache backend.
-
-Stage: EXECUTE
-Purpose: Parse CSV/JSON/Parquet files (via PyArrow, no DuckDB filesystem access)
-into rows, store in a QueryResultCache via put(), and register a SQL view per
-table name so author SQL like ``SELECT * FROM sales`` works against the cache engine.
-
-CSV and Parquet also hand put() the ``pyarrow.Table`` they parsed, so the stored
-table carries the file's own column types (a Parquet DECIMAL(18,2) stays a
-DECIMAL(18,2)) instead of whatever the backend's row-dict storage encoding would
-have made of them. JSON/NDJSON have no schema beyond ``json.loads``, so they stay
-on the row-dict path.
-
-Cache key per file table:
-    source_hash    = compute_source_hash(source_config)
-    query_hash     = Project.file_version(relpath), hashed to 16 hex — the single
-                     file-identity token (a stat signature locally, a git blob OID
-                     on Cloud), NOT a re-hash of the file's bytes. Computing it is
-                     cheap, so a warm table skips the read entirely.
-    variables_hash = FILE_SOURCE_VARS_HASH  (file sources have no variables)
-
-For glob patterns (paths containing ``*`` or ``?``), the files: value is expanded
-via ``project.files.glob()``. The combined version key encodes the full set of
-matched relpaths and their individual version tokens, so the cache invalidates
-when any matched file changes OR when files are added/removed from the glob set.
-
-On a cache hit the table/view already exists and the file is never read; on a miss
-we read + parse + put + register. When the cache is a DuckDB-backed cache,
-disable_external_access() is called once at construction so author SQL cannot call
-read_csv('http://...') or access local filesystem paths at query time.
-"""
+"""Load project file sources into a private, sandboxed DuckDB."""
 
 from __future__ import annotations
 
 import hashlib
 import io
-import logging
+import json
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -55,49 +25,35 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_FILE_SOURCE_DECIMAL_TOO_WIDE,
     ERR_FILE_SOURCE_TOO_LARGE,
     ERR_FILE_SOURCE_TOO_MANY_TABLES,
+    ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
     ERR_GLOB_EMPTY,
     ERR_GLOB_SCHEMA_MISMATCH,
     ERR_GLOB_TOO_MANY,
 )
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryParams
-from dbt_charts.core.execute.cache_backend import FILE_SOURCE_VARS_HASH, CacheHit
+from dbt_charts.core.execute.adapters.duckdb_adapter import duckdb_error_code
 from dbt_charts.core.execute.duckdb_cache import compute_source_hash
 from dbt_charts.core.project import is_glob
 
 if TYPE_CHECKING:
+    import duckdb
     import pyarrow as pa
 
-    from dbt_charts.core.execute.cache_backend import QueryResultCache
     from dbt_charts.core.project import Project
 
-# JSON files carry runtime-dynamic column schemas; Any is the correct boundary type.
 _JsonRow: TypeAlias = dict[str, Any]
-
-# Decimal MB, matching how execution.file_source_max_bytes is documented
-# ("5 GB" == 5_000_000_000) — a MiB divisor would render that default as a
-# confusing "4768.4 MB".
+_FileSource = CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig
 _BYTES_PER_MB = 1_000_000
-
-logger = logging.getLogger(__name__)
 
 
 def default_local_materializer_factory(
     project: Project,
 ) -> Callable[[], FileSourceMaterializer]:
-    """A factory that lazily builds the local DuckDB-backed file materializer.
-
-    Handed to ``Executor(file_materializer_factory=...)`` and
-    ``AdapterRegistry(file_materializer_factory=...)`` for local ``dct`` so the
-    materializer (and its in-memory DuckDB) is created only when a file-source
-    query actually misses the result cache — a fully-cached render, or a
-    session that never touches a file source, never opens one. Cloud injects
-    its own Postgres-backed materializer instead.
-    """
+    """Build the local materializer only when a file query needs it."""
 
     def _build() -> FileSourceMaterializer:
-        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
-
-        return FileSourceMaterializer(project, TrivialDuckDBCache())
+        return FileSourceMaterializer(project)
 
     return _build
 
@@ -106,133 +62,61 @@ def resolve_local_file_materializer_factory(
     project: Project,
     file_materializer: FileSourceMaterializer | None,
 ) -> Callable[[], FileSourceMaterializer] | None:
-    """The one place that resolves "local means the DuckDB-backed factory".
-
-    Every local composition root (render, registered views, the ad-hoc
-    ``AdapterRegistry`` a ``ProjectSession`` lazily builds) needs the same
-    choice: an injected ``file_materializer`` (Cloud, or any other host) wins
-    outright and needs no factory; its absence falls back to
-    ``default_local_materializer_factory``. Routing every call site through
-    this function is what keeps that fallback from being reinvented per site.
-    """
+    """Use an injected materializer or lazily build the local one."""
     if file_materializer is not None:
         return None
     return default_local_materializer_factory(project)
 
 
 def _version_key(token: str) -> str:
-    """Hash a Project.file_version token to the 16-hex cache-key slot form.
-
-    file_version tokens are host-specific (a ``mtime_ns:size`` stat signature
-    locally, a git blob OID on Cloud); hashing them to a fixed 16-hex string
-    yields an identifier-safe cache-key component regardless of the token shape.
-    """
     return hashlib.sha256(token.encode()).hexdigest()[:16]
 
 
 def _glob_vkey(sorted_pairs: list[tuple[str, str]]) -> str:
-    """Composite version key for a glob table.
-
-    Encodes both the set of matched relpaths and their per-file version tokens
-    so the cache invalidates when any file changes content, is added, or is
-    removed from the glob match set.  ``sorted_pairs`` must be pre-sorted by
-    relpath (``project.files.glob`` yields sorted order).
-    """
-    combined = "\n".join(f"{relpath}:{vk}" for relpath, vk in sorted_pairs)
+    combined = "\n".join(f"{relpath}:{version}" for relpath, version in sorted_pairs)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
 
 class FileSourceMaterializer:
-    """Materializes file-based sources into any QueryResultCache backend.
+    """ProjectSession-owned file parser and author-SQL engine."""
 
-    Each table in the source's ``files`` mapping is loaded into the cache via
-    ``cache.put()``. A SQL view/alias is then created under the table's authored
-    name so author SQL can reference it by name directly.
-
-    When the cache backend is DuckDB-based, ``disable_external_access()`` is
-    called once at construction to prevent author SQL from reading the filesystem
-    or network (``read_csv('http://...')``, etc.).
-
-    Args:
-        project: The dbt charts project (for resolving file paths and reading bytes).
-        cache: Any QueryResultCache implementation to materialize into.
-    """
-
-    def __init__(self, project: Project, cache: QueryResultCache) -> None:
+    def __init__(self, project: Project) -> None:
         self._project = project
-        self._cache = cache
-        # Serialize all cache access across threads. DuckDB in-memory connections
-        # are not thread-safe; this lock covers the full materialize_and_run
-        # critical section. For Postgres-backed caches, the lock still serializes
-        # the put+register pair so register always sees the row it just wrote.
         self._lock = threading.Lock()
-        # Disable external access once at construction. For DuckDB: prevents author
-        # SQL from reaching the filesystem or network. For Postgres: no-op.
-        self._cache.disable_external_access()
+        self._conn: duckdb.DuckDBPyConnection | None = None
+        self._loaded: dict[tuple[str, str], str] = {}
+
+    def _connection(self) -> duckdb.DuckDBPyConnection:
+        if self._conn is None:
+            import duckdb
+
+            self._conn = duckdb.connect(
+                ":memory:",
+                config={"enable_external_access": "false"},
+            )
+            self._conn.execute("SET TimeZone='UTC'")
+        return self._conn
 
     def close(self) -> None:
-        """Release the backing cache's held resources (e.g. a DuckDB handle)."""
-        self._cache.close()
+        """Release the private DuckDB, if file execution opened it."""
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+            self._loaded.clear()
 
     def materialize_and_run(
         self,
-        source: CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig,
+        source: _FileSource,
         sql: str,
         variables: dict[str, Any],
         source_name: str,
         params: QueryParams = None,
         strict: bool = True,
     ) -> list[_JsonRow]:
-        """Ensure all tables in *source* are in the cache, then execute *sql*.
-
-        Glob patterns (``*`` / ``?``) in ``source.files`` values are expanded via
-        ``project.files.glob()``.  Each glob must match at least one file and may
-        not exceed ``execution.max_glob_file_count``.  All matched files are loaded
-        and their rows concatenated into one table.
-
-        Two more guardrails bound a single relation's growth: ``source.files``
-        may not declare more tables than ``execution.file_source_max_tables``
-        (checked up front, before any file read), and each relation's
-        uncompressed byte size — summed across its matched files, measured by
-        ``_uncompressed_bytes`` — may not exceed
-        ``execution.file_source_max_bytes`` (checked as each file is read,
-        before it is parsed or written to the cache).
-
-        Args:
-            source: A CsvSourceConfig, JsonSourceConfig, or ParquetSourceConfig.
-            sql: SQL template (may contain {{ variable }} Jinja expressions),
-                or — when *params* is given — SQL already rendered to the
-                "duckdb" placeholder style (``$1``, ``$2``, …) by an upstream
-                composition step (``AdapterRegistry._compose_query_refs``),
-                which also expands ``{{ queries.X }}`` refs this method's own
-                rendering does not.
-            variables: Variable values substituted into *sql* via
-                render_parameterized. Ignored when *params* is given — *sql*
-                is already rendered.
-            source_name: Authored source name (for error messages).
-            params: Pre-rendered positional parameter values, in the same
-                "duckdb" placeholder style this method renders internally
-                when omitted. Passed by ``AdapterRegistry`` once it has
-                already composed the SQL; ``None`` (the render path's own
-                caller) renders *sql* against *variables* here instead.
-            strict: Passed to the internal ``render_parameterized`` call when
-                *params* is None (a caller that already composed *sql* has
-                already made this choice). Mirrors every other adapter's
-                ``strict=not query.lenient_variables`` — an undefined
-                ``{{ variable }}`` raises when True (default), renders as an
-                empty string when False.
-
-        Returns:
-            Rows returned by *sql*.
-
-        Raises:
-            DbtChartsError: Empty glob match, glob fan-out cap exceeded,
-                table-count cap exceeded, or materialized-byte cap exceeded.
-            RuntimeError: If SQL execution fails (propagated from execute_file_source_sql,
-                includes external-access violations in author SQL).
-        """
+        """Load exact file versions once, install aliases, and run author SQL."""
         source_hash = compute_source_hash(source)
-        cap = get_execution_config().max_glob_file_count
+        glob_cap = get_execution_config().max_glob_file_count
         byte_cap = resolve_file_source_max_bytes()
 
         table_cap = resolve_file_source_max_tables()
@@ -244,69 +128,62 @@ class FileSourceMaterializer:
                 cap=table_cap,
             )
 
-        # Each entry: (table_name, vkey, sorted_relpaths).
-        # For literal paths: one relpath, vkey from that file alone.
-        # For globs: sorted relpaths from glob expansion, composite vkey.
-        # Glob expansion and cap/empty checks happen here — before the lock,
-        # before any file reads, so a bad glob fails fast.
         table_specs: list[tuple[str, str, list[str]]] = []
         for table_name, path_or_glob in source.files.items():
             if is_glob(path_or_glob):
-                matched = sorted(
-                    p.relpath for p in self._project.files.glob(path_or_glob)
+                relpaths = sorted(
+                    path.relpath for path in self._project.files.glob(path_or_glob)
                 )
-                if not matched:
+                if not relpaths:
                     raise DbtChartsError.from_code(
                         ERR_GLOB_EMPTY,
                         source_name=source_name,
                         table_name=table_name,
                         pattern=path_or_glob,
                     )
-                if len(matched) > cap:
+                if len(relpaths) > glob_cap:
                     raise DbtChartsError.from_code(
                         ERR_GLOB_TOO_MANY,
                         source_name=source_name,
                         table_name=table_name,
                         pattern=path_or_glob,
-                        count=len(matched),
-                        cap=cap,
+                        count=len(relpaths),
+                        cap=glob_cap,
                     )
-                pairs = [
-                    (r, _version_key(self._project.file_version(r))) for r in matched
+                versions = [
+                    (relpath, _version_key(self._project.file_version(relpath)))
+                    for relpath in relpaths
                 ]
-                vkey = _glob_vkey(pairs)
-                table_specs.append((table_name, vkey, matched))
+                version = _glob_vkey(versions)
             else:
-                vkey = _version_key(self._project.file_version(path_or_glob))
-                table_specs.append((table_name, vkey, [path_or_glob]))
+                relpaths = [path_or_glob]
+                version = _version_key(self._project.file_version(path_or_glob))
+            table_specs.append((table_name, version, relpaths))
 
-        if params is not None:
-            # Already rendered by the caller (AdapterRegistry._compose_query_refs)
-            # in this same "duckdb" placeholder style — {{ queries.X }} refs and
-            # variables are both expanded, so there is nothing left to render here.
-            resolved_sql, resolved_params = sql, params
-        else:
-            # Render {{ variable }} templates to parameterized SQL before
-            # executing. profile_type="duckdb" → $1/$2/… placeholders (DuckDB
-            # positional style).
+        if params is None:
             parameterized = render_parameterized(
                 sql, variables, profile_type="duckdb", strict=strict
             )
-            resolved_sql, resolved_params = parameterized.sql, parameterized.params
+            resolved_sql = parameterized.sql
+            resolved_params = parameterized.params
+        else:
+            resolved_sql, resolved_params = sql, params
 
         union_by_name = isinstance(source, JsonSourceConfig) and source.union_by_name
 
         with self._lock:
-            for table_name, vkey, relpaths in table_specs:
-                # Cache miss → read + parse + store. A hit never opens any file.
-                if not isinstance(
-                    self._cache.get(source_hash, vkey, FILE_SOURCE_VARS_HASH), CacheHit
-                ):
+            conn = self._connection()
+            from dbt_charts.core.execute._duckdb_cache_base import (
+                _q,
+                _rows_from_result,
+            )
+
+            for table_name, version, relpaths in table_specs:
+                key = (source_hash, table_name)
+                physical = self._physical_name(source_hash, table_name)
+                if self._loaded.get(key) != version:
                     rows: list[_JsonRow] = []
                     arrow: pa.Table | None = None
-                    # The file folded into `arrow` most recently — the neighbor
-                    # a schema conflict is actually against, which for a long
-                    # glob is more useful than always blaming the first shard.
                     previous_relpath = ""
                     first_relpath = ""
                     first_keys: frozenset[str] = frozenset()
@@ -326,9 +203,6 @@ class FileSourceMaterializer:
                             )
                         file_rows, file_arrow = _parse(source, file_bytes, relpath)
                         if file_rows:
-                            # Schema check uses only the first row's keys.  This catches
-                            # header-level mismatches (the common authoring mistake) but
-                            # will not detect a mid-file column shift in irregular formats.
                             file_keys = frozenset(file_rows[0])
                             if not first_relpath:
                                 first_keys = file_keys
@@ -361,29 +235,22 @@ class FileSourceMaterializer:
                                 )
                                 previous_relpath = relpath
                     if union_by_name and rows:
-                        # Union of column names in first-seen insertion order so
-                        # the created table's column order is deterministic across
-                        # processes (a set would vary under hash randomization).
-                        all_keys = dict.fromkeys(k for row in rows for k in row)
+                        all_keys = dict.fromkeys(key for row in rows for key in row)
                         for row in rows:
-                            for k in all_keys:
-                                row.setdefault(k, None)
-                    # Individual glob-matched files with zero rows are silently
-                    # skipped (common for empty partitions); the error fires only
-                    # when *all* matched files together contribute no rows.
+                            for column in all_keys:
+                                row.setdefault(column, None)
                     if not rows:
                         raise ValueError(
                             f"File table {table_name!r}: parsed file(s) contain no rows. "
-                            "Empty file sources are not supported — "
-                            "provide a file with at least one data row."
+                            "Empty file sources are not supported — provide a file with "
+                            "at least one data row."
                         )
-                    if arrow is not None:
+
+                    if arrow is None:
+                        self._replace_table_from_rows(conn, physical, table_name, rows)
+                    else:
                         import pyarrow as pa
 
-                        # A column still ``null`` after the merge had no values
-                        # in any shard. DuckDB would make it INTEGER, breaking
-                        # the text SQL an author wrote for it; VARCHAR is what
-                        # the row-dict path always gave it.
                         arrow = _normalize_arrow(
                             arrow,
                             source_name,
@@ -391,22 +258,113 @@ class FileSourceMaterializer:
                             previous_relpath,
                             null_as=pa.string(),
                         )
-                    self._cache.put(
-                        source_hash,
-                        vkey,
-                        FILE_SOURCE_VARS_HASH,
-                        rows,
-                        board_slug="__file_source__",
-                        query_name=table_name,
-                        arrow=arrow,
-                    )
+                        self._replace_table(conn, physical, table_name, arrow)
+                    self._loaded[key] = version
 
-                # Register (or re-register) so SQL can reference the table name.
-                # For DuckDB: creates/replaces a VIEW pointing at the _r_<hash> table.
-                # For Postgres: records the mapping for execute_file_source_sql to load.
-                self._cache.register_file_table(table_name, source_hash, vkey)
+                conn.execute(
+                    f"CREATE OR REPLACE VIEW {_q(table_name)} AS "
+                    f"SELECT * FROM {_q(physical)}"
+                )
+            try:
+                return _rows_from_result(conn.execute(resolved_sql, resolved_params))
+            except Exception as exc:  # noqa: BLE001 — DuckDB exposes many execution exception classes at this boundary
+                raise QueryError(
+                    f"{exc}\nSQL:\n{resolved_sql}", code=duckdb_error_code(exc)
+                ) from exc
 
-            return self._cache.execute_file_source_sql(resolved_sql, resolved_params)
+    @staticmethod
+    def _physical_name(source_hash: str, table_name: str) -> str:
+        digest = hashlib.sha256(f"{source_hash}:{table_name}".encode()).hexdigest()[:24]
+        return f"_dct_file_{digest}"
+
+    @staticmethod
+    def _replace_table_from_rows(
+        conn: duckdb.DuckDBPyConnection,
+        physical: str,
+        table_name: str,
+        rows: list[_JsonRow],
+    ) -> None:
+        import duckdb
+        import pyarrow as pa
+
+        from dbt_charts.core.execute._duckdb_cache_base import (
+            _cache_safe_value,
+            _infer_type,
+            _q,
+        )
+
+        staging = 'temp."_dct_file_rows"'
+        keys = list(rows[0])
+        columns = [
+            f"{_q(column)} "
+            + _infer_type(
+                next(
+                    (row[column] for row in rows if row.get(column) is not None),
+                    None,
+                )
+            )
+            for column in keys
+        ]
+        coerced = [
+            {column: _cache_safe_value(row.get(column)) for column in keys}
+            for row in rows
+        ]
+        registered = False
+        try:
+            conn.execute(
+                f"CREATE OR REPLACE TEMP TABLE {staging} ({', '.join(columns)})"
+            )
+            try:
+                arrow = pa.Table.from_pylist(coerced)
+            except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
+                placeholders = ", ".join("?" * len(keys))
+                conn.executemany(
+                    f"INSERT INTO {staging} VALUES ({placeholders})",
+                    [[row[column] for column in keys] for row in coerced],
+                )
+            else:
+                conn.register("_dct_file_ingest", arrow)
+                registered = True
+                conn.execute(f"INSERT INTO {staging} SELECT * FROM _dct_file_ingest")
+            conn.execute(
+                f"CREATE OR REPLACE TABLE {_q(physical)} AS SELECT * FROM {staging}"
+            )
+        except duckdb.Error as exc:
+            raise DbtChartsError.from_code(
+                ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
+                table_name=table_name,
+                detail=str(exc).splitlines()[0],
+            ) from exc
+        finally:
+            if registered:
+                conn.unregister("_dct_file_ingest")
+            conn.execute(f"DROP TABLE IF EXISTS {staging}")
+
+    @staticmethod
+    def _replace_table(
+        conn: duckdb.DuckDBPyConnection,
+        physical: str,
+        table_name: str,
+        arrow: pa.Table,
+    ) -> None:
+        import duckdb
+
+        from dbt_charts.core.execute._duckdb_cache_base import _q
+
+        conn.register("_dct_file_ingest", arrow)
+        try:
+            conn.execute(
+                f"CREATE OR REPLACE TABLE {_q(physical)} AS "
+                "SELECT * FROM _dct_file_ingest"
+            )
+        except duckdb.Error as exc:
+            raise DbtChartsError.from_code(
+                ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
+                table_name=table_name,
+                detail=str(exc).splitlines()[0],
+            ) from exc
+        finally:
+            conn.unregister("_dct_file_ingest")
 
 
 def _uncompressed_bytes(
@@ -646,7 +604,7 @@ def _parse(
 
     The Arrow table is None for JSON/NDJSON, whose values carry no schema beyond
     what ``json.loads`` produces; for CSV and Parquet it is the file's own typed
-    representation, which ``materialize_and_run`` hands to ``cache.put`` so the
+    representation, which ``materialize_and_run`` loads directly so the
     SQL-visible table keeps those types.
     """
     if isinstance(source, CsvSourceConfig):
@@ -685,8 +643,6 @@ def _parse_json(
 
     Raises ValueError when the file cannot be parsed in the selected format.
     """
-    import json
-
     if relpath.lower().endswith(".jsonl"):
         return _parse_ndjson(file_bytes)
 
@@ -717,8 +673,6 @@ def _parse_ndjson(file_bytes: bytes) -> list[_JsonRow]:
 
     Raises ValueError on any line that is not a valid JSON object.
     """
-    import json
-
     try:
         text = file_bytes.decode("utf-8")
     except UnicodeDecodeError as e:

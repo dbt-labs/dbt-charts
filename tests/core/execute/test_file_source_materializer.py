@@ -1,13 +1,16 @@
-"""Tests for FileSourceMaterializer — CSV/JSON/Parquet → TrivialDuckDBCache.
+"""Tests for the session-owned CSV/JSON/Parquet FileSourceMaterializer.
 
 TDD order: each test was written before its implementation existed.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
+import os
+import subprocess
+import sys
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -23,6 +26,7 @@ from dbt_charts.core.compile.models.source import (
     ParquetSourceConfig,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
@@ -64,6 +68,7 @@ def _make_board(
     from dbt_charts.core.compile import compile
 
     result = compile(board_text)
+    assert result.board is not None
     return result.board
 
 
@@ -73,6 +78,125 @@ def _csv_source(files: dict[str, str], **kw: Any) -> CsvSourceConfig:
 
 def _json_source(files: dict[str, str], **kw: Any) -> JsonSourceConfig:
     return JsonSourceConfig(type="json", files=files, **kw)
+
+
+def test_importing_materializer_does_not_import_duckdb() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from dbt_charts.core.execute.file_source_materializer import "
+            "FileSourceMaterializer; import sys; "
+            "assert 'duckdb' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_exact_file_version_is_read_once_per_materializer(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(
+        tmp_path, {"data/sales.csv": "amount\n1\n2\n"}, local_project
+    )
+    source = _csv_source({"sales": "data/sales.csv"})
+    materializer = FileSourceMaterializer(project)
+    original = project.read_bytes
+    reads: list[str] = []
+
+    def counting_read(relpath: str) -> bytes:
+        reads.append(relpath)
+        return original(relpath)
+
+    monkeypatch.setattr(project, "read_bytes", counting_read)
+
+    assert materializer.materialize_and_run(
+        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
+    ) == [{"total": 3}]
+    assert materializer.materialize_and_run(
+        source, "SELECT COUNT(*) AS total FROM sales", {}, "sales"
+    ) == [{"total": 2}]
+    assert reads == ["data/sales.csv"]
+
+
+def test_changed_file_version_replaces_loaded_table(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    project = _make_project(tmp_path, {"data/sales.csv": "amount\n1\n"}, local_project)
+    source = _csv_source({"sales": "data/sales.csv"})
+    materializer = FileSourceMaterializer(project)
+
+    assert materializer.materialize_and_run(
+        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
+    ) == [{"total": 1}]
+
+    path = tmp_path / "data/sales.csv"
+    path.write_text("amount\n9\n")
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+
+    assert materializer.materialize_and_run(
+        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
+    ) == [{"total": 9}]
+
+
+def test_failed_replacement_keeps_new_version_retryable(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(
+        tmp_path, {"data/rows.json": '[{"value": 1}]'}, local_project
+    )
+    source = _json_source({"rows": "data/rows.json"})
+    materializer = FileSourceMaterializer(project)
+    assert materializer.materialize_and_run(
+        source, "SELECT value FROM rows", {}, "rows"
+    ) == [{"value": 1}]
+
+    loaded_before = materializer._loaded.copy()
+    source_hash, table_name = next(iter(loaded_before))
+    physical = materializer._physical_name(source_hash, table_name)
+    path = tmp_path / "data/rows.json"
+    path.write_text('[{"value": 2}]')
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+
+    connection = materializer._connection()
+
+    class FailPhysicalReplacement:
+        def __init__(self) -> None:
+            self.failed = False
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(connection, name)
+
+        def execute(self, query: str, parameters: Any = None) -> Any:
+            if (
+                query.startswith(f'CREATE OR REPLACE TABLE "{physical}"')
+                and not self.failed
+            ):
+                self.failed = True
+                raise RuntimeError("injected replacement failure")
+            return connection.execute(query, parameters)
+
+    failing_connection = FailPhysicalReplacement()
+    monkeypatch.setattr(materializer, "_connection", lambda: failing_connection)
+
+    with pytest.raises(RuntimeError, match="injected replacement failure"):
+        materializer.materialize_and_run(source, "SELECT value FROM rows", {}, "rows")
+    assert failing_connection.failed
+    assert connection.execute(f'SELECT value FROM "{physical}"').fetchall() == [(1,)]
+    assert materializer._loaded == loaded_before
+    assert materializer.materialize_and_run(
+        source, "SELECT value FROM rows", {}, "rows"
+    ) == [{"value": 2}]
 
 
 # ---------------------------------------------------------------------------
@@ -90,8 +214,7 @@ class TestCsvMaterialize:
             local_project,
         )
         source = _csv_source({"sales": "data/sales.csv"})
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source, "SELECT * FROM sales ORDER BY amount", {}, "sales"
@@ -110,8 +233,7 @@ class TestCsvMaterialize:
             local_project,
         )
         source = _csv_source({"sales": "data/sales.csv"})
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -131,8 +253,7 @@ class TestCsvMaterialize:
             local_project,
         )
         source = _csv_source({"cities": "data/pipe.csv"}, delimiter="|")
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source, "SELECT city FROM cities ORDER BY city", {}, "cities"
@@ -146,6 +267,83 @@ class TestCsvMaterialize:
 
 
 class TestJsonMaterialize:
+    def test_authored_table_name_cannot_collide_with_private_staging(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = _make_project(
+            tmp_path,
+            {
+                "data/first.json": '[{"value": 1}]',
+                "data/second.json": '[{"value": 2}]',
+            },
+            local_project,
+        )
+        source = _json_source(
+            {
+                "_dct_file_rows": "data/first.json",
+                "second": "data/second.json",
+            }
+        )
+
+        rows = FileSourceMaterializer(project).materialize_and_run(
+            source,
+            "SELECT value FROM _dct_file_rows UNION ALL SELECT value FROM second "
+            "ORDER BY value",
+            {},
+            "values",
+        )
+
+        assert rows == [{"value": 1}, {"value": 2}]
+
+    def test_heterogeneous_values_follow_row_binding_coercion(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = _make_project(
+            tmp_path,
+            {"data/values.json": '[{"v": "1"}, {"v": 2}]'},
+            local_project,
+        )
+        source = _json_source({"values": "data/values.json"})
+
+        rows = FileSourceMaterializer(project).materialize_and_run(
+            source,
+            "SELECT v, typeof(v) AS type FROM values ORDER BY v",
+            {},
+            "values",
+        )
+
+        assert rows == [
+            {"v": "1", "type": "VARCHAR"},
+            {"v": "2", "type": "VARCHAR"},
+        ]
+
+    def test_nested_values_remain_json_columns(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = _make_project(
+            tmp_path,
+            {"data/values.json": '[{"object": {"a": 1}, "array": [1, 2]}]'},
+            local_project,
+        )
+        source = _json_source({"values": "data/values.json"})
+
+        rows = FileSourceMaterializer(project).materialize_and_run(
+            source,
+            'SELECT "object", "array", typeof("object") AS object_type, '
+            'typeof("array") AS array_type FROM values',
+            {},
+            "values",
+        )
+
+        assert rows == [
+            {
+                "object": {"a": 1},
+                "array": [1, 2],
+                "object_type": "JSON",
+                "array_type": "JSON",
+            }
+        ]
+
     def test_json_array_of_objects(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
@@ -154,8 +352,7 @@ class TestJsonMaterialize:
             tmp_path, {"data/users.json": json.dumps(data)}, local_project
         )
         source = _json_source({"users": "data/users.json"})
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source, "SELECT name FROM users ORDER BY id", {}, "users"
@@ -169,8 +366,7 @@ class TestJsonMaterialize:
         ndjson = '{"id": 1}\n{"id": 2}\n'
         project = _make_project(tmp_path, {"data/items.jsonl": ndjson}, local_project)
         source = _json_source({"items": "data/items.jsonl"})
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source, "SELECT id FROM items ORDER BY id", {}, "items"
@@ -184,8 +380,7 @@ class TestJsonMaterialize:
         bad_json = '{"key": "value",}'  # trailing comma — invalid JSON
         project = _make_project(tmp_path, {"data/bad.json": bad_json}, local_project)
         source = _json_source({"data": "data/bad.json"})
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         with pytest.raises(ValueError, match="JSON file is not valid JSON"):
             mat.materialize_and_run(source, "SELECT * FROM data", {}, "data")
@@ -213,8 +408,7 @@ class TestJsonMaterialize:
         source = _json_source(
             {"summaries": "data/runs/*/summary.json"}, union_by_name=True
         )
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         # If score were typed VARCHAR due to row-0 None, SUM(score) would error.
         rows = mat.materialize_and_run(
@@ -242,8 +436,7 @@ class TestJsonMaterialize:
         source = _json_source(
             {"summaries": "data/runs/*/summary.json"}, union_by_name=True
         )
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -280,8 +473,7 @@ class TestMultiTableJoin:
                 "customers": "data/customers.csv",
             }
         )
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -300,6 +492,56 @@ class TestMultiTableJoin:
 
 
 class TestExternalAccessBlocked:
+    def test_materializer_opens_only_a_sandboxed_duckdb_without_file_readers(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import duckdb
+
+        project = _make_project(
+            tmp_path, {"data/sales.csv": "x,y\n1,2\n"}, local_project
+        )
+        source = _csv_source({"sales": "data/sales.csv"})
+        real_connect = duckdb.connect
+        DuckDBConfig = dict[str, str | bool | int | float | list[str]]
+        connections: list[DuckDBConfig] = []
+
+        class GuardedConnection:
+            def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
+                self._connection = connection
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._connection, name)
+
+            def execute(
+                self, query: str, parameters: Any = None
+            ) -> duckdb.DuckDBPyConnection:
+                lowered = query.lower()
+                assert "read_csv" not in lowered
+                assert "read_json" not in lowered
+                assert "read_parquet" not in lowered
+                return self._connection.execute(query, parameters)
+
+        def guarded_connect(
+            database: str = ":memory:",
+            *,
+            config: DuckDBConfig | None = None,
+        ) -> GuardedConnection:
+            assert config is not None
+            assert config["enable_external_access"] == "false"
+            connections.append(config)
+            return GuardedConnection(real_connect(database, config=config))
+
+        monkeypatch.setattr(duckdb, "connect", guarded_connect)
+
+        materializer = FileSourceMaterializer(project)
+        assert materializer.materialize_and_run(
+            source, "SELECT SUM(x) AS total FROM sales", {}, "sales"
+        ) == [{"total": 1}]
+        assert len(connections) == 1
+
     def test_http_read_csv_in_sql_is_blocked(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
@@ -308,11 +550,10 @@ class TestExternalAccessBlocked:
             tmp_path, {"data/sales.csv": "x,y\n1,2\n"}, local_project
         )
         source = _csv_source({"sales": "data/sales.csv"})
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         with pytest.raises(
-            RuntimeError, match="(?i)(external|access|http|blocked|forbidden)"
+            QueryError, match="(?i)(external|access|http|blocked|forbidden)"
         ):
             mat.materialize_and_run(
                 source,
@@ -323,44 +564,31 @@ class TestExternalAccessBlocked:
 
 
 # ---------------------------------------------------------------------------
-# 5. Cache miss → re-materialize: drop the backing table, re-execute, same rows
-# ---------------------------------------------------------------------------
+# 5. One materializer serializes alias installation and execution
+def test_parallel_queries_with_same_alias_are_isolated(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    project = _make_project(
+        tmp_path,
+        {
+            "data/a.csv": "value\na\n",
+            "data/b.csv": "value\nb\n",
+        },
+        local_project,
+    )
+    materializer = FileSourceMaterializer(project)
+    source_a = _csv_source({"shared": "data/a.csv"})
+    source_b = _csv_source({"shared": "data/b.csv"})
 
+    def run(source: CsvSourceConfig) -> str:
+        return materializer.materialize_and_run(
+            source, "SELECT value FROM shared", {}, "source"
+        )[0]["value"]
 
-class TestCacheMissRehydrate:
-    def test_rehydrate_after_cache_drop(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        project = _make_project(
-            tmp_path,
-            {"data/sales.csv": "x,y\n1,10\n2,20\n"},
-            local_project,
-        )
-        source = _csv_source({"sales": "data/sales.csv"})
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(run, [source_a, source_b] * 10))
 
-        sql = "SELECT x, y FROM sales ORDER BY x"
-        rows_first = mat.materialize_and_run(source, sql, {}, "sales")
-        assert len(rows_first) == 2
-
-        # Drop all _r_ tables to simulate a cold cache
-        tables = cache.conn.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE '_r_%'"
-        ).fetchall()
-        for (tbl,) in tables:
-            cache.conn.execute(f'DROP TABLE IF EXISTS "{tbl}"')
-
-        # Also drop the views that the materializer registered
-        views = cache.conn.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_name NOT LIKE '_r_%' AND table_name NOT LIKE '_query%'"
-        ).fetchall()
-        for (v,) in views:
-            with contextlib.suppress(Exception):
-                cache.conn.execute(f'DROP VIEW IF EXISTS "{v}"')
-
-        rows_second = mat.materialize_and_run(source, sql, {}, "sales")
-        assert rows_second == rows_first
+    assert results == ["a", "b"] * 10
 
 
 # ---------------------------------------------------------------------------
@@ -381,14 +609,15 @@ class TestParquetMaterialize:
         table = pa.table({"product": ["A", "B", "C"], "sales": [10, 20, 30]})
         parquet_path = tmp_path / "data" / "products.parquet"
         parquet_path.parent.mkdir(parents=True)
-        pq.write_table(table, parquet_path)
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            table, parquet_path
+        )
 
         project = local_project(tmp_path)
         source = ParquetSourceConfig(
             type="parquet", files={"products": "data/products.parquet"}
         )
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -435,6 +664,7 @@ charts:
         result = df_compile(board_yaml, base_dir=project.directory())
         assert result.success, f"Compile failed: {result.errors}"
         board = result.board
+        assert board is not None
 
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
@@ -442,7 +672,7 @@ charts:
 
         registry = build_adapter_registry(project)
         cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
         executor = Executor(
             board,
             registry,
@@ -461,7 +691,7 @@ charts:
         """Editing a data file produces updated rows on the next executor call.
 
         Regression: the outer result cache (keyed by source config, not file
-        content) must NOT shadow the materializer's fingerprinted inner cache.
+        content) must NOT shadow the materializer's versioned table.
         If it does, the second query returns stale old_rows even after the file
         is updated.
         """
@@ -495,11 +725,12 @@ charts:
         result = df_compile(board_yaml, base_dir=project.directory())
         assert result.success
         board = result.board
+        assert board is not None
         registry = build_adapter_registry(project)
 
         # First render — v1 content
         cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
         executor = Executor(board, registry, result_cache=cache, file_materializer=mat)
         rows_v1 = executor.execute_query("monthly")
         assert rows_v1[0]["revenue"] == 1000
@@ -509,7 +740,7 @@ charts:
 
         # Second render — same persistent cache, new file content.
         # Must return v2 rows, not stale v1 rows.
-        mat2 = FileSourceMaterializer(project, cache)
+        mat2 = FileSourceMaterializer(project)
         executor2 = Executor(
             board, registry, result_cache=cache, file_materializer=mat2
         )
@@ -559,8 +790,7 @@ class TestVariableSubstitution:
             local_project,
         )
         source = _csv_source({"sales": "data/sales.csv"})
-        cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -618,6 +848,7 @@ charts:
         result = df_compile(board_yaml, base_dir=project.directory())
         assert result.success, f"Compile failed: {result.errors}"
         board = result.board
+        assert board is not None
 
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
@@ -625,7 +856,7 @@ charts:
 
         registry = build_adapter_registry(project)
         cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project, cache)
+        mat = FileSourceMaterializer(project)
         executor = Executor(board, registry, result_cache=cache, file_materializer=mat)
 
         rows = executor.execute_query("q")
@@ -666,7 +897,9 @@ class TestFileTableTypeFidelity:
         )
         parquet_path = tmp_path / "data" / "orders.parquet"
         parquet_path.parent.mkdir(parents=True)
-        pq.write_table(table, parquet_path)
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            table, parquet_path
+        )
         return local_project(tmp_path), ParquetSourceConfig(
             type="parquet", files={"orders": "data/orders.parquet"}
         )
@@ -675,29 +908,21 @@ class TestFileTableTypeFidelity:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         project, source = self._decimal_parquet_project(tmp_path, local_project)
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         summed = mat.materialize_and_run(
             source, "SELECT SUM(amount) AS s FROM orders", {}, "orders"
         )
         assert summed[0]["s"] == Decimal("3.30")
 
-    def test_decimal_type_survives_a_cache_hit(
+    def test_decimal_type_survives_session_reuse(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """A hit never opens the file, so the type has to come from the stored
-        table — both within one process and from a cache file a previous one
-        left behind."""
+        """A loaded parsed table retains the source's type for the session."""
         project, source = self._decimal_parquet_project(tmp_path, local_project)
-        db_path = tmp_path / "cache.duckdb"
-
-        warm = FileSourceMaterializer(project, TrivialDuckDBCache(db_path=db_path))
-        warm.materialize_and_run(source, "SELECT * FROM orders", {}, "orders")
-
-        for mat in (
-            warm,
-            FileSourceMaterializer(project, TrivialDuckDBCache(db_path=db_path)),
-        ):
+        mat = FileSourceMaterializer(project)
+        mat.materialize_and_run(source, "SELECT * FROM orders", {}, "orders")
+        for _ in range(2):
             rows = mat.materialize_and_run(
                 source,
                 "SELECT SUM(amount) AS s, ANY_VALUE(typeof(amount)) AS t FROM orders",
@@ -705,23 +930,6 @@ class TestFileTableTypeFidelity:
                 "orders",
             )
             assert rows[0] == {"s": Decimal("3.30"), "t": "DECIMAL(18,2)"}
-
-    def test_arrow_on_a_non_file_put_is_rejected(self) -> None:
-        """The Arrow path skips the Decimal storage encoding, which is only
-        sound for a file table — a query-result key must not reach it."""
-        import pyarrow as pa
-
-        cache = TrivialDuckDBCache()
-        with pytest.raises(ValueError, match="FILE_SOURCE_VARS_HASH"):
-            cache.put(
-                "src",
-                "qry",
-                "deadbeefdeadbeef",
-                [{"amount": Decimal("1.10")}],
-                board_slug="b",
-                query_name="q",
-                arrow=pa.table({"amount": pa.array([Decimal("1.10")])}),
-            )
 
     def test_csv_date_bool_and_int_columns_keep_their_types(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -734,7 +942,7 @@ class TestFileTableTypeFidelity:
             local_project,
         )
         source = _csv_source({"events": "data/events.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -754,7 +962,7 @@ class TestFileTableTypeFidelity:
             local_project,
         )
         source = _csv_source({"sparse": "data/sparse.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -787,10 +995,11 @@ class TestFileTableTypeFidelity:
             local_project,
         )
         source = _csv_source({"sales": "data/*/sales.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         with pytest.raises(DbtChartsError) as excinfo:
             mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales_source")
+        assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-GLOB-SCHEMA-MISMATCH"
         message = str(excinfo.value)
         assert "data/2025/sales.csv" in message
@@ -812,7 +1021,7 @@ class TestFileTableTypeFidelity:
             local_project,
         )
         source = _csv_source({"sales": "data/*/sales.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -856,7 +1065,7 @@ class TestFileTableTypeFidelity:
             local_project,
         )
         source = _csv_source({"sales": "data/*/sales.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -884,7 +1093,7 @@ class TestFileTableTypeFidelity:
             local_project,
         )
         source = _csv_source({"sales": "data/*/sales.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source,
@@ -931,7 +1140,7 @@ class TestFileTableTypeFidelity:
                 return Decimal("12.50")
             return 7
 
-        def _arrow_type(type_name: str) -> pa.DataType:
+        def _arrow_type(type_name: str) -> Any:
             if type_name.startswith("decimal128("):
                 precision, scale = type_name[len("decimal128(") : -1].split(",")
                 return pa.decimal128(int(precision), int(scale))
@@ -951,12 +1160,12 @@ class TestFileTableTypeFidelity:
             path = tmp_path / "data" / shard / "t.parquet"
             path.parent.mkdir(parents=True, exist_ok=True)
             arrow_type = _arrow_type(type_name)
-            pq.write_table(
+            pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
                 pa.table({"v": pa.array([_value(type_name)], type=arrow_type)}),
                 path,
             )
         source = ParquetSourceConfig(type="parquet", files={"t": "data/*/t.parquet"})
-        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
         rows = mat.materialize_and_run(
             source, "SELECT v, typeof(v) AS t FROM t", {}, "t_source"
@@ -981,12 +1190,12 @@ class TestFileTableTypeFidelity:
         ):
             path = tmp_path / "data" / shard / "t.parquet"
             path.parent.mkdir(parents=True, exist_ok=True)
-            pq.write_table(
+            pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
                 pa.table({"valid_to": pa.array([value], type=pa.timestamp(unit))}),
                 path,
             )
         source = ParquetSourceConfig(type="parquet", files={"t": "data/*/t.parquet"})
-        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
         rows = mat.materialize_and_run(
             source,
@@ -1016,11 +1225,11 @@ class TestFileTableTypeFidelity:
         ):
             path = tmp_path / "data" / shard / "t.parquet"
             path.parent.mkdir(parents=True, exist_ok=True)
-            pq.write_table(
+            pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
                 pa.table({"ts": pa.array([value], type=pa.timestamp(unit))}), path
             )
         source = ParquetSourceConfig(type="parquet", files={"t": "data/*/t.parquet"})
-        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
         with pytest.raises(DbtChartsError) as excinfo:
             mat.materialize_and_run(source, "SELECT ts FROM t", {}, "t_source")
@@ -1044,7 +1253,7 @@ class TestFileTableTypeFidelity:
             local_project,
         )
         source = _csv_source({"sales": "data/*/sales.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
             source, "SELECT region, amount FROM sales ORDER BY amount", {}, "sales"
@@ -1073,7 +1282,7 @@ class TestArrowTypesDuckDBRefuses:
 
         parquet_path = tmp_path / "data" / "wide.parquet"
         parquet_path.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
             pa.table(
                 {"amount": pa.array(values, type=pa.decimal256(precision, scale))}
             ),
@@ -1085,7 +1294,7 @@ class TestArrowTypesDuckDBRefuses:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         source = self._write(tmp_path, [Decimal("1.10"), Decimal("2.20")], 40, 2)
-        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
         rows = mat.materialize_and_run(
             source,
@@ -1099,10 +1308,11 @@ class TestArrowTypesDuckDBRefuses:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         source = self._write(tmp_path, [Decimal("1" * 39 + ".00")], 41, 2)
-        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
         with pytest.raises(DbtChartsError) as excinfo:
             mat.materialize_and_run(source, "SELECT * FROM wide", {}, "wide_source")
+        assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-FILE-SOURCE-DECIMAL-TOO-WIDE"
         message = str(excinfo.value)
         assert "amount" in message
@@ -1118,12 +1328,14 @@ class TestArrowTypesDuckDBRefuses:
         assert dumped["fields"]["column_type"] == "decimal256(41, 2)"
 
     @staticmethod
-    def _write_parquet(tmp_path: Path, table) -> ParquetSourceConfig:
+    def _write_parquet(tmp_path: Path, table: Any) -> ParquetSourceConfig:
         import pyarrow.parquet as pq
 
         parquet_path = tmp_path / "data" / "t.parquet"
         parquet_path.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(table, parquet_path)
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            table, parquet_path
+        )
         return ParquetSourceConfig(type="parquet", files={"t": "data/t.parquet"})
 
     def test_float16_column_widens_to_float(
@@ -1137,7 +1349,7 @@ class TestArrowTypesDuckDBRefuses:
         source = self._write_parquet(
             tmp_path, pa.table({"v": pa.array([1.5, 2.5], type=pa.float16())})
         )
-        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
         rows = mat.materialize_and_run(
             source,
@@ -1163,7 +1375,7 @@ class TestArrowTypesDuckDBRefuses:
                 }
             ),
         )
-        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
         rows = mat.materialize_and_run(
             source, "SELECT v, typeof(v) AS t FROM t", {}, "t_source"
@@ -1189,7 +1401,7 @@ class TestArrowTypesDuckDBRefuses:
                 }
             ),
         )
-        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
         rows = mat.materialize_and_run(
             source, "SELECT typeof(v) AS t FROM t", {}, "t_source"
@@ -1229,10 +1441,11 @@ class TestArrowTypesDuckDBRefuses:
             tmp_path, {"data/dup.csv": "a,a,b\n1,2,3\n"}, local_project
         )
         source = _csv_source({"dup": "data/dup.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         with pytest.raises(DbtChartsError) as exc:
             mat.materialize_and_run(source, "SELECT * FROM dup", {}, "dup")
+        assert exc.value.code is not None
         assert exc.value.code.code == "ERR-FILE-SOURCE-UNSUPPORTED-TYPE"
         assert "'dup'" in str(exc.value)
         assert "error.pxi" not in str(exc.value)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -33,6 +34,8 @@ from dbt_charts.core.render.numeral_expr import (
 from dbt_charts.core.text.format_d3 import (
     _LEADING_SIGN_CHARS,
     SignPlacement,
+    active_format_locale,
+    composed_currency,
     is_d3_si_spec,
 )
 from dbt_charts.core.text.numeral_scale import (
@@ -237,7 +240,7 @@ def compose_axis_format(
 def axis_to_vl(
     axis: Any,
     *,
-    label_overlap: Literal["allow", "parity"] | None = None,
+    label_overlap: Literal["allow", "parity", "greedy"] | None = None,
     label_angle: float | None = None,
 ) -> dict[str, Any]:
     """Map any axis style object → VL axis config dict (non-None fields only).
@@ -246,7 +249,8 @@ def axis_to_vl(
     patch (skip None). Single canonical mapper for all axis variants — theme
     global/channel/type-conditional and chart-local patches.
 
-    ``label_overlap`` is the render-local VL directive from resolve_axis_x_overlap;
+    ``label_overlap`` is the render-local VL directive from resolve_axis_x_overlap/
+    resolve_axis_y_overlap;
     it is not stored on the resolved model (VL vocabulary stays out of Resolved*).
     """
     if axis is None:
@@ -272,13 +276,14 @@ def axis_to_vl(
         d["labelAngle"] = v
     if (v := _n(axis, "labels", "align")) is not None:
         d["labelAlign"] = v
-    # label_overlap is the render-local VL directive from resolve_axis_x_overlap.
+    # label_overlap is the render-local VL directive from resolve_axis_{x,y}_overlap.
     # "allow" → false (no reduction; labels may overlap).
-    # "parity" → pass through as-is (VL drops every other label).
+    # "parity"/"greedy" → pass through as-is (VL drops every other label /
+    # drops whichever labels collide).
     # None → omit (VL applies its per-scale adaptive default).
     if label_overlap == "allow":
         d["labelOverlap"] = False
-    elif label_overlap == "parity":
+    elif label_overlap in ("parity", "greedy"):
         d["labelOverlap"] = label_overlap
     if (v := _n(axis, "labels", "min_gap")) is not None:
         d["labelSeparation"] = v
@@ -404,6 +409,7 @@ def measure_axis_to_vl(
     y_fields: tuple[str, ...],
     *,
     category_labels: tuple[str, ...] | None = None,
+    label_overlap: Literal["allow", "parity", "greedy"] | None = None,
 ) -> dict[str, Any]:
     """``axis_to_vl`` for a measure axis that keeps its left/right orient in the
     final spec — i.e. every cartesian y-axis except horizontal bar's measure
@@ -435,7 +441,7 @@ def measure_axis_to_vl(
     away-side default via ``_fallback_reversed_label_align`` instead of
     reserving an unmeasured gutter.
     """
-    d = axis_to_vl(axis)
+    d = axis_to_vl(axis, label_overlap=label_overlap)
     orient = d.get("orient")
     align = d.get("labelAlign")
     labels: list[str] = []
@@ -577,7 +583,8 @@ def _decimal_pad_missing_len_expr(formatted_e: str, precision: int) -> str:
     knowledge of the table's own cap, so it agrees with
     ``decimal_pad_for`` by construction for every spec type and cap.
     """
-    frac_e = f"replace({formatted_e}, /^[^.]*\\.?/, '')"
+    decimal = re.escape(active_format_locale().decimal)
+    frac_e = f"replace({formatted_e}, /^[^{decimal}]*{decimal}?/, '')"
     frac_digits_e = f"length(replace({frac_e}, /[^0-9]/g, ''))"
     return f"({frac_digits_e} === 0 ? {precision + 1} : {precision} - {frac_digits_e})"
 
@@ -672,12 +679,8 @@ def inject_axis_numeral_expr(
     string is appended to each trimmed-decimal value so all labels have
     equal rendered advance.
 
-    The anchor semantics differ between the two: ``ruler.anchor_at_start``
-    is magnitude-based (the tick furthest from zero, regardless of sign,
-    since a shared "K"/"M"/"B" suffix scale depends on the magnitude
-    extreme); ``tick_label.anchor_at_start`` is sign-aware (largest positive
-    tick when any exist, else most-negative -- a "$" prefix has no scale
-    dependency the way a shared suffix does).
+    Both use ``ladder_anchor_at_start``; the ruler alone anchors on the
+    magnitude extreme when the top edge is unbaked.
 
     ``tick_label.si_format`` is a third, mutually exclusive shape from the
     above: set only for a ladder-LESS axis (``build_resolved_axis`` had no
@@ -848,16 +851,21 @@ def inject_axis_numeral_expr(
     # An authored affix has no d3 slot: the anchor tick composes it beside the
     # native `prefix` ("US $12.4 M").
     assert fmt is not None  # a ladder implies a format
+    # A currency the locale places after the digits goes around the magnitude
+    # suffix ("€12.4M" or "12.4M €", not "12.4 €M").
+    front, trail = composed_currency(prefix, ruler.prefix_repeats)
     if prefix or fmt.prefix:
-        anchor_digit_spec = with_symbol(digit_spec, prefix) if prefix else digit_spec
-        if fmt.prefix:
+        composed = bool(front or trail)
+        anchor_digit_spec = (
+            with_symbol(digit_spec, prefix) if prefix and not composed else digit_spec
+        )
+        if fmt.prefix or front:
             # The authored suffix trails the magnitude suffix, below.
-            anchor_digits_expr = _affixed_digits_expr(
-                value_expr,
-                anchor_digit_spec,
-                fmt,
-                anchored=not ruler.prefix_repeats,
-                trailing_suffix=False,
+            anchor_digits_expr = _affix_signed_expr(
+                numeral_vega_expr(value_expr, anchor_digit_spec, fmt.notation),
+                fmt.prefix + front,
+                "",
+                painted_sign_placement(fmt, not ruler.prefix_repeats),
             )
         else:
             anchor_digits_expr = numeral_vega_expr(value_expr, anchor_digit_spec)
@@ -876,6 +884,8 @@ def inject_axis_numeral_expr(
     parts.append(_apply_decimal_pad(digit_expr_combined, ruler.decimal_pad_table))
     padding_expr = json.dumps(ruler.reservation) if ruler.reserve else "''"
     parts.append(f"({suffix_present} ? {json.dumps(suffix_text)} : {padding_expr})")
+    if trail:
+        parts.append(f"(datum.value !== 0 ? {json.dumps(trail)} : '')")
     if fmt.suffix:
         # Trails the magnitude suffix ("12.4 M EUR").
         affix_present = (

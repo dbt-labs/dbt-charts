@@ -15,7 +15,7 @@ These live here (separate from board/authored.py) because:
 - Keeping AuthoredQuery here avoids the discriminated-union module importing itself.
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -26,14 +26,20 @@ from pydantic import (
     field_validator,
 )
 
-from dbt_charts.core.compile.models.cache import CachePatch
+from dbt_charts.core.compile.models.cache import CacheInput
+from dbt_charts.core.compile.models.constraints import (
+    ConstrainedModel,
+    Constraint,
+    Requires,
+)
 from dbt_charts.core.compile.models.markers import DisplayText, ExplicitTag, Format
 from dbt_charts.core.compile.models.primitives import (
+    ErrorHint,
     IncrementalValue,
     validate_incremental_value,
 )
-from dbt_charts.core.compile.models.schema_names import FormatAlias
-from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
+from dbt_charts.core.compile.models.schema_names import FormatAlias, WarningCode
+from dbt_charts.core.diagnostics.suppression import warn_retired_codes
 
 # ============================================================================
 # QUERY-LEVEL PRIMITIVES (used by both authored and compiled layers)
@@ -50,6 +56,7 @@ QueryDialect = Literal[
     "databricks",
     "duckdb",
     "fabric",
+    "lakecompute",
     "mysql",
     "postgres",
     "presto",
@@ -65,6 +72,15 @@ QueryDialect = Literal[
 # ============================================================================
 # AUTHORED QUERY MODELS — one class per query type, discriminated on `type`
 # ============================================================================
+
+
+IgnoredQueryCode = Annotated[
+    WarningCode,
+    ErrorHint(
+        "unknown warning code {value!r} in ignore. Use a registered WARN-* "
+        "code; error codes cannot be suppressed."
+    ),
+]
 
 
 class _BaseQueryFields(BaseModel):
@@ -95,14 +111,14 @@ class _BaseQueryFields(BaseModel):
         default=None,
         description="Prose summary of what this query returns, passed along with its results to tooling.",
     )
-    ignore: list[str] | None = Field(
+    ignore: list[IgnoredQueryCode] | None = Field(
         default=None,
         description=(
             "Diagnostic codes to suppress for this query "
-            "(e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION'])."
+            "(e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION'])."
         ),
     )
-    cache: CachePatch | None = Field(
+    cache: CacheInput | None = Field(
         default=None,
         description=(
             "Cache policy override for this query, e.g. cache: 5m: refines "
@@ -134,9 +150,11 @@ class _BaseQueryFields(BaseModel):
 
     @field_validator("ignore")
     @classmethod
-    def _validate_ignore_codes(cls, v: list[str] | None) -> list[str] | None:
+    def _warn_retired_ignore_codes(
+        cls, v: list[WarningCode] | None
+    ) -> list[WarningCode] | None:
         if v is not None:
-            validate_suppression_codes(v, source="query.ignore")
+            warn_retired_codes(v, source="query.ignore")
         return v
 
     @field_validator("incremental", mode="before")
@@ -269,15 +287,23 @@ class AuthoredCompactValuesQuery(_AuthoredValuesQueryFields):
     ]
 
 
-class AuthoredSchemaQuery(_BaseQueryFields):
+class AuthoredSchemaQuery(_BaseQueryFields, ConstrainedModel):
     """dbt source schema query."""
 
-    # populate_by_name=True: required for schema_name's alias="schema" to accept
-    # both the YAML key "schema:" and the Python attribute name "schema_name".
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    # Dumping by alias lets every dump-and-revalidate site round-trip `schema`.
+    model_config = ConfigDict(extra="forbid", serialize_by_alias=True)
 
-    type: Annotated[Literal["schema"], ExplicitTag()] = Field(
-        default="schema",
+    # `type` is unset only so this rule can name it; the discriminator routes any
+    # typeless `schema:` query here.
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Requires(
+            ("type",),
+            "A schema query needs `type: schema`; the type is never inferred.",
+        ),
+    )
+
+    type: Annotated[Literal["schema", None], ExplicitTag()] = Field(
+        default=None,
         description="Never inferred; write `type: schema` explicitly.",
     )
     # alias="schema" so YAML authors write `schema: analytics`; Python code uses
@@ -321,6 +347,8 @@ def _discriminate_authored_query(v: Any) -> str | None:
         t = getattr(v, "type", None)
     else:
         return None
+    if t is None and isinstance(v, dict) and "schema" in v:
+        return "schema"
     if not isinstance(t, str):
         return None
     if t == "values":

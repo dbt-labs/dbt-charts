@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart imported from another file with an invalid field now reports a coded error pointing at the line in that file, instead of an internal error.
+time: 2026-10-07T18:19:20.40024-07:00

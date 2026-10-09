@@ -194,7 +194,11 @@ class KpiChartStyle(_ChartStyleBaseAllOptional):
     )
     min_card_width: float = Field(description="Minimum KPI card width in pixels.")
     default_height: float = Field(description="Default KPI card height in pixels.")
-    border: BorderStyle = Field(description="KPI card border style.")
+    # Cascade tier sentinel: None means "not authored"; the cascade fills it from
+    # charts.border, so no theme populates it.
+    border: Annotated[
+        BorderStyle | None, InheritSlot(from_path="Style.charts.border")
+    ] = Field(default=None, description="KPI card border style.")
     content_padding: SpacingValues = Field(
         description="Inner inset (top/right/bottom/left) for KPI card content in pixels."
     )

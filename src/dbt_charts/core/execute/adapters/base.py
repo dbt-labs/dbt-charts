@@ -20,6 +20,7 @@ Security:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -28,12 +29,14 @@ from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.connections import classify_connection_error
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_QUERY_INTERRUPTED,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import QueryError
+from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 
 if TYPE_CHECKING:
@@ -259,6 +262,55 @@ def connection_failure(source_type: str, error: Exception) -> QueryResult:
     )
 
 
+def redact_values(text: str, secrets: Iterable[str]) -> str:
+    """Strip these exact *secrets* out of *text*.
+
+    For the one caller that knows what it sent: a driver holds the option dict
+    it just handed the warehouse, so it can remove the values by identity rather
+    than by guessing at their shape. That catches a token a driver quotes back
+    in prose, with no field name beside it to match on.
+
+    Short values are skipped. A one- or two-character secret is not one, and
+    removing every occurrence of it would shred the message it was found in.
+    """
+    for secret in sorted(set(secrets), key=len, reverse=True):
+        if len(secret) > 3:
+            text = text.replace(secret, "[redacted]")
+    return text
+
+
+class WarehouseStatementError(Exception):
+    """A statement the warehouse read and rejected, carrying its SQLSTATE.
+
+    Raised by the Arrow driver seam in place of the driver's own exception.
+    A SQLSTATE is a far better classification key than the message patterns the
+    dbt adapters force (`classify_warehouse_error` below), but reading it off
+    the driver's exception type would put an optional-extra import in this
+    module. The driver, which already depends on its own extra, transports the
+    value instead, or ``None`` for a driver that reports none.
+
+    Distinct from a failure to *open* the connection, which never reaches a
+    statement and goes to :func:`connection_failure` instead.
+    """
+
+    def __init__(self, sqlstate: str | None, message: str) -> None:
+        self.sqlstate = sqlstate
+        super().__init__(message)
+
+
+# SQLSTATE → typed code. Only the SQL-standard classes, which mean the same
+# thing whichever warehouse reports them; a class nobody has observed stays on
+# ERR_WAREHOUSE_RUNTIME rather than being guessed at.
+#
+# 42000 is absent on purpose: engines answer a plain syntax error with it, so
+# reading it as an unknown reference would mislabel half the queries that carry it.
+_SQLSTATE_ERROR_CODES: dict[str, ErrorCode] = {
+    "42S02": ERR_BINDER_UNKNOWN_COLUMN,  # base table or view not found
+    "42S22": ERR_BINDER_UNKNOWN_COLUMN,  # column not found
+    "22018": ERR_BINDER_TYPE_MISMATCH,  # invalid character value for cast
+}
+
+
 # BigQuery's REST API error text for an unresolvable column/table/dataset
 # reference (confirmed against real dbt-bigquery output, which joins
 # error.errors[]["message"] verbatim into the exception string). Snowflake and
@@ -299,7 +351,15 @@ def classify_warehouse_error(
     """
     if isinstance(error, DbtChartsError):
         return handle_adapter_error(operation, error)
-    if dialect == "bigquery" and any(
+    if (
+        isinstance(error, WarehouseStatementError)
+        and error.sqlstate in _SQLSTATE_ERROR_CODES
+    ):
+        # A SQLSTATE we have a verdict for: no dialect gate needed, since the
+        # code means the same thing whoever reported it. An unmapped one falls
+        # through to the runtime fallback below.
+        code = _SQLSTATE_ERROR_CODES[error.sqlstate]
+    elif dialect == "bigquery" and any(
         substring in str(error) for substring in BIGQUERY_UNKNOWN_REF_SUBSTRINGS
     ):
         code = ERR_BINDER_UNKNOWN_COLUMN

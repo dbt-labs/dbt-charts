@@ -444,7 +444,7 @@ class TestDbtAdapter:
                 patch.dict(
                     "sys.modules", {"dbt": None, "dbt.cli": None, "dbt.cli.main": None}
                 ),
-                pytest.raises((ImportError, FileNotFoundError)),
+                pytest.raises((ImportError, ValueError)),
             ):
                 adapter._get_dbt_adapter()
 

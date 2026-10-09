@@ -21,15 +21,8 @@ import contextlib
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path  # noqa: TID251 — DuckDB cache file (DCT_CACHE_PATH)
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    import pyarrow as pa
-
-from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.codes_execute import (
-    ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
-)
 from dbt_charts.core.execute._duckdb_cache_base import (
     _cache_safe_value,
     _DuckDBResultCacheBase,
@@ -41,7 +34,6 @@ from dbt_charts.core.execute._duckdb_cache_base import (
     _uniform_decimal_columns,
 )
 from dbt_charts.core.execute.cache_backend import (
-    FILE_SOURCE_VARS_HASH,
     CacheHit,
     CacheOutcome,
     CacheRows,
@@ -143,7 +135,6 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
         query_name: str,
         source_name: str = "",
         truncated_reason: TruncatedReason | None = None,
-        arrow: pa.Table | None = None,
     ) -> None:
         """Record *outcome* in its own slot, leaving the other one alone.
 
@@ -153,21 +144,10 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
         timed out cannot destroy rows another worker just computed, and a
         success cannot silently strand a stale failure the way two tables could.
 
-        With *arrow*, the result table is built straight from the Arrow schema
-        and none of the row-dict encodings apply — in particular a Decimal
-        column becomes a real DuckDB DECIMAL, not the VARCHAR sidecar, so
-        ``decimal_columns`` stays empty and author SQL over the registered file
-        view can sum it. See ``QueryResultCache.put``.
         """
         del (
             source_name
         )  # recorded by Cloud's backend; the local cache has no use for it
-        if arrow is not None and variables_hash != FILE_SOURCE_VARS_HASH:
-            raise ValueError(
-                f"put(arrow=...) skips the Decimal storage encoding, which is "
-                f"only safe for a file table; {query_name!r} was written with "
-                f"variables_hash {variables_hash!r}, not FILE_SOURCE_VARS_HASH."
-            )
         tbl = _result_table_name(source_hash, query_hash, variables_hash)
 
         with self._lock:
@@ -181,12 +161,8 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                     query_name,
                 )
                 return
-            decimal_columns = (
-                frozenset() if arrow is not None else _uniform_decimal_columns(outcome)
-            )
-            if arrow is not None:
-                self._replace_result_table_from_arrow(tbl, arrow, query_name)
-            elif outcome:
+            decimal_columns = _uniform_decimal_columns(outcome)
+            if outcome:
                 self._ensure_result_table(tbl, outcome, decimal_columns)
                 self.conn.execute(f"DELETE FROM {_q(tbl)}")
                 self._insert_rows(tbl, outcome, decimal_columns)
@@ -273,59 +249,6 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
             for col_name in data[0]
         ]
         self.conn.execute(f"CREATE TABLE {_q(table_name)} ({', '.join(cols)})")
-
-    def _replace_result_table_from_arrow(
-        self, table_name: str, arrow: pa.Table, query_name: str
-    ) -> None:
-        """Rebuild *table_name* from *arrow*, letting DuckDB derive the column types.
-
-        ``CREATE OR REPLACE TABLE ... AS SELECT`` rather than a typed CREATE plus
-        INSERT: DuckDB's Arrow→SQL type mapping is the whole point here, and
-        re-deriving it in Python would be a second, drifting copy of it.
-
-        DuckDB refuses an Arrow type or shape it cannot represent at
-        ``register`` or at the ``CREATE`` (a duplicate column name passes the
-        first and fails the second, as the base ``duckdb.Error``). The
-        materializer converts the cases it can before the table gets here;
-        this stamps whatever is left, so no refusal reaches the author as
-        ERR-INTERNAL.
-        """
-        import duckdb
-
-        try:
-            self.conn.register("_dct_file_ingest", arrow)
-            self.conn.execute(
-                f"CREATE OR REPLACE TABLE {_q(table_name)} AS "
-                "SELECT * FROM _dct_file_ingest"
-            )
-        except duckdb.Error as e:
-            # DuckDB appends pyarrow's C++ frames after the first line.
-            raise DbtChartsError.from_code(
-                ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
-                table_name=query_name,
-                detail=str(e).splitlines()[0],
-            ) from e
-        finally:
-            self.conn.unregister("_dct_file_ingest")
-
-    def register_file_table(
-        self, table_name: str, source_hash: str, fingerprint_hash: str
-    ) -> None:
-        """Create or replace a SQL view aliasing the materialized result table.
-
-        The view exposes the rows under the authored table name (e.g. ``sales``)
-        so that author SQL can reference it directly.
-
-        Args:
-            table_name: The SQL view name to create (e.g. ``sales``).
-            source_hash: Source hash component of the result table key.
-            fingerprint_hash: Content-fingerprint hash (in the query_hash slot).
-        """
-        tbl = _result_table_name(source_hash, fingerprint_hash, FILE_SOURCE_VARS_HASH)
-        with self._lock:
-            self.conn.execute(
-                f"CREATE OR REPLACE VIEW {_q(table_name)} AS SELECT * FROM {_q(tbl)}"
-            )
 
     def _insert_rows(
         self,

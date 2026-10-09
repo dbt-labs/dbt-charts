@@ -75,13 +75,6 @@ _MIN_SOURCE: dict[str, dict] = {
         "user": "u",
         "password": "p",
     },
-    "mysql": {
-        "type": "mysql",
-        "host": "h",
-        "database": "db",
-        "user": "u",
-        "password": "p",
-    },
 }
 
 

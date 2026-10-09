@@ -7,7 +7,7 @@ directly.
 
 Cases are derived from ``SharedScale`` itself (every tier x every mode)
 rather than a hand-typed suffix table, so the test cannot pin a suffix
-``_D3_TO_NARRATIVE`` never produces (the narrative-trillions suffix is
+the en-US narrative words never produce (the narrative-trillions suffix is
 ``"trn"``).
 
 ``compose_suffix_reservation`` replaced the earlier whole-digit-unit
@@ -25,6 +25,8 @@ See "the reservation is exact in slots, approximate in width" in
 
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 
 from dbt_charts.core.font_measure import (
@@ -36,6 +38,8 @@ from dbt_charts.core.fonts import (
     DBT_SANS_TABULAR_FONT_FAMILY,
     DBT_SERIF_OLDSTYLE_TABULAR_FONT_FAMILY,
 )
+from dbt_charts.core.text.format_d3 import LocaleName
+from dbt_charts.core.text.magnitude_words import magnitude_words
 from dbt_charts.core.text.numeral_scale import SharedScale, SuffixMode
 
 # Every (exponent, mode) the resolver's SuffixMode/exponent tables can
@@ -70,6 +74,22 @@ _ALL_TABULAR_FAMILIES = (
     DBT_SANS_TABULAR_FONT_FAMILY,
     DBT_SERIF_OLDSTYLE_TABULAR_FONT_FAMILY,
 )
+
+
+@pytest.mark.parametrize("font_family", _ALL_TABULAR_FAMILIES)
+@pytest.mark.parametrize("name", get_args(LocaleName))
+def test_every_locale_word_composes_a_reservation(
+    name: LocaleName, font_family: str
+) -> None:
+    measurer = _measurer_for_composition(font_family)
+    analytic, narrative = magnitude_words(name)
+    for word in {*analytic, *narrative}:
+        padding = compose_suffix_reservation(word, font_family)
+        error_em = abs(
+            measurer.measure(padding.removesuffix(RESERVATION_GUARD), 1.0)
+            - measurer.measure(word, 1.0)
+        )
+        assert error_em < _TOLERANCE_EM, (word, error_em)
 
 
 @pytest.mark.parametrize("font_family", _ALL_TABULAR_FAMILIES)

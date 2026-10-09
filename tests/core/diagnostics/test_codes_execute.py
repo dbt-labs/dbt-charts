@@ -21,25 +21,25 @@ class TestCodesExecute:
         from dbt_charts.core.diagnostics import REGISTRY
         from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
         from dbt_charts.core.diagnostics.codes_execute import (
-            ERR_NO_DEFAULT_SOURCE,
             ERR_SOURCE_NOT_FOUND_EMPTY,
+            ERR_SOURCE_NOT_NAMED,
         )
 
         assert REGISTRY.get("ERR-SOURCE-NOT-FOUND") is ERR_SOURCE_NOT_FOUND
         assert REGISTRY.get("ERR-SOURCE-NOT-FOUND-EMPTY") is ERR_SOURCE_NOT_FOUND_EMPTY
-        assert REGISTRY.get("ERR-NO-DEFAULT-SOURCE") is ERR_NO_DEFAULT_SOURCE
+        assert REGISTRY.get("ERR-SOURCE-NOT-NAMED") is ERR_SOURCE_NOT_NAMED
 
     def test_doc_url_and_topic_present(self) -> None:
         from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
         from dbt_charts.core.diagnostics.codes_execute import (
-            ERR_NO_DEFAULT_SOURCE,
             ERR_SOURCE_NOT_FOUND_EMPTY,
+            ERR_SOURCE_NOT_NAMED,
         )
 
         for code in (
             ERR_SOURCE_NOT_FOUND,
             ERR_SOURCE_NOT_FOUND_EMPTY,
-            ERR_NO_DEFAULT_SOURCE,
+            ERR_SOURCE_NOT_NAMED,
         ):
             assert code.doc_url, f"{code.code} missing doc_url"
             assert code.docs_topic, f"{code.code} missing docs_topic"
@@ -65,14 +65,17 @@ class TestCodesExecute:
         assert "dbt_charts.yml" in msg
         assert "sources:" in msg
 
-    def test_no_default_source_message_is_surface_neutral(self) -> None:
+    def test_source_not_named_message_is_surface_neutral(self) -> None:
         """Raised on both local and Cloud sourceless queries, so the message must
         not assume a local ``dbt_charts.yml`` / ``sources:`` block or a DuckDB adapter.
         """
-        from dbt_charts.core.diagnostics.codes_execute import ERR_NO_DEFAULT_SOURCE
+        from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_NOT_NAMED
 
-        msg = ERR_NO_DEFAULT_SOURCE.message_template.format(available="none configured")
-        assert "Source name required" in msg
+        msg = ERR_SOURCE_NOT_NAMED.message_template.format(available="none configured")
+        assert "names no source" in msg
+        assert "none configured" in msg
+        assert "`source:`" in msg
+        assert "default" not in msg
         assert "dbt_charts.yml" not in msg
         assert "DuckDB" not in msg
 

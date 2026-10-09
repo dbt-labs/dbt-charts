@@ -66,19 +66,17 @@ _RESERVATION_SPACE_CANDIDATES: tuple[str, ...] = (
     " ",  # MEDIUM MATHEMATICAL SPACE
 )
 
-# Longest composition the search considers. Three characters already reaches
-# sub-pixel error against every suffix the register tables emit; a longer
-# search would only add more candidate space characters to a label's
-# rendered text for a precision gain nobody could see.
+# Longest composition the search considers. Three characters reach sub-pixel
+# error against a one- or two-letter suffix; a longer word adds whole widest
+# spaces ahead of the search rather than a longer search.
 _MAX_RESERVATION_COMPOSITION_LENGTH = 3
 
 # The residual (in em, i.e. measure(..., font_size=1.0) units) below which a
 # composed reservation counts as "sub-pixel" -- comfortably under a pixel at
 # any axis-label size this codebase actually ships (0.05em is under a pixel
-# up to a 20px label, far larger than any axis label renders at). The search
-# reaches well under this against every suffix on every vendored tabular
-# face measured so far (worst observed: ~0.016em, dbt Serif Oldstyle
-# Tabular, which is missing two of the ten candidates); a face that cannot
+# up to a 20px label, far larger than any axis label renders at). The
+# composition reaches it against every locale word on every vendored tabular
+# face (a test pins this); a face that cannot
 # reach it genuinely cannot support the tabular-figures reservation
 # guarantee, which is the one condition this module raises on.
 _SUBPIXEL_RESIDUAL_TOLERANCE_EM = 0.05
@@ -248,7 +246,8 @@ def compose_suffix_reservation(suffix: str, font_family: str) -> str:
     line up with a tick that carries ``suffix``.
 
     Composes up to ``_MAX_RESERVATION_COMPOSITION_LENGTH`` characters from
-    ``_RESERVATION_SPACE_CANDIDATES``, searching for the combination whose
+    ``_RESERVATION_SPACE_CANDIDATES`` (after whole widest spaces, for a word
+    that search cannot reach), searching for the combination whose
     summed advance is closest to ``suffix``'s own advance — not a whole
     number of digit-width (U+2007) units, which cannot express a suffix
     advance that isn't itself a whole number of digits (e.g. " K" measures
@@ -283,6 +282,15 @@ def compose_suffix_reservation(suffix: str, font_family: str) -> str:
     target = measurer.measure(suffix, 1.0)
 
     best, best_error = _search_space_combo(target, available, widths)
+    # A word wider than the search reaches leads with whole widest spaces.
+    if best_error > _SUBPIXEL_RESIDUAL_TOLERANCE_EM and available:
+        widest = max(available, key=lambda c: widths[c])
+        for lead in range(1, math.floor(target / widths[widest]) + 1):
+            combo, error = _search_space_combo(
+                target - lead * widths[widest], available, widths
+            )
+            if error < best_error:
+                best, best_error = (widest,) * lead + combo, error
 
     if best_error > _SUBPIXEL_RESIDUAL_TOLERANCE_EM:
         raise RuntimeError(

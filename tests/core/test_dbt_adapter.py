@@ -209,6 +209,42 @@ class TestReadTargetDict:
             _read_target_dict(tmp_path, "nonexistent", "dev")
 
 
+class TestReadTargetDictWithoutProject:
+    """No dbt project: nothing to anchor relative paths to, no project-local step."""
+
+    def test_relative_path_stays_relative_and_profile_comes_from_env_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter import _read_target_dict
+
+        (tmp_path / "profiles.yml").write_text(
+            "demo:\n"
+            "  target: dev\n"
+            "  outputs:\n"
+            "    dev:\n"
+            "      type: duckdb\n"
+            "      path: warehouse.duckdb\n"
+        )
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(tmp_path))
+
+        target = _read_target_dict(None, "demo", "dev")
+        assert target["path"] == "warehouse.duckdb"
+
+    def test_missing_profile_error_names_the_profiles_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter import _read_target_dict
+
+        (tmp_path / "profiles.yml").write_text(
+            "demo:\n  outputs:\n    dev:\n      type: duckdb\n"
+        )
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(tmp_path))
+
+        with pytest.raises(ValueError, match="nonexistent") as exc_info:
+            _read_target_dict(None, "nonexistent", "dev")
+        assert str(tmp_path / "profiles.yml") in str(exc_info.value)
+
+
 class TestMissingAdapterPackage:
     """A profile whose adapter isn't installed names the extra, not dbt's internals."""
 
@@ -321,8 +357,8 @@ class TestReadProfilesYml:
         (tmp_path / "profiles.yml").write_text(
             "myprofile:\n  outputs:\n    dev:\n      type: duckdb\n"
         )
-        result = _read_profiles_yml(tmp_path)
-        assert isinstance(result, dict)
+        path, result = _read_profiles_yml(tmp_path)
+        assert path == tmp_path / "profiles.yml"
         assert "myprofile" in result
 
 

@@ -28,6 +28,7 @@ from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyle
 from dbt_charts.core.compile.models.primitives import (
     ScaleTargetConfig as PrimitivesScale,
 )
+from dbt_charts.core.compile.models.style.authored import ColumnScaleTargetConfig
 from dbt_charts.core.render.chart.kpi import _evaluate_channel_for_row
 from dbt_charts.core.render.chart.table_support import (
     compute_scale_domain,
@@ -139,7 +140,7 @@ class TestResolveCellConditionalStylesDecimal:
         """A Decimal cell value must produce a non-None background from a scale."""
         col = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=["#000000", "#ffffff"], min=0, max=100
                 )
             ),

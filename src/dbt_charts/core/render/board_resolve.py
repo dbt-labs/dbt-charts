@@ -30,6 +30,7 @@ from dbt_charts.core.render.board_variables import board_data_provider
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.prose import plan_board_prose
+from dbt_charts.core.text.format_d3 import number_locale_scope
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Layout, LayoutItem
@@ -182,6 +183,7 @@ def build_resolved_nested_board_static(board: Board) -> ResolvedBoard:
         id=board.id,
         title=board.title,
         notes=board.notes,
+        regional=board.regional,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,
@@ -241,6 +243,7 @@ def build_resolved_board_static(board: Board) -> ResolvedBoard:
         id=board.id,
         title=board.title,
         notes=board.notes,
+        regional=board.regional,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,
@@ -279,6 +282,26 @@ def build_resolved_board(
     *,
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
     authored_slot_heights: dict[str, float] | EllipsisType = ...,
+) -> tuple[ResolvedBoard, RenderCache]:
+    with number_locale_scope(board.regional.format_locale):
+        return _build_resolved_board(
+            board,
+            executor,
+            variables,
+            render_first,
+            resolve_errors=resolve_errors,
+            authored_slot_heights=authored_slot_heights,
+        )
+
+
+def _build_resolved_board(
+    board: Board,
+    executor: Executor,
+    variables: VariableValues,
+    render_first: bool,
+    *,
+    resolve_errors: dict[str, ChartResolveFailure] | EllipsisType,
+    authored_slot_heights: dict[str, float] | EllipsisType,
 ) -> tuple[ResolvedBoard, RenderCache]:
     """Build a data-resolved ResolvedBoard using the chart resolver.
 
@@ -377,6 +400,7 @@ def build_resolved_board(
             id=board.id,
             title=board.title,
             notes=board.notes,
+            regional=board.regional,
             tags=tuple(board.tags),
             text=board.text,
             base_dir=board.base_dir,
@@ -581,6 +605,7 @@ def _resolve_nested(
         id=board.id,
         title=board.title,
         notes=board.notes,
+        regional=board.regional,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,

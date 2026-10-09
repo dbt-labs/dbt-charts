@@ -117,22 +117,20 @@ PREDEFINED_SPECS: dict[str, str] = {
     PredefinedNumberFormat.year: "d",
 }
 
-# Predefined members whose SI spec is wrong below si_sub_unit_floor: money
-# has no sub-cent unit to name, so a value under $1 misreads -- $0.67 as
-# "$670m" (d3's SI milli prefix), colliding case-only with the house million
-# grammar and reading as 670 million dollars. Below the floor, the member
-# falls back to this plain-digit sibling instead of its SI spec.
+# Predefined SI members never print an SI prefix below 1: d3's milli ("m")
+# collides case-only with the house million grammar, so $0.67 as "$670m" or
+# 0.2 as "200m" reads as a magnitude. From SUB_UNIT_FLOOR up to 1, the member
+# falls back to this plain-digit sibling.
 PREDEFINED_SUB_UNIT_FALLBACK: dict[str, str] = {
     PredefinedNumberFormat.currency.value: PredefinedNumberFormat.currency_full.value,
     PredefinedNumberFormat.number.value: PredefinedNumberFormat.number_full.value,
 }
 
-
-# Money-affix detection for si_sub_unit_floor: deliberately small and
-# explicit, kept next to the predicate that uses it. Currency symbols glued
-# directly onto a value, and the major ISO 4217 codes a FormatConfig
-# prefix/suffix commonly spells out (` USD` is that field's own documented
-# example).
+# Money-affix detection for the slot vote: deliberately small and explicit.
+# Currency symbols glued directly onto a value, and the major ISO 4217 codes a
+# FormatConfig prefix/suffix commonly spells out (` USD` is that field's own
+# documented example). When money cannot be positively identified the answer is
+# "not money": a plain quantity must never be truncated to two decimals.
 _MONEY_SYMBOLS = {"$", "£", "€", "¥", "₹", "₩", "₽"}
 _MONEY_CODES = {"USD", "GBP", "EUR", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"}
 
@@ -146,58 +144,16 @@ def _affix_is_money(affix: str | None) -> bool:
     )
 
 
-# The smallest amount `$,.2f` renders as a nonzero string. Money below this is
-# left on SI: the two-decimal fallback would paint it "$0.00".
-MONEY_SUB_UNIT_FLOOR = 0.005
+def is_money_format(spec: str, prefix: str | None, suffix: str | None) -> bool:
+    """A spec carrying a literal ``$``, or an affix naming a currency."""
+    return "$" in spec or _affix_is_money(prefix) or _affix_is_money(suffix)
 
 
-def si_sub_unit_floor(
-    spec: str, prefix: str | None = None, suffix: str | None = None
-) -> float:
-    """The lower edge of the sub-$1 band in which an adaptive member avoids SI.
-
-    Used at the call site as ``floor < abs(value) < 1.0`` -- a fixed 1.0
-    ceiling, not a general adaptive band. Fixing "$13" for $12.99 needs a
-    per-set vote over the whole slot (axis, column, ...) and is tracked
-    separately (closed PR #7854); this predicate is the narrower per-value
-    fix for amounts under a dollar, where SI is not imprecise but wrong.
-
-    ``MONEY_SUB_UNIT_FLOOR`` (0.005) for money, which has no sub-cent unit to
-    name: d3's SI ``m`` (milli) is not in the house suffix vocabulary
-    (``_D3_TO_ANALYTIC`` keys are k/M/G/T/P/E/Z/Y), so it stays glued inside
-    the number as "$670m" rather than lifting into the suffix lane.
-
-    The floor is 0.005 rather than 0.0 because the fallback it swaps to is
-    ``$,.2f``, which cannot represent less than half a cent: below that it
-    renders "$0.00" for every row of a CPC, per-token or FX column, which is
-    indistinguishable from the genuine zeros this same band is careful to
-    leave as "$0". Confining the swap to the range the fallback can actually
-    represent keeps sub-cent money on SI, where it is at least readable.
-
-    ``1.0`` for a plain quantity, whose fraction the Python-painted KPI and
-    table surfaces still print as an SI sub-unit -- ``0.671`` as "671m",
-    d3's milli. An axis no longer does: a non-compacting tick ladder writes
-    its digits out at any magnitude (``non_compacting_tick_format``,
-    ``numeral_scale``), so read this arm as those surfaces' own position, not
-    a shared one.
-
-    Money is a resolved spec carrying a literal ``$``, or a prefix/suffix
-    that contains a known currency symbol or spells out a major ISO 4217
-    code (``_MONEY_SYMBOLS`` / ``_MONEY_CODES`` above). This is a heuristic
-    over a small, explicit set -- it cannot enumerate the world's
-    currencies, and it does not try to. Money detection here has two ways
-    to be wrong, and only one of them is survivable: calling a real
-    currency "not money" just keeps today's SI rendering (a value like
-    ``0.002 kg`` printing an odd-looking ``2m kg`` is a cosmetic miss, and
-    that same miscall on money is the acceptable "$13 from $12.99" case
-    already tracked separately). Calling a plain quantity "money" runs it
-    through the exact-two-decimal fallback and truncates it -- ``0.002 kg``
-    would render as ``0.00 kg``, discarding a real value. So whenever this
-    predicate cannot positively identify money, it must decline the floor
-    and fall through to SI -- never the other way around.
-    """
-    is_money = "$" in spec or _affix_is_money(prefix) or _affix_is_money(suffix)
-    return MONEY_SUB_UNIT_FLOOR if is_money else 1.0
+# The smallest amount the two-decimal sibling renders as a nonzero string.
+# Below it the member paints significant digits (scientific past
+# SUB_UNIT_SCIENTIFIC_FLOOR) instead, so a CPC, per-token or FX column does not
+# read as a column of zeros.
+SUB_UNIT_FLOOR = 0.005
 
 
 # Engine-owned d3 time specs for each predefined time format member.

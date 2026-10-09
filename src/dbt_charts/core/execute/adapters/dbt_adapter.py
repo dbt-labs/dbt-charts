@@ -34,7 +34,11 @@ from dbt_charts.core.compile.template.parameterized import (
     make_filter_helper,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_INVALID_TYPE
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_DBT_TARGET_NEEDS_SOURCE,
+    ERR_SOURCE_INVALID_TYPE,
+)
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.dialects import (
     DIALECTS,
     SQLDialect,
@@ -69,15 +73,19 @@ from dbt_charts.core.execute.sql_literals import (
 
 
 def _read_profiles_yml(
-    dbt_project_path: Path, profiles_dir: Path | None = None
-) -> dict[str, Any]:
-    """Read and return profiles.yml using the canonical resolution order.
+    dbt_project_path: Path | None, profiles_dir: Path | None = None
+) -> tuple[
+    Path,
+    dict[str, Any],  # type-state: explicit_any — raw dbt-owned profiles.yml mapping
+]:
+    """Read profiles.yml using the canonical resolution order.
 
     Resolution order: profiles_dir → DBT_PROFILES_DIR → project-local → ~/.dbt.
-    Raises FileNotFoundError if none exists.
+    Returns the file's path and its mapping. Raises FileNotFoundError if none exists.
 
     Args:
-        dbt_project_path: The dbt project root (where dbt_project.yml lives).
+        dbt_project_path: The dbt project root (where dbt_project.yml lives), or
+            None when no dbt project is linked (skips the project-local step).
         profiles_dir: Explicit absolute path to the directory containing profiles.yml,
             already resolved. None means use the standard resolution order.
     """
@@ -91,7 +99,7 @@ def _read_profiles_yml(
             f"profiles.yml at {candidate} did not parse to a mapping. "
             f"Got: {type(data).__name__}"
         )
-    return data
+    return candidate, data
 
 
 # dbt spelling → the spelling dbt charts' own code reads the field under. Deliberately
@@ -106,8 +114,71 @@ _DBT_KEYS_DBT_CHARTS_READS: dict[str, dict[str, str]] = {
 }
 
 
+# dbt v2's `LakeComputeConfig` keys that govern dbt's own work, not the lake
+# compute connection: `database`/`schema` name where `dbt run` writes models
+# (boards read fully qualified relations), `threads` stays beside the credentials
+# as for every target, `snowflake_pat_duration_days` is dbt's own Snowflake PAT
+# minting, and `organization` is never forwarded to the driver by dbt-auth either
+# — sending it would connect differently from `dbt run`.
+_LAKECOMPUTE_PROFILE_ONLY_KEYS = frozenset(
+    {"database", "schema", "threads", "snowflake_pat_duration_days", "organization"}
+)
+
+
+def _read_lakecompute_target(
+    target: dict[str, Any],  # type-state: explicit_any — dbt owns profiles.yml values
+    profile_name: str,
+    target_name: str,
+    render: bool,
+) -> dict[str, Any]:  # type-state: explicit_any — mirrors _read_target_dict's dict
+    """The connection fields of a `type: lakecompute` target, validated without dbt Core.
+
+    dbt Core 1.x has no lake compute adapter to ask, so the lakecompute source
+    model is the validator. It renders the target's Jinja itself and the result
+    is discarded: this only raises early, and the caller receives the same kind
+    of dict every other type returns.
+    """
+    from dbt_charts.core.compile.models.source import (
+        LAKECOMPUTE_ADAPTER,
+        reject_retired_lakecompute_type,
+    )
+    from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
+
+    reject_retired_lakecompute_type(str(target["type"]).lower())
+    if "path" in target:
+        raise ValueError(
+            "lakecompute 'path' selects dbt's local DuckDB engine; dbt Charts "
+            "connects to the lake compute service — remove path or use a duckdb "
+            "source."
+        )
+    connection = {
+        key: value
+        for key, value in target.items()
+        if key not in _LAKECOMPUTE_PROFILE_ONLY_KEYS and key != "type"
+    }
+    # The variant is chosen from `method` before the model renders anything, so
+    # a templated `method:` has to be rendered first.
+    candidate = {"type": "lakecompute", **connection}
+    if "method" in candidate:
+        candidate["method"] = render_dbt_jinja_in_dict({"method": candidate["method"]})[
+            "method"
+        ]
+    try:
+        LAKECOMPUTE_ADAPTER.validate_python(candidate)
+    except ValueError as exc:
+        raise ValueError(
+            f"Profile '{profile_name}' target '{target_name}' is not a valid "
+            f"lakecompute connection: {exc}"
+        ) from exc
+    if render:
+        connection = render_dbt_jinja_in_dict(connection)
+    elif "method" in candidate:
+        connection["method"] = candidate["method"]
+    return {"type": "lakecompute", **connection}
+
+
 def _read_target_dict(
-    dbt_project_path: Path,
+    dbt_project_path: Path | None,
     profile_name: str,
     target_name: str | None,
     profiles_dir: Path | None = None,
@@ -136,6 +207,8 @@ def _read_target_dict(
     Args:
         dbt_project_path: The dbt project root; used as the anchor for relative
             DuckDB path: entries and as the fallback location for profiles.yml.
+            None when no dbt project is linked: relative paths stay as authored
+            and profiles.yml is looked up without the project-local step.
         profile_name: The dbt profile name.
         target_name: The dbt target name. None means use the profile's declared
             default target (profile["target"]), falling back to "dev" if absent.
@@ -150,13 +223,14 @@ def _read_target_dict(
             that also renders the result, or an env_var() value that itself
             contains Jinja delimiters would be evaluated a second time.
     """
-    profiles = _read_profiles_yml(dbt_project_path, profiles_dir=profiles_dir)
+    profiles_path, profiles = _read_profiles_yml(
+        dbt_project_path, profiles_dir=profiles_dir
+    )
     profile = profiles.get(profile_name)
     if profile is None:
         available = [k for k in profiles if k != "config"]
         raise ValueError(
-            f"Profile '{profile_name}' not found in profiles.yml "
-            f"(checked {dbt_project_path}). "
+            f"Profile '{profile_name}' not found in {profiles_path}. "
             f"Available profiles: {available}"
         )
     resolved_target = target_name or profile.get("target", "dev")
@@ -167,6 +241,31 @@ def _read_target_dict(
             f"Target '{resolved_target}' not found in profile '{profile_name}'. "
             f"Available targets: {list(outputs.keys())}"
         )
+
+    # dbt v2 also writes a target as a list of connections, or a mapping with a
+    # `lakecompute:` sibling key. Neither is one connection, so name the shape
+    # before `dict(target)` below would turn it into a bare TypeError.
+    if isinstance(target, list) or (
+        isinstance(target, dict) and "lakecompute" in target
+    ):
+        raise ValueError(
+            f"Profile '{profile_name}' target '{resolved_target}' uses dbt v2's "
+            "multi-connection shape, which dbt Charts does not read yet. Add a "
+            "target whose type is lakecompute, or declare the source directly "
+            "with type: lakecompute."
+        )
+    # Before `load_plugin`, which fails for a type with no dbt-core adapter. The
+    # retired spellings take this branch too, to be refused with their hint.
+    if (
+        isinstance(target, dict)
+        and str(
+            target.get(
+                "type", ""
+            )  # type-state: silent_fallback — a missing type reaches the missing-type error below
+        ).lower()
+        in {"lakecompute", "alt", "lake_compute"}
+    ):
+        return _read_lakecompute_target(target, profile_name, resolved_target, render)
 
     from dbt.adapters.factory import load_plugin
     from dbt_common.exceptions import DbtRuntimeError
@@ -240,7 +339,7 @@ def _read_target_dict(
     raw_path = target.get("path")
     if isinstance(raw_path, str) and raw_path and raw_path != ":memory:":
         path_obj = Path(raw_path)
-        if not path_obj.is_absolute():
+        if dbt_project_path is not None and not path_obj.is_absolute():
             target["path"] = str((dbt_project_path / path_obj).resolve())
     return target
 
@@ -287,7 +386,7 @@ class DbtAdapter(BaseAdapter):
                 read (out of the Project seam) since dbt's own config
                 resolution order is disk-anchored.
             target_name: dbt target name
-            profile_name: dbt profile name (default: from dbt_project.yml)
+            profile_name: dbt profile name (default: $DBT_PROFILE, then dbt_project.yml)
         """
         self.project = project
         self.dbt_project_path = Path(dbt_project_path).resolve()
@@ -421,22 +520,11 @@ class DbtAdapter(BaseAdapter):
 
         See ``resolve_target_type()`` for the exceptions this can raise.
         """
-        if not self.profile_name:
-            project_config_path = self.dbt_project_path / "dbt_project.yml"
-            if project_config_path.exists():
-                with project_config_path.open(encoding="utf-8") as f:
-                    project_dict = yaml.safe_load(f)
-                profile_from_project = project_dict.get("profile")
-                if not profile_from_project:
-                    raise ValueError(
-                        f"dbt_project.yml at {project_config_path} has no 'profile:' key"
-                    )
-                self.profile_name = profile_from_project
-            else:
-                raise FileNotFoundError(
-                    f"No dbt_project.yml found at {project_config_path} and no "
-                    f"profile_name was provided to DbtAdapter"
-                )
+        from dbt_charts.core.project_roots import resolve_dbt_profile_name
+
+        self.profile_name = resolve_dbt_profile_name(
+            self.profile_name, self.dbt_project_path
+        )
 
         # This path has no render step of its own downstream, unlike
         # source_resolver._expand_dbt_profile — see the `render` arg.
@@ -451,10 +539,10 @@ class DbtAdapter(BaseAdapter):
         """The dbt target's warehouse type, read from profiles.yml without connecting.
 
         Raises:
-            FileNotFoundError: no dbt_project.yml at dbt_project_path and no
-                profile_name was provided.
-            ValueError: dbt_project.yml has no 'profile:' key, or the
-                resolved profile/target is missing or invalid.
+            FileNotFoundError: no profiles.yml found.
+            ValueError: no profile name resolves (see
+                ``resolve_dbt_profile_name``), or the resolved profile/target is
+                missing or invalid.
             AdapterNotInstalledError: the target's adapter package is missing.
         """
         return str(self._resolve_target_dict()["type"])
@@ -469,6 +557,13 @@ class DbtAdapter(BaseAdapter):
             return self._adapter
 
         target_dict = self._resolve_target_dict()
+        if target_dict["type"] == "lakecompute":
+            raise ExecutionError.from_code(
+                ERR_DBT_TARGET_NEEDS_SOURCE,
+                warehouse="lakecompute",
+                target=self.target_name,
+                profile=self.profile_name,
+            )
         from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
 
         # Dialect first, adapter second, and not the other way round: workers run

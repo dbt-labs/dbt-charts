@@ -152,6 +152,33 @@ class TestGroupedBarOverlap:
         assert "xOffset" in _get_encoding(spec)
         assert _get_mark(spec)["width"]["band"] == pytest.approx(1.25)
 
+    @pytest.mark.parametrize(
+        ("orientation", "key", "expected"),
+        [
+            ("vertical", "width", {"band": 1.25}),
+            ("horizontal", "size", {"expr": "1.25 * bandwidth('yOffset')"}),
+        ],
+    )
+    def test_mixed_sign_overlap_reaches_every_bar_sublayer(
+        self, orientation, key, expected
+    ):
+        """A mixed-sign measure splits each bar into a positive and a negative
+        sub-layer; both must carry the authored overlap, not the unrendered
+        outer spec."""
+        mixed = [dict(row, revenue=-row["revenue"]) for row in MULTI_SERIES_DATA[:2]]
+        spec = chart_pane(
+            self._spec(
+                [*mixed, *MULTI_SERIES_DATA[2:]],
+                orientation=orientation,
+                overlap="partial",
+            )
+        )
+        bars = [
+            layer["mark"] for layer in spec["layer"] if layer["mark"]["type"] == "bar"
+        ]
+        assert len(bars) == 2
+        assert [mark[key] for mark in bars] == [expected, expected]
+
     def test_auto_three_series_uses_no_overlap_gap(self):
         # auto + 3 series → none (-0.1) → width band 0.9 (a gap); no error.
         spec = self._spec(THREE_SERIES_DATA)

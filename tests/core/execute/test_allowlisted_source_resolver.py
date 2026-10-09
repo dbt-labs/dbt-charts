@@ -22,8 +22,8 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SOURCE_NOT_FOUND,
 )
 from dbt_charts.core.diagnostics.codes_execute import (
-    ERR_NO_DEFAULT_SOURCE,
     ERR_SOURCE_CROSS_FILE_FORBIDDEN,
+    ERR_SOURCE_NOT_NAMED,
 )
 
 
@@ -141,8 +141,8 @@ class TestAllowlistedSourceResolver:
                 ),
                 dbt_context=None,
             )
-        assert exc_info.value.code == ERR_NO_DEFAULT_SOURCE
-        assert "source name required" in str(exc_info.value).lower()
+        assert exc_info.value.code == ERR_SOURCE_NOT_NAMED
+        assert "names no source" in str(exc_info.value).lower()
 
     def test_rejects_hash_anchor_reference(self):
         """FR-003: any string containing `#` is refused (cross-file reference)."""

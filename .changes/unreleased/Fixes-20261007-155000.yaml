@@ -1,0 +1,3 @@
+kind: Fixes
+body: Validate no longer warns about possible fan-out on every join with an aggregate; the check flagged lookup joins and never a real fan-out.
+time: 2026-10-07T15:50:00.000000-07:00

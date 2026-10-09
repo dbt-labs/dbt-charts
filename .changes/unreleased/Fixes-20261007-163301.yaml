@@ -1,0 +1,3 @@
+kind: Fixes
+body: Board validation now rejects compiler-owned variable fields, cache enabled, and the in_ and schema_name attribute spellings, and the board schema accepts chart visible.
+time: 2026-10-07T16:33:01.569567-07:00

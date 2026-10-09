@@ -11,39 +11,27 @@ from __future__ import annotations
 
 from dbt_charts.core.diagnostics.registry import REGISTRY, WarningCode
 
-WARN_FANOUT_RISK = REGISTRY.register(
-    WarningCode(
-        code="WARN-FANOUT-RISK",
-        domain="query",
-        title="Join may multiply rows beyond chart aggregation",
-        message_template=("Query {query_name!r}: {message}"),
-        fix_template=(
-            "Add a GROUP BY or aggregation in the query to collapse the "
-            "duplicate rows before they reach the chart."
-        ),
-        doc=(
-            "Fires when query validation detects a join that may multiply rows "
-            "beyond what the chart's aggregation can recover. When a cached "
-            "relationship context (super-schema profiles) is available, severity "
-            "is calibrated against known multiplicities. Emitted by "
-            "`validate_compiled_queries` for every named query."
-        ),
-        docs_topic="queries",
-    )
-)
-
 WARN_MISSING_JOIN_PREDICATE = REGISTRY.register(
     WarningCode(
         code="WARN-MISSING-JOIN-PREDICATE",
         domain="query",
         title="Join is missing a predicate and may produce a cross join",
         message_template=("Query {query_name!r}: {message}"),
-        fix_template=("Add an ON clause to the join to specify how the tables relate."),
+        fix_template=(
+            "Add an ON clause that relates the tables, or join a source that "
+            "returns one row (an aggregate with no GROUP BY, or LIMIT 1)."
+        ),
         doc=(
-            "Fires when query validation detects an implicit cross join or an "
-            "explicit CROSS JOIN without a predicate. These almost always indicate "
-            "a missing ON clause and produce wildly fanned-out result sets. "
-            "Emitted by `validate_compiled_queries` via the query validator."
+            "Fires when query validation detects a CROSS JOIN, a comma join, or a "
+            "join on a constant (`ON TRUE`, `ON 1 = 1`) between two sources that "
+            "can each return many rows. That multiplies every row of one by every "
+            "row of the other; it almost always means a missing ON clause.\n\n"
+            "A source that returns one row by construction never multiplies rows, "
+            "so a join against it stays quiet: a subquery or CTE that aggregates "
+            "with no `GROUP BY`, a `SELECT` with no `FROM`, or a `LIMIT 1`. So does "
+            "a table function such as `generate_series`. A filter that merely "
+            "happens to match one row does not count. Emitted by "
+            "`validate_compiled_queries` via the query validator."
         ),
         docs_topic="queries",
     )
@@ -57,13 +45,13 @@ WARN_PARSE_ERROR = REGISTRY.register(
         message_template=("Query {query_name!r}: {message}"),
         fix_template=(
             "Check the SQL syntax. The query may still execute, but "
-            "semantic validation (fanout detection, reaggregation) cannot run "
+            "semantic validation (reaggregation, missing join predicates) cannot run "
             "on unparseable SQL."
         ),
         doc=(
             "Fires when a SQL query cannot be parsed as a structured AST. The "
             "query may still execute against the warehouse; this warning "
-            "surfaces that semantic validation (fanout, reaggregation) cannot "
+            "surfaces that semantic validation (reaggregation, missing join predicates) cannot "
             "run on unparseable SQL. Emitted by `compile()` for authored "
             "queries whose dialect resolves and whose failure carries a "
             "specific position."
@@ -76,29 +64,31 @@ WARN_REAGGREGATION = REGISTRY.register(
     WarningCode(
         code="WARN-REAGGREGATION",
         domain="query",
-        title="Aggregation applied on top of an already-aggregated input",
+        title="Grouping-dependent aggregate applied on top of an aggregated input",
         message_template=("Query {query_name!r}: {message}"),
         fix_template=(
-            "Refactor the query to aggregate only once at the correct level, "
-            "or verify the double-aggregation is intentional."
+            "Compute the aggregate once over the underlying rows, or carry the "
+            "SUM and COUNT up and divide them in the outer query."
         ),
         doc=(
-            "Fires when query validation detects aggregation applied on top of an "
-            "already-aggregated input (e.g. SUM(SUM(...)) patterns or aggregation "
-            "over a query result that itself aggregates). The result is usually not "
-            "what the author intended. Emitted by `validate_compiled_queries` via "
-            "the query validator.\n\n"
-            "Looker's symmetric aggregate is exempt. Migrated Looker queries read a "
-            "measure across a fan-out join by packing it with a hash of the dedup "
-            "key, `SUM(DISTINCT ...)`-ing so duplicate keys collapse, then "
-            "subtracting a second `SUM(DISTINCT hash-only)`: an identity over a "
-            "per-key value, not a second aggregation. Both halves of that "
-            "subtraction must be present for the exemption to apply, so a plain "
-            "`SUM(DISTINCT already_summed_column)` still warns."
+            "Fires when an outer query applies an aggregate whose result depends "
+            "on how rows were grouped to a column that a CTE or subquery already "
+            "aggregated: `AVG`, `MEDIAN`, or a percentile over any aggregate, and "
+            "`SUM` over an `AVG`, `MEDIAN`, or percentile, and any `DISTINCT` "
+            "aggregate, which collapses equal pre-aggregated values. An average of "
+            "averages weights every group equally, so it differs from the "
+            "average of the underlying rows. The message names both functions, "
+            "for example `AVG over AVG`. Emitted by `validate_compiled_queries` "
+            "via the query validator.\n\n"
+            "Pairs that compose exactly stay quiet: `SUM` or `COUNT` over `SUM` "
+            "or `COUNT`, `MAX` over `MAX`, and `MIN` over `MIN`. So do window "
+            "functions (`LAG`, a running `SUM(...) OVER`), which run per row, "
+            "and aggregates with a `FILTER (WHERE ...)` clause, which pick a "
+            "subset of rows."
         ),
         summary=(
-            "Fires when query validation detects aggregation applied on top "
-            "of an already-aggregated input."
+            "Fires when an AVG, MEDIAN, percentile, or DISTINCT aggregate is applied "
+            "to an already-aggregated column, or a SUM to an already-averaged one."
         ),
         docs_topic="queries",
     )

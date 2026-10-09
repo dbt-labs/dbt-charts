@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from dbt_charts.core.compile.models.markers import Color, Merge, Strategy
 from dbt_charts.core.compile.models.primitives import (
+    BOX_SHADOW_PATTERN,
     BorderStyle,
     FormatConfig,
     NamedFont,
     SpacingValues,
+    check_box_shadow,
 )
 from dbt_charts.core.compile.models.schema_names import PaletteName
 from dbt_charts.core.compile.models.style.theme.board import (
@@ -77,11 +86,19 @@ class Style(BaseModel):
         description="Root font configuration including emoji mode."
     )
     border: BorderStyle = Field(
-        description="Default border style cascaded to all chart cards."
+        description="Frame drawn around the whole board; none by default."
     )
-    box_shadow: str | None = Field(
+    box_shadow: Annotated[
+        str | None,
+        BeforeValidator(
+            check_box_shadow,
+            json_schema_input_type=Optional[  # noqa: UP045 (pyright rejects `Annotated[...] | None`)
+                Annotated[str, StringConstraints(pattern=f"^{BOX_SHADOW_PATTERN}$")]
+            ],
+        ),
+    ] = Field(
         default=None,
-        description="CSS box shadow for chart cards; None means no shadow.",
+        description="Drop shadow under chart cards: x offset, y offset, blur, color.",
     )
     opacity: float = Field(description="Default mark opacity (0–1).")
     title: TitleStyle = Field(

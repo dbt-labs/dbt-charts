@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
 from dbt_charts.core.diagnostics import Diagnostic
+from dbt_charts.core.text.format_d3 import number_locale_scope
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -56,7 +57,7 @@ from dbt_charts.core.render.prose import render_prose_svg
 from dbt_charts.core.render.svg_utils import (
     authored_attrs,
     authored_kind_attr,
-    border_dash_attrs,
+    border_rect,
     checked_href,
     css_color,
     divider_dash_attr,
@@ -104,7 +105,7 @@ def _footer_attribution_svg(
     600 has wider advances than at 400, and measuring with the regular instance
     would let the words behind it overlap.
     """
-    # FooterStyle._require_font_size_and_color guarantees both non-None.
+    # FooterStyle.__constraints__ guarantee both non-None.
     assert footer.font.size is not None and footer.font.color is not None
     size = float(footer.font.size)
     brand_weight = get_chart_rendering().frame.footer_brand_weight
@@ -299,6 +300,7 @@ def _board_uses_title_inline_band(
         float(board.style.frame.card_padding),
         _measured_variable_values(board, variables),
         board.level,
+        board.base_dir,
     )
 
 
@@ -436,6 +438,7 @@ def _render_title_variables_inline_band(
         board.title,
         measured_values,
         board.level,
+        board.base_dir,
     )
     col_gap = float(vs.gap)
 
@@ -1004,6 +1007,32 @@ def render_board_svg(
     error_collector: list[Diagnostic] | None = None,
     embed_fonts: bool = False,
 ) -> str:
+    with number_locale_scope(board.regional.format_locale):
+        return _render_board_svg(
+            board,
+            executor,
+            variables,
+            background,
+            grid,
+            render_cache=render_cache,
+            margins=margins,
+            error_collector=error_collector,
+            embed_fonts=embed_fonts,
+        )
+
+
+def _render_board_svg(
+    board: ResolvedBoard,
+    executor: ChartDataProvider,
+    variables: VariableValues,
+    background: str | None,
+    grid: bool,
+    *,
+    render_cache: RenderCache,
+    margins: bool,
+    error_collector: list[Diagnostic] | None,
+    embed_fonts: bool,
+) -> str:
     """Render board to SVG.
 
     Walks the layout structure and renders each item based on layout type.
@@ -1273,7 +1302,7 @@ def render_board_svg(
     timestamp_family = board.style.timestamp.font.family
     assert footer_family is not None and timestamp_family is not None
     if footer_style.visible:
-        # FooterStyle._require_font_size_and_color guarantees font.size is not None.
+        # FooterStyle.__constraints__ guarantee font.size is not None.
         assert footer_style.font.size is not None
         footer_font_size = float(footer_style.font.size)
         footer_rule_gap_px = get_chart_rendering().frame.footer_rule_gap_px
@@ -1307,11 +1336,17 @@ def render_board_svg(
         margin_lines = "\n".join(lines)
 
     # Fonts last: which fonts to embed depends on everything painted, including
-    # the footer and timestamp below.
+    # the footer and timestamp below, when they are visible.
+    chrome_families = "".join(
+        family
+        for family, chrome in (
+            (footer_family, footer_style),
+            (timestamp_family, board.style.timestamp),
+        )
+        if chrome.visible
+    )
     painted_markup = (
-        "".join(content_items) + font_family + footer_family + timestamp_family
-        if embed_fonts
-        else ""
+        "".join(content_items) + font_family + chrome_families if embed_fonts else ""
     )
     svg_styles = generate_svg_styles(
         emoji_mode=resolved_style.emoji_mode,
@@ -1343,7 +1378,7 @@ def render_board_svg(
     timestamp_style = board.style.timestamp
     if timestamp_style.visible:
         # All timestamp values come from the style cascade.
-        # TimestampStyle._require_font_size_and_color guarantees both non-None.
+        # TimestampStyle.__constraints__ guarantee both non-None.
         assert timestamp_style.font.size is not None
         assert timestamp_style.font.color is not None
         timestamp_font_size = float(timestamp_style.font.size)
@@ -1382,7 +1417,7 @@ def render_board_svg(
     footer_element = ""
     # All footer values come from board.style.footer (style cascade).
     if footer_style.visible:
-        # FooterStyle._require_font_size_and_color guarantees both non-None.
+        # FooterStyle.__constraints__ guarantee both non-None.
         assert footer_style.font.size is not None
         assert footer_style.font.color is not None
         footer_parts = []
@@ -1633,32 +1668,18 @@ def render_nested_board(
     total_svg_height = board_height + board_margin_vertical
 
     bg_rect = ""
-    border_rect = ""
     border_radius = resolved_style.border.radius
 
     if authored_bg:
         bg = str(authored_bg)
         bg_rect = f'<rect x="0" y="0" width="{escape_attr(board_width)}" height="{escape_attr(board_height)}" fill="{escape_attr(bg)}" rx="{escape_attr(border_radius)}"/>'
 
-    border_width = resolved_style.border.width
-    border_color = resolved_style.border.color
-    if border_width > 0 and border_color:
-        stroke_width = border_width
-        stroke_color = border_color
-        stroke_inset = stroke_width / 2.0
-        border_rect = (
-            f'<rect x="{escape_attr(stroke_inset)}" y="{escape_attr(stroke_inset)}" '
-            f'width="{escape_attr(max(board_width - stroke_width, 0))}" '
-            f'height="{escape_attr(max(board_height - stroke_width, 0))}" '
-            f'fill="none" stroke="{escape_attr(stroke_color)}" stroke-width="{escape_attr(stroke_width)}"'
-            f"{border_dash_attrs(resolved_style.border)} "
-            f'rx="{escape_attr(max(border_radius - stroke_inset, 0))}"/>'
-        )
+    border_svg = border_rect(board_width, board_height, resolved_style.border)
 
     board_group = translate_group(
         px(board_margin_left),
         px(board_margin_top),
-        f"{bg_rect}\n{border_rect}\n{''.join(inner_items)}",
+        f"{bg_rect}\n{border_svg}\n{''.join(inner_items)}",
     )
 
     svg = f"""<svg width="{escape_attr(total_svg_width)}" height="{escape_attr(total_svg_height)}" viewBox="0 0 {escape_attr(total_svg_width)} {escape_attr(total_svg_height)}">

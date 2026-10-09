@@ -458,6 +458,20 @@ Fired when an authored `style.charts.category_colors.<field>` field has more dis
 
 Fired when two values pinned under `style.charts.category_colors.<field>` resolve to the same color (case-insensitively), which would seat two categories on one swatch. Give one of the pins a different color.
 
+### ERR-CHART-COLOR-TOKEN: Chart style color token does not resolve
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: {reason}
+```
+
+Fired when a color in a chart's own `style:` block is a palette token (`palette.slot`, `role[N]`) that no palette or theme role resolves, such as a misspelled palette name or slot. The error names the chart and the token; other charts on the board render normally.
+
 ### ERR-CHART-PAINTED-NO-MARKS: Chart received rows but painted no marks
 
 - **Level:** error
@@ -467,10 +481,10 @@ Fired when two values pinned under `style.charts.category_colors.<field>` resolv
 **Message template:**
 
 ```
-Chart {chart_id!r} received {row_count} row(s) but every mark it drew has zero width or height; check whether the x/y fields and scale types match the data's actual shape.
+Chart {chart_id!r} received {row_count} row(s) but every mark it drew has zero width or height. Its card is {card_width}px wide, which is likely too narrow to leave the plot any room; otherwise check whether the x/y fields and scale types match the data's actual shape.
 ```
 
-Fired when a plotting-family chart's query returns at least one row but the rendered SVG contains no mark with visible extent: every bar, line, area, point, wedge, or shape it drew is degenerate. `WARN-QUERY-RETURNED-ZERO-ROWS` covers the honest empty case (no rows); this covers the dishonest one: rows arrived, the renderer just didn't paint anything visible with them.
+Fired when a plotting-family chart's query returns at least one row but the rendered SVG contains no mark with visible extent: every bar, line, area, point, wedge, or shape it drew is degenerate. `WARN-QUERY-RETURNED-ZERO-ROWS` covers the honest empty case (no rows); this covers the dishonest one: rows arrived, the renderer just didn't paint anything visible with them. The message states the card's measured width, because a card too narrow to leave the plot any room (axis labels take the width first) is a likely cause; otherwise the x/y fields and scale types do not match the data's shape.
 
 ### ERR-COLOR-NULL-SERIES: Color column contains NULL values
 
@@ -626,34 +640,6 @@ Fired when `style.fonts` entries extend one another in a cycle (`a` extends `b` 
 
 Fired when a font slot or a `style.fonts` entry names a font (`font: label`, `font: {extends: label}`, `fonts.h2: {extends: heading}`) that `style.fonts` does not define. The message lists the known names. Define the font under `style.fonts`, or fix the name.
 
-### ERR-FORMAT-AFFIX-GEO-TOOLTIP-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach a geo tooltip
-
-- **Level:** error
-- **Domain:** compile
-- **Suppressible:** no
-
-**Message template:**
-
-```
-style.tooltip.format at {field_path} authors a prefix/suffix/notation, but a {chart_type} tooltip takes a plain d3 spec and has no place for an affix. Drop the prefix/suffix/notation, or author a plain spec.
-```
-
-A point/bubble map or choropleth tooltip takes a plain d3 format string, so a prefix, suffix or notation on `style.tooltip.format` (reachable through a `style.formats` alias) cannot paint. Author `style.tooltip.format` as a plain spec or alias without an affix. The tooltips of bar, line, area, scatter and pie charts do paint an affix.
-
-### ERR-FORMAT-AFFIX-NATIVE-TOOLTIP-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach this chart's tooltip
-
-- **Level:** error
-- **Domain:** compile
-- **Suppressible:** no
-
-**Message template:**
-
-```
-The measure format at {field_path} authors a prefix/suffix/notation, but chart {chart_id!r} (a {chart_type} shape excluded from the structured tooltip) takes a plain d3 spec for its hover card and has no place for an affix. Drop the prefix/suffix/notation, or author a plain spec.
-```
-
-A faceted `multiples:` chart, a wide multi-measure scatter, a histogram and a layered scatter take a plain d3 spec for their hover card, so an affix on the measure format cannot paint there. Drop the prefix, suffix or notation, or author a plain spec; charts with a structured tooltip paint the affix.
-
 ### ERR-FORMAT-AFFIX-NOMINAL-AXIS-UNSUPPORTED: A FormatConfig prefix/suffix/notation cannot reach a categorical axis
 
 - **Level:** error
@@ -681,6 +667,20 @@ Format at {field_path} combines a prefix/suffix/notation with time-format spec {
 ```
 
 A prefix, suffix or notation next to a strftime spec ('%b %Y') is rejected on `time_format` and on a temporal axis's format: those paint through a date formatter, which has no place for an affix. Author a prefix/suffix on a number slot (`number_format`), or on a KPI value or table column format, which paint it around the date (`FY Jan 2026`). `notation` only affects an SI number spec; it does nothing to a date anywhere, so drop it.
+
+### ERR-FORMAT-ALIAS-CYCLE: style.formats aliases point at each other in a circle
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.formats.{name} leads into a circle: {chain}. Give one of them a d3 spec of its own.
+```
+
+A `style.formats` entry whose target is another entry's name (`currency: currency_whole`) resolves through that entry. When the entries lead around a circle, no format is ever reached. Break the circle by giving one entry a literal d3 spec.
 
 ### ERR-FORMAT-INVALID: Format spec is not a predefined name, a style.formats alias, or a valid d3-format/d3-time-format spec
 
@@ -1409,6 +1409,20 @@ Pie chart {chart_id!r} has {null_rows} row(s) with a NULL value in its theta col
 ```
 
 Fired when the column bound to a pie or donut chart's `theta` channel contains NULL values. A pie slice's angle comes directly from theta, so a NULL cannot be drawn or labeled; fix the grain in the query instead of letting the renderer guess a value.
+
+### ERR-REGIONAL-NESTED-MISMATCH: A nested board's regional differs from its root board's
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{board} sets regional {authored}, but the board it is nested in uses {root}. A board and everything nested in it write numbers one way; remove the nested `regional:` or make it match.
+```
+
+Fired when a nested board (inline or imported) authors a `regional:` locale or currency that differs from the root board's. One page reads numbers in one locale and one currency, so nested boards take the root's `regional:`. Set it on the root board or in `charts/meta.yml`.
 
 ### ERR-RESOLVED-PIE-DATA-MISMATCH: Resolved pie rows do not match its recording
 
@@ -2173,7 +2187,7 @@ Fired when a file-backed source (DuckDB, SQLite) declares a relative `path:` but
 DuckDB source config sets {field!r}. The in-process DuckDB adapter does not support this field; remove it from the source config.
 ```
 
-Fired when a DuckDB source authors `plugins`, `filesystems`, `remote`, or `use_credential_provider` and it is executed by the in-process DuckDBAdapter, including a `dbt_profile` source that expanded to a duckdb target carrying one of these fields, since dbt_profile does not change which adapter runs the query. These fields need dbt-duckdb's own connection lifecycle (plugin hooks, fsspec registration, remote transport) that the in-process adapter does not implement; silently ignoring them would connect with different semantics than authored. There is no supported way to run this field through dbt charts today. Remove it from the source config or `profiles.yml` target.
+Fired when a `dbt_profile` source expands to a duckdb target carrying `plugins`, `filesystems`, `remote`, or `use_credential_provider` and the in-process DuckDBAdapter executes it. A directly authored duckdb source is rejected at parse time instead. These fields need dbt-duckdb's own connection lifecycle (plugin hooks, fsspec registration, remote transport) that the in-process adapter does not implement; silently ignoring them would connect with different semantics than authored. There is no supported way to run this field through dbt charts today. Remove it from the source config or `profiles.yml` target.
 
 ### ERR-BINDER-TYPE-MISMATCH: Warehouse rejected the query due to a type mismatch
 
@@ -2317,6 +2331,20 @@ SQL references {{{{ source({source_name!r}, {table_name!r}) }}}}, but no matchin
 
 Fired when a query's SQL calls the dbt `source()` Jinja function with a source/table pair that is not present in the loaded manifest. Check for a typo, or refresh the manifest (`dbt parse`) if the source was added recently.
 
+### ERR-DBT-TARGET-NEEDS-SOURCE: This dbt target is reachable only through a declared source
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+This dbt project's target {target!r} is {warehouse}, which dbt Charts reaches only through a declared source. Add a source with `dbt_profile: {profile}` and `target: {target}`, and set `source:` on the query.
+```
+
+Fired when a query uses dbt Jinja such as `{{ ref() }}` with no `source:`, and the dbt project's own target is lake compute. Such a query would run through dbt Core against that target, and dbt Core has no lake compute adapter. Declare a source that names the profile and target, and set `source:` on the query.
+
 ### ERR-DBT-TARGET-PATH-INVALID: dbt target path is not usable
 
 - **Level:** error
@@ -2330,6 +2358,48 @@ The dbt target path from {origin} is not usable: {detail}. Use a relative direct
 ```
 
 Fired when the directory the manifest is read from (the source's `target_path:`, `DBT_TARGET_PATH`, or `target-path:` in `dbt_project.yml`) is absolute, climbs out of the dbt project, contains an unrendered Jinja template, or sits in a `dbt_project.yml` that is not valid YAML. Manifests are read through the project, so the directory must be relative to the dbt project root. Fix it where the message says it came from, or set a relative `target_path:` on the `dbt_profile` source, which wins over `DBT_TARGET_PATH` and `target-path:`. Only checked where a manifest is needed: a query calling `ref()` or `source()`.
+
+### ERR-DRIVER-CHECKSUM-MISMATCH: The warehouse driver is not the pinned build
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{subject} hashes to {actual}, not the pinned {expected}. {outcome}
+```
+
+Fired when a warehouse driver does not match the SHA-256 pinned for its version and platform, either as downloaded or as already cached on disk. A downloaded file is discarded and no library is loaded. A cached file is never overwritten, because the cache is shared with dbt: delete the named file and retry. A download that repeats the mismatch is usually a truncated or proxy-rewritten response; a cached file that fails is truncated, corrupted or replaced.
+
+### ERR-DRIVER-PLATFORM-UNSUPPORTED: No warehouse driver is published for this machine
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+No {driver} driver is published for {arch} {os}. Published platforms: {available}.
+```
+
+Lake compute has no ADBC driver on PyPI, so dbt Charts downloads dbt's own build for this machine's OS and CPU. Fired when no build exists for that combination. The download is refused rather than attempted, because dbt Charts will only run a binary whose SHA-256 it pinned in advance. Run dbt Charts on one of the platforms named in the message.
+
+### ERR-DRIVER-TOO-LARGE: The downloaded warehouse driver expanded past its size ceiling
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{url} expanded past {ceiling} bytes and was discarded before it could fill the disk.
+```
+
+A pinned SHA-256 says nothing about how far the bytes expand, and the expansion necessarily happens before the hash can be compared, so dbt Charts also caps the unpacked size. Nothing is written to the driver cache. A published driver is far below the cap, so this means the response was not the artifact dbt published.
 
 ### ERR-FILE-SOURCE-AMBIGUOUS: Inline file source path exists at both candidate locations
 
@@ -2485,20 +2555,6 @@ dct refuses to execute non-read-only SQL. Statement: {rejected_node_kind}. Previ
 
 Fired when dbt charts detects a non-SELECT statement (INSERT, UPDATE, DELETE, DROP, etc.) in a query. dbt charts only executes read-only SQL to prevent accidental data modification.
 
-### ERR-NO-DEFAULT-SOURCE: Source name required but none specified
-
-- **Level:** error
-- **Domain:** execute
-- **Suppressible:** no
-
-**Message template:**
-
-```
-Source name required: {available}. Name a source for the query.
-```
-
-Fired when a query reaches execution without a source name and there is no default source configured. Specify a source name on the query or configure a default source.
-
 ### ERR-QUERY-DIALECT-MIXED: Composed queries declare different dialects
 
 - **Level:** error
@@ -2598,6 +2654,20 @@ Repo file too large: {file_path} is at or over the {limit_mb:.0f} MB per-file li
 ```
 
 Fired when a file in a connected repository is at or over the deployment's per-file size limit. dbt charts imposes this limit because large files are better served by a direct database connection rather than loading the entire file into memory.
+
+### ERR-RESULT-NUMERIC-OVERFLOW: A returned number is too large to represent
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Column {column!r} holds a whole number too large for a 64-bit integer. Cast it in the query (e.g. to VARCHAR or FLOAT) to choose how it should be read.
+```
+
+Fired when a warehouse returns an integer wider than 64 bits. dbt Charts refuses to narrow it, because a driver's own narrowing can wrap silently and produce a plausible wrong number. Cast the column in the query to state what you want instead.
 
 ### ERR-SOURCE-CONFIG-INVALID: Source configuration fails validation
 
@@ -2713,6 +2783,20 @@ Source {source!r} not found. No source profiles are configured. Declare sources 
 
 Fired when a query references a source but no source profiles are configured at all. Declare sources under `sources:` in your dbt_charts.yml.
 
+### ERR-SOURCE-NOT-NAMED: Query names no source
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query names no source. Available: {available}. Set `source:` on the query or at the board root.
+```
+
+Fired when a SQL query reaches execution without naming a source. There is no implicit source to fall back to: set `source:` on the query, or once at the board root so every query inherits it, to one of the available sources.
+
 ### ERR-SOURCE-REQUIRED: Query has no source configured
 
 - **Level:** error
@@ -2818,7 +2902,7 @@ Fired when a chart's `query:` names a query that is not declared under `queries:
 Could not parse this SQL: {cause}
 ```
 
-**Fix:** If the warehouse accepts this query, the SQL is fine; the parser just does not model that dialect or macro yet, and only dbt charts' static checks (read-only enforcement, fanout and reaggregation lint) are skipped for it. If the warehouse rejects it too, fix the syntax at the reported position.
+**Fix:** If the warehouse accepts this query, the SQL is fine; the parser just does not model that dialect or macro yet, and only dbt charts' static checks (read-only enforcement, reaggregation and join lint) are skipped for it. If the warehouse rejects it too, fix the syntax at the reported position.
 
 Fired when dbt charts' static SQL parser cannot parse a query. The query is still sent to the warehouse; what is lost is the static read-only check and the semantic lint that run on parseable SQL. It is not necessarily an error in the SQL itself; unmodeled dialect syntax and dbt macros land here too.
 
@@ -2863,6 +2947,20 @@ Query '{name}' failed warehouse validation ({mechanism}): {warehouse_message}
 ```
 
 Fired when a query's SQL is rejected by the warehouse during `dct validate --warehouse`. The warehouse message carries the specific failure reason (unknown column, syntax error, etc.). Fix the SQL or re-run `dbt parse` if a referenced model was recently renamed.
+
+### ERR-WAREHOUSE-RESULT-WARNING: The warehouse reported a warning about this result
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+The warehouse reported a warning about this result: {warnings}
+```
+
+Fired when the warehouse answered a query and attached a warning, such as an export limit that truncated the rows. A result the warehouse itself flagged as incomplete is a wrong answer that looks right, so dbt Charts raises rather than rendering it. Change the query so the warning no longer applies, for example by selecting fewer rows.
 
 ### ERR-WAREHOUSE-RUNTIME: Warehouse rejected the query at runtime
 

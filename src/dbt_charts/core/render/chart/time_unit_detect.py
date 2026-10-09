@@ -581,17 +581,14 @@ def resolve_temporal_label_visibility(
     An ``authored_format`` overrides that promotion like every other
     vocabulary decision — see ``cadence_label_text``.
     """
-    ceiling = get_chart_rendering().axis.sparse_ceiling_px
-    unit = format_time_unit
-    sparse_fit: str | None = None  # finest rung that clears collisions but is sparse
-    while True:
-        labeled = [
-            i
-            for i, d in enumerate(dates)
-            if is_label_opener(d, encoding_time_unit, unit, fiscal_year_start_month)
-        ]
-        vocab = "year" if unit == "year" else format_time_unit
-        if temporal_visibility_fits(
+    return walk_label_cadence_ladder(
+        dates,
+        encoding_time_unit,
+        format_time_unit,
+        band,
+        fiscal_year_start_month,
+        allow_skip,
+        lambda labeled, vocab: temporal_visibility_fits(
             labeled,
             dates,
             encoding_time_unit,
@@ -602,7 +599,37 @@ def resolve_temporal_label_visibility(
             edge_labels_flushed=edge_labels_flushed,
             fiscal_year_start_month=fiscal_year_start_month,
             authored_format=authored_format,
-        ):
+        ),
+    )
+
+
+def walk_label_cadence_ladder(
+    dates: list[dt.date],
+    encoding_time_unit: str,
+    format_time_unit: str,
+    band: float,
+    fiscal_year_start_month: int,
+    allow_skip: bool,
+    fits: Callable[[list[int], str], bool],
+) -> tuple[str, bool]:
+    """Walk the label cadence ladder finest to coarsest; ``fits`` is the axis's test.
+
+    ``fits(labeled, vocab)`` answers whether the opener indices ``labeled``
+    clear each other when painted in label vocabulary ``vocab`` (``year`` once
+    the ladder reaches it, else ``format_time_unit``). Direction-agnostic:
+    the horizontal axis measures widths, the vertical one heights.
+    """
+    ceiling = get_chart_rendering().axis.sparse_ceiling_px
+    unit = format_time_unit
+    sparse_fit: str | None = None  # finest rung that clears collisions but is sparse
+    while True:
+        labeled = [
+            i
+            for i, d in enumerate(dates)
+            if is_label_opener(d, encoding_time_unit, unit, fiscal_year_start_month)
+        ]
+        vocab = "year" if unit == "year" else format_time_unit
+        if fits(labeled, vocab):
             spacing = (
                 band * (labeled[-1] - labeled[0]) / (len(labeled) - 1)
                 if len(labeled) >= 2
@@ -1329,27 +1356,35 @@ def _apply_gap_fill_handling(
                     row[col] = left_val + (right_val - left_val) * _smoothstep(t)
 
 
+def canonicalize_ordinal_x(data: ChartRenderData, x_field: str) -> ChartRenderData:
+    """Rewrite ``x_field`` to a date-only ISO string, keeping row order.
+
+    A raw date/datetime object or a non-date-only date-like string (e.g. an
+    ISO datetime with a "T"/space time component) otherwise reaches the
+    emitted spec unstringified or with a stray time component, which Vega's
+    JS ``Date`` parser can read as local time, shifting every point by the
+    runtime's UTC offset.
+    """
+    return [
+        row
+        if x_field not in row or row[x_field] is None
+        else {**row, x_field: _ordinal_bucket_key(row[x_field])}
+        for row in data
+    ]
+
+
 def canonicalize_and_sort_ordinal_x(
     data: ChartRenderData, x_field: str
 ) -> ChartRenderData:
-    """Rewrite ``x_field`` to a date-only ISO string and sort chronologically.
+    """``canonicalize_ordinal_x``, then sort chronologically.
 
     Used when a bucketed calendar grain resolves to a continuous temporal
     scale and no missing-bucket synthesis is needed, but the other two
-    ``complete_ordinal_time_series`` side effects still must apply: a raw
-    date/datetime object or a non-date-only date-like string (e.g. an ISO
-    datetime with a "T"/space time component) otherwise reaches the emitted
-    spec unstringified or with a stray time component, which Vega's JS
-    ``Date`` parser can read as local time, shifting every point by the
-    runtime's UTC offset.
+    ``complete_ordinal_time_series`` side effects still must apply.
     """
-    canonicalized: ChartRenderData = []
-    for row in data:
-        if x_field not in row or row[x_field] is None:
-            canonicalized.append(row)
-            continue
-        canonicalized.append({**row, x_field: _ordinal_bucket_key(row[x_field])})
-    return sorted(canonicalized, key=lambda row: str(row.get(x_field)))
+    return sorted(
+        canonicalize_ordinal_x(data, x_field), key=lambda row: str(row.get(x_field))
+    )
 
 
 def complete_ordinal_time_series(

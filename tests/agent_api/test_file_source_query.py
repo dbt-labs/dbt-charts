@@ -174,28 +174,50 @@ class TestFileSourceDescribeQuery:
         assert result.error
         assert "materializer" in result.error
 
-    def test_describe_query_of_a_bad_column_surfaces_the_real_error(
+    def test_describe_query_of_a_bad_column_reports_invalid_not_unchecked(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """A materializer failure (DuckDB rejects the unknown column) reaches
-        the caller with the real detail rather than a raw duckdb exception or
-        a silent success.
+        """DuckDB's binder rejection is a verdict on the SQL: the check reports
+        ``invalid`` with the real detail, and does not advise running the
+        query in full."""
+        from dbt_charts.core.execute.warehouse_check import check_ad_hoc_query
 
-        It is *not* classified ``invalid`` the way a Postgres/Snowflake
-        EXPLAIN rejection is: ``_duckdb_cache_base.execute_file_source_sql``
-        wraps every DuckDB error — including a genuine
-        ``duckdb.BinderException`` — in a plain ``RuntimeError`` before
-        ``handle_adapter_error`` ever sees it, so the code stays at the
-        ERR-INTERNAL fallback here and ``_is_query_defect`` falls back to
-        ``unchecked``.
-        """
         project = _csv_project(tmp_path, local_project)
         with ProjectSession.from_project(project) as session:
+            check = check_ad_hoc_query(
+                "SELECT nonexistent_column FROM orders",
+                source="marts",
+                adapter_registry=session.adapter_registry,
+            )
             result = session.describe_query(
                 "SELECT nonexistent_column FROM orders", source="marts"
             )
 
+        assert check.status == "invalid"
         assert result.success is False
         assert result.error
         assert "Binder Error" in result.error
         assert "not found in FROM clause" in result.error
+        assert "Run it by executing it in full" not in result.error
+        assert "Warehouse" not in result.error
+
+    def test_describe_query_of_a_missing_file_stays_unchecked(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A materializer fault says nothing about the author's SQL, so it must
+        not be promoted to ``invalid``."""
+        from dbt_charts.core.execute.warehouse_check import check_ad_hoc_query
+
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  marts:\n    type: csv\n"
+            "    files:\n      orders: data/missing.csv\n"
+        )
+        project = local_project(tmp_path)
+        with ProjectSession.from_project(project) as session:
+            check = check_ad_hoc_query(
+                "SELECT region FROM orders",
+                source="marts",
+                adapter_registry=session.adapter_registry,
+            )
+
+        assert check.status == "unchecked"

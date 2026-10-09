@@ -7,6 +7,7 @@ from dbt_charts.core.compile.models.dbt_credential_contract import (
     render_dbt_credential_contract_markdown,
 )
 from dbt_charts.core.compile.models.source import (
+    UNSUPPORTED_DUCKDB_FIELDS,
     BigQuerySourceConfig,
     DuckDBSourceConfig,
     PostgresSourceConfig,
@@ -66,6 +67,10 @@ def test_every_snapshotted_dbt_field_has_a_closed_source_model_field() -> None:
                     # build_adapter derives or forces these rather than exposing
                     # them to authors: BigQuery's credential method, Redshift's
                     # always-on autocommit.
+                    continue
+                if adapter == "duckdb" and field in UNSUPPORTED_DUCKDB_FIELDS:
+                    # Rejected at parse with a field-naming error instead.
+                    assert field not in source_fields
                     continue
                 assert source_field in source_fields, (
                     f"{adapter} dbt field {field!r} has no source model field "

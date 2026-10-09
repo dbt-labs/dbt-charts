@@ -3867,7 +3867,7 @@ rows:
             resolved, executor, variables, width, *, height=None, **kwargs
         ):
             recorded_height_args.append(height)
-            return MOCK_NATURAL_SVG, 400.0, 50.0, None
+            return MOCK_NATURAL_SVG, 400.0, 50.0
 
         # Patch _render_chart_to_svg in layout_sizing so the V2 sizing pass
         # is intercepted (V2 uses _render_chart_to_svg, not render_unresolved_chart_to_svg).

@@ -155,6 +155,55 @@ class TestDftValidateStrictExits1OnWarnings:
         )
         assert result_strict.exit_code == 1
 
+    def test_project_warnings_ignore_clears_strict_for_a_validate_tier_warning(
+        self, tmp_path: Path
+    ) -> None:
+        """A deliberate ``SELECT *`` over a dbt ref() warns on every validate;
+        ``warnings.ignore`` in dbt_charts.yml is the escape hatch that lets a
+        strict CI run go green."""
+        (tmp_path / "target").mkdir()
+        (tmp_path / "target" / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "metadata": {"adapter_type": "postgres"},
+                    "nodes": {
+                        "model.p.orders": {
+                            "resource_type": "model",
+                            "name": "orders",
+                            "schema": "main",
+                            "raw_code": "SELECT id FROM raw",
+                        }
+                    },
+                }
+            )
+        )
+        board = tmp_path / "board.yml"
+        board.write_text(
+            "source: s\n"
+            "queries:\n"
+            "  q: SELECT * FROM {{ ref('orders') }}\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: q\n"
+            "    type: bar\n"
+            "    x: id\n"
+            "    y: id\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        args = ["validate", str(board), "--strict", "--project-dir", str(tmp_path)]
+
+        (tmp_path / "dbt_charts.yml").write_text("name: p\n")
+        unsuppressed = runner.invoke(app, args)
+        assert unsuppressed.exit_code == 1
+        assert "WARN-DBT-QUERY-COLUMNS-INDETERMINATE" in unsuppressed.stderr
+
+        (tmp_path / "dbt_charts.yml").write_text(
+            "name: p\nwarnings:\n  ignore:\n    - WARN-DBT-QUERY-COLUMNS-INDETERMINATE\n"
+        )
+        suppressed = runner.invoke(app, args)
+        assert suppressed.exit_code == 0, suppressed.stderr
+
     def test_strict_fails_a_board_migrated_in_memory(self, tmp_path: Path) -> None:
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
         board = tmp_path / "board.yml"

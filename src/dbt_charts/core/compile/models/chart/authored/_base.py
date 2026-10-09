@@ -20,6 +20,7 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    StringConstraints,
     Tag,
     field_validator,
     model_validator,
@@ -33,16 +34,18 @@ from dbt_charts.core.compile.models.constraints import (
     ValueIn,
 )
 from dbt_charts.core.compile.models.markers import Channel, Color, DisplayText, Url
+from dbt_charts.core.compile.models.primitives import CHANNEL_COLUMN, ErrorHint
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import (
     QueryRef,
     normalize_query_value,
     ref_or_inline,
 )
+from dbt_charts.core.compile.models.schema_names import ChartWarningCode
 from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
 from dbt_charts.core.compile.models.vega_lite.contracts import Projection
 from dbt_charts.core.compile.vega_lite.validation import validate_projection_definition
-from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
+from dbt_charts.core.diagnostics.suppression import warn_retired_codes
 
 from ._annotations import (
     ChartSort,
@@ -108,14 +111,28 @@ GRADIENT_COLOR_FIX = (
     "  style:\n    color:\n      gradient:\n        palette: dbt-seq-blue"
 )
 
+ChartColorColumn = Annotated[
+    str,
+    StringConstraints(pattern=CHANNEL_COLUMN),
+    ErrorHint(
+        "chart.color is a data channel (bare field name only); a literal color "
+        "like '{value}' belongs in style:\n" + STATIC_COLOR_FIX
+    ),
+]
+
+IgnoredChartCode = Annotated[
+    ChartWarningCode,
+    ErrorHint(
+        "unknown or query-domain warning code {value!r} in warnings_ignore. "
+        "Use a registered WARN-* code (error codes cannot be suppressed); "
+        "query-domain codes such as WARN-REAGGREGATION never carry a chart id, so "
+        "suppress them under `queries.<name>.ignore` instead."
+    ),
+]
+
 
 def _reject_color_dict(v: Any) -> Any:
     """Shared validator: reject non-string chart.color values."""
-    if isinstance(v, str) and v.startswith("#"):
-        raise ValueError(
-            "chart.color is a data channel (bare field name only); a literal "
-            f"color like '{v}' belongs in style:\n" + STATIC_COLOR_FIX
-        )
     if isinstance(v, dict):
         if "value" in v:
             raise ValueError(
@@ -245,12 +262,12 @@ class _BaseChartFields(ConstrainedModel):
             )
         return data
 
-    # Excluded from compiled dict — layout hint only when patch is inline in rows/cols.
+    # Layout hint, read from the chart wherever it is placed; the layout
+    # normalizer keeps it out of the compiled chart dict.
     visible: Annotated[
         bool | str | SingleRowBoolProbe | None,
         Field(
             default=None,
-            exclude=True,
             description="Controls whether this layout item is rendered.",
         ),
     ]
@@ -258,20 +275,20 @@ class _BaseChartFields(ConstrainedModel):
     # Required — missing or unknown type raises a discriminator ValidationError.
     type: str
     warnings_ignore: Annotated[
-        list[str] | None,
+        list[IgnoredChartCode] | None,
         Field(
             default=None,
-            description="Codes of render warnings to suppress for this chart.",
+            description="Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.<name>.ignore` instead.",
         ),
     ]
 
     @field_validator("warnings_ignore")
     @classmethod
-    def _validate_warnings_ignore_codes(cls, v: list[str] | None) -> list[str] | None:
+    def _warn_retired_ignore_codes(
+        cls, v: list[ChartWarningCode] | None
+    ) -> list[ChartWarningCode] | None:
         if v is not None:
-            validate_suppression_codes(
-                v, source="chart.warnings_ignore", forbid_domains=frozenset({"query"})
-            )
+            warn_retired_codes(v, source="chart.warnings_ignore")
         return v
 
 
@@ -396,11 +413,11 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
     ]
     # None = no color encoding (solid fill from theme).
     color: Annotated[
-        str | None,
+        ChartColorColumn | None,
         Channel(),
         Field(
             default=None,
-            description="Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only.",
+            description="Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`.",
         ),
     ]
     sort: Annotated[
@@ -541,11 +558,11 @@ class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
     ]
     # None = no color encoding.
     color: Annotated[
-        str | None,
+        ChartColorColumn | None,
         Channel(),
         Field(
             default=None,
-            description="Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only.",
+            description="Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only; a literal color goes in `style.color.static`.",
         ),
     ]
     geo: Annotated[
@@ -603,18 +620,6 @@ class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
         ),
     ]
 
-    @field_validator("color", mode="before")
-    @classmethod
-    def _reject_non_column_color(cls, v: Any) -> Any:
-        if isinstance(v, str) and v.startswith("#"):
-            raise ValueError(
-                "chart.color is a data channel (bare field name only); a "
-                f"literal color like '{v}' belongs in style:\n" + STATIC_COLOR_FIX
-            )
-        if isinstance(v, dict):
-            raise ValueError("chart.color only accepts a bare field name (string).")
-        return v
-
     @field_validator("projection", mode="before")
     @classmethod
     def _validate_projection(cls, value: Any) -> str | Projection | None:
@@ -634,11 +639,11 @@ class _RadialChartFields(_SharedChartFields, _FieldLabelsField):
     ]
     # None = no color encoding.
     color: Annotated[
-        str | None,
+        ChartColorColumn | None,
         Channel(),
         Field(
             default=None,
-            description="Column naming each wedge, giving it its own hue. Bare column name only.",
+            description="Column naming each wedge, giving it its own hue. Bare column name only; a literal color goes in `style.color.static`.",
         ),
     ]
     total: Annotated[
@@ -671,12 +676,3 @@ class _RadialChartFields(_SharedChartFields, _FieldLabelsField):
             ),
         ),
     ]
-
-    @field_validator("color", mode="before")
-    @classmethod
-    def _reject_non_column_color(cls, v: Any) -> Any:
-        if isinstance(v, str) and v.startswith("#"):
-            raise ValueError(
-                f"literal color '{v}' belongs in style. chart.color is a data channel."
-            )
-        return v

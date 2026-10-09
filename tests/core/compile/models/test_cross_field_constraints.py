@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from jsonschema import Draft202012Validator
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.authored import (
@@ -19,11 +20,28 @@ from dbt_charts.core.compile.models.chart.authored import (
     ScatterChart,
     SparkBarChart,
 )
-from dbt_charts.core.compile.models.style.authored import TableColumnConfig
+from dbt_charts.core.compile.models.chart.authored.table import TableChart
+from dbt_charts.core.compile.models.config import ProjectCacheConfig, ProjectCacheInput
+from dbt_charts.core.compile.models.constraints import declared_constraints
+from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
+from dbt_charts.core.compile.models.query.normalized import SchemaQuery
+from dbt_charts.core.compile.models.source import (
+    BigQuerySourceConfig,
+    CsvSourceConfig,
+)
+from dbt_charts.core.compile.models.style.authored import (
+    ColumnScaleConfig,
+    TableColumnConfig,
+)
 from dbt_charts.core.compile.models.style.theme import (
     AxisMirrorStyle,
+    DimensionTicksStyle,
+    FooterStyle,
     ScaleContinuousStyle,
+    SparkEmptyStyle,
+    TimestampStyle,
 )
+from dbt_charts.core.compile.schema.renderers.json_schema import constraint_schema
 
 _BAR: dict[str, Any] = {"type": "bar", "x": "a", "y": "b"}
 _POINT_MAP: dict[str, Any] = {
@@ -227,6 +245,58 @@ CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
         "verbatim.",
     ),
     (
+        "schema-query-schema-without-source",
+        SchemaQuery,
+        {"schema": "s"},
+        "schema: 'schema' requires 'source' to be set",
+    ),
+    (
+        "schema-query-table-without-schema",
+        SchemaQuery,
+        {"source": "src", "table": "t"},
+        "schema: 'table' requires 'schema' to be set",
+    ),
+    (
+        "schema-query-column-without-table",
+        SchemaQuery,
+        {"source": "src", "schema": "s", "column": "c"},
+        "schema: 'column' requires 'table' (and 'schema') to be set",
+    ),
+    (
+        "ticks-time-unit-and-count",
+        DimensionTicksStyle,
+        {"time_unit": "year", "count": 5},
+        "ticks.time_unit and ticks.count cannot both be set — they are two "
+        "different ways to express tick cadence. Use ticks.time_unit/step for a "
+        "step-anchored cadence (every N years/quarters/months), or ticks.count "
+        "for VL's advisory tick-count hint, not both.",
+    ),
+    (
+        "table-spanners-with-pivot",
+        TableChart,
+        {
+            "type": "table",
+            "rows": ["a"],
+            "spanners": [{"label": "L", "columns": ["b"]}],
+        },
+        "'spanners' cannot be combined with the pivot channels rows/columns/values: "
+        "a pivot already draws its own spanners from its column dimensions.",
+    ),
+    (
+        "table-empty-spanners-with-pivot",
+        TableChart,
+        {"type": "table", "rows": ["a"], "spanners": []},
+        "'spanners' cannot be combined with the pivot channels rows/columns/values: "
+        "a pivot already draws its own spanners from its column dimensions.",
+    ),
+    (
+        "log-scale-with-zero",
+        ScaleContinuousStyle,
+        {"type": "log", "zero": True},
+        "scale.continuous.type: log is incompatible with zero: true — a log "
+        "domain cannot include 0. Remove zero or drop the log scale.",
+    ),
+    (
         "temporal-domain-not-iso",
         ScaleContinuousStyle,
         {"type": "temporal", "domain": ["2024-01-01", "x"]},
@@ -285,12 +355,34 @@ def test_rule_message(
             ("domain",),
             "Input should be a valid tuple",
         ),
+        (
+            CsvSourceConfig,
+            {"type": "csv", "files": {}},
+            ("files",),
+            "Dictionary should have at least 1 item after validation, not 0",
+        ),
+        (
+            CategoricalColorStyle,
+            {"single_series_palette": []},
+            ("single_series_palette",),
+            "Value error, single_series_palette must be a palette name or a "
+            "non-empty list of colors, got []",
+        ),
+        (
+            ColumnScaleConfig,
+            {"color": {"palette": [0.2, 1.0]}},
+            ("color", "palette", "list[str]", 0),
+            "Input should be a valid string",
+        ),
     ],
     ids=[
         "rule-between-three",
         "rule-in-empty",
         "spark-bar-two-y",
         "temporal-domain-not-a-list",
+        "csv-files-empty",
+        "single-series-palette-empty",
+        "column-scale-numeric-palette",
     ],
 )
 def test_length_rule_message(
@@ -334,3 +426,99 @@ def test_length_rule_message(
 )
 def test_rule_accepts(model: type[BaseModel], payload: dict[str, Any]) -> None:
     model.model_validate(payload)
+
+
+_SPARK_STROKE: dict[str, Any] = {"color": "red", "width": 1, "dasharray": "2"}
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (SchemaQuery, {"schema": "s"}),
+        (SchemaQuery, {"source": "src", "table": "t"}),
+        (SchemaQuery, {"source": "src", "schema": "s", "column": "c"}),
+        (DimensionTicksStyle, {"time_unit": "year", "count": 5}),
+        (ProjectCacheConfig, {"enabled": True}),
+        (FooterStyle, {"font": {"color": "red"}}),
+        (FooterStyle, {"font": {"size": 10}}),
+        (TimestampStyle, {"font": {"color": "red"}}),
+        (TimestampStyle, {"font": {"size": 10}}),
+        (SparkEmptyStyle, {"stroke": {"color": "red", "width": 1}}),
+        (ScaleContinuousStyle, {"log": {"base": 2}}),
+        (ScaleContinuousStyle, {"type": "linear", "pow": {"exponent": 2}}),
+        (ScaleContinuousStyle, {"type": "log", "symlog": {"constant": 1}}),
+        (BigQuerySourceConfig, {"keyfile": "k.json", "keyfile_json": {"a": "b"}}),
+        (TableChart, {"spanners": [{"label": "L"}], "values": ["v"]}),
+        (TableChart, {"spanners": [], "rows": ["r"]}),
+        (ScaleContinuousStyle, {"type": "log", "zero": True}),
+    ],
+    ids=[
+        "schema-query-schema-without-source",
+        "schema-query-table-without-schema",
+        "schema-query-column-without-table",
+        "ticks-time-unit-and-count",
+        "cache-root-enabled-without-ttl",
+        "footer-font-without-size",
+        "footer-font-without-color",
+        "timestamp-font-without-size",
+        "timestamp-font-without-color",
+        "spark-empty-stroke-without-dasharray",
+        "log-base-without-log-type",
+        "pow-exponent-without-pow-type",
+        "symlog-constant-without-symlog-type",
+        "bigquery-two-keyfiles",
+        "table-spanners-with-values",
+        "table-empty-spanners-with-rows",
+        "log-scale-with-zero",
+    ],
+)
+def test_rule_is_declared(model: type[BaseModel], payload: dict[str, Any]) -> None:
+    schema = constraint_schema(declared_constraints(model))
+    assert not Draft202012Validator(schema).is_valid(payload)
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (SchemaQuery, {"source": "src", "schema": "s", "table": "t", "column": "c"}),
+        (FooterStyle, {"font": {"extends": "body"}}),
+        (FooterStyle, {"font": {"size": 10, "color": "red"}}),
+        (SparkEmptyStyle, {"stroke": _SPARK_STROKE}),
+        (ScaleContinuousStyle, {"type": "log", "log": {"base": 2}}),
+        (ProjectCacheConfig, {"enabled": True, "ttl": "1h"}),
+        (TableChart, {"spanners": [{"label": "L"}], "values": []}),
+    ],
+    ids=[
+        "schema-query-full-path",
+        "footer-font-extends",
+        "footer-font-size-and-color",
+        "spark-empty-full-stroke",
+        "log-base-with-log-type",
+        "cache-root-enabled-with-ttl",
+        "table-spanners-with-empty-values",
+    ],
+)
+def test_declared_rule_accepts(model: type[BaseModel], payload: dict[str, Any]) -> None:
+    schema = constraint_schema(declared_constraints(model))
+    assert Draft202012Validator(schema).is_valid(payload)
+
+
+def test_cache_root_true_needs_a_ttl() -> None:
+    with pytest.raises(ValidationError, match="the project cache root has to say"):
+        TypeAdapter(ProjectCacheInput).validate_python(True)
+
+
+@pytest.mark.parametrize("slot", ["footer", "timestamp"])
+@pytest.mark.parametrize("key", ["size", "color"])
+def test_page_chrome_font_requires_size_and_color(slot: str, key: str) -> None:
+    from dbt_charts.core.compile.config import get_theme_style  # noqa: PLC0415
+
+    model = FooterStyle if slot == "footer" else TimestampStyle
+    base = getattr(get_theme_style(), slot).model_dump()
+    font = {"size": 10, "color": "#000000", key: None}
+    with pytest.raises(ValidationError) as exc:
+        model.model_validate({**base, "font": font})
+    assert [e["msg"] for e in exc.value.errors()] == [
+        f"Value error, style.{slot}.font.{key} is required "
+        + ("(float)" if key == "size" else "(color string)")
+    ]

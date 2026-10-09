@@ -271,10 +271,12 @@ def test_board_schema_types_every_typed_container() -> None:
 def test_item_bounds_stay_off_the_field() -> None:
     collected: dict[str, AuthorableModel] = {}
     _collect_models(_ItemBounds, collected)
-    assert all(not f.constraints for f in collected["_ItemBounds"].fields)
+    assert all(
+        not f.bounds and not f.constraints for f in collected["_ItemBounds"].fields
+    )
 
 
-def _field(type_repr: str, constraints: dict[str, int | float | str]) -> SchemaField:
+def _field(type_repr: str, constraints: dict[str, int | str]) -> SchemaField:
     return SchemaField(
         name="x",
         description="",

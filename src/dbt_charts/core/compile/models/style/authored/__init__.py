@@ -103,6 +103,7 @@ from dbt_charts.core.compile.models.style.authored.spark_bar import (
 from dbt_charts.core.compile.models.style.authored.table import (
     _SPARK_RENAMED_AWAY as _SPARK_RENAMED_AWAY,
     ColumnScaleConfig,
+    ColumnScaleTargetConfig,
     PaginationConfig,
     SparkConfig,
     SparkStylePatch,
@@ -110,13 +111,11 @@ from dbt_charts.core.compile.models.style.authored.table import (
     TableChartStylePatch,
     TableColumnConfig,
     TableColumnDefaultsConfig,
-    _validate_glyph_text as _validate_glyph_text,
     fill_table_column_defaults,
 )
 
 __all__ = [
     "_SPARK_RENAMED_AWAY",
-    "_validate_glyph_text",
     "AreaChartStylePatch",
     "AreaMarkStylePatch",
     "AxisGridThresholdStylePatch",
@@ -141,6 +140,7 @@ __all__ = [
     "ChartStylePatch",
     "ChartsStylePatch",
     "ColumnScaleConfig",
+    "ColumnScaleTargetConfig",
     "SupportTableStylePatch",
     "EndpointLabelsConfig",
     "EndpointLabelsConfigPatch",

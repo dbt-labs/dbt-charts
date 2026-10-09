@@ -20,12 +20,13 @@ parameters rather than inlining, so for them this layer is a type analysis of
 the same comparison shape; Layer 2 runs their real path.
 
 Layer 2 — execution, with row-level expectations. DuckDB and SQLite run in
-CI (bound parameters, the adapters' own path). Postgres and BigQuery are
-local opt-ins that CI never reaches — nothing sets their variables there:
+CI (bound parameters, the adapters' own path), and so do Postgres (the
+runner's PostgreSQL) and BigQuery (a dry run through WIF), in
+test-dataface.yml's `test` job. Locally the last two skip until opted in;
+BigQuery uses Application Default Credentials:
 
-    DCT_TEST_POSTGRES_URL=postgresql://localhost:5432/postgres \
-    DCT_TEST_BIGQUERY_PROJECT=<gcp project> \
-    uv run pytest tests/core/test_variable_sql_cross_dialect.py -m ""
+    DCT_TEST_POSTGRES_URL=<url> DCT_TEST_BIGQUERY_PROJECT=<gcp project> \
+    uv run pytest tests/core/test_variable_sql_cross_dialect.py
 
 Postgres executes the inlined literals; BigQuery dry-runs them, which scans
 nothing and is the one engine here that rejects a mistyped comparison.
@@ -77,7 +78,7 @@ from dbt_charts.core.execute.sql_literals import (
 CANONICAL_DIALECTS = sorted({d.name for d in DIALECTS.values()})
 
 # Where our name and sqlglot's differ.
-SQLGLOT_NAMES = {"sqlserver": "tsql"}
+SQLGLOT_NAMES = {"sqlserver": "tsql", "lakecompute": "duckdb"}
 
 DATE_KINDS = frozenset({"date", "datepicker", "daterange"})
 
@@ -533,7 +534,6 @@ def bigquery() -> tuple[Any, Any]:
     )
 
 
-@pytest.mark.network
 class TestBigQueryDryRun:
     @pytest.mark.parametrize(("case", "column"), _case_params())
     def test_accepted(self, bigquery: tuple[Any, Any], case: Case, column: str) -> None:

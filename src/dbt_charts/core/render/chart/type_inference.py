@@ -209,6 +209,8 @@ def resolve_cartesian_x_type(
 ) -> tuple[str, str, DetectedTimeUnit]:
     """Return the emitted VL x type, data type, and calendar bucket grain.
 
+    Channel-agnostic: a heatmap calls it for its y axis too.
+
     Any auto-detected bucketed grain is additionally gated by
     ``ordinal_scaffold_within_budget``: past the budget the data is sparser
     than its detected grain, so the bar branch resolves temporal instead of

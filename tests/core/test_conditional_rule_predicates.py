@@ -415,7 +415,7 @@ class TestMatchPredicateIn:
             match_predicate,
         )
 
-        rule = ConditionalRule(in_=["At Risk", "Critical"], background="#fee2e2")
+        rule = ConditionalRule(**{"in": ["At Risk", "Critical"]}, background="#fee2e2")
         assert match_predicate(rule, "At Risk") is True
         assert match_predicate(rule, "Critical") is True
         assert match_predicate(rule, "OK") is False
@@ -426,7 +426,7 @@ class TestMatchPredicateIn:
             match_predicate,
         )
 
-        rule = ConditionalRule(in_=[1, 2, 3], background="#fff")
+        rule = ConditionalRule(**{"in": [1, 2, 3]}, background="#fff")
         assert match_predicate(rule, 1) is True
         assert match_predicate(rule, 4) is False
 
@@ -436,7 +436,7 @@ class TestMatchPredicateIn:
             match_predicate,
         )
 
-        rule = ConditionalRule(in_=[1, 2, 3], background="#fff")
+        rule = ConditionalRule(**{"in": [1, 2, 3]}, background="#fff")
         assert match_predicate(rule, None) is False
 
     def test_match_in_bool_vs_int_does_not_cross_match(self) -> None:
@@ -446,7 +446,7 @@ class TestMatchPredicateIn:
             match_predicate,
         )
 
-        rule = ConditionalRule(in_=[1, 2], background="#fff")
+        rule = ConditionalRule(**{"in": [1, 2]}, background="#fff")
         assert match_predicate(rule, True) is False
         assert match_predicate(rule, 1) is True
 

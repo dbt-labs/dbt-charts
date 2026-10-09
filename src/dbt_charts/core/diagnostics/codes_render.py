@@ -1016,8 +1016,9 @@ ERR_CHART_PAINTED_NO_MARKS = REGISTRY.register(
         title="Chart received rows but painted no marks",
         message_template=(
             "Chart {chart_id!r} received {row_count} row(s) but every mark it drew "
-            "has zero width or height; check whether the x/y fields and scale "
-            "types match the data's actual shape."
+            "has zero width or height. Its card is {card_width}px wide, which is "
+            "likely too narrow to leave the plot any room; otherwise check "
+            "whether the x/y fields and scale types match the data's actual shape."
         ),
         doc=(
             "Fired when a plotting-family chart's query returns at least one row "
@@ -1025,7 +1026,11 @@ ERR_CHART_PAINTED_NO_MARKS = REGISTRY.register(
             "bar, line, area, point, wedge, or shape it drew is degenerate. "
             "`WARN-QUERY-RETURNED-ZERO-ROWS` covers the honest empty case (no "
             "rows); this covers the dishonest one: rows arrived, the renderer "
-            "just didn't paint anything visible with them."
+            "just didn't paint anything visible with them. The message states "
+            "the card's measured width, because a card too narrow to leave the "
+            "plot any room (axis labels take the width first) is a likely cause; "
+            "otherwise the x/y fields and scale types do not match the data's "
+            "shape."
         ),
         docs_topic="charts",
     )
@@ -1964,7 +1969,7 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
             "currency's own symbol). Also fires on a visible table column with "
             "no number format whose non-null values are all numbers between 0 "
             "and 1, and not all exactly 0 or 1 (a flag): left unformatted it "
-            "renders in SI notation (0.4367 shows as `437m`). The fix is to set "
+            "renders as a bare fraction (0.4367 shows as `0.44`). The fix is to set "
             "`style.columns.<name>.format`, e.g. `.1%`. Pivot measure columns "
             "are not checked."
         ),
@@ -2430,11 +2435,10 @@ WARN_TOO_MANY_COLOR_CATEGORIES = REGISTRY.register(
     WarningCode(
         code="WARN-TOO-MANY-COLOR-CATEGORIES",
         domain="render",
-        title="Color encoding has more categories than the palette can distinguish",
+        title="Color encoding has more categories than a reader can tell apart",
         message_template=(
             "Chart {chart_id!r}: color encoding on {field!r} yields {count} "
-            "distinct series; the palette only has {max_categories} distinct "
-            "colors before recycling."
+            "distinct series, more than the {max_categories} a reader can tell apart."
         ),
         fix_template=(
             "Reduce the number of color categories by grouping small values into "
@@ -2442,8 +2446,11 @@ WARN_TOO_MANY_COLOR_CATEGORIES = REGISTRY.register(
         ),
         doc=(
             "Fires when a categorical color encoding has more distinct values than "
-            "the palette can distinguish; colors recycle and the legend becomes "
-            "unreadable. Gated on the Vega-Lite color encoding type so a continuous "
+            "the larger of the chart's palette length and eight; past that a "
+            "reader cannot match legend entries to marks, and a short palette "
+            "recycles colors. A handful of series on a short palette stays quiet. "
+            "The message states the series count and the threshold. Gated on the "
+            "Vega-Lite color encoding type so a continuous "
             "(quantitative) color gradient never trips it. A wide chart "
             "(y: [a, b]) is counted by the series its fold renders -- the "
             "measures, crossed with the color: dimension's values when one is "

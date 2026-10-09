@@ -23,10 +23,15 @@ from typing import get_args
 import pytest
 import vl_convert as vlc
 
+from dbt_charts.core.compile.models.primitives import NumberLocale, Regional
 from dbt_charts.core.diagnostics.codes_render import ERR_NUMERAL_EXPR_EMPTY_SPEC
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.numeral_expr import Notation, numeral_vega_expr
-from dbt_charts.core.text.format_d3 import _D3_TO_ANALYTIC, format_d3, round_aware_spec
+from dbt_charts.core.text.format_d3 import (
+    format_d3,
+    number_locale_scope,
+    round_aware_spec,
+)
 
 _TEXT_RE = re.compile(r"<text[^>]*>(.*?)</text>", re.S)
 
@@ -46,13 +51,9 @@ def _render_via_vega(value: float | None, expr: str) -> str:
     return html.unescape(match.group(1))
 
 
-# Every SI tier boundary d3 defines, derived from the analytic map's own key
-# count rather than hardcoded — d3's SI prefixes step by exactly 3 decimal
-# orders (k=1e3, M=1e6, ...), so a future prefix added to the map (e.g. a
-# vocabulary pass extending past Y) grows this matrix along with it instead
-# of leaving the new tier uncovered. Each value's negative, plus zero.
+# Every SI tier boundary d3 names (k through Y), each negated, plus zero.
 _TIER_VALUES = [0.0]
-for _i in range(1, len(_D3_TO_ANALYTIC) + 1):
+for _i in range(1, 9):
     _TIER_VALUES.append(10.0 ** (3 * _i))
     _TIER_VALUES.append(-(10.0 ** (3 * _i)))
 
@@ -73,6 +74,28 @@ def test_si_spec_matches_format_d3(value: float, notation: Notation) -> None:
         f"value={value!r} notation={notation!r}: Vega expr rendered {rendered!r}, "
         f"format_d3 produced {expected!r}"
     )
+
+
+# Words ending in a later tier's d3 letter: each value takes one substitution.
+_LETTER_WORDS = NumberLocale.model_validate(
+    {
+        "decimal": ".",
+        "thousands": ",",
+        "grouping": [3],
+        "currency": ["$", ""],
+        "analytic": [" M", " G", " T", " P"],
+        "narrative": ["M", "G", "T", "P"],
+    }
+)
+
+
+@pytest.mark.parametrize("value", _TIER_VALUES)
+@pytest.mark.parametrize("notation", _NOTATIONS)
+def test_locale_words_match_format_d3(value: float, notation: Notation) -> None:
+    with number_locale_scope(Regional(locale=_LETTER_WORDS).format_locale):
+        expr = numeral_vega_expr("datum.value", _SI_SPEC, notation=notation)
+        expected = format_d3(value, _SI_SPEC, notation=notation)
+    assert _render_via_vega(value, expr) == expected
 
 
 def test_no_notation_argument_emits_no_post_process() -> None:

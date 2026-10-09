@@ -59,7 +59,7 @@ _PROJECT_ISH_RE = re.compile(r"project", re.IGNORECASE)
 # sanctioned: the local/parameter is explicitly typed FilesystemProject, or
 # narrowed via isinstance immediately above. Ratchet — shrink, don't grow.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("core/compile/config.py", 567): (
+    ("core/compile/config.py", 573): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
     ("core/execute/adapters/adapter_registry.py", 225): (
@@ -140,7 +140,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/_paths.py", 573): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
-    ("agent_api/project_session.py", 323): (
+    ("agent_api/project_session.py", 321): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
     ("agent_api/serve.py", 80): (

@@ -6,18 +6,21 @@ resolve_cache_policy's field-level layered merge.
 """
 
 from datetime import timedelta
-from typing import Any
+from typing import Annotated, Any, get_args, get_origin
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, BeforeValidator, TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.models.cache import (
     CachePatch,
     CachePolicy,
+    desugar_cache,
     merge_cache_layers,
     parse_duration,
     resolve_cache_policy,
 )
+
+from ..conftest import cache_layer
 
 # ── parse_duration ───────────────────────────────────────────────────────────
 
@@ -70,35 +73,35 @@ def test_ttl_never_is_rejected_as_an_invalid_literal() -> None:
     """`never` is not the never-auto-expire spelling — `forever` is. The old
     literal must not be silently accepted as either a duration or a keyword."""
     with pytest.raises(ValidationError):
-        CachePatch.model_validate({"ttl": "never"})
+        cache_layer({"ttl": "never"})
 
 
 # ── patch models ─────────────────────────────────────────────────────────────
 
 
 def test_cache_patch_accepts_partial_fields() -> None:
-    patch = CachePatch.model_validate(False)
+    patch = cache_layer(False)
     assert patch.enabled is False
     assert patch.ttl is None
 
 
 def test_cache_patch_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        CachePatch.model_validate({"method": "results"})
+        cache_layer({"method": "results"})
 
 
 def test_cache_patch_rejects_malformed_ttl() -> None:
     with pytest.raises(ValidationError):
-        CachePatch.model_validate({"ttl": "1 fortnight"})
+        cache_layer({"ttl": "1 fortnight"})
 
 
 def test_cache_patch_accepts_valid_ttl() -> None:
-    patch = CachePatch.model_validate({"ttl": "1h30m"})
+    patch = cache_layer({"ttl": "1h30m"})
     assert patch.ttl == "1h30m"
 
 
 def test_cache_patch_accepts_ttl_forever() -> None:
-    patch = CachePatch.model_validate({"ttl": "forever"})
+    patch = cache_layer({"ttl": "forever"})
     assert patch.ttl == "forever"
 
 
@@ -121,7 +124,7 @@ def test_scalar_cache_desugars(
 ) -> None:
     """`cache: <scalar>` is the whole authoring surface: false is the only
     opt-out, any other value means on."""
-    patch = CachePatch.model_validate(authored)
+    patch = cache_layer(authored)
     assert patch.enabled is enabled
     assert patch.ttl == ttl
 
@@ -129,29 +132,33 @@ def test_scalar_cache_desugars(
 def test_scalar_and_block_ttl_are_equivalent() -> None:
     """`cache: 1h` and `cache: {ttl: 1h}` are the same policy — the scalar is
     pure syntax, not a second set of merge semantics."""
-    scalar = resolve_cache_policy(_root(), CachePatch.model_validate("1h"))
-    block = resolve_cache_policy(_root(), CachePatch.model_validate({"ttl": "1h"}))
+    scalar = resolve_cache_policy(_root(), cache_layer("1h"))
+    block = resolve_cache_policy(_root(), cache_layer({"ttl": "1h"}))
     assert scalar == block
 
 
 def test_malformed_scalar_reports_the_duration_error() -> None:
     with pytest.raises(ValidationError, match="[Ii]nvalid duration"):
-        CachePatch.model_validate("1 fortnight")
+        cache_layer("1 fortnight")
 
 
 @pytest.mark.parametrize(
-    "authored", [{"enabled": False}, {"enabled": True}, {"enabled": True, "ttl": "1h"}]
+    "authored",
+    [
+        {"enabled": False},
+        {"enabled": True},
+        {"enabled": True, "ttl": "1h"},
+        {"enabled": False, "ttl": "1h"},
+    ],
 )
 def test_authored_enabled_key_is_rejected(authored: dict[str, Any]) -> None:
     """`enabled` is derived from the scalar, never authored — an author
     reaching for it gets pointed at `cache: false`.
 
-    Every spelling an author would reach for is rejected: the bare off switch,
-    the bare on switch, and on-with-a-ttl. Only `{enabled: false, <ttl>}` gets
-    through, and only because it is the serializer's round-trip of a state no
-    scalar can write (see below)."""
+    Every spelling is rejected, including the dump of an off layer that kept
+    a ttl."""
     with pytest.raises(ValidationError, match="cache: false"):
-        CachePatch.model_validate(authored)
+        cache_layer(authored)
 
 
 def test_bare_cache_key_names_the_four_spellings() -> None:
@@ -162,36 +169,27 @@ def test_bare_cache_key_names_the_four_spellings() -> None:
     spellings an author could fix it with.
     """
     with pytest.raises(ValidationError, match="cache: 1h"):
-        CachePatch.model_validate(None)
+        cache_layer(None)
 
 
 @pytest.mark.parametrize("authored", ["1h", "forever", True, False, {"ttl": "5m"}, {}])
 def test_a_layer_survives_a_dump_and_revalidate(authored: object) -> None:
-    """Every state a layer can hold must round-trip through `model_dump()`.
+    """Every authorable state must round-trip through `model_dump()`.
 
-    The extends/meta cascade dumps a board's own patch and re-validates it, and
-    the meta pass does it again for the merged board — so a state the dump
-    cannot spell is a state silently lost in production. `enabled` being
-    unauthorable is exactly why the dump has to emit the scalar back.
+    The extends cascade dumps a board's own patch and re-validates it, so a
+    state the dump cannot spell is a state silently lost in production.
     """
-    patch = CachePatch.model_validate(authored)
-    assert CachePatch.model_validate(patch.model_dump(exclude_unset=True)) == patch
+    patch = cache_layer(authored)
+    assert cache_layer(patch.model_dump(exclude_unset=True)) == patch
 
 
-def test_an_off_layer_carrying_a_ttl_round_trips() -> None:
-    """The one state no scalar spells — it still has to survive a dump.
+def test_an_off_layer_carrying_a_ttl_dumps_with_the_internal_key() -> None:
+    """The one state no scalar spells: `false` alone would drop the ttl.
 
-    `1h` above + `cache: false` here is an ordinary field-by-field merge, and
-    the meta pass dumps the merged board patch back to YAML. `false` alone would
-    drop the ttl, silently re-rooting any query that opts back in, so the dump
-    emits the internal key and the validator takes it back in this shape only.
+    It has no authored spelling, so consumers pass the model, not its dump.
     """
-    merged = merge_cache_layers(
-        CachePatch.model_validate("1h"), CachePatch.model_validate(False)
-    )
-    dumped = merged.model_dump(exclude_unset=True)
-    assert dumped == {"enabled": False, "ttl": "1h"}
-    assert CachePatch.model_validate(dumped) == merged
+    merged = merge_cache_layers(cache_layer("1h"), cache_layer(False))
+    assert merged.model_dump(exclude_unset=True) == {"enabled": False, "ttl": "1h"}
 
 
 def test_enabled_is_absent_from_the_authorable_schema() -> None:
@@ -254,7 +252,7 @@ def test_ttl_timedelta_parses_duration_only_once() -> None:
 def _root() -> CachePatch:
     """A root layer as the shipped default supplies it: a ttl (which, like any
     non-false authored value, resolves `enabled`)."""
-    return CachePatch.model_validate({"ttl": "24h"})
+    return cache_layer({"ttl": "24h"})
 
 
 def test_resolve_root_alone() -> None:
@@ -272,22 +270,22 @@ def test_resolve_skips_none_layers() -> None:
 def test_false_layer_disables_but_inherits_ttl() -> None:
     """`cache: false` sets only enabled; unset fields still inherit (the ttl
     is moot while off, but a re-enabling layer below must still see it)."""
-    policy = resolve_cache_policy(_root(), CachePatch.model_validate(False))
+    policy = resolve_cache_policy(_root(), cache_layer(False))
     assert policy.enabled is False
     assert policy.ttl == "24h"
 
 
 def test_nearest_layer_wins_field_by_field() -> None:
-    source = CachePatch.model_validate({"ttl": "1h"})
-    query = CachePatch.model_validate({"ttl": "5m"})
+    source = cache_layer({"ttl": "1h"})
+    query = cache_layer({"ttl": "5m"})
     policy = resolve_cache_policy(_root(), source, query)
     assert policy.ttl == "5m"
     assert policy.enabled is True  # inherited from root; neither layer set it
 
 
 def test_unset_ttl_inherits_parent_ttl() -> None:
-    source = CachePatch.model_validate({"ttl": "1h"})
-    query = CachePatch.model_validate(False)  # no ttl override at all
+    source = cache_layer({"ttl": "1h"})
+    query = cache_layer(False)
     policy = resolve_cache_policy(_root(), source, query)
     assert policy.enabled is False
     assert policy.ttl == "1h"
@@ -296,7 +294,7 @@ def test_unset_ttl_inherits_parent_ttl() -> None:
 def test_ttl_forever_overrides_inherited_ttl() -> None:
     """`ttl: forever` explicitly resets an inherited ttl to never-auto-expire,
     resolved to ttl=None on the policy."""
-    query = CachePatch.model_validate({"ttl": "forever"})
+    query = cache_layer({"ttl": "forever"})
     policy = resolve_cache_policy(_root(), query)
     assert policy.ttl is None
     assert policy.ttl_timedelta is None
@@ -306,22 +304,18 @@ def test_explicit_null_ttl_is_rejected() -> None:
     """`ttl: null` looks like omission but would merge differently — it must
     error with a pointer to the two honest spellings."""
     with pytest.raises(ValidationError, match="forever"):
-        CachePatch.model_validate({"ttl": None})
+        cache_layer({"ttl": None})
 
 
 def test_false_then_true_layers_reenable() -> None:
-    policy = resolve_cache_policy(
-        _root(), CachePatch.model_validate(False), CachePatch.model_validate(True)
-    )
+    policy = resolve_cache_policy(_root(), cache_layer(False), cache_layer(True))
     assert policy.enabled is True
 
 
 def test_a_ttl_below_a_false_layer_reenables() -> None:
     """Writing a ttl asks for caching — a nearer `cache: 5m` beats an outer
     `cache: false` rather than being silently ignored while off."""
-    policy = resolve_cache_policy(
-        _root(), CachePatch.model_validate(False), CachePatch.model_validate("5m")
-    )
+    policy = resolve_cache_policy(_root(), cache_layer(False), cache_layer("5m"))
     assert policy.enabled is True
     assert policy.ttl == "5m"
 
@@ -354,9 +348,9 @@ def test_default_config_supplies_cache_root() -> None:
 def test_project_scope_accepts_the_same_scalars(authored: bool | str) -> None:
     """The project root is authored exactly like every other scope — `path` is
     reachable through the block form, never required to spell a bare ttl."""
-    from dbt_charts.core.compile.models.config import ProjectCacheConfig
+    from dbt_charts.core.compile.models.config import ProjectCacheInput
 
-    root = ProjectCacheConfig.model_validate(authored)
+    root = TypeAdapter(ProjectCacheInput).validate_python(authored)
     assert root.path is None
     assert root.enabled is (authored is not False)
 
@@ -365,7 +359,55 @@ def test_project_scope_rejects_bare_true() -> None:
     """The one scalar the root cannot honor: it promises nothing about
     duration, and there is no scope above to take one from, so accepting it
     would silently mean cache-forever."""
-    from dbt_charts.core.compile.models.config import ProjectCacheConfig
+    from dbt_charts.core.compile.models.config import ProjectCacheInput
 
     with pytest.raises(ValidationError, match="forever"):
-        ProjectCacheConfig.model_validate(True)
+        TypeAdapter(ProjectCacheInput).validate_python(True)
+
+
+def _all_models() -> set[type[BaseModel]]:
+    seen: set[type[BaseModel]] = set()
+    stack: list[type[BaseModel]] = [BaseModel]
+    while stack:
+        for sub in stack.pop().__subclasses__():
+            if sub not in seen:
+                seen.add(sub)
+                stack.append(sub)
+    return seen
+
+
+def test_every_cache_patch_field_is_annotated_with_cache_input() -> None:
+    """A bare `CachePatch` field would accept `{enabled: true}` and reject
+    `cache: 1h`: the authoring rules live on the annotation, not the class."""
+    import dbt_charts.core.compile.models.config  # noqa: F401  # registers Config
+    import dbt_charts.core.compile.models.source  # noqa: F401
+
+    checked = 0
+    for model in _all_models():
+        field = model.model_fields.get("cache")
+        if field is None:
+            continue
+        # `CacheInput | None` keeps its Annotated arm inside the union.
+        arms = [field.annotation, *get_args(field.annotation)]
+        if not any(
+            issubclass(
+                get_args(arm)[0] if get_origin(arm) is Annotated else arm, CachePatch
+            )
+            for arm in arms
+            if isinstance(arm, type) or get_origin(arm) is Annotated
+        ):
+            continue
+        checked += 1
+        metadata = [
+            *field.metadata,
+            *(
+                m
+                for arm in arms
+                if get_origin(arm) is Annotated
+                for m in get_args(arm)[1:]
+            ),
+        ]
+        assert any(
+            isinstance(m, BeforeValidator) and m.func is desugar_cache for m in metadata
+        ), f"{model.__module__}.{model.__name__}.cache is not CacheInput"
+    assert checked >= 4

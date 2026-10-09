@@ -1,0 +1,3 @@
+kind: Fixes
+body: A table suffix keeps its leading space, a zero-crossing axis labels its unit on the positive end, and support_table strips on sorted or left-axis charts state their unit once, beside a horizontal bar in a table column's spelling ($2.35 M).
+time: 2026-10-08T10:37:38.622272-07:00

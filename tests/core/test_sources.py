@@ -152,7 +152,7 @@ class TestSourceTypes:
 
     def test_csv_source_requires_nonempty_files(self):
         """CSV source requires a non-empty files mapping."""
-        with pytest.raises(ValueError, match="files must not be empty"):
+        with pytest.raises(ValueError, match="Dictionary should have at least 1 item"):
             CsvSourceConfig(type="csv", files={})
 
     def test_lookml_no_longer_a_source_type(self):
@@ -288,32 +288,50 @@ class TestSourceTypes:
 
 
 class TestDatabricksSourceConfig:
-    """token is the only auth this config supports; extra="forbid" rejects
-    OAuth and passthrough fields."""
+    """Exactly one credential set — a token, or an OAuth M2M client_id plus
+    client_secret; extra="forbid" rejects the unvalidated passthrough fields."""
 
-    def test_token_is_required_and_non_empty(self):
+    _BASE = {
+        "type": "databricks",
+        "host": "h.cloud.databricks.com",
+        "http_path": "/sql/1.0/warehouses/abc",
+        "catalog": "main",
+    }
+
+    def test_token_is_non_empty(self):
         with pytest.raises(ValidationError, match="token"):
-            DatabricksSourceConfig(
-                type="databricks",
-                host="h.cloud.databricks.com",
-                http_path="/sql/1.0/warehouses/abc",
-                token="",
-            )
+            DatabricksSourceConfig(**self._BASE, token="")
+
+    def test_accepts_an_oauth_m2m_service_principal(self):
+        cfg = DatabricksSourceConfig(**self._BASE, client_id="cid", client_secret="sec")
+        assert (cfg.client_id, cfg.client_secret, cfg.token) == ("cid", "sec", None)
 
     @pytest.mark.parametrize(
-        "field", ["client_id", "client_secret", "auth_type", "session_properties"]
+        ("credentials", "message"),
+        [
+            ({}, "token or client_id and client_secret"),
+            (
+                {"token": "tok", "client_id": "cid", "client_secret": "sec"},
+                "not both",
+            ),
+            ({"token": "tok", "client_id": "cid"}, "not both"),
+            ({"client_id": "cid"}, "client_secret"),
+            ({"client_secret": "sec"}, "client_id"),
+        ],
+        ids=["neither", "both", "token-and-partial", "id-only", "secret-only"],
     )
-    def test_rejects_oauth_and_passthrough_fields(self, field):
-        """OAuth and passthrough fields are unvalidated and unsupported;
-        extra="forbid" must reject them."""
+    def test_rejects_anything_but_exactly_one_complete_credential_set(
+        self, credentials, message
+    ):
+        with pytest.raises(ValidationError, match=message):
+            DatabricksSourceConfig(**self._BASE, **credentials)
+
+    @pytest.mark.parametrize("field", ["auth_type", "session_properties"])
+    def test_rejects_passthrough_fields(self, field):
+        """Passthrough fields are unvalidated and unsupported; extra="forbid"
+        must reject them."""
         with pytest.raises(ValidationError, match="extra"):
-            DatabricksSourceConfig(
-                type="databricks",
-                host="h.cloud.databricks.com",
-                http_path="/sql/1.0/warehouses/abc",
-                token="tok",
-                **{field: "x"},
-            )
+            DatabricksSourceConfig(**self._BASE, token="tok", **{field: "x"})
 
     def test_rejects_connection_parameters_passthrough(self):
         """connection_parameters would let an authored value silently collide
@@ -1920,7 +1938,15 @@ class TestRegistryCredentialLiterals:
         assert "wh" in str(exc.value)
 
     @pytest.mark.parametrize(
-        "field", ["password", "private_key", "keyfile_json", "token", "secret"]
+        "field",
+        [
+            "password",
+            "private_key",
+            "keyfile_json",
+            "token",
+            "secret",
+            "client_secret",
+        ],
     )
     def test_every_known_secret_field_rejected_as_literal(
         self, tmp_path, field, local_project: Callable[..., FilesystemProject]

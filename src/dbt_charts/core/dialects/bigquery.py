@@ -60,3 +60,14 @@ class BigQueryDialect(SQLDialect):
             f"FROM `{scope}`.INFORMATION_SCHEMA.COLUMNS "
             "ORDER BY table_schema, table_name, ordinal_position"
         )
+
+    def quote(self, identifier: str) -> str:
+        """Backtick-quote an identifier; GoogleSQL has no double-quoted form.
+
+        A backtick inside one is escaped with a backslash, not by doubling —
+        doubling is MySQL's rule, and GoogleSQL reads two backticks as the end
+        of one quoted identifier and the start of another.
+
+        https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical
+        """
+        return "`" + identifier.replace("\\", "\\\\").replace("`", "\\`") + "`"

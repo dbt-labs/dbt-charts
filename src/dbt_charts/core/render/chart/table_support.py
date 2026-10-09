@@ -17,7 +17,7 @@ from dbt_charts.core.compile.models.chart.authored import (
 )
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
-    FormatAliases,
+    FormatTable,
 )
 from dbt_charts.core.compile.models.style.resolved import ResolvedTableColumnConfig
 from dbt_charts.core.compile.models.style.theme import (
@@ -352,9 +352,10 @@ def _measure_min_word_width(
 
     Searches ``values`` (sampled rendered cell texts) and the ``header_label``.
 
-    Cell tokens are measured at ``font_size`` and the header label's at
-    ``header_font_size``: a theme with larger headers would otherwise get a
-    floor narrower than the header word it exists to keep whole.
+    Cell tokens are measured at ``font_size`` in ``measurer``'s font and the
+    header label's at ``header_font_size`` in ``header_measurer``'s: a theme
+    with larger headers would otherwise get a floor narrower than the header
+    word it exists to keep whole.
 
     This gives the minimum column width that avoids mid-word line breaks.
     """
@@ -525,7 +526,7 @@ def _is_padded_numeric(
 def _rendered_cell_text(
     val: Any,  # type-state: explicit_any — arbitrary warehouse cell value
     col_config: TableColumnConfig | None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> str:
     """Return the text a cell paints for ``val``, without any glyph run.
 
@@ -577,6 +578,7 @@ def _rendered_cell_text(
             default_number=True,
             shared_scale=shared_scale,
             is_anchor=True,
+            keep_affix_gaps=True,
         )
         rendered = prefix + number + suffix
         pad_basis = number
@@ -613,7 +615,7 @@ def measure_column_demands(
     header_case: CaseValue = "none",
     cell_pad: int,
     max_sample_rows: int = 50,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
     header_visible: bool = True,
     column_when_rules: Mapping[str, Sequence[ConditionalRule]],
 ) -> tuple[dict[str, float], dict[str, float]]:
@@ -694,7 +696,7 @@ def measure_column_word_floors(
     header_case: CaseValue = "none",
     cell_pad: int = 0,
     max_sample_rows: int = 50,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
     header_visible: bool = True,
     column_when_rules: Mapping[str, Sequence[ConditionalRule]],
 ) -> dict[str, float]:

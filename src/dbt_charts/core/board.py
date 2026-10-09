@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import importlib.util as _importlib_util
 import logging
 import time
 from collections.abc import Callable
@@ -70,25 +69,8 @@ from dbt_charts.core.project import (
     is_package_relpath,
 )
 
-# Probe once at import time: avoids repeated find_spec calls and avoids
-# the `try/except ImportError` antipattern on our own modules.
-_SUPER_SCHEMA_AVAILABLE = (
-    _importlib_util.find_spec("dbt_charts_super_schema") is not None
-)
-
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
-    from dbt_charts.core.inspect.query_validator import RelationshipContext
-
-
-def _relationship_context(project: Project) -> RelationshipContext | None:
-    if not _SUPER_SCHEMA_AVAILABLE:
-        return None
-    from dbt_charts_super_schema.inspect.relationship_context import (  # noqa: PLC0415
-        load_relationship_context,
-    )
-
-    return load_relationship_context(project)
 
 
 from dbt_charts.core.compile.compiler import validate_compiled_queries
@@ -260,8 +242,8 @@ def _with_template_output_budget(
     return wrapper
 
 
-def _partition_compile_warnings(
-    result: CompileResult,
+def partition_compile_warnings(
+    warnings: list[Diagnostic],
     board: Board | None,
     ignore_codes: set[str] | None,
     project_codes: frozenset[str],
@@ -269,7 +251,7 @@ def _partition_compile_warnings(
     """Apply the render-time ignore layers (--ignore-warning, dbt_charts.yml,
     per-chart codes) to compile warnings; a failed compile has no *board*."""
     return _partition_warnings(
-        list(result.warnings),
+        warnings,
         cli_codes=ignore_codes or set(),
         project_codes=set(project_codes),
         per_chart_codes=(
@@ -287,8 +269,8 @@ def _partition_compile_warnings(
 def _compile_failed(
     result: CompileResult, ignore_codes: set[str] | None, project_codes: frozenset[str]
 ) -> BoardRenderResult:
-    active, suppressed = _partition_compile_warnings(
-        result, result.board, ignore_codes, project_codes
+    active, suppressed = partition_compile_warnings(
+        list(result.warnings), result.board, ignore_codes, project_codes
     )
     return BoardRenderResult(
         status="failed",
@@ -362,9 +344,7 @@ def render_dashboard(
         result = compile_file(board)
         if not result.success:
             return _compile_failed(result, ignore_codes, _warnings_ignore)
-        validate_compiled_queries(
-            result, relationship_context=_relationship_context(project)
-        )
+        validate_compiled_queries(result)
         check_manifest_refs(result, project)
         if result.errors:
             # Ref/source errors land here: this arm has no execution layer to
@@ -373,8 +353,8 @@ def render_dashboard(
             # than `success` — mypy narrows the property from the guard above
             # and calls the branch unreachable.)
             return _compile_failed(result, ignore_codes, _warnings_ignore)
-        active, suppressed = _partition_compile_warnings(
-            result, result.board, ignore_codes, _warnings_ignore
+        active, suppressed = partition_compile_warnings(
+            list(result.warnings), result.board, ignore_codes, _warnings_ignore
         )
         return BoardRenderResult(
             status="ok",
@@ -439,9 +419,7 @@ def render_dashboard(
     if not result.success:
         return _compile_failed(result, ignore_codes, _warnings_ignore)
 
-    validate_compiled_queries(
-        result, relationship_context=_relationship_context(project)
-    )
+    validate_compiled_queries(result)
     # Errors this appends are re-derived per chart by DbtRefResolver during
     # execution, which contains them to the failing chart instead of failing the
     # whole board; only WARN-DBT-MANIFEST-MISSING needs the board-level call.
@@ -467,8 +445,8 @@ def render_dashboard(
     # `result.suppressed_warnings` matched a compile-time layer (query-level
     # `ignore:` or meta.yml lint config); `compile_suppressed` matched a
     # render-time layer. Both belong in the result.
-    compile_active, compile_suppressed = _partition_compile_warnings(
-        result, compiled_board, ignore_codes, _warnings_ignore
+    compile_active, compile_suppressed = partition_compile_warnings(
+        list(result.warnings), compiled_board, ignore_codes, _warnings_ignore
     )
 
     from dbt_charts.core.render.render_result import RenderResult as _RenderResult

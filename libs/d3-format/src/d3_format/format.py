@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, localcontext
-from typing import overload
+from typing import TypedDict, overload
 
 from d3_format.spec import FormatSpec, parse
 
@@ -143,15 +144,77 @@ def _to_radix(abs_val: float, base: int, upper: bool) -> str:
     return digits.upper() if upper else digits
 
 
-def _group(value: str, width: float) -> str:
-    """Replicate d3's formatGroup for grouping [3] with a ',' separator.
+@dataclass(frozen=True)
+class FormatLocale:
+    """d3's ``formatLocale`` definition. ``grouping=None`` disables grouping."""
+
+    decimal: str = "."
+    thousands: str = ","
+    grouping: tuple[int, ...] | None = (3,)
+    currency: tuple[str, str] = ("$", "")
+    numerals: tuple[str, ...] | None = None
+    percent: str = "%"
+    minus: str = _MINUS
+    nan: str = "NaN"
+
+    def format(self, spec_str: str) -> Callable[[float | int | Decimal], str]:
+        """d3's ``locale.format(spec)``."""
+        spec = parse(spec_str)
+        _resolve_type(spec)
+        precision = _resolve_precision(spec)
+        return lambda v: _apply_spec(spec, precision, v, self)
+
+
+class LocaleDefinition(TypedDict, total=False):
+    """A d3 locale definition, as d3-format's locale JSON files spell it."""
+
+    decimal: str
+    thousands: str
+    grouping: list[int]
+    currency: list[str]
+    numerals: list[str]
+    percent: str
+    minus: str
+    nan: str
+
+
+def format_locale(definition: LocaleDefinition) -> FormatLocale:
+    """Build a locale from a d3 locale definition (e.g. d3-format's fr-FR.json).
+
+    Like d3, a definition missing ``grouping`` or ``thousands`` does not group.
+    """
+    grouping = definition.get("grouping")
+    thousands = definition.get("thousands")
+    currency = definition.get("currency", ["", ""])
+    numerals = definition.get("numerals")
+    return FormatLocale(
+        decimal=definition.get("decimal", "."),
+        thousands=thousands or "",
+        grouping=None if grouping is None or thousands is None else tuple(grouping),
+        currency=(currency[0], currency[1]),
+        numerals=None if numerals is None else tuple(numerals),
+        percent=definition.get("percent", "%"),
+        minus=definition.get("minus", _MINUS),
+        nan=definition.get("nan", "NaN"),
+    )
+
+
+EN_US = FormatLocale()
+
+
+def _group(value: str, width: float, locale: FormatLocale) -> str:
+    """Replicate d3's formatGroup.
 
     ``width`` caps the grouped length; d3 passes infinity except when zero-fill
     padding is grouped along with the digits, where it bounds the total.
     """
+    grouping = locale.grouping
+    if grouping is None:
+        return value
     i = len(value)
     parts: list[str] = []
-    g = 3
+    j = 0
+    g = grouping[0]
     length = 0
     while i > 0 and g > 0:
         if length + g + 1 > width:
@@ -161,9 +224,10 @@ def _group(value: str, width: float) -> str:
         length += g + 1
         if length > width:
             break
-        g = 3
+        j = (j + 1) % len(grouping)
+        g = grouping[j]
     parts.reverse()
-    return ",".join(parts)
+    return locale.thousands.join(parts)
 
 
 def _apply_trim(body: str) -> str:
@@ -398,23 +462,29 @@ def _body_is_zero(body: str) -> bool:
         return False
 
 
-def _prefix(spec: FormatSpec) -> str:
+def _prefix(spec: FormatSpec, locale: FormatLocale) -> str:
     """The leading unit: a currency symbol, or the alternate-form radix marker."""
     if spec.symbol == "$":
-        return "$"
+        return locale.currency[0]
     if spec.symbol == "#" and spec.type in _ALTERNATE_FORM_TYPES:
         return "0" + spec.type.lower()
     return ""
 
 
-def _value_suffix(spec: FormatSpec) -> str:
+def _value_suffix(spec: FormatSpec, locale: FormatLocale) -> str:
     """The trailing unit. A currency symbol displaces the percent sign."""
     if spec.symbol == "$":
-        return ""
-    return "%" if spec.type in ("%", "p") else ""
+        return locale.currency[1]
+    return locale.percent if spec.type in ("%", "p") else ""
 
 
-def _pad(spec: FormatSpec, value_prefix: str, value: str, value_suffix: str) -> str:
+def _pad(
+    spec: FormatSpec,
+    value_prefix: str,
+    value: str,
+    value_suffix: str,
+    locale: FormatLocale,
+) -> str:
     """Group the digits, then pad to width and align — d3's closing steps.
 
     Grouping appears twice for a reason: without zero-fill d3 groups the digits
@@ -422,7 +492,7 @@ def _pad(spec: FormatSpec, value_prefix: str, value: str, value_suffix: str) -> 
     separators land inside the padded field.
     """
     if spec.comma and not spec.zero:
-        value = _group(value, math.inf)
+        value = _group(value, math.inf, locale)
 
     length = len(value_prefix) + len(value) + len(value_suffix)
     if spec.width is not None and spec.width > length:
@@ -432,17 +502,22 @@ def _pad(spec: FormatSpec, value_prefix: str, value: str, value_suffix: str) -> 
 
     if spec.comma and spec.zero:
         width = (spec.width - len(value_suffix)) if padding and spec.width else math.inf
-        value = _group(padding + value, width)
+        value = _group(padding + value, width, locale)
         padding = ""
 
     if spec.align == "<":
-        return value_prefix + value + value_suffix + padding
-    if spec.align == "=":
-        return value_prefix + padding + value + value_suffix
-    if spec.align == "^":
+        out = value_prefix + value + value_suffix + padding
+    elif spec.align == "=":
+        out = value_prefix + padding + value + value_suffix
+    elif spec.align == "^":
         half = len(padding) // 2
-        return padding[:half] + value_prefix + value + value_suffix + padding[half:]
-    return padding + value_prefix + value + value_suffix
+        out = padding[:half] + value_prefix + value + value_suffix + padding[half:]
+    else:
+        out = padding + value_prefix + value + value_suffix
+    if locale.numerals is not None:
+        numerals = locale.numerals
+        out = "".join(numerals[int(c)] if "0" <= c <= "9" else c for c in out)
+    return out
 
 
 def _resolve_type(spec: FormatSpec) -> None:
@@ -471,22 +546,26 @@ def _resolve_precision(spec: FormatSpec) -> int:
     return max(0, min(20, spec.precision))
 
 
-def _apply_spec(spec: FormatSpec, precision: int, v: float | int | Decimal) -> str:
+def _apply_spec(
+    spec: FormatSpec, precision: int, v: float | int | Decimal, locale: FormatLocale
+) -> str:
     """Apply a resolved FormatSpec to a numeric value, mirroring d3's format()."""
-    value_prefix = _prefix(spec)
-    value_suffix = _value_suffix(spec)
+    value_prefix = _prefix(spec, locale)
+    value_suffix = _value_suffix(spec, locale)
     x = float(v)  # coerce int, Decimal, etc.; preserves -0 sign via IEEE 754
 
     if spec.type == "c":
         # Character data: the value is stringified verbatim and carries its own
         # ASCII hyphen, so the sign, trim and split steps are all skipped.
-        return _pad(spec, value_prefix, "", _js_number_to_string(x) + value_suffix)
+        return _pad(
+            spec, value_prefix, "", _js_number_to_string(x) + value_suffix, locale
+        )
 
     if math.isnan(x):
         # d3 short-circuits NaN ahead of the type function, which is why 'X'
         # does not uppercase it the way it uppercases "INFINITY".
         is_negative = False
-        body, si_prefix = "NaN", ""
+        body, si_prefix = locale.nan, ""
     else:
         is_negative = x < 0 or math.copysign(1.0, x) < 0
         body, si_prefix = _format_type(spec, abs(x), precision)
@@ -500,7 +579,7 @@ def _apply_spec(spec: FormatSpec, precision: int, v: float | int | Decimal) -> s
         is_negative = False
 
     if is_negative:
-        value_prefix = ("(" if spec.sign == "(" else _MINUS) + value_prefix
+        value_prefix = ("(" if spec.sign == "(" else locale.minus) + value_prefix
     elif spec.sign not in ("-", "("):
         value_prefix = spec.sign + value_prefix
 
@@ -512,11 +591,12 @@ def _apply_spec(spec: FormatSpec, precision: int, v: float | int | Decimal) -> s
         # Hold the fraction/exponent out of grouping and zero-padding.
         for i, char in enumerate(body):
             if not "0" <= char <= "9":
-                value_suffix = body[i:] + value_suffix
+                rest = locale.decimal + body[i + 1 :] if char == "." else body[i:]
+                value_suffix = rest + value_suffix
                 body = body[:i]
                 break
 
-    return _pad(spec, value_prefix, body, value_suffix)
+    return _pad(spec, value_prefix, body, value_suffix, locale)
 
 
 @overload
@@ -548,13 +628,7 @@ def format(  # noqa: A001
     Raises:
         D3FormatError: If spec_str does not match the d3-format grammar.
     """
-    spec = parse(spec_str)
-    _resolve_type(spec)
-    precision = _resolve_precision(spec)
-
-    def _fmt(v: float | int | Decimal) -> str:
-        return _apply_spec(spec, precision, v)
-
+    _fmt = EN_US.format(spec_str)
     if value is None:
         return _fmt
     return _fmt(value)

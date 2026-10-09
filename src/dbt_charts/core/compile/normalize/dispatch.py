@@ -70,6 +70,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     LineChart,
     ScatterChart,
 )
+from dbt_charts.core.compile.models.primitives import DEFAULT_REGIONAL, Regional
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.refs import ChartRef
 from dbt_charts.core.compile.models.style.authored import StylePatch
@@ -111,9 +112,11 @@ from dbt_charts.core.compile.normalize.variables import (
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.compile.template.jinja import text_query_references
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_REGIONAL_NESTED_MISMATCH,
     ERR_TEXT_UNKNOWN_QUERY,
     ERR_VALIDATION_FIELD,
 )
+from dbt_charts.core.text.currencies import CurrencyCode
 
 
 def compiled_meta() -> dict[str, str]:
@@ -158,7 +161,7 @@ def _theme_from_extends(extends: str | list[str] | None) -> str | None:
 # `repr` of the dumped fields, not `model_dump_json`: JSON writes inf and nan as
 # null, so `gap: .inf` would key the same as `gap: null` and silently take the
 # wrong style off the memo. A repr the other way round can only miss.
-_BoardCascadeKey = tuple[str, str, str | None]
+_BoardCascadeKey = tuple[str, str, str | None, CurrencyCode | None]
 _CascadeProducts = tuple[ResolvedStyle, ChartStyleContext]
 
 # Board style cascades already resolved, innermost compile last. Every cascade
@@ -270,6 +273,8 @@ def compile_board_resolved_style(
     parent_patch: StylePatch | None = None,
     theme_name: str | None = None,
     parent_theme_name: str | None = None,
+    *,
+    currency: CurrencyCode | None = DEFAULT_REGIONAL.currency,
 ) -> tuple[ResolvedStyle, ChartStyleContext, StylePatch | None]:
     """Build the authoritative ResolvedStyle + ChartStyleContext for this board scope.
 
@@ -355,10 +360,14 @@ def compile_board_resolved_style(
         )
         patches = (merged_patch,) if merged_patch is not None else ()
         return (
-            *resolve_style_and_context(base, *patches, base_background=bottom_layer),
+            *resolve_style_and_context(
+                base, *patches, base_background=bottom_layer, currency=currency
+            ),
             parent_patch,
         )
 
+    if is_nested:
+        board_style = _block_font_sets_prose_font(board_style)
     own_patch = scope_patch(parent_patch, board_style)
     own_patch = _pin_unauthored_nested_background(
         own_patch, board_style, is_nested=is_nested, replacement=replacement
@@ -369,6 +378,7 @@ def compile_board_resolved_style(
         effective_theme,
         repr(own_patch.model_dump(exclude_unset=True)),
         bottom_layer,
+        currency,
     )
     cached = cache.get(key)
     if cached is not None:
@@ -381,9 +391,66 @@ def compile_board_resolved_style(
         # allocation.
         return copy.copy(cached[0]), cached[1], own_patch
 
-    resolved = resolve_style_and_context(base, own_patch, base_background=bottom_layer)
+    resolved = resolve_style_and_context(
+        base, own_patch, base_background=bottom_layer, currency=currency
+    )
     cache[key] = resolved
     return (*resolved, own_patch)
+
+
+def _block_font_sets_prose_font(style: StylePatch) -> StylePatch:
+    """A nested block's authored ``font.family``/``font.size`` also set its prose.
+
+    Prose takes its font from the theme's named ``body`` font, which already has
+    a family and size, so a block's ``font`` would never reach it the way
+    ``font.color`` does. An authored ``text.font`` still wins.
+    """
+    from dbt_charts.core.compile.merge import merge_patches
+
+    if "font" not in style.model_fields_set:
+        return style
+    prose = {
+        name: getattr(style.font, name)
+        for name in ("family", "size")
+        if name in style.font.model_fields_set
+    }
+    if not prose:
+        return style
+    return merge_patches(
+        StylePatch.model_validate({"text": {"font": prose}}), style, nested=False
+    )
+
+
+def _board_regional(board: AuthoredBoard, parent: Regional | None) -> Regional:
+    """A nested board writes numbers the way its root does."""
+    if parent is None:
+        return board.regional or Regional()
+    authored = board.regional
+    if authored is not None and any(
+        getattr(authored, name) != getattr(parent, name)
+        for name in authored.model_fields_set
+    ):
+        raise CompilationError.from_code(
+            ERR_REGIONAL_NESTED_MISMATCH,
+            field_path="regional",
+            board=board.title
+            or "A nested board",  # type-state: silent_fallback — an untitled nested board has no name to cite
+            authored=_regional_text(authored, authored.model_fields_set),
+            root=_regional_text(parent, {"locale", "currency"}),
+        )
+    return parent
+
+
+def _regional_text(regional: Regional, names: set[str]) -> str:
+    shown = {
+        "locale": regional.locale
+        if isinstance(regional.locale, str)
+        else "a custom locale",
+        "currency": "the locale's own currency"
+        if regional.currency is None
+        else regional.currency,
+    }
+    return ", ".join(f"{name}: {shown[name]}" for name in sorted(names))
 
 
 def _root_width_style_patch(board: AuthoredBoard) -> StylePatch | None:
@@ -465,6 +532,7 @@ def sync_board_resolved_style(
             parent_context,
             parent_patch,
             theme_name=board.theme,
+            currency=board.regional.currency,
         )
     )
     for item in board.layout.items or []:
@@ -503,6 +571,7 @@ def _propagate_resolved_style(
                 parent_patch,
                 theme_name=item.board.theme,
                 parent_theme_name=parent_theme_name,
+                currency=item.board.regional.currency,
             )
             _propagate_resolved_style(
                 item.board.layout,
@@ -634,6 +703,7 @@ def normalize_board(
         parent_context["html_policy"] if inherits_html_policy else board.html_policy,
         resolve_html_policy_ceiling().value,
     )
+    regional = _board_regional(board, parent_context.get("regional"))
     if base_dir is None:
         base_dir = parent_context.get("base_dir")
 
@@ -913,6 +983,7 @@ def normalize_board(
         parent_context.get("chart_style_context"),
         theme_name=theme,
         parent_theme_name=parent_context.get("theme"),
+        currency=regional.currency,
     )
 
     # ════════════════════════════════════════════════════════════════════
@@ -955,6 +1026,7 @@ def normalize_board(
         parent_level=this_level,
         sources=sources,
         html_policy=html_policy,
+        regional=regional,
         cache_root=cache_root,
         path_prefix=path_prefix,
     )
@@ -1014,6 +1086,7 @@ def normalize_board(
         variable_defaults=variable_defaults,  # Local variable defaults
         card_gap=board.card_gap,
         auto_link=board.auto_link,
+        regional=regional,
         authored_style=board_style,
         theme=theme,
         resolved_style=resolved_style,

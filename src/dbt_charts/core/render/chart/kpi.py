@@ -40,8 +40,8 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedStyleChannel,
 )
 from dbt_charts.core.compile.models.primitives import (
-    FormatAliases,
     FormatConfig,
+    FormatTable,
     ResolvedFormat,
     SingleLineFontStyle,
     SpacingValues,
@@ -56,6 +56,7 @@ from dbt_charts.core.compile.models.style.theme import (
     KpiTonesStyle,
     font_weight_as_css,
 )
+from dbt_charts.core.diagnostics import ERR_INTERNAL
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_KPI_FORMAT_KIND_MISMATCH,
@@ -79,9 +80,9 @@ from dbt_charts.core.render.chart.title_overflow import (
     compute_title_limit,
     prepare_title_text,
 )
+from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.svg_utils import (
     authored_kind_attr,
-    border_dash_attrs,
     card_box,
     checked_href,
     escape_attr,
@@ -300,7 +301,7 @@ def _format_value_parts(
     cell: Any,
     format_input: ResolvedFormat | None,
     chart_id: str,
-    formats: dict[str, Any] | None = None,
+    formats: FormatTable | None = None,
     native: bool = False,
     format_may_be_cascaded: bool = False,
     keep_affix_gaps: bool = False,
@@ -532,7 +533,6 @@ class _KpiColors:
     glyph_fill: str
     label_fill: str
     card_fill: str | None
-    border_color: str | None
     muted: str
 
 
@@ -587,20 +587,18 @@ def _emit_card_chrome(
     inset: dict[str, float] | None,
 ) -> str | None:
     """Emit the card background rect, or ``None`` when no chrome to draw."""
-    if palette.card_fill is None and palette.border_color is None:
+    if palette.card_fill is None:
         return None
+    if kpi_config.border is None:
+        raise RenderError.from_code(
+            ERR_INTERNAL, message="kpi.border was not filled by the cascade"
+        )
     x, y, w, h = card_box(w, h, inset)
-    rect = (
+    return (
         f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" '
         f'rx="{kpi_config.border.radius:g}" '
-        f'fill="{escape_attr(palette.card_fill or "none")}"'  # type-state: silent_fallback — no card_fill authored means paint nothing; "none" is the real SVG fill value, not a fabricated color
+        f'fill="{escape_attr(palette.card_fill)}"/>'
     )
-    if palette.border_color:
-        rect += (
-            f' stroke="{escape_attr(palette.border_color)}" stroke-width="1"'
-            f"{border_dash_attrs(kpi_config.border)}"
-        )
-    return rect + "/>"
 
 
 def _resolve_kpi_link(chart_link: str | None) -> str | None:
@@ -809,7 +807,7 @@ def _resolve_kpi_colors(
     kpi_config: KpiChartStyle,
     resolved_channels: dict[str, ResolvedStyleChannel],
     chart_background: str | None,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
     *,
     board_style: ResolvedStyle,
 ) -> _KpiColors:
@@ -855,13 +853,6 @@ def _resolve_kpi_colors(
     # value's own slot.
     label_fill = _own_fill(kpi_config.label.font.color, kpi_font_color)
 
-    _bc = kpi_config.border.color
-    border_color = (
-        _explicit_color_override(_bc)
-        if _bc.lower() not in {"transparent", "none", ""}
-        else None
-    )
-
     return _KpiColors(
         value_fill=value_fill,
         # Conditional formatting paints the whole value run, over slot colors.
@@ -871,7 +862,6 @@ def _resolve_kpi_colors(
         or _own_fill(kpi_config.value.glyph.font.color, value_fill),
         label_fill=label_fill,
         card_fill=card_fill,
-        border_color=border_color,
         muted=_ms.muted,
     )
 
@@ -880,7 +870,7 @@ def kpi_value_text(
     cell: Any,  # type-state: explicit_any — a query cell, dynamically typed
     format_input: ResolvedFormat | None,
     chart_id: str,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     *,
     native: bool = False,
     format_may_be_cascaded: bool = False,
@@ -909,7 +899,7 @@ def _resolve_support_row(
     tones: KpiTonesStyle,
     muted: str,
     chart_id: str,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
 ) -> _SupportRow | None:
     """Resolve the support row's text and colors. Returns None when the row
     is absent or carries no content to emit.
@@ -973,7 +963,7 @@ def _render_kpi_svg_core(
     chart: ResolvedKpiChart,
     chart_background: str | None,
     kpi_config: KpiChartStyle,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     board_style: ResolvedStyle,
     width: float | None,
     height: float | None,

@@ -159,7 +159,9 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     )
     # Declared here, not on _ChartStyleBase (see that class's docstring): the
     # board-level authoritative default. No InheritSlot — themes must set it.
-    border: BorderStyle = Field(description="Chart card border style.")
+    border: BorderStyle = Field(
+        description="Border around every chart card; callout cards keep their own."
+    )
 
     # Override _ChartStyleBase.padding to break the self-loop the InheritSlot
     # would otherwise create on the board-level slot (Style.charts.padding cannot

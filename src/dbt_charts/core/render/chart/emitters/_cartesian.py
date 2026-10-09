@@ -67,6 +67,7 @@ from dbt_charts.core.render.chart.text_truncation import record_text_truncation
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
     canonicalize_and_sort_ordinal_x,
+    canonicalize_ordinal_x,
     detect_time_unit,
     normalize_labeled_temporal,
     vl_time_unit,
@@ -345,6 +346,7 @@ def canonicalize_cartesian_x_data(
     authored_time_unit: str | None,
     *,
     skip_bucket_collapse: bool = False,
+    sort: bool = True,
 ) -> tuple[ChartRenderData, bool]:
     """Normalize labeled-temporal x values and canonicalize date-like ones.
 
@@ -389,6 +391,10 @@ def canonicalize_cartesian_x_data(
     truncating it to ``.date().isoformat()`` would silently collapse distinct
     rows onto the same day.
 
+    ``sort=False`` keeps query row order — for a dimension whose order the
+    query owns (a heatmap's y), where chronological sorting is the x axis's
+    own convention.
+
     Returns ``(data, transformed)``; when True the caller must stamp the
     returned rows onto ``ChartSpec.data`` (mirrors ``line.py``'s
     ``_normalize_line_data``) so the render session does not overwrite the
@@ -410,7 +416,11 @@ def canonicalize_cartesian_x_data(
             x_values = [row.get(x_field) for row in data if x_field in row]
             time_unit = detect_time_unit(x_values)
         if time_unit in BUCKETED_CALENDAR_UNITS:
-            data = canonicalize_and_sort_ordinal_x(data, x_field)
+            data = (
+                canonicalize_and_sort_ordinal_x(data, x_field)
+                if sort
+                else canonicalize_ordinal_x(data, x_field)
+            )
             transformed = True
     return data, transformed
 
@@ -1667,7 +1677,7 @@ def build_cartesian_y_encoding(
     Callers that need a VL ``stack`` key (area charts) mutate the returned dict.
 
     ``tooltip_format``'s affix never reaches this ``format``: the structured
-    tooltip carries it, or ``_reject_unstructured_tooltip_affix`` rejects it.
+    tooltip carries it, or ``NativeTooltipAffixFeature`` writes the hover card.
     """
     bake_tick_ladder(ay_vl, ay)
     return {

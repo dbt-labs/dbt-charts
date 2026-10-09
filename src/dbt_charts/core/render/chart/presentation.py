@@ -8,7 +8,9 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from d3_format import EN_US
 from dbt_charts.core.compile.merge import deep_merge_dict
+from dbt_charts.core.text.format_d3 import active_format_locale, locale_definition
 
 # Internal field name for the calculate-transform output backing the href
 # click-interactivity encoding. Consumed by translate.py.
@@ -47,6 +49,10 @@ def apply_presentation_defaults(
         raise TypeError("Chart config must be a dictionary")
     authored_config = result_spec["config"]
     compiled = copy.deepcopy(effective_vega_config)
+    # Stamped per render, not baked into the theme-memoized vega_config.
+    locale = active_format_locale()
+    if locale_definition(locale) != locale_definition(EN_US):
+        compiled["locale"] = {"number": locale_definition(locale)}
 
     result_spec["config"] = compiled
 

@@ -82,7 +82,7 @@ class TestGating:
         assert any(d.code == "WARN-MISSING-JOIN-PREDICATE" for d in result.diagnostics)
         assert calls == []
 
-    def test_fanout_warning_does_not_block_dispatch(self, monkeypatch):
+    def test_reaggregation_warning_does_not_block_dispatch(self, monkeypatch):
         check = WarehouseCheck(
             status="valid",
             adapter_type="bigquery",
@@ -93,7 +93,7 @@ class TestGating:
         calls = _mock_check_ad_hoc_query(monkeypatch, check=check)
         registry = _registry_non_duckdb()
         result = describe_query(
-            "SELECT SUM(a.x) FROM a JOIN b ON a.id = b.a_id",
+            "SELECT SUM(t) FROM (SELECT r, SUM(x) AS t FROM a GROUP BY r) s",
             source="warehouse",
             adapter_registry=registry,
         )

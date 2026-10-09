@@ -433,7 +433,7 @@ The `sources:` registry in the project root `dbt_charts.yml` names every connect
 sources:
   analytics:                     # A dbt project: credentials stay in profiles.yml
     type: dbt_profile
-    profile: my_dbt_project
+    profile: my_dbt_project      # Optional: defaults to $DBT_PROFILE, then dbt_project.yml's profile:
     target: dev
 
   local:                         # A DuckDB file (local-only, see below)
@@ -464,7 +464,7 @@ sources:
 
 Then in a board: `source: warehouse` at the root (default for every `sql` query) or per query (`queries.<name>.source`). Check a source before writing boards: `dct query warehouse 'SELECT 1'`.
 
-Types: `dbt_profile`, `postgres`, `snowflake`, `bigquery`, `redshift`, `mysql`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `http`.
+Types: `dbt_profile`, `postgres`, `snowflake`, `bigquery`, `redshift`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `http`.
 
 **Local-only types.** `duckdb` and `sqlite` read a file on the machine running `dct`. dbt charts Cloud connects only to `bigquery`, `postgresql` (Cloud's spelling of `postgres`), `redshift`, and `snowflake` — it never reads a `.duckdb` file from a repo, committed or not. For Cloud, load the tables into one of those warehouses, or export each table to a Parquet/CSV/JSON file committed in the repo and register it once under `sources:` (`type: csv | json | parquet`, a `files:` map, paths relative to the project root); every query then references the source by name, and it renders identically locally and on Cloud with no connection step. A board that is the only reader of one file can skip the registry and point at it inline: `source: <path>` resolves against the board's own directory or the project root, whichever exists (`source: ../data/orders.parquet` from `charts/`, or `source: data/orders.parquet` from any board depth). Both existing at once is a compile error naming both.
 
@@ -557,7 +557,7 @@ Common fields (all query types):
 | `filters` | Post-execution result filters |
 | `limit` | Maximum rows returned |
 | `pivot` | Table-rendering cross-tab hint: `{column, value}` |
-| `ignore` | Diagnostic codes to suppress (e.g. `["WARN-FANOUT-RISK"]`) |
+| `ignore` | Diagnostic codes to suppress (e.g. `["WARN-REAGGREGATION"]`) |
 
 SQL fields: `sql`, `setup_sql`.
 HTTP fields: `url`, `method`, `headers`, `params`, `body`, `json_path`.
@@ -567,7 +567,7 @@ Schema fields: `schema`, `table`, `column`, `fields` (project result rows to exa
 
 Connection source types (named in the project root `dbt_charts.yml`'s `sources:`
 registry — never inline in a board): `postgres`, `snowflake`, `bigquery`,
-`redshift`, `mysql`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `http`, `dbt_profile`.
+`redshift`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `http`, `dbt_profile`.
 CSV/JSON/Parquet may instead be referenced inline as a `source:` file path
 without a registry entry — see the example above.
 
@@ -828,9 +828,9 @@ with `ERR-FORMAT-NATIVE-IN-VEGA-SLOT`:
 | Alias | Spec | Renders like |
 |-------|------|--------------|
 | `integer` | `,.0f` | `12,346` |
-| `number` | `.3~s` | Register depends on the slot: table cells render analytic `12.4 K`; KPI headline values and mark value labels render narrative `12.4k`; axis ticks compact only when the largest tick has ≥6 digits (below that the engine paints plain digits — `20,000`, no suffix). Also the engine fallback when no format is authored |
+| `number` | `.3~s` | Register depends on the slot: table cells render analytic `12.4 K`; KPI headline values and mark value labels render narrative `12.4k`; axis ticks compact only when the largest tick has ≥6 digits (below that the engine paints plain digits — `20,000`, no suffix). Also the engine fallback when no format is authored |
 | `number_full` | `,.2f` | `12,345.68` — every digit at every magnitude |
-| `currency` | `$.3~s` | `12400` → `$12.4 K` (analytic default; narrative slots render `$12.4k`) |
+| `currency` | `$.3~s` | `12400` → `$12.4 K` (analytic default; narrative slots render `$12.4k`) |
 | `currency_whole` | `$,.0f` | `$12,346` |
 | `currency_full` | `$,.2f` | `$12,345.68` — cents at every magnitude |
 | `percent` | `.1%` | `0.42` → `42.0%` — **multiplies by 100**; for a value that already IS a whole-number percent (`42`, `148.23`), use `percent_number` |
@@ -844,8 +844,19 @@ with `ERR-FORMAT-NATIVE-IN-VEGA-SLOT`:
 
 #### Currency and other affixes
 
-Any format slot above also accepts an object instead of a bare string, for a
-symbol/unit d3 itself can't produce (d3's own grammar only knows `$`/`#`):
+`regional:` (board root, cascaded by `charts/meta.yml`, not by themes) sets how a board writes numbers, and the board's one currency: every money format and every `$` spec prints it. `locale` is a d3-format locale name (`fr-FR`, `de-CH`, ...), default `en-US`, or a full d3 locale definition (`decimal`, `thousands`, `grouping`, `currency: [prefix, suffix]`, optional `percent`, `minus`, and `analytic`/`narrative`: the extra-short and abbreviated thousand, million, billion, trillion suffixes, printed as written, default en-US's K/M/B/T after a non-breaking space and `["k", "mn", "bn", "trn"]`): separators, signs, magnitude suffixes (a named locale brings its own, `de-DE`: `M` analytic, `Mio.` narrative), and the currency template every `$` spec prints, the money names (`currency`, `currency_whole`, `currency_full`) included. `currency` is an ISO 4217 code (USD, EUR, GBP, JPY, CAD, AUD, CHF, SEK, NOK, DKK, INR, CNY, BRL, MXN) whose symbol replaces the locale's own at the locale's placement (`de-DE` + `USD`: `1.234,50 $`); unset, the locale's own currency prints. Repeated values keep the locale's side; a value that declares the currency once (anchored table column, support_table row, axis tick) leads with it (`€1,2 M`). `JPY` has no decimals. A nested board takes its root's `regional:` (`ERR-REGIONAL-NESTED-MISMATCH` otherwise).
+
+```yaml
+regional:
+  locale: de-DE   # 1.234,50 €
+  currency: USD   # only to change the locale's own currency: 1.234,50 $
+```
+
+Any format slot above also accepts an object instead of a bare string, for
+what `regional` cannot express: a second currency on the board (define it once
+as a `style.formats` alias), a long-form name (`50 US dollars`), or a
+combination like `50 $ US`. Its spec carries no `$`, which would print the
+board's currency:
 
 ```yaml
 style:
@@ -853,14 +864,14 @@ style:
     labels:
       format:
         spec: ",.0f"     # any spec or alias target above; omit to use the engine default
-        prefix: "€"      # or "EUR "; leads the digits, after the sign
-        suffix: " USD"   # trails the digits
+        prefix: "US$"    # leads the digits, after the sign
+        suffix: " net"   # trails the digits
         notation: narrative  # or analytic; SI (~s) specs only, otherwise a no-op
 ```
 
-The sign leads: a prefix reads `−€500` (sign, then prefix, then digits); a
-suffix trails the digits unaffected: `−500 USD`. A table column keeps the sign
-against the digits (`€−500`) because its prefix lane is shared down the column.
+The sign leads: a prefix reads `−US$500` (sign, then prefix, then digits); a
+suffix trails the digits unaffected: `−500 net`. A table column keeps the sign
+against the digits (`US$−500`) because its prefix lane is shared down the column.
 `style.formats` aliases work the same way: an entry can name an object with
 the same keys instead of a bare spec string, and every slot above resolves it
 identically to writing the object inline.
@@ -874,7 +885,7 @@ below 1. It must stay the same kind (`ERR-FORMAT-KIND-MISMATCH`).
 Pairing a prefix with a spec that already carries its own native `$`/`#`
 composes around it (a `$,.0f` spec with prefix `"US "` paints `US $154,500`),
 including a spec that is both SI-shaped and native-symbol-bearing (the
-`currency` preset, `$.3~s`, plus prefix `"US "` paints `US $12.4 M`).
+`currency` preset, `$.3~s`, plus prefix `"US "` paints `US $12.4 M`).
 
 An authored `labels.expr` on an axis always wins over `labels.format`
 outright, object or string; it renders exactly as written, with no affix or

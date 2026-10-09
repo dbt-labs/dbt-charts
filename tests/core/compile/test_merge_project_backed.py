@@ -231,7 +231,7 @@ def test_resolve_meta_lint_in_memory() -> None:
     from dbt_charts.core.compile.parse.meta import resolve_meta_lint
 
     files = {
-        "charts/meta.yml": "lint:\n  ignore:\n    - WARN-FANOUT-RISK\n",
+        "charts/meta.yml": "lint:\n  ignore:\n    - WARN-REAGGREGATION\n",
         "charts/sub/meta.yml": "lint:\n  ignore:\n    - WARN-REAGGREGATION\n",
         "charts/sub/board.yaml": "title: T\n",
     }
@@ -240,5 +240,5 @@ def test_resolve_meta_lint_in_memory() -> None:
 
     result = resolve_meta_lint(board_file, project.directory("."))
     assert result is not None
-    assert "WARN-FANOUT-RISK" in result.ignore
+    assert "WARN-REAGGREGATION" in result.ignore
     assert "WARN-REAGGREGATION" in result.ignore

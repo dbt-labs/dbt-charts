@@ -100,10 +100,10 @@ def _normalize(svg: str) -> str:
     return _DATA_AS_OF.sub("DATA_AS_OF", out)
 
 
-def _live(tmp_path: Path) -> tuple[bytes, BoardRecording, str]:
+def _live(tmp_path: Path, board: str = _YAML) -> tuple[bytes, BoardRecording, str]:
     """Compile + resolve + render a board live, returning artifact bytes,
     recording, and the live SVG for comparison."""
-    result = compile_board(_YAML)
+    result = compile_board(board)
     assert result.success, result.errors
     assert result.board is not None
 
@@ -204,6 +204,42 @@ def test_pie_artifact_replays_the_same_recording(tmp_path: Path) -> None:
         reloaded_recording.variables,
     )
 
+    assert _normalize(replay_svg) == _normalize(live_svg)
+
+
+_EUR_YAML = """
+title: Euro Replay
+regional:
+  currency: EUR
+queries:
+  prices:
+    columns: [item, price]
+    values:
+      - [A, 0.5]
+charts:
+  prices:
+    query: prices
+    type: table
+    style:
+      columns:
+        price:
+          format: currency
+rows:
+  - prices
+"""
+
+
+def test_a_saved_board_keeps_its_currency(tmp_path: Path) -> None:
+    artifact_bytes, recording, live_svg = _live(tmp_path, _EUR_YAML)
+    reloaded_recording = load_board_recording(recording.model_dump_json().encode())
+
+    replay_svg = render_board_from_artifact(
+        load_board_artifact(artifact_bytes),
+        reloaded_recording,
+        reloaded_recording.variables,
+    )
+
+    assert "€" in replay_svg and "$" not in replay_svg
     assert _normalize(replay_svg) == _normalize(live_svg)
 
 
@@ -407,18 +443,16 @@ rows:
 """
 
 
-def test_render_board_from_artifact_calibrates_title_offset_for_support_table(
+def test_render_board_from_artifact_matches_title_offset_for_support_table(
     tmp_path: Path,
 ) -> None:
-    """render_board_from_artifact must apply title-offset calibration like dct render.
+    """render_board_from_artifact must place the title identically to dct render.
 
-    Pre-fix: dct artifact render re-emitted the uncalibrated title.offset (= probe),
-    making the gap = VL_baseline + probe instead of probe (the live gap).
-    Post-fix: the calibration runs in the artifact render path too, so the title gap
-    matches the live render (within 5px).
+    The support_table post-pass computes title.offset in closed form once —
+    from the theme's own offset plus the title's font size, with no
+    render-time calibration in either path — so the live and replay renders
+    must position the title's role-title group at the exact same coordinates.
     """
-    from dbt_charts.core.render.layout_sizing import _measure_vl_title_plot_gap
-
     result = compile_board(_DT_YAML)
     assert result.success and result.board is not None, result.errors
 
@@ -448,15 +482,18 @@ def test_render_board_from_artifact_calibrates_title_offset_for_support_table(
         assert m is not None, "dt_chart not found in SVG"
         return svg[m.start() :]
 
-    live_gap = _measure_vl_title_plot_gap(_chart_section(live_svg))
-    replay_gap = _measure_vl_title_plot_gap(_chart_section(replay_svg))
+    def _role_title_group_transform(svg: str) -> str:
+        m = re.search(r'role-title"><g transform="(translate\([^)]+\))"', svg)
+        assert m is not None, "role-title group not found"
+        return m.group(1)
 
-    assert live_gap is not None, "title gap not found in live SVG"
-    assert replay_gap is not None, "title gap not found in replay SVG"
-    assert abs(live_gap - replay_gap) < 5.0, (
-        f"live gap ({live_gap:.1f}px) and replay gap ({replay_gap:.1f}px) differ by "
-        f"{abs(live_gap - replay_gap):.1f}px > 5px. "
-        "dct artifact render must apply the same title-offset calibration as dct render."
+    live_transform = _role_title_group_transform(_chart_section(live_svg))
+    replay_transform = _role_title_group_transform(_chart_section(replay_svg))
+
+    assert live_transform == replay_transform, (
+        f"live title position ({live_transform}) and replay title position "
+        f"({replay_transform}) differ. dct artifact render must place the "
+        "title.offset-corrected title identically to dct render."
     )
 
 
@@ -688,3 +725,21 @@ def test_artifact_replay_does_not_double_paint_an_unstyled_nested_boards_tint(
     tint = 'fill="rgba(255, 0, 0, 0.5)"'
     assert live_svg.count(tint) == 2
     assert replay_svg.count(tint) == live_svg.count(tint)
+
+
+def test_a_saved_board_keeps_its_locale(tmp_path: Path) -> None:
+    board = _EUR_YAML.replace(
+        "regional:\n  currency: EUR\n", "regional:\n  locale: fr-FR\n"
+    )
+    board = board.replace("[A, 0.5]", "[A, 1234.5]")
+    artifact_bytes, recording, live_svg = _live(tmp_path, board)
+    reloaded_recording = load_board_recording(recording.model_dump_json().encode())
+
+    replay_svg = render_board_from_artifact(
+        load_board_artifact(artifact_bytes),
+        reloaded_recording,
+        reloaded_recording.variables,
+    )
+
+    assert ">1,23<" in replay_svg
+    assert _normalize(replay_svg) == _normalize(live_svg)

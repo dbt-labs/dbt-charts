@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.chart.normalized import Chart
-from dbt_charts.core.compile.models.primitives import HtmlPolicy
+from dbt_charts.core.compile.models.primitives import HtmlPolicy, Regional
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -509,6 +509,11 @@ class Board(BaseModel):
             "When True, table charts with no explicit link: automatically link each "
             "row to its canonical /data/<source>/<schema>/<table>/detail/ page."
         ),
+    )
+
+    regional: Regional = Field(
+        default_factory=Regional,
+        description="Locale and currency every number on the board prints with.",
     )
 
     # Semantic heading level: count of titled ancestors (not structural nesting depth).

@@ -1088,12 +1088,13 @@ class TestDuckDBAdapterAttachConfig:
             "use_credential_provider: aws\n",
         ],
     )
-    def test_unsupported_field_returns_typed_query_error(
+    def test_unsupported_field_rejected_at_parse(
         self,
         tmp_path: Path,
         local_project: Callable[..., FilesystemProject],
         yaml_field: str,
     ) -> None:
+        from dbt_charts.core.compile.errors import CompilationError
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
         )
@@ -1105,14 +1106,8 @@ class TestDuckDBAdapterAttachConfig:
             "    path: ':memory:'\n"
             f"    {yaml_field}"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
-        try:
-            result = registry.execute(_make_query("SELECT 1 AS n", source="analytics"))
-            assert result.error is not None
-            assert result.error.code is not None
-            assert result.error.code.code == "ERR-ADAPTER-UNSUPPORTED-DUCKDB-FIELD"
-        finally:
-            registry.close()
+        with pytest.raises(CompilationError, match="is not supported"):
+            build_adapter_registry(local_project(tmp_path))
 
     def test_unsupported_field_rejected_for_dbt_profile_expanded_source(
         self,

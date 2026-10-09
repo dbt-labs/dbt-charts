@@ -8,7 +8,6 @@ Covers every cell of the dispatch matrix:
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -285,9 +284,11 @@ class TestRawSqlValidate:
         assert any(d["code"] == "WARN-MISSING-JOIN-PREDICATE" for d in parsed)
 
     def test_validate_show_suppressed_flag(self, tmp_path: Path) -> None:
-        # Must aggregate columns from BOTH joined tables to trigger WARN-FANOUT-RISK
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
-        sql = "-- dct:ignore WARN-FANOUT-RISK\nSELECT SUM(o.x), SUM(li.y) FROM orders o JOIN li ON o.id = li.oid GROUP BY o.id"
+        sql = (
+            "-- dct:ignore WARN-REAGGREGATION\nSELECT AVG(t) FROM "
+            "(SELECT region, SUM(x) AS t FROM orders GROUP BY region) s"
+        )
         sql_file = tmp_path / "q.sql"
         sql_file.write_text(sql)
         result = runner.invoke(
@@ -323,71 +324,6 @@ class TestRawSqlValidate:
         )
         assert result.exit_code == 0
         assert "No issues" in result.output
-
-    @pytest.mark.skipif(
-        importlib.util.find_spec("dbt_charts_super_schema") is None,
-        reason="dbt_charts_super_schema not installed",
-    )
-    def test_calibrated_severity_flows_to_json_output(self, tmp_path: Path) -> None:
-        """Relationship context from super_schema.json elevates WARN-FANOUT-RISK to 'error'."""
-        (tmp_path / "dbt_charts.yml").write_text(
-            "sources:\n  db:\n    type: duckdb\n    path: ':memory:'\n"
-        )
-        (tmp_path / "target").mkdir()
-        (tmp_path / "target" / "super_schema.json").write_text(
-            json.dumps(
-                {
-                    "version": 2,
-                    "generated_at": "2026-01-01T00:00:00+00:00",
-                    "tables": {
-                        "orders": {
-                            "table_name": "orders",
-                            "relationships": [
-                                {
-                                    "left_table": "orders",
-                                    "right_table": "line_items",
-                                    "confidence": 0.95,
-                                    "join_profile": {
-                                        "multiplicity": "one-to-many",
-                                        "fanout_factor": 20.0,
-                                    },
-                                }
-                            ],
-                        },
-                        "line_items": {
-                            "table_name": "line_items",
-                            "relationships": [],
-                        },
-                    },
-                }
-            )
-        )
-        sql = (
-            "SELECT SUM(o.amount), SUM(li.qty) "
-            "FROM orders o JOIN line_items li ON o.id = li.order_id "
-            "GROUP BY o.id"
-        )
-        result = runner.invoke(
-            app,
-            [
-                "query",
-                "db",
-                sql,
-                "--validate",
-                "--json",
-                "--project-dir",
-                str(tmp_path),
-            ],
-        )
-        assert result.exit_code == 1, "calibrated 'error' severity should exit 1"
-        parsed = json.loads(result.output)
-        fanout = [d for d in parsed if d["code"] == "WARN-FANOUT-RISK"]
-        assert fanout, "expected WARN-FANOUT-RISK diagnostic in JSON output"
-        assert fanout[0]["severity"] == "error", (
-            f"expected calibrated 'error', got {fanout[0]['severity']!r}"
-        )
-        # A populated optional field is present on the exclude_none wire shape.
-        assert "confidence" in fanout[0], fanout[0]
 
 
 # ---------------------------------------------------------------------------

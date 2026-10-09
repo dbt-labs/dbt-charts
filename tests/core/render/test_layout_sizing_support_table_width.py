@@ -188,7 +188,7 @@ def test_align_cols_heights_uses_corrected_width_for_support_table_chart():
     def fake_render(resolved, executor_, variables_, width, **kwargs):
         widths_called.append(width)
         # Return an SVG whose outer width = width (as if corrected width was used correctly)
-        return f'<svg viewBox="0 0 {width} 600"></svg>', width, 600.0, None
+        return f'<svg viewBox="0 0 {width} 600"></svg>', width, 600.0
 
     layout_sizing_mod = importlib.import_module("dbt_charts.core.render.layout_sizing")
     with patch.object(
@@ -304,7 +304,6 @@ def test_fix_slot_heights_does_not_inflate_support_table_chart_cached_height():
             f'<svg viewBox="0 0 {width} {returned_h}"></svg>',
             width,
             returned_h,
-            None,
         )
 
     with patch.object(
@@ -414,12 +413,10 @@ rows:
     render_heights: list[float] = []
 
     def spy_render(resolved, executor_, variables_, width, **kwargs):
-        svg, w, h, probe = original_render(
-            resolved, executor_, variables_, width, **kwargs
-        )
+        svg, w, h = original_render(resolved, executor_, variables_, width, **kwargs)
         if resolved.id == "weekly_bar":
             render_heights.append(h)
-        return svg, w, h, probe
+        return svg, w, h
 
     with patch.object(
         layout_sizing_mod, "_render_chart_to_svg", side_effect=spy_render

@@ -302,9 +302,9 @@ class TestConditionalFormattingTokenResolution:
         assert rule.font.color == HEX
 
     def test_unknown_background_token_raises_at_resolve_time(self) -> None:
-        from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
+        from dbt_charts.core.compile.errors import CompilationError
 
-        with pytest.raises(UnknownColorError):
+        with pytest.raises(CompilationError, match="'test_chart'"):
             self._resolved_chart({"eq": "x", "background": UNKNOWN})
 
     def test_bracket_role_token_in_font_color_resolves(self) -> None:

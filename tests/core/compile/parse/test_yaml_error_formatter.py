@@ -2049,7 +2049,7 @@ rows: [c]
         monkeypatch: pytest.MonkeyPatch,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
     ) -> None:
-        from dbt_charts.core.compile.errors import MergeValidationError
+        from dbt_charts.core.compile.errors import FileValidationError
         from dbt_charts.core.compile.merge import _fragment_from_yaml
         from dbt_charts.core.compile.migrations import SchemaMigrationWarning
         from dbt_charts.core.project import ProjectDirectory
@@ -2057,7 +2057,7 @@ rows: [c]
         _frozen_clock(monkeypatch, date(2028, 1, 1))
         with (
             pytest.warns(SchemaMigrationWarning),
-            pytest.raises(MergeValidationError) as excinfo,
+            pytest.raises(FileValidationError) as excinfo,
         ):
             _fragment_from_yaml(
                 "style:\n  page:\n    background: red\n",
@@ -2066,5 +2066,5 @@ rows: [c]
             )
 
         assert "`style.page` was removed in 0.7.0" in _hint_for(
-            excinfo.value.merge_diagnostics, "page"
+            excinfo.value.diagnostics, "page"
         )

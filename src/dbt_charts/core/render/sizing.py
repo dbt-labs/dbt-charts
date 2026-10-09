@@ -74,14 +74,8 @@ Cross-module API:
 
 from __future__ import annotations
 
-import functools
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
-
-from PIL import ImageFont
-
-from dbt_charts.core.compile.resolve.style.typography import board_title_spec
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.resolved import (
@@ -122,7 +116,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import _FAMILY_SLOT
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.resolve.style.markdown_style import (
     title_blocks,
-    title_font_family,
+    title_max_content_width,
     title_renderer,
 )
 from dbt_charts.core.compile.sizing import (
@@ -134,7 +128,6 @@ from dbt_charts.core.compile.sizing import (
     resolve_cols_widths,
     rows_item_width,
 )
-from dbt_charts.core.fonts import get_font_path
 from dbt_charts.core.numeric import aspect_ratio_height
 from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.variables_layout import WRAP_EPSILON, lay_out_variables
@@ -511,60 +504,6 @@ _MIN_TITLE_INLINE_TITLE_COLUMN_PX = 48.0
 _TITLE_INLINE_TITLE_MAX_INNER_RATIO = 0.8
 _TITLE_INLINE_VARIABLE_MAX_ROWS = 2
 
-# Strip a leading `#+\s+` markdown heading prefix without eating standalone
-# `#` characters or trailing punctuation — `lstrip("# ")` would mangle titles
-# like "#1 Product" or "## Q3 ##".
-_HEADING_PREFIX_RE = re.compile(r"^#+\s+")
-
-
-def _measure_title_single_line_width(
-    title: str | None,
-    variable_values: dict[str, Any] | None,
-    resolved_style: ResolvedStyle,
-    level: int,
-) -> float:
-    """Width the title text needs to render on a single line at its natural size.
-
-    Measured in the typography the title will actually be drawn in: the size
-    ``board_title_spec`` gives this board at this level, in the family the board's
-    resolved title style names. Reading the *default* theme's tier here instead
-    reserved a column sized for a board nobody was rendering — a board that
-    enlarges its title then drew that title straight under the controls the
-    band packs against the opposite edge.
-
-    mdsvg's measure() can't be used here — it returns the constraint width when
-    passed an unbounded width, not the natural content extent.
-    """
-    if not title:
-        return 0.0
-
-    from dbt_charts.core.render.boards import resolve_display_text_from_provider
-
-    resolved = resolve_display_text_from_provider(
-        title, variable_values, resolved_style=resolved_style
-    )
-    # Strip a leading `#+\s+` markdown heading prefix without eating standalone
-    # `#` characters or trailing punctuation — `lstrip("# ")` would mangle
-    # titles like "#1 Product" or "## Q3 ##".
-    plain = _HEADING_PREFIX_RE.sub("", resolved).strip()
-
-    font_size, _weight = board_title_spec(level=level, resolved_style=resolved_style)
-    family = title_font_family(resolved_style)
-    return float(_load_title_font(float(font_size), family).getlength(plain))
-
-
-@functools.lru_cache(maxsize=16)
-def _load_title_font(size_px: float, family: str) -> ImageFont.FreeTypeFont:
-    """Load the title font for ``family`` at the requested size, cached.
-
-    `_measure_title_single_line_width` is called per-board during both sizing
-    and render; without caching, ImageFont.truetype reparses the .ttf file
-    on every call. The cache is bounded — `size_px` comes from the title
-    tier ramp (6 entries) plus the level-driven offsets, over the handful of
-    families we vendor a measurable board for.
-    """
-    return ImageFont.truetype(get_font_path(family), size_px)
-
 
 def resolve_title_variables_inline_widths(
     inner: float,
@@ -573,6 +512,7 @@ def resolve_title_variables_inline_widths(
     title: str | None,
     variable_values: dict[str, Any] | None,
     level: int,
+    base_dir: str | None,
 ) -> tuple[float, float]:
     """Split inner title+variables width into (title_w, variables_w).
 
@@ -597,8 +537,16 @@ def resolve_title_variables_inline_widths(
 
     # Title's natural single-line width + a small breathing-room pad so the
     # measured width doesn't wrap on sub-pixel rendering jitter.
-    natural = _measure_title_single_line_width(
-        title, variable_values, resolved_style, level
+    natural = (
+        title_max_content_width(
+            title,
+            level,
+            resolved_style,
+            {} if variable_values is None else variable_values,
+            base_dir,
+        )
+        if title
+        else 0.0
     )
     natural_with_pad = (
         natural + 8.0 if natural > 0 else _MIN_TITLE_INLINE_TITLE_COLUMN_PX
@@ -666,6 +614,7 @@ def should_use_title_inline_band(
     card_padding: float,
     variable_values: dict[str, Any] | None,
     level: int,
+    base_dir: str | None,
 ) -> bool:
     """Return whether variables fit the compact title-inline band contract.
 
@@ -680,7 +629,13 @@ def should_use_title_inline_band(
 
     inner = max(content_width - 2 * card_padding, 1.0)
     _title_w, vars_w = resolve_title_variables_inline_widths(
-        inner, resolved_style, visible_variables, title, variable_values, level
+        inner,
+        resolved_style,
+        visible_variables,
+        title,
+        variable_values,
+        level,
+        base_dir,
     )
     layout = _variables_layout(
         visible_variables, vars_w, variable_values, variables_style
@@ -746,6 +701,7 @@ def compute_title_variables_inline_band_height(
     vs = board.resolved_style.variables
     card_pad = float(board.resolved_style.frame.card_padding)
     inner = max(content_width - 2 * card_pad, 1.0)
+    base_dir = board.base_dir
     _, vars_w = resolve_title_variables_inline_widths(
         inner,
         board.resolved_style,
@@ -753,10 +709,10 @@ def compute_title_variables_inline_band_height(
         board.title,
         variable_values,
         board.level,
+        base_dir,
     )
     if not board.title:
         return 0.0
-    base_dir = board.base_dir
     # Measure at inner (the full band width) so the title's measured height
     # matches the height render_title produces at that same width.
     # The narrower title column (vars_w companion) would over-reserve when
@@ -1550,6 +1506,7 @@ def nested_board_sizing_context(
         card_pad,
         variable_values,
         nested_board.level,
+        base_dir,
     )
 
     if use_title_inline:

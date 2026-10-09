@@ -54,6 +54,7 @@ from dbt_charts.core.compile.resolve.chart._table import (
     _resolve_table,
 )
 from dbt_charts.core.compile.resolve.chart.label_data import (
+    default_slice_label_template,
     pie_presentation_fingerprint,
 )
 from dbt_charts.core.compile.resolve.chart.pie_attachment import (
@@ -172,12 +173,21 @@ def _resolve_pie(
         raise ValueError(
             "pie.marks.slice.labels is None after cascade — check theme defaults"
         )
+    tooltip_format = column_format(
+        "number",
+        chart_style_context.formats,
+        normalized.format,
+        board=chart_style_context.tooltip.format,
+        column=theta_declared,
+        values=format_vote_values,
+    )
     effective_template = _slice_labels.template
     if effective_template is None:
-        effective_template = (
-            _slice_labels.default_template.with_color
-            if resolved_color_field
-            else _slice_labels.default_template.no_color
+        effective_template = default_slice_label_template(
+            _slice_labels,
+            bool(resolved_color_field),
+            tooltip_format,
+            normalized.id,
         )
     resolved_labels = SliceLabelsStyle(
         offset=_slice_labels.offset,
@@ -395,14 +405,7 @@ def _resolve_pie(
         style=ResolvedPieStyle(
             inner_radius=pie.inner_radius if pie.inner_radius is not None else 0.0,
             slice_mark=effective_slice_mark,
-            tooltip_format=column_format(
-                "number",
-                chart_style_context.formats,
-                normalized.format,
-                board=chart_style_context.tooltip.format,
-                column=theta_declared,
-                values=format_vote_values,
-            ),
+            tooltip_format=tooltip_format,
             total_style=total_style,
             title_font=_tf,
         ),

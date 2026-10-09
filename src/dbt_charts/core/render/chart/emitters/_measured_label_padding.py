@@ -75,7 +75,6 @@ from __future__ import annotations
 import math
 from decimal import Decimal
 
-from d3_format import format as d3_format
 from dbt_charts.core.compile.models.primitives import (
     ResolvedFormat,
     painted_sign_placement,
@@ -87,7 +86,7 @@ from dbt_charts.core.compile.models.style.resolved import (
 )
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.render.chart._types import VLDict
-from dbt_charts.core.text.format_d3 import format_d3
+from dbt_charts.core.text.format_d3 import composed_currency, d3_format, format_d3
 from dbt_charts.core.text.numeral_scale import (
     SUB_UNIT_SCIENTIFIC_FLOOR,
     SuffixMode,
@@ -139,8 +138,8 @@ def quantitative_tick_labels(
     on ``ruler.prefix_repeats`` instead (independent of ``mode`` -- a
     column-forming axis can land in REPEAT mode for its own, magnitude-driven
     reason and still anchor the prefix) -- the anchor position, for either,
-    is ``ruler.anchor_at_start`` (which END of the ladder is the
-    magnitude-extreme, not the tick's raw value). A non-suffix tick trails
+    is ``ruler.anchor_at_start`` (which END of the ladder anchors, not the
+    tick's raw value). A non-suffix tick trails
     with ``ruler.reservation`` when ``ruler.reserve``.
 
     ``ruler`` is required, not Optional-with-a-default: every real caller
@@ -165,10 +164,10 @@ def quantitative_tick_labels(
                         fmt.placement,
                     )
                     if v != 0
-                    else d3_format(format_spec, v)
+                    else d3_format(format_spec)(v)
                     for v in tick_values
                 ]
-            return [d3_format(format_spec, v) for v in tick_values]
+            return [d3_format(format_spec)(v) for v in tick_values]
         prefix = tick_label.prefix
         anchor_at_start = tick_label.anchor_at_start
         pad_table = tick_label.decimal_pad_table
@@ -203,10 +202,10 @@ def quantitative_tick_labels(
 
         if pad_table:
             return [
-                (s := d3_format(format_spec, v)) + decimal_pad_for(pad_table, s)
+                (s := d3_format(format_spec)(v)) + decimal_pad_for(pad_table, s)
                 for v in tick_values
             ]
-        return [d3_format(format_spec, v) for v in tick_values]
+        return [d3_format(format_spec)(v) for v in tick_values]
 
     prefix, digit_spec = ruler.prefix, ruler.digit_spec
     suffix_text = ruler.suffix_string
@@ -214,7 +213,14 @@ def quantitative_tick_labels(
     anchor_position = 0 if ruler.anchor_at_start else len(tick_values) - 1
     pad_table = ruler.decimal_pad_table
 
-    anchor_digit_spec = with_symbol(digit_spec, prefix) if prefix else digit_spec
+    # Twin of inject_axis_numeral_expr's currency composition.
+    front, trail = composed_currency(prefix, ruler.prefix_repeats)
+    anchor_digit_spec = (
+        with_symbol(digit_spec, prefix)
+        if prefix and not (front or trail)
+        else digit_spec
+    )
+    anchor_prefix = fmt.prefix + front
 
     labels: list[str] = []
     for position, value in enumerate(tick_values):
@@ -226,21 +232,23 @@ def quantitative_tick_labels(
         # Symbol-inclusive spec keeps d3's sign-before-symbol order ("-$500");
         # an authored affix composes on `anchor_digit_spec`.
         scaled = value / magnitude
-        if carries_prefix and fmt.prefix:
+        if carries_prefix and anchor_prefix:
             digits = format_d3(
                 scaled,
                 anchor_digit_spec,
-                fmt.prefix,
+                anchor_prefix,
                 sign_placement=painted_sign_placement(fmt, not ruler.prefix_repeats),
             )
         else:
-            digits = d3_format(
-                anchor_digit_spec if carries_prefix else digit_spec, scaled
+            digits = d3_format(anchor_digit_spec if carries_prefix else digit_spec)(
+                scaled
             )
         if pad_table:
             digits += decimal_pad_for(pad_table, digits)
         tail = suffix_text if carries_suffix else ruler.reservation
         label = digits + tail
+        if trail and carries_prefix:
+            label += trail
         if fmt.suffix and carries_prefix:
             label += fmt.suffix
         labels.append(label)
@@ -323,10 +331,10 @@ def estimated_quantitative_tick_labels(
                     fmt.placement,
                 )
                 if v != 0
-                else d3_format(fmt.spec, v)
+                else d3_format(fmt.spec)(v)
                 for v in candidates
             ]
-        return [d3_format(fmt.spec, v) for v in candidates]
+        return [d3_format(fmt.spec)(v) for v in candidates]
     return [_sub_unit_guarded_format(v, fmt, tick_label) for v in candidates]
 
 
@@ -387,7 +395,7 @@ def _sub_unit_guarded_format(
             ),
         )
     if value == 0:
-        return d3_format(tick_label.format, value)
+        return d3_format(tick_label.format)(value)
     return format_d3(
         value,
         tick_label.format,

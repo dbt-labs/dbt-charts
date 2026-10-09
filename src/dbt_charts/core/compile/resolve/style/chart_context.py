@@ -28,8 +28,8 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
-    FormatAliases,
     FormatConfig,
+    FormatTable,
 )
 from dbt_charts.core.compile.models.style.authored import ChartStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -162,7 +162,7 @@ def chart_authored_axis_format(
 def declared_column_format(
     chart: _BaseChartFields,
     columns: str | list[str] | None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     *,
     time: bool,
 ) -> str | None:
@@ -182,7 +182,7 @@ def axis_layer_format(
     chart: CartesianFamilyChart,
     channel_type: str,
     columns: str | list[str] | None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     *,
     dimension: bool,
 ) -> AuthoredFormat | None:

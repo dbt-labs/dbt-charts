@@ -16,7 +16,7 @@ d3-interval vocabulary (``year``/``month``/...) that the old
 interval name via ``_TEMPORAL_TICK_INTERVAL``.
 
 Model-level gate (Pydantic — raised at authoring/construction time via
-DimensionTicksStyle/DimensionTicksStylePatch's own ``_validate_cadence``, no
+DimensionTicksStyle's own ``__constraints__``, no
 compile pass needed):
   1. ticks.time_unit + ticks.count together -> ValidationError
 

@@ -8,6 +8,7 @@ import pytest
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
+from dbt_charts.core.compile.models.style.authored import ColumnScaleTargetConfig
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -366,7 +367,7 @@ class TestAnchorsMode:
             FormatConfig(spec=",.0f", suffix=f" {unit}"),
             [1500, 2500, 3500],
         )
-        assert svg.count(f">{unit}<") == 1
+        assert svg.count(f"> {unit}<") == 1
 
     @pytest.mark.parametrize(
         ("symbol_mode", "repeat", "count"),
@@ -383,7 +384,7 @@ class TestAnchorsMode:
             [1500, -2500, 3500],
             symbol_mode,
         )
-        assert svg.count(">EUR<") == count
+        assert svg.count(">EUR <") == count
         assert ">−2,500<" in svg
 
     def test_anchors_keeps_a_magnitude_suffix_on_every_row(self, make_chart):
@@ -548,7 +549,6 @@ class TestScaleDomainExcludesTotalRows:
 
         from dbt_charts.core.compile.models.chart.authored import (
             ColumnScaleConfig,
-            ScaleTargetConfig,
             TableColumnConfig,
         )
         from dbt_charts.core.compile.models.style.authored import (
@@ -564,7 +564,9 @@ class TestScaleDomainExcludesTotalRows:
                 "product": TableColumnConfig(),
                 "revenue": TableColumnConfig(
                     scale=ColumnScaleConfig(
-                        background=ScaleTargetConfig(palette=["#ffffff", "#000000"])
+                        background=ColumnScaleTargetConfig(
+                            palette=["#ffffff", "#000000"]
+                        )
                     ),
                 ),
             }

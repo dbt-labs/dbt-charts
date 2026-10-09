@@ -167,32 +167,34 @@ class TestStringShorthands:
             "string arms found — bare SQL will be red-squiggles in VS Code"
         )
 
-    def test_cache_scalar_shorthands_valid_in_schema(self, vscode_schema) -> None:
-        """`cache: 1h` and `cache: false` are the primary authoring forms.
-
-        CachePatch's before-validator expands them, which JSON Schema generation
-        cannot see — without explicit boolean and unconstrained-string arms the
-        IDE red-squiggles the spelling we tell authors to use.
-        """
-        arms = vscode_schema["$defs"]["CachePatch"]["oneOf"]
-        types = {arm.get("type") for arm in arms}
-        assert "boolean" in types, f"cache: false has no boolean arm: {arms}"
-        assert any(
-            arm.get("type") == "string" and "pattern" not in arm for arm in arms
-        ), f"cache: 1h has no unconstrained string arm: {arms}"
-        assert any(arm.get("type") == "object" for arm in arms), "block form dropped"
-
-    def test_cache_block_ttl_accepts_a_duration_string(self, vscode_schema) -> None:
-        """The block form must accept `ttl: 1h`, not just the `forever` literal."""
-        block = next(
-            arm
-            for arm in vscode_schema["$defs"]["CachePatch"]["oneOf"]
-            if arm.get("type") == "object"
-        )
-        ttl = block["properties"]["ttl"]
-        assert any(branch.get("type") == "string" for branch in ttl["anyOf"]), (
-            f"ttl rejects duration strings — only {ttl['anyOf']} allowed"
-        )
+    @pytest.mark.parametrize(
+        ("value", "valid"),
+        [
+            ("1h", True),
+            ("1H30m", True),
+            ("forever", True),
+            (True, True),
+            (False, True),
+            ({"ttl": "1h"}, True),
+            ({"ttl": "forever"}, True),
+            ("5x", False),
+            ("sometimes", False),
+            ({"ttl": None}, False),
+            ({"ttl": "5x"}, False),
+            ({"enabled": True}, False),
+        ],
+    )
+    def test_cache_accepts_exactly_the_authorable_forms(
+        self, vscode_schema, value: object, valid: bool
+    ) -> None:
+        """Scalars are expanded by a before-validator JSON Schema cannot see;
+        the annotation's input type must state them, and only them."""
+        board_cache = {
+            "$ref": "#/properties/cache",
+            "$defs": vscode_schema["$defs"],
+            "properties": vscode_schema["properties"],
+        }
+        assert Draft202012Validator(board_cache).is_valid(value) is valid
 
     def test_layout_item_grid_uses_allof_not_bare_ref(self, vscode_schema) -> None:
         grid_prop = vscode_schema["$defs"]["LayoutItem"]["oneOf"][2]["properties"][

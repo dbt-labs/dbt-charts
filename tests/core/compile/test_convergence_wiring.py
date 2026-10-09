@@ -179,7 +179,7 @@ def test_merge_metas_strips_lint_key(
     _write(
         tmp_path,
         "charts/meta.yml",
-        "title: MetaTitle\nlint:\n  ignore:\n    - WARN-FANOUT-RISK\n",
+        "title: MetaTitle\nlint:\n  ignore:\n    - WARN-REAGGREGATION\n",
     )
     project = local_project(tmp_path)
     board_file = project.path("charts/board.yaml")
@@ -268,7 +268,7 @@ def test_compile_file_threads_lint_through_engine(
     _write(
         tmp_path,
         "charts/meta.yml",
-        "lint:\n  ignore:\n    - WARN-FANOUT-RISK\n",
+        "lint:\n  ignore:\n    - WARN-REAGGREGATION\n",
     )
     board_yaml = "title: T\nrows:\n  - cols:\n    - text: hi\n"
     _write(tmp_path, "charts/board.yaml", board_yaml)
@@ -278,7 +278,7 @@ def test_compile_file_threads_lint_through_engine(
     )
     assert result.success, result.errors
     assert result.meta_lint is not None
-    assert "WARN-FANOUT-RISK" in result.meta_lint.ignore
+    assert "WARN-REAGGREGATION" in result.meta_lint.ignore
 
 
 def test_compiler_wiring_respects_merge_marker_not_hardcoded_set(
@@ -582,12 +582,12 @@ def test_resolve_meta_lint_returns_config_when_meta_exists(
     """resolve_meta_lint returns MetaLintConfig when meta.yml has lint: block."""
     from dbt_charts.core.compile.parse.meta import resolve_meta_lint
 
-    _write(tmp_path, "charts/meta.yml", "lint:\n  ignore:\n    - WARN-FANOUT-RISK\n")
+    _write(tmp_path, "charts/meta.yml", "lint:\n  ignore:\n    - WARN-REAGGREGATION\n")
     project = local_project(tmp_path)
     board_file = project.path("charts/board.yaml")
     result = resolve_meta_lint(board_file, project.directory("."))
     assert result is not None
-    assert "WARN-FANOUT-RISK" in result.ignore
+    assert "WARN-REAGGREGATION" in result.ignore
 
 
 # ===========================================================================

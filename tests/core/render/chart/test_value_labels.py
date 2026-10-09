@@ -2490,7 +2490,9 @@ class TestHouseRegister:
             chart, _MILLIONS_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
         texts = _render_texts(spec)
-        assert "1.2 M" in texts, f"expected analytic '1.2 M' in rendered texts: {texts}"
+        assert "1.2\u00a0M" in texts, (
+            f"expected analytic '1.2\u00a0M' in rendered texts: {texts}"
+        )
         assert "1.2mn" not in texts, (
             f"narrative default must not override an authored analytic "
             f"notation: {texts}"
@@ -2514,7 +2516,7 @@ class TestHouseRegister:
             chart, _MILLIONS_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
         texts = _render_texts(spec)
-        assert "€1.2 M" in texts, f"expected analytic '€1.2 M': {texts}"
+        assert "€1.2\u00a0M" in texts, f"expected analytic '€1.2\u00a0M': {texts}"
         assert "€1.2mn" not in texts, f"narrative must not override: {texts}"
 
 

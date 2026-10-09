@@ -8,7 +8,7 @@ Before writing SQL, write a short query plan:
 - **FILTERS**: each WHERE condition; verify the exact stored value before filtering (stored values may differ from display labels — e.g. `'LA'` not `'Los Angeles'`)
 - **SORT/LIMIT**: include if the question asks to rank, sort, or return a top-N
 
-Then translate the plan faithfully into SQL. Verify by executing the query and checking that shape and values match the plan. When you run a query, heed any diagnostics it returns — a `WARN-FANOUT-RISK`, `WARN-MISSING-JOIN-PREDICATE`, or `WARN-REAGGREGATION` warning means the join or aggregate is probably double-counting even though the query ran; fix the grain before trusting the numbers.
+Then translate the plan faithfully into SQL. Verify by executing the query and checking that shape and values match the plan. When you run a query, heed any diagnostics it returns — a `WARN-MISSING-JOIN-PREDICATE` or `WARN-REAGGREGATION` warning means the join or aggregate is probably double-counting even though the query ran; fix the grain before trusting the numbers.
 
 Additional rules:
 

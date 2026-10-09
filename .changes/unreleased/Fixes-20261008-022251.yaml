@@ -1,0 +1,3 @@
+kind: Fixes
+body: The `mysql` source type, which had no adapter and could never execute, is no longer accepted.
+time: 2026-10-08T02:22:51.16842-07:00

@@ -62,7 +62,7 @@ from dbt_charts.core.compile.resolve.chart._layers import (
     _resolve_layer_list,
 )
 from dbt_charts.core.compile.resolve.chart._marks import (
-    _apply_stroke_width_fallback,
+    _apply_line_width,
     _build_resolved_line_mark,
     _label_format_fallback,
     _measure_tooltip_format,
@@ -75,7 +75,6 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
-    has_structured_tooltip,
     plan_cartesian,
     quantitative_channel_values,
 )
@@ -84,7 +83,6 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     resolve_wide_measure_channels,
 )
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
-    bake_line_stroke,
     bake_point_companions,
     resolve_px_per_point,
     stroke_from_px_per_point,
@@ -332,7 +330,6 @@ def _resolve_line(
             normalized, primary, chart_style_context, values=tooltip_format_values
         ),
         tooltip_format_values=tooltip_format_values,
-        structured_tooltip_eligible=has_structured_tooltip(normalized),
         # Line semantics fix x=dimension, y=value -- see the same comment
         # above near the categorical-y guard.
         ax_is_quantitative=x_ch_type == "quantitative",
@@ -368,15 +365,9 @@ def _resolve_line(
     )
     line_mark_baked = line.marks.line
     # Density-adaptive stroke: bake BEFORE building the resolved mark so the
-    # resolver paints the final width; render reads it verbatim. Compute the
-    # adaptive value unconditionally -- bake_line_stroke() owns the "is this
-    # pinned" decision (a None-check on the merged width, answering "did any
-    # tier pin this" directly, including the zero-width "no stroke" sentinel)
-    # and no-ops on a pinned mark, so this resolver must not re-derive that
-    # check itself: doing so zeroed the value for an unpinned overlay layer
-    # sharing this same _adaptive_stroke, whenever the BASE mark happened to
-    # be pinned. The faceted per-cell width uses facet_panel_width() so the
-    # baked stroke matches what each panel actually renders into.
+    # resolver paints the final width; render reads it verbatim. The faceted
+    # per-cell width uses facet_panel_width() so the baked stroke matches what
+    # each panel renders.
     _px_per_point = 0.0
     if normalized.x is not None:
         _px_per_point = resolve_px_per_point(
@@ -388,9 +379,8 @@ def _resolve_line(
             bool(ay.mirror),
         )
     _adaptive_stroke = stroke_from_px_per_point(_px_per_point)
-    line_mark_baked = bake_line_stroke(line_mark_baked, _adaptive_stroke)
-    line_mark_baked = _apply_stroke_width_fallback(
-        line_mark_baked, get_chart_rendering().stroke.fallback_width
+    line_mark_baked = _apply_line_width(
+        line_mark_baked, _adaptive_stroke, get_chart_rendering().stroke.fallback_width
     )
     resolved_line_mark = _build_resolved_line_mark(
         line_mark_baked, resolved_line_labels
@@ -407,8 +397,7 @@ def _resolve_line(
         ResolvedPointMarkStyle, line.marks.point, labels=resolved_point_labels
     )
     # Point companions track the effective line stroke — the derivation lives
-    # in bake_point_companions, next to bake_line_stroke. Gated only on there
-    # being a real stroke to track (the zero-sentinel path leaves
+    # in bake_point_companions. Gated only on there being a real stroke to track (the zero-sentinel path leaves
     # resolved_line_mark.stroke.width at 0.0, which must not zero
     # already-visible points); independent of whether that stroke came from
     # the adaptive bake or an author pin. The density trigger gates the size
@@ -418,14 +407,6 @@ def _resolve_line(
             line_point_mark,
             resolved_line_mark.stroke.width,
             _px_per_point,
-            # Cascaded value, not chart-tier-only: board/theme-tier size
-            # authoring must be seen too (see PointMarkStyle.size — the
-            # global default is unset precisely so any tier setting it reads
-            # as authored here).
-            size_authored=line_point_mark.size is not None,
-            # Cascaded for the same reason as size — the global theme slot
-            # is unset, so any tier that set a ring reads as authored here.
-            ring_authored=line_point_mark.stroke_width is not None,
         )
     _tf = _title_font(normalized, chart_local_style_context, width)
     bkw = _base_kwargs(

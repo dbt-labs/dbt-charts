@@ -7,7 +7,9 @@ cannot live in either without creating a circular import.
 
 from __future__ import annotations
 
+import dataclasses
 import re
+from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 from pydantic import (
@@ -15,14 +17,21 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    GetCoreSchemaHandler,
     PlainSerializer,
+    PositiveInt,
     SerializationInfo,
     StringConstraints,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    WrapValidator,
     field_validator,
     model_serializer,
     model_validator,
 )
+from pydantic_core import core_schema
 
+from d3_format import LocaleDefinition
 from dbt_charts.core.colors import CSS_COLOR_NAMES
 from dbt_charts.core.compile.models.factories import (
     FontAlias,
@@ -45,11 +54,17 @@ from dbt_charts.core.compile.models.schema_names import (
     ScalePaletteName,
     StopsPaletteName,
 )
+from dbt_charts.core.text.currencies import CURRENCIES, CurrencyCode, with_symbol
 from dbt_charts.core.text.format_d3 import (
+    HouseLocale,
+    LocaleName,
     Notation,
     SignPlacement,
     default_sign_placement,
+    house_locale,
+    number_locale_definition,
 )
+from dbt_charts.core.text.magnitude_words import magnitude_words
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 
 # A frozenset dumps in Python's per-process hash-seed order, so two otherwise-
@@ -99,12 +114,74 @@ HtmlPolicy = Literal["none", "safe-subset", "trusted-raw"]
 # shared StrokeStyle, and the resolved stroke all name the same three values.
 LineCap = Literal["butt", "round", "square"]
 
+
+@dataclasses.dataclass(frozen=True)
+class ErrorHint:
+    """Annotated marker: every rule declared before it fails with ``hint``.
+
+    A pattern or Literal states the rule once, for Python and the JSON Schema
+    alike; this carries the remediation text pydantic's generic message lacks.
+    ``{value}`` in the hint is the rejected value. Only errors of the ``only``
+    kinds are replaced (default: a pattern or Literal mismatch); a wrong type
+    keeps pydantic's own message. ``only=None`` replaces every error.
+    """
+
+    hint: str
+    only: tuple[str, ...] | None = ("string_pattern_mismatch", "literal_error")
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,  # type-state: explicit_any — pydantic's annotated type
+        handler: GetCoreSchemaHandler,
+    ) -> core_schema.CoreSchema:
+        def with_hint(
+            value: Any,  # type-state: explicit_any — raw value under validation
+            inner: ValidatorFunctionWrapHandler,
+        ) -> Any:  # type-state: explicit_any — whatever the inner schema returns
+            try:
+                return inner(value)
+            except ValidationError as exc:
+                if self.only is not None and any(
+                    e["type"] not in self.only for e in exc.errors()
+                ):
+                    raise
+                raise ValueError(self.hint.format(value=value)) from None
+
+        return core_schema.no_info_wrap_validator_function(with_hint, handler(source))
+
+
+# A string with at least one non-space character: YAML parses a blank value to
+# null or "", which must not read as a name.
+NON_BLANK = r"\S"
+
+GlyphText = Annotated[
+    str,
+    StringConstraints(pattern=NON_BLANK),
+    ErrorHint("glyph must be a non-empty string, got {value!r}"),
+]
+
+# A data-channel column name. A leading `#` is a literal color, which belongs
+# in `style:`, never on a channel.
+CHANNEL_COLUMN = r"^(?:[^#]|$)"
+
 # Incremental refresh setting, shared by board (AuthoredBoard.incremental) and
 # query (_BaseQueryFields.incremental): a watermark column name enables the
 # tail path, `false` opts out of an inherited setting, `None` inherits it. A
 # bare `True` is rejected by validate_incremental_value — a single field, so
 # there is no separate key field left to name a column on.
-IncrementalValue = str | Literal[False] | None
+IncrementalValue = (
+    Annotated[
+        str,
+        StringConstraints(pattern=NON_BLANK),
+        ErrorHint(
+            "incremental: {value!r} is not valid — give the watermark column "
+            "name, or omit the field (or set false) to disable incremental refresh",
+            only=None,
+        ),
+    ]
+    | Literal[False]
+    | None
+)
 
 
 def validate_incremental_value(
@@ -119,11 +196,6 @@ def validate_incremental_value(
         raise ValueError(
             "incremental: true is not valid — give the watermark column name "
             "instead, e.g. incremental: updated_at"
-        )
-    if isinstance(v, str) and not v.strip():
-        raise ValueError(
-            "incremental: '' is not valid — give the watermark column name, "
-            "or omit the field (or set false) to disable incremental refresh"
         )
     return v
 
@@ -207,8 +279,134 @@ def resolved_as(
 AuthoredFormat = str | FormatConfig
 """A format as authored: a spec, preset or alias name, or a format block."""
 
+
 FormatAliases = dict[str, AuthoredFormat]
 """The ``style.formats`` alias table."""
+
+
+_MagnitudeWord = Annotated[str, StringConstraints(pattern=r"\S")]
+_MagnitudeWords = tuple[_MagnitudeWord, _MagnitudeWord, _MagnitudeWord, _MagnitudeWord]
+
+
+class NumberLocale(BaseModel):
+    """A d3 formatLocale definition."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    decimal: str = Field(description='The decimal mark (e.g. `"."`).')
+    thousands: str = Field(description='The group separator (e.g. `","`).')
+    grouping: tuple[PositiveInt, ...] = Field(
+        min_length=1,
+        description="The group sizes (e.g. `[3]`), cycled as needed.",
+    )
+    currency: tuple[str, str] = Field(
+        description=(
+            'The currency prefix and suffix (e.g. `["$", ""]`) a `$` in a d3 '
+            "spec prints."
+        ),
+    )
+    percent: str = Field(default="%", description="The percent sign.")
+    minus: str = Field(default="\u2212", description="The minus sign.")
+    analytic: _MagnitudeWords = Field(
+        default=magnitude_words("en-US")[0],
+        description=(
+            "The extra-short thousand, million, billion and trillion "
+            "suffixes, where a magnitude is declared once (en-US: K, M, B, T "
+            "after a non-breaking space). A leading space is part of the "
+            "suffix."
+        ),
+    )
+    narrative: _MagnitudeWords = Field(
+        default=magnitude_words("en-US")[1],
+        description=(
+            "The abbreviated thousand, million, billion and trillion "
+            'suffixes on every value (en-US: `["k", "mn", "bn", "trn"]`).'
+        ),
+    )
+
+
+class Regional(BaseModel):
+    """How a board writes numbers: its d3 locale and currency symbol."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    locale: LocaleName | NumberLocale = Field(
+        default="en-US",
+        description=(
+            "The d3-format locale for every number on the board: a locale name, "
+            "or a full d3 locale definition."
+        ),
+    )
+    currency: CurrencyCode | None = Field(
+        default=None,
+        description=(
+            "ISO 4217 code whose symbol replaces the locale's own in its currency "
+            "template, at the locale's placement. Unset prints the locale's own."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _currency_has_a_place(self) -> Regional:
+        if (
+            self.currency is not None
+            and isinstance(self.locale, NumberLocale)
+            and not "".join(self.locale.currency).strip()
+        ):
+            raise ValueError(
+                "regional.currency replaces the symbol in regional.locale.currency, "
+                'which has none: give the template one (e.g. ["$", ""]).'
+            )
+        return self
+
+    @cached_property
+    def format_locale(self) -> HouseLocale:
+        locale = self.locale
+        definition: LocaleDefinition
+        if isinstance(locale, NumberLocale):
+            definition = {
+                "decimal": locale.decimal,
+                "thousands": locale.thousands,
+                "grouping": list(locale.grouping),
+                "currency": list(locale.currency),
+                "percent": locale.percent,
+                "minus": locale.minus,
+            }
+            analytic, narrative = locale.analytic, locale.narrative
+        else:
+            definition = number_locale_definition(locale).copy()
+            analytic, narrative = magnitude_words(locale)
+        if self.currency is not None:
+            template = definition.get("currency")
+            if template is None:
+                raise ValueError(f"locale {locale!r} has no currency template")
+            before, after = template
+            symbol = CURRENCIES[self.currency].symbol
+            definition["currency"] = list(with_symbol((before, after), symbol))
+        return house_locale(definition, analytic, narrative)
+
+
+DEFAULT_REGIONAL = Regional()
+"""What a style resolved without a board (a theme preview) formats with."""
+
+
+class FormatTable(BaseModel):
+    """What resolves a format name on one board: the author's ``style.formats``
+    aliases, and the ``regional.currency`` whose minor unit ``currency_full``
+    prints (None: the locale's own currency, at two decimals)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    aliases: FormatAliases
+    currency: CurrencyCode | None
+
+    def __contains__(
+        self,
+        name: object,  # type-state: object_annotation — the `in` protocol's signature
+    ) -> bool:
+        return name in self.aliases
+
+    def __getitem__(self, name: str) -> AuthoredFormat:
+        return self.aliases[name]
 
 
 AUTHORED_FORMATS = "authored_formats"
@@ -328,9 +526,9 @@ def signs_before_prefix(fmt: ResolvedFormat) -> bool:
 
 
 def painted_sign_placement(fmt: ResolvedFormat, anchored: bool) -> SignPlacement:
-    """The placement a painter composes: an anchored prefix (one value per
-    ladder, column or strip) leads the sign, so the anchor's digits line up
-    with the bare values beside it (``€−50`` above ``−40``)."""
+    """The placement a painter composes: an anchored currency or prefix (one
+    value per ladder, column or strip) leads the sign, so the anchor's digits
+    line up with the bare values beside it (``€−50`` above ``−40``)."""
     return "after_prefix" if anchored else fmt.placement
 
 
@@ -527,6 +725,31 @@ class ResolvedFontStyle(BaseModel):
     tabular_figures: bool
 
 
+def one_error(message: str) -> WrapValidator:
+    """Report any failure under this field as ``message``; ``{value}`` is the input.
+
+    A union reports one error per arm, which buries the rule the author broke.
+    """
+
+    def validate(
+        value: Any,  # type-state: explicit_any — wrap-validator input, raw YAML value
+        handler: ValidatorFunctionWrapHandler,
+    ) -> Any:  # type-state: explicit_any — whatever the wrapped schema returns
+        try:
+            return handler(value)
+        except ValidationError:
+            raise ValueError(message.format(value=repr(value))) from None
+
+    return WrapValidator(validate)
+
+
+Dasharray = Annotated[
+    str,
+    StringConstraints(pattern=r"^\s*\d+(\.\d+)?([ ,]+\d+(\.\d+)?)*\s*$"),
+    one_error("dasharray must be positive numbers such as '6 3', got {value}"),
+]
+
+
 class DividerStyle(BaseModel):
     """A separator line: whether it draws, and its color, width and line style.
 
@@ -540,7 +763,7 @@ class DividerStyle(BaseModel):
     color: Annotated[str, Color()] = Field(description="Divider color.")
     width: float = Field(gt=0, description="Divider line width in pixels.")
     # Optional on purpose: unset is a solid line, so no theme has to say so.
-    dasharray: str | None = Field(
+    dasharray: Dasharray | None = Field(
         default=None,
         description=(
             'Dash pattern in pixels, such as "6 3" (6 drawn, 3 gap); '
@@ -548,17 +771,12 @@ class DividerStyle(BaseModel):
         ),
     )
 
+    # Normalized on the compiled style only, so an authored patch keeps its
+    # spelling.
     @field_validator("dasharray")
     @classmethod
-    def _dasharray_is_numbers(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        parts = re.split(r"[ ,]+", value.strip())
-        if not all(re.fullmatch(r"\d+(\.\d+)?", part) for part in parts):
-            raise ValueError(
-                f"dasharray must be positive numbers such as '6 3', got {value!r}"
-            )
-        return " ".join(parts)
+    def _space_separated(cls, value: str | None) -> str | None:
+        return None if value is None else " ".join(re.split(r"[ ,]+", value.strip()))
 
 
 class BorderStyle(BaseModel):
@@ -622,6 +840,43 @@ _BORDER_PATTERN = (
     r"(?:(solid|dashed|dotted)(?: |$))?"
     rf"({_BORDER_COLOR})?"
 )
+# CSS box-shadow, minus inset and spread: SVG draws it as a drop-shadow filter,
+# which has neither.
+_LENGTH = r"(-?[0-9]+(?:\.[0-9]+)?)(?:px)?"
+BOX_SHADOW_PATTERN = (
+    rf"{_LENGTH} {_LENGTH}(?: ([0-9]+(?:\.[0-9]+)?)(?:px)?)? ({_BORDER_COLOR})"
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class BoxShadow:
+    dx: float
+    dy: float
+    blur: float
+    color: str
+
+
+def parse_box_shadow(value: str) -> BoxShadow:
+    """Parse ``<x> <y> [<blur>] <color>``; ``inset`` and spread are errors."""
+    match = re.fullmatch(BOX_SHADOW_PATTERN, value)
+    if match is None:
+        raise ValueError(
+            "box_shadow must look like '0 2px 8px #00000040' (x offset, y offset, "
+            "optional blur, hex/rgb()/CSS color keyword; no inset or spread)"
+        )
+    dx, dy, blur, color = match.groups()
+    blur_px = float(blur or 0)  # type-state: silent_fallback — CSS omits blur for 0
+    return BoxShadow(float(dx), float(dy), blur_px, color)
+
+
+def check_box_shadow(
+    value: Any,  # type-state: explicit_any — before-validator input, raw YAML value
+) -> Any:  # type-state: explicit_any — non-strings go to type validation
+    if isinstance(value, str):
+        parse_box_shadow(value)
+    return value
+
+
 # Line styles BorderStyle.dash_array can express.
 _BORDER_DASHES: dict[str, dict[str, list[float] | str]] = {
     "dashed": {"dash_array": [4.0, 4.0]},
@@ -726,7 +981,7 @@ class StrokeStyle(BaseModel):
       - width: absent = VL default (1 px) for most compiled families; line and
         area instead fall back to chart_rendering.stroke.fallback_width /
         .stacked_fallback_width once the cascade and adaptive bake both leave
-        it unset — see _apply_stroke_width_fallback.
+        it unset — see _apply_line_width.
       - cap/join: absent = VL default (butt/miter). Only line/arc set these.
       - dasharray: absent = solid line. Only spark.empty sets this.
     """
@@ -963,8 +1218,8 @@ class ScaleTargetPaletteValidationMixin(BaseModel):
 class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
     """Scale configuration for a single style target (background or color).
 
-    Used as a chart channel annotation (``ColumnScaleConfig``) and as the
-    ``gradient`` field of ``ColorStyle`` / ``StaticGradientColorStyle``.
+    Base of ``ColumnScaleTargetConfig`` and the ``gradient`` field of
+    ``ColorStyle`` / ``StaticGradientColorStyle``.
     Lives in primitives so both ``chart/authored.py`` and ``style/authored.py``
     can import it without creating a circular dependency.
     """
@@ -1024,9 +1279,11 @@ class ResolvedScaleTargetConfig(ScaleTargetConfig):
 
     @model_validator(mode="after")
     def _reject_unbaked_named_palette(self) -> ResolvedScaleTargetConfig:
-        # type(self) is exact: subclass ResolvedNamedPaletteScaleTargetConfig
-        # legitimately holds a named palette string, so we only guard the base class.
-        if type(self) is ResolvedScaleTargetConfig and isinstance(self.palette, str):
+        # A ResolvedNamedPaletteScaleTargetConfig legitimately holds a named
+        # palette string next to its baked stops.
+        if not isinstance(self, ResolvedNamedPaletteScaleTargetConfig) and isinstance(
+            self.palette, str
+        ):
             if self.palette not in VEGA_SCHEME_NAMES:
                 raise ValueError(
                     f"palette {self.palette!r} is a named dbt-charts palette and must be "
@@ -1095,9 +1352,9 @@ def bake_scale_target_stops(target: ScaleTargetConfig) -> ResolvedScaleTargetCon
 
 # Patch type for ScaleTargetConfig — generated (and registered) here, right after
 # the compiled class, so every later recursive build_patch_model_ext call that
-# encounters ScaleTargetConfig as a nested field (StaticGradientColorStyle.gradient,
-# ColumnScaleConfig.color/background) reuses this exact registered class instead of
-# a vanilla auto-generated one with no palette validation.
+# encounters ScaleTargetConfig as a nested field (StaticGradientColorStyle.gradient)
+# reuses this exact registered class instead of a vanilla auto-generated one with
+# no palette validation.
 #
 # resolved_stops is absent from ScaleTargetConfig itself (it lives only on the
 # resolved subtypes), so ScaleTargetConfigPatch correctly excludes it by
@@ -1138,8 +1395,15 @@ class CategoricalColorStyle(BaseModel):
         default=None,
         description="Categorical color palette: list of stops or a named palette. Expanded to list[str] at validation time.",
     )
+    # Empty would break the spark cascade and the single-series render path.
     single_series_palette: Annotated[
-        StopsPaletteName | list[str] | str | None, Merge(Strategy.OVERRIDE), Palette()
+        StopsPaletteName | Annotated[list[str], Field(min_length=1)] | str | None,
+        Merge(Strategy.OVERRIDE),
+        Palette(),
+        one_error(
+            "single_series_palette must be a palette name or a non-empty list of "
+            "colors, got {value}"
+        ),
     ] = Field(
         default=None,
         description="Ordered list of single-series mark inks (must be non-empty when set), or a palette name.",
@@ -1147,6 +1411,7 @@ class CategoricalColorStyle(BaseModel):
     requested_alias_palette: Annotated[str | None, Merge(Strategy.OVERRIDE)] = Field(
         default=None,
         exclude=True,
+        json_schema_extra={"internal": True},
         description=(
             "Internal: set when this layer authors palette/single_series_palette "
             "as a known WARN-PALETTE-UNSUPPORTED anti-pattern name (e.g. RdYlGn); "
@@ -1200,18 +1465,6 @@ class CategoricalColorStyle(BaseModel):
             if requested is not None:
                 data["requested_alias_palette"] = requested
         return data
-
-    @field_validator("single_series_palette", mode="after")
-    @classmethod
-    def _single_series_palette_non_empty(
-        cls, value: list[str] | None
-    ) -> list[str] | None:
-        if value is not None and not value:
-            raise ValueError(
-                "single_series_palette must contain at least one ink stop; "
-                "empty lists break the spark cascade and the single-series render path."
-            )
-        return value
 
 
 class StaticGradientColorStyle(BaseModel):

@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts.core.diagnostics.base import DbtChartsError
 
 if TYPE_CHECKING:
+    from pydantic import ValidationError as PydanticValidationError
+
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 
 
@@ -266,14 +268,30 @@ class TemplateOutputTooLargeError(CompilationError):
         self.fields = {"emitted_bytes": emitted_bytes, "ceiling": ceiling}
 
 
-class MergeValidationError(CompilationError):
-    """Pydantic validation error from an extends fragment or meta.yml file.
+class FileValidationError(CompilationError):
+    """Pydantic validation error from a YAML file other than the board being
+    compiled.
 
-    Carries pre-structured diagnostics (from ``format_validation_errors_structured``)
-    so the compiler routes them through the hint-bearing path instead of wrapping
-    them as a bare ERR-INTERNAL string.
+    Its diagnostics are already ranged in *that* file: report them as-is, never
+    re-stamp them against the compiling board.
     """
 
     def __init__(self, message: str, diagnostics: list[Diagnostic]) -> None:
         super().__init__(message)
-        self.merge_diagnostics = diagnostics
+        self.diagnostics = diagnostics
+
+    @classmethod
+    def from_pydantic(
+        cls, message: str, error: PydanticValidationError, content: str, relpath: str
+    ) -> FileValidationError:
+        from dbt_charts.core.compile.parse.source_map import (
+            build_source_index,
+            stamp_diagnostics,
+        )
+        from dbt_charts.core.compile.parse.yaml_error_formatter import (
+            format_validation_errors_structured,
+        )
+
+        diagnostics = format_validation_errors_structured(error, content)
+        stamp_diagnostics(diagnostics, *build_source_index(content, relpath))
+        return cls(message, diagnostics)

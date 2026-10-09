@@ -26,7 +26,7 @@ from dbt_charts.core.compile.format import (
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
-    FormatAliases,
+    FormatTable,
     ResolvedFormat,
 )
 from dbt_charts.core.compile.models.style.authored import (
@@ -63,6 +63,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.resolve.style.scale import (
     _build_ruler,
     build_resolved_scale,
+    ladder_anchor_at_start,
 )
 from dbt_charts.core.font_measure import compose_decimal_units
 from dbt_charts.core.text.format_d3 import is_d3_fixed_decimal_spec, is_d3_si_spec
@@ -252,20 +253,6 @@ def _resolve_overlap_config(
     return ResolvedAxisLabelOverlapConfig(tilt=overlap.tilt, skip=overlap.skip)
 
 
-def _affix_anchor_at_start(tick_values: tuple[float, ...]) -> bool:
-    """Whether an anchored affix sits on the first tick rather than the last.
-
-    Sign-aware: the largest positive tick, else the most negative, so a
-    zero-crossing ladder never anchors on its larger negative extreme or the 0
-    cap. With no ladder, Vega's last tick.
-    """
-    if not tick_values:
-        return False
-    positives = [v for v in tick_values if v > 0]
-    anchor_value = max(positives) if positives else min(tick_values)
-    return tick_values.index(anchor_value) == 0
-
-
 def _anchors_affix(fmt: ResolvedFormat) -> bool:
     return fmt.repeat == "anchor" and bool(fmt.prefix or fmt.suffix)
 
@@ -274,12 +261,10 @@ def ladderless_tick_label(
     fmt: ResolvedFormat, measure_values: Sequence[float]
 ) -> ResolvedTickLabel:
     """The tick label of an SI axis with no ladder: sub-1 values paint plain
-    digits, the rest keep the SI spec. An anchored affix sits on the end Vega
-    draws nearest the larger-magnitude value: the first (bottom) tick when the
-    most negative value outweighs the most positive, else the last."""
-    anchor_at_start = bool(measure_values) and -min(measure_values) > max(
-        measure_values
-    )
+    digits, the rest keep the SI spec. An anchored affix sits on the last tick
+    when any value is positive, else the first (bottom), as
+    ``ladder_anchor_at_start``."""
+    anchor_at_start = bool(measure_values) and max(measure_values) <= 0
     return ResolvedTickLabel(
         format=sub_unit_digit_format(fmt.spec),
         anchor_at_start=anchor_at_start if _anchors_affix(fmt) else None,
@@ -296,7 +281,7 @@ def affix_tick_label(
     if not _anchors_affix(fmt):
         return None
     return ResolvedTickLabel(
-        format=fmt.spec, anchor_at_start=_affix_anchor_at_start(tick_values)
+        format=fmt.spec, anchor_at_start=ladder_anchor_at_start(tick_values)
     )
 
 
@@ -325,7 +310,7 @@ def build_resolved_axis(
     zero_anchored: bool = False,
     chart_id: str,
     y_gridline_caps_bottom: bool | None = None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     floor_tick_step: bool = False,
     measure_values: Sequence[float] = (),
 ) -> ResolvedAxisStyle:
@@ -529,6 +514,22 @@ def build_resolved_axis(
         and is_d3_fixed_decimal_spec(format.spec)
         else None
     )
+    # Vega draws only the rungs inside the baked domain (the top one is often
+    # dropped), so the anchor end is chosen among those.
+    drawn_ticks = tuple(
+        t
+        for t in tick_values
+        if (domain_min is ... or t >= domain_min)
+        and (domain_max is ... or t <= domain_max)
+    )
+    anchor_at_start = ladder_anchor_at_start(drawn_ticks)
+    # Unbaked top edge: Vega fits it, so a positive rung may not be drawn;
+    # the ruler anchors on the magnitude extreme.
+    ruler_anchor_at_start = (
+        anchor_at_start
+        if domain_max is not ...
+        else bool(drawn_ticks) and drawn_ticks.index(max(drawn_ticks, key=abs)) == 0
+    )
     ruler = _build_ruler(
         tick_values=tick_values,
         si_format=_si_format,
@@ -538,6 +539,7 @@ def build_resolved_axis(
         font_family=_resolved_font.family,
         font_tabular=_resolved_font.tabular_figures,
         chart_id=chart_id,
+        anchor_at_start=ruler_anchor_at_start,
         notation=format.notation if format is not None else None,
         repeat=format.repeat if format is not None else None,
     )
@@ -589,7 +591,7 @@ def build_resolved_axis(
             column_forming if format.repeat is None else format.repeat == "anchor"
         )
         if (prefix or format.prefix or format.suffix) and anchored:
-            anchor_at_start_plain = _affix_anchor_at_start(tick_values)
+            anchor_at_start_plain = anchor_at_start
         if (
             precision is not None
             and column_forming
@@ -636,7 +638,7 @@ def build_resolved_axis(
         assert format is not None  # _si_format implies a format
         tick_label = ladderless_tick_label(format, measure_values)
     elif ruler is None and format is not None and axis.labels.expr is None:
-        tick_label = affix_tick_label(format, tick_values)
+        tick_label = affix_tick_label(format, drawn_ticks)
 
     # The mirrored edge anchors independently of the primary (labels.align
     # resolves per edge), so it gets its own _build_ruler call. An authored
@@ -673,7 +675,7 @@ def build_resolved_axis(
                     "number", formats, authored_mirror.format, values=tick_values
                 )
             if mirror_tick_label is None:
-                mirror_tick_label = affix_tick_label(mirror_format, tick_values)
+                mirror_tick_label = affix_tick_label(mirror_format, drawn_ticks)
             if (
                 mirror_tick_label is not None
                 and mirror_tick_label.anchor_at_start is not None
@@ -702,6 +704,7 @@ def build_resolved_axis(
                 font_family=_resolved_font.family,
                 font_tabular=_resolved_font.tabular_figures,
                 chart_id=chart_id,
+                anchor_at_start=ruler_anchor_at_start,
                 notation=format.notation if format is not None else None,
                 repeat=format.repeat if format is not None else None,
             )

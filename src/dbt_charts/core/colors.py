@@ -494,12 +494,32 @@ def is_deferred_color_reference(value: str) -> bool:
     return is_color_token(value) or bool(_BARE_IDENTIFIER_PATTERN.match(value))
 
 
+_CSS_COLOR_KEYWORDS = frozenset({"transparent", "none"})
+
+
 def is_sanitizable_color(color: str) -> bool:
     """Return True if ``color`` is accepted by sanitize_color (hex or transparent/none)."""
-    return bool(_CSS_HEX_COLOR_PATTERN.match(color)) or color.lower() in {
-        "transparent",
-        "none",
-    }
+    return bool(_CSS_HEX_COLOR_PATTERN.match(color)) or color.lower() in (
+        _CSS_COLOR_KEYWORDS
+    )
+
+
+# is_color_token or is_sanitizable_color as one regex, for fields whose JSON
+# Schema must reject exactly what those predicates reject. Keywords are spelled
+# case-insensitively with character classes because ECMA regex has no `(?i:)`.
+TOKEN_OR_SANITIZABLE_COLOR_PATTERN = "|".join(
+    f"(?:{p})"
+    for p in (
+        _COLOR_TOKEN_PATTERN.pattern,
+        _CSS_HEX_COLOR_PATTERN.pattern,
+        "^(?:"
+        + "|".join(
+            "".join(f"[{c}{c.upper()}]" for c in word)
+            for word in sorted(_CSS_COLOR_KEYWORDS)
+        )
+        + ")$",
+    )
+)
 
 
 @overload

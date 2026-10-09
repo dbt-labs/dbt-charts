@@ -109,6 +109,13 @@ execution:
     sqlserver: tsql
     mssql: tsql
     mariadb: mysql
+    lakecompute: duckdb
+  # Lake compute's production API endpoint, sent when a source sets no
+  # base_url. dbt v2's driver requires one and reads this same default from its
+  # own profile layer. Override in dbt_charts.yml under
+  # execution.lakecompute.default_base_url.
+  lakecompute:
+    default_base_url: https://api.lake-compute.fivetran.com/
 
 
 # Project ceiling for board html_policy.  DCT_HTML_POLICY_CEILING env var
@@ -214,9 +221,8 @@ chart_rendering:
     # compute an adaptive one (no data, no x field, or non-cartesian) --
     # line's own stroke and area's overlap-edge stroke.
     fallback_width: 2.5
-    # Same role, for area's stacked/streamgraph perimeter stroke (a thinner
-    # separator weight, not a trend line) -- also the ceiling the computed
-    # adaptive value is capped at on that recipe.
+    # Area's stacked/streamgraph perimeter stroke: a fixed separator weight,
+    # not a trend line, so it never derives from density.
     stacked_fallback_width: 1.0
   point:
     # Line-chart point companion (compile/resolve/adaptive_stroke.py

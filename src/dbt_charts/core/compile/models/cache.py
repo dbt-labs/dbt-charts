@@ -42,23 +42,28 @@ from functools import cached_property
 from typing import Annotated, Any, Literal
 
 from pydantic import (
-    AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
+    StringConstraints,
+    TypeAdapter,
     ValidationError as PydanticValidationError,
     model_serializer,
-    model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.models.factories import register_as_own_patch
+from dbt_charts.core.compile.models.factories import (
+    register_as_own_patch,
+    register_shorthand,
+)
 
 # Short-duration segments: <number><unit>, units s/m/h/d/w (m = MINUTES, never
 # months), compound allowed (1h30m), case- and whitespace-insensitive. No
 # months/years (ambiguous length), no fractions, no bare numbers, no ISO 8601.
-_DURATION_SEGMENT_RE = re.compile(r"(\d+)\s*([smhdw])")
-_DURATION_FULL_RE = re.compile(r"^(?:\d+\s*[smhdw]\s*)+$")
+_DURATION_SEGMENT_RE = re.compile(r"(\d+)\s*([smhdw])", re.ASCII)
+_DURATION_FULL_RE = re.compile(r"^(?:\d+\s*[smhdw]\s*)+$", re.ASCII)
 
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
@@ -103,7 +108,7 @@ def parse_duration(text: str) -> timedelta:
     Raises:
         ValueError: On any malformed or out-of-range value. Both are compile
             errors, never silent defaults. Raising ``ValueError`` specifically
-            is load-bearing: pydantic's ``AfterValidator`` turns it into a
+            is load-bearing: a pydantic validator turns it into a
             ``ValidationError`` and routes it through the diagnostic system,
             while an ``OverflowError`` from unguarded ``timedelta`` arithmetic
             would escape as a raw traceback.
@@ -140,12 +145,25 @@ def parse_duration(text: str) -> timedelta:
     return timedelta(seconds=total_seconds)
 
 
-def _validate_duration(value: str) -> str:
-    parse_duration(value)
+def _validate_duration(
+    value: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+    if isinstance(value, str):
+        parse_duration(value)
     return value
 
 
-Duration = Annotated[str, AfterValidator(_validate_duration)]
+# The schema pattern mirrors `_DURATION_FULL_RE` ignoring case (ECMA regex has
+# no inline flags).
+_DURATION_SCHEMA_PATTERN = r"^\s*(?:[0-9]+\s*[smhdwSMHDW]\s*)+$"
+
+# The validator runs first so a malformed value gets the parser's actionable
+# message; the pattern then only states the shape for JSON Schema.
+Duration = Annotated[
+    str,
+    BeforeValidator(_validate_duration),
+    StringConstraints(pattern=_DURATION_SCHEMA_PATTERN),
+]
 """A validated short-duration string; malformed values raise at model parse."""
 
 
@@ -157,7 +175,8 @@ class CachePatch(BaseModel):
 
     Authorable at the project, source, board, and query scopes — `cache: true`
     at the project root excepted, since it has no scope to inherit a ttl from.
-    The validator below expands the scalar into these fields; the block form
+    Validate authored values through ``CacheInput``, never this class bare:
+    ``desugar_cache`` expands the scalar into these fields; the block form
     (``cache: {ttl: 1h}``) means the same thing. Unset fields inherit.
 
     Keep the summary line above self-contained and naming every authoring form:
@@ -170,8 +189,8 @@ class CachePatch(BaseModel):
     # every compile in the process.
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Never authorable — `cache: false` is the only opt-out, and the validator
-    # below rejects the key outright. This field is where that boolean lands
+    # Never authorable — `cache: false` is the only opt-out, and `desugar_cache`
+    # rejects the key outright. This field is where that boolean lands
     # internally, and `internal` keeps it out of the IDE schema, the YAML
     # reference, and the agent prompt.
     enabled: bool | None = Field(
@@ -182,7 +201,7 @@ class CachePatch(BaseModel):
             "`cache: false` / `cache: true`, never authored directly."
         ),
     )
-    ttl: Literal["forever"] | Duration | None = Field(
+    ttl: Literal["forever"] | Duration | SkipJsonSchema[None] = Field(
         default=None,
         description=(
             "Expire cached results after this wall-clock age (lazy: the next "
@@ -194,60 +213,15 @@ class CachePatch(BaseModel):
         examples=["5m", "1h", "24h", "7d", "forever"],
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def _desugar_authored_value(cls, data: Any) -> Any:
-        """Expand the scalar authoring forms into the fields they stand for.
-
-        ``cache: false`` is the only opt-out; every other authored value means
-        caching is on at this scope, so the value's presence resolves
-        ``enabled`` and the cascade root needs no ``enabled: true``
-        restatement. An empty block authors nothing at all.
-        """
-        if isinstance(data, bool):
-            return {"enabled": data}
-        if isinstance(data, str):
-            return {"enabled": True, "ttl": data}
-        if data is None:
-            # A bare `cache:` — a block someone started and never finished.
-            # Pydantic's own message for it names this class, which is not a
-            # word the author can act on.
-            raise ValueError(
-                "cache: needs a value — write cache: <duration> (e.g. "
-                "cache: 1h), cache: forever, cache: true, or cache: false."
-            )
-        if not isinstance(data, dict):
-            return data
-        # `{enabled: false, ttl: ...}` is the serializer's round-trip of an off
-        # layer that kept an inherited ttl — a merged state no scalar spells
-        # (see `_serialize_as_authored`). Every spelling an author would reach
-        # for still fails loudly.
-        if "enabled" in data and not (data["enabled"] is False and len(data) > 1):
-            raise ValueError(
-                "cache.enabled is not authorable — write cache: false to turn "
-                "caching off at this scope, or cache: <duration> (e.g. "
-                "cache: 1h) / cache: true to turn it on."
-            )
-        # An explicit `ttl: null` looks like omission but would silently mean
-        # something different under exclude-unset merging — reject it with the
-        # two honest spellings instead of shipping a third, invisible one.
-        if "ttl" in data and data["ttl"] is None:
-            raise ValueError(
-                "ttl: null is ambiguous — omit ttl to inherit from the parent "
-                "scope, or write cache: forever to never auto-expire."
-            )
-        # A block that carries any value at all means caching is on.
-        return {"enabled": True, **data} if data else data
-
     @model_serializer(mode="plain")
     def _serialize_as_authored(self) -> bool | str | Mapping[str, str | bool]:
         """Emit the layer in the spelling an author would have written.
 
-        The exact inverse of the desugar above, and what lets ``enabled`` stay
-        unauthorable: a board's ``cache:`` is dumped and re-validated several
-        times on the way through the extends/meta cascade
-        (``merge._fragment_own_patch``, the compiler's meta pass), so every key
-        emitted here has to be a key accepted there.
+        The inverse of ``desugar_cache``, so ``enabled`` stays unauthorable.
+        One merged state has no authored spelling: off while still carrying an
+        inherited ttl. It dumps with the internal ``enabled`` key, which the
+        validator rejects, so a consumer must pass such a layer as the model
+        rather than re-validate its dump (``compile`` does).
         """
         # A set-but-null key is dropped: only the project scope's `path` can be
         # one (`ttl: null` is rejected outright), and it re-validates to the
@@ -259,11 +233,6 @@ class CachePatch(BaseModel):
             if name != "enabled" and (value := getattr(self, name)) is not None
         }
         if self.enabled is False and written:
-            # Off, but still carrying a ttl a nearer scope can turn back on —
-            # what `meta: 1h` + `cache: false` merges to. No scalar spells it:
-            # `false` alone would drop the ttl and silently re-root any query
-            # that opts back in, so emit the internal key, which the validator
-            # accepts back in this shape and no other.
             return {"enabled": False, **written}
         if written.keys() - {"ttl"}:
             # A block — the project scope's `path` travels with its ttl.
@@ -273,11 +242,61 @@ class CachePatch(BaseModel):
         return {} if self.enabled is None else self.enabled
 
 
-# CachePatch is all-Optional and is its own patch. Without this, the
+def desugar_cache(
+    data: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+    """Expand the scalar authoring forms into the fields they stand for.
+
+    ``cache: false`` is the only opt-out; every other authored value means
+    caching is on at this scope, so the value's presence resolves
+    ``enabled`` and the cascade root needs no ``enabled: true``
+    restatement. An empty block authors nothing at all.
+    """
+    if isinstance(data, bool):
+        return {"enabled": data}
+    if isinstance(data, str):
+        return {"enabled": True, "ttl": data}
+    if data is None:
+        # A bare `cache:` — a block someone started and never finished.
+        # Pydantic's own message for it names this class, which is not a
+        # word the author can act on.
+        raise ValueError(
+            "cache: needs a value — write cache: <duration> (e.g. "
+            "cache: 1h), cache: forever, cache: true, or cache: false."
+        )
+    if not isinstance(data, dict):
+        return data
+    if "enabled" in data:
+        raise ValueError(
+            "cache.enabled is not authorable — write cache: false to turn "
+            "caching off at this scope, or cache: <duration> (e.g. "
+            "cache: 1h) / cache: true to turn it on."
+        )
+    # An explicit `ttl: null` looks like omission but would silently mean
+    # something different under exclude-unset merging — reject it with the
+    # two honest spellings instead of shipping a third, invisible one.
+    if "ttl" in data and data["ttl"] is None:
+        raise ValueError(
+            "ttl: null is ambiguous — omit ttl to inherit from the parent "
+            "scope, or write cache: forever to never auto-expire."
+        )
+    # A block that carries any value at all means caching is on.
+    return {"enabled": True, **data} if data else data
+
+
+_CACHE_SHORTHAND = BeforeValidator(
+    desugar_cache,
+    json_schema_input_type=bool | Literal["forever"] | Duration | CachePatch,
+)
+CacheInput = Annotated[CachePatch, _CACHE_SHORTHAND]
+"""``cache:`` at any scope: a scalar or the block form."""
+
+# CachePatch is all-Optional and is its own patch. Without the registration, the
 # `AuthoredBoard` → `BoardPatch` synthesis every file-based compile runs would
-# build a `CachePatchPatch` that does NOT carry the desugar validator above —
-# so every scalar spelling would be rejected as "not a valid dictionary".
+# build a `CachePatchPatch`; and the generated patch field drops the annotation's
+# validator, so the shorthand is re-attached per patch field.
 register_as_own_patch(CachePatch)
+register_shorthand(CachePatch, _CACHE_SHORTHAND)
 
 
 # ── resolved policy (the executor's contract) ────────────────────────────────
@@ -380,18 +399,21 @@ def merge_cache_layers(*layers: CachePatch) -> CachePatch:
     return merged
 
 
+_CACHE_ADAPTER: TypeAdapter[CachePatch] = TypeAdapter(CacheInput)
+
+
 def validate_cache_layer(scope: str, raw: Any) -> CachePatch | None:
     """Validate a raw authored cache value into a cascade layer.
 
     Accepts None (nothing authored) and an already-validated CachePatch;
-    anything else goes through CachePatch's own desugaring validator, so the
+    anything else goes through ``CacheInput``'s desugaring, so the
     raw-dict authoring path enforces exactly what the typed authored fields
     do — a malformed value is a compile error, never silently ignored.
     """
     if raw is None or isinstance(raw, CachePatch):
         return raw
     try:
-        return CachePatch.model_validate(raw)
+        return _CACHE_ADAPTER.validate_python(raw)
     except PydanticValidationError as e:
         raise CompilationError(f"Query '{scope}': invalid cache value: {e}") from e
 

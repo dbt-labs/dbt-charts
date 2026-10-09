@@ -118,3 +118,11 @@ class SQLServerDialect(SQLDialect):
         that keeps the driver's text, so the text is what there is to read.
         """
         return _QUERY_TIMEOUT_RE.search(str(exc)) is not None
+
+    def quote(self, identifier: str) -> str:
+        """Bracket-quote an identifier. T-SQL accepts double quotes only while
+        QUOTED_IDENTIFIER is ON, which the connection does not control.
+
+        https://learn.microsoft.com/en-us/sql/relational-databases/databases/database-identifiers
+        """
+        return "[" + identifier.replace("]", "]]") + "]"

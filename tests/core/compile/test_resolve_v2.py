@@ -978,7 +978,7 @@ def test_geoshape_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
     data = [{"id": "CA", "cents": 0.42}, {"id": "NY", "cents": 0.25}]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedGeoshapeChart)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
 
 
 def test_geoshape_value_field_spelling_votes_not_color_channel() -> None:
@@ -1014,7 +1014,7 @@ def test_geoshape_value_field_spelling_votes_not_color_channel() -> None:
     data = [{"id": "CA", "cents": 0.42}, {"id": "NY", "cents": 0.25}]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedGeoshapeChart)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
 
 
 def test_resolve_point_map_sub_dollar_size_measure_tooltip_avoids_si_milli() -> None:
@@ -1049,7 +1049,7 @@ def test_resolve_point_map_sub_dollar_size_measure_tooltip_avoids_si_milli() -> 
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedPointMapChart)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
 
 
 def test_resolve_point_map_color_measure_never_votes_only_size_does() -> None:
@@ -1089,7 +1089,7 @@ def test_resolve_point_map_color_measure_never_votes_only_size_does() -> None:
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedPointMapChart)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"]
 
 
 def test_resolve_point_map_negative_size_row_never_votes() -> None:
@@ -1127,7 +1127,7 @@ def test_resolve_point_map_negative_size_row_never_votes() -> None:
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedPointMapChart)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"]
 
 
 def test_heatmap_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
@@ -2384,4 +2384,4 @@ def test_geoshape_tooltip_vote_ignores_an_int_beyond_float_range() -> None:
     ]
     resolved = resolve(compiled, data, _currency_tooltip_style())
     assert isinstance(resolved, ResolvedGeoshapeChart)
-    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]

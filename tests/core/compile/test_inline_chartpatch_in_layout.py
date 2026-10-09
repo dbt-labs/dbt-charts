@@ -12,6 +12,7 @@ dict. Omitted display text remains empty after normalization.
 from __future__ import annotations
 
 from dbt_charts.core.compile.models.chart.authored import BarChart
+from dbt_charts.core.compile.models.primitives import Regional
 from dbt_charts.core.compile.normalize.layout import _resolve_single_item
 
 
@@ -28,6 +29,7 @@ def test_chartpatch_in_layout_omitted_title_stays_empty() -> None:
         item_id="row0",
         sources={},
         html_policy="none",
+        regional=Regional(),
     )
     assert result.chart is not None
     assert result.chart.title == ""
@@ -45,6 +47,7 @@ def test_chartpatch_in_layout_respects_explicit_title() -> None:
         item_id="row0",
         sources={},
         html_policy="none",
+        regional=Regional(),
     )
     assert result.chart is not None
     assert result.chart.title == "My Revenue Chart"

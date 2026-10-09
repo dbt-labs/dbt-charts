@@ -526,6 +526,82 @@
           "anyOf": [
             {
               "items": {
+                "enum": [
+                  "WARN-ADJACENT-TEXT-ROWS",
+                  "WARN-AREA-UNSTACKED-READS-AS-STACKED",
+                  "WARN-AXIS-ALIGN-DISCARDED",
+                  "WARN-AXIS-LABEL-COLLISION",
+                  "WARN-AXIS-TITLE-TRUNCATED",
+                  "WARN-BAR-BAND-WIDTH-TOO-NARROW",
+                  "WARN-BAR-GROUPED-SERIES-COINCIDE",
+                  "WARN-CALLOUT-TEXT-TRUNCATED",
+                  "WARN-CATEGORY-COLOR-PIN-UNSEEN",
+                  "WARN-CHART-TITLE-TRUNCATED",
+                  "WARN-COLUMN-CHECK-UNAVAILABLE",
+                  "WARN-DATE-AS-TEXT",
+                  "WARN-DBT-MANIFEST-MISSING",
+                  "WARN-DBT-MODEL-COLUMNS-UNRESOLVED",
+                  "WARN-DBT-QUERY-COLUMNS-INDETERMINATE",
+                  "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
+                  "WARN-DOUBLE-HEADER",
+                  "WARN-DUAL-AXIS-COMPETING-SCALES",
+                  "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-TIED",
+                  "WARN-EXTENDS-LAYOUT-APPENDED",
+                  "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
+                  "WARN-FANOUT-RISK",
+                  "WARN-FLAT-COLS-UNSIZED-OVERFLOW",
+                  "WARN-H1-BODY-NO-TITLE",
+                  "WARN-HTML-POLICY-CAPPED",
+                  "WARN-KPI-ALIGN-OVERFLOW",
+                  "WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
+                  "WARN-KPI-LABEL-TRUNCATED",
+                  "WARN-LAYER-X-DOMAIN-PAINT-ORDER",
+                  "WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH",
+                  "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
+                  "WARN-LEGEND-POSITION-WIDTH-FALLBACK",
+                  "WARN-LEGEND-VALUES-UNRESOLVED",
+                  "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
+                  "WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS",
+                  "WARN-LOW-TEXT-CONTRAST",
+                  "WARN-MISSING-JOIN-PREDICATE",
+                  "WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE",
+                  "WARN-PALETTE-UNSUPPORTED",
+                  "WARN-PARSE-ERROR",
+                  "WARN-PIE-DOMINANT-SEGMENT",
+                  "WARN-PIE-TOO-MANY-SEGMENTS",
+                  "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS",
+                  "WARN-PLOT-HEIGHT-BELOW-MINIMUM",
+                  "WARN-PLOT-WIDTH-BELOW-MINIMUM",
+                  "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
+                  "WARN-POINT-MAP-OUT-OF-PROJECTION",
+                  "WARN-QUERY-RESULT-TRUNCATED",
+                  "WARN-QUERY-RETURNED-ZERO-ROWS",
+                  "WARN-REAGGREGATION",
+                  "WARN-REDUNDANT-AUTHORED-DEFAULT",
+                  "WARN-REDUNDANT-AUTHORED-LABEL",
+                  "WARN-REDUNDANT-ENCODING",
+                  "WARN-SCHEMA-MIGRATED",
+                  "WARN-SERIES-LABEL-TRUNCATED",
+                  "WARN-SERIES-LABELS-REPEAT-WORD",
+                  "WARN-SINGLE-CHART-REDUNDANT-TITLE",
+                  "WARN-SPARK-LABEL-TRUNCATED",
+                  "WARN-STATIC-PAGINATION-CAPPED",
+                  "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
+                  "WARN-TABLE-COLUMNS-OVERFLOW",
+                  "WARN-TABLE-CRAMPED",
+                  "WARN-TABLE-PAGE-SQUEEZED",
+                  "WARN-TABLE-TEXT-TRUNCATED",
+                  "WARN-TEMPORAL-SINGLE-POINT",
+                  "WARN-TOO-MANY-COLOR-CATEGORIES",
+                  "WARN-TOO-MANY-X-CATEGORIES",
+                  "WARN-UNREFERENCED-CHART",
+                  "WARN-VALUE-LABELS-CROWD-WIDTH",
+                  "WARN-WAREHOUSE-CHECK-UNAVAILABLE",
+                  "WARN-WIDE-MEASURE-LABEL-COLLISION",
+                  "WARN-Y-ENCODING-MOSTLY-NULL"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -535,7 +611,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -595,10 +671,11 @@
               "type": "boolean"
             },
             {
-              "type": "null"
+              "pattern": "\\S",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -675,6 +752,82 @@
           "anyOf": [
             {
               "items": {
+                "enum": [
+                  "WARN-ADJACENT-TEXT-ROWS",
+                  "WARN-AREA-UNSTACKED-READS-AS-STACKED",
+                  "WARN-AXIS-ALIGN-DISCARDED",
+                  "WARN-AXIS-LABEL-COLLISION",
+                  "WARN-AXIS-TITLE-TRUNCATED",
+                  "WARN-BAR-BAND-WIDTH-TOO-NARROW",
+                  "WARN-BAR-GROUPED-SERIES-COINCIDE",
+                  "WARN-CALLOUT-TEXT-TRUNCATED",
+                  "WARN-CATEGORY-COLOR-PIN-UNSEEN",
+                  "WARN-CHART-TITLE-TRUNCATED",
+                  "WARN-COLUMN-CHECK-UNAVAILABLE",
+                  "WARN-DATE-AS-TEXT",
+                  "WARN-DBT-MANIFEST-MISSING",
+                  "WARN-DBT-MODEL-COLUMNS-UNRESOLVED",
+                  "WARN-DBT-QUERY-COLUMNS-INDETERMINATE",
+                  "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
+                  "WARN-DOUBLE-HEADER",
+                  "WARN-DUAL-AXIS-COMPETING-SCALES",
+                  "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-TIED",
+                  "WARN-EXTENDS-LAYOUT-APPENDED",
+                  "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
+                  "WARN-FANOUT-RISK",
+                  "WARN-FLAT-COLS-UNSIZED-OVERFLOW",
+                  "WARN-H1-BODY-NO-TITLE",
+                  "WARN-HTML-POLICY-CAPPED",
+                  "WARN-KPI-ALIGN-OVERFLOW",
+                  "WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
+                  "WARN-KPI-LABEL-TRUNCATED",
+                  "WARN-LAYER-X-DOMAIN-PAINT-ORDER",
+                  "WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH",
+                  "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
+                  "WARN-LEGEND-POSITION-WIDTH-FALLBACK",
+                  "WARN-LEGEND-VALUES-UNRESOLVED",
+                  "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
+                  "WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS",
+                  "WARN-LOW-TEXT-CONTRAST",
+                  "WARN-MISSING-JOIN-PREDICATE",
+                  "WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE",
+                  "WARN-PALETTE-UNSUPPORTED",
+                  "WARN-PARSE-ERROR",
+                  "WARN-PIE-DOMINANT-SEGMENT",
+                  "WARN-PIE-TOO-MANY-SEGMENTS",
+                  "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS",
+                  "WARN-PLOT-HEIGHT-BELOW-MINIMUM",
+                  "WARN-PLOT-WIDTH-BELOW-MINIMUM",
+                  "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
+                  "WARN-POINT-MAP-OUT-OF-PROJECTION",
+                  "WARN-QUERY-RESULT-TRUNCATED",
+                  "WARN-QUERY-RETURNED-ZERO-ROWS",
+                  "WARN-REAGGREGATION",
+                  "WARN-REDUNDANT-AUTHORED-DEFAULT",
+                  "WARN-REDUNDANT-AUTHORED-LABEL",
+                  "WARN-REDUNDANT-ENCODING",
+                  "WARN-SCHEMA-MIGRATED",
+                  "WARN-SERIES-LABEL-TRUNCATED",
+                  "WARN-SERIES-LABELS-REPEAT-WORD",
+                  "WARN-SINGLE-CHART-REDUNDANT-TITLE",
+                  "WARN-SPARK-LABEL-TRUNCATED",
+                  "WARN-STATIC-PAGINATION-CAPPED",
+                  "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
+                  "WARN-TABLE-COLUMNS-OVERFLOW",
+                  "WARN-TABLE-CRAMPED",
+                  "WARN-TABLE-PAGE-SQUEEZED",
+                  "WARN-TABLE-TEXT-TRUNCATED",
+                  "WARN-TEMPORAL-SINGLE-POINT",
+                  "WARN-TOO-MANY-COLOR-CATEGORIES",
+                  "WARN-TOO-MANY-X-CATEGORIES",
+                  "WARN-UNREFERENCED-CHART",
+                  "WARN-VALUE-LABELS-CROWD-WIDTH",
+                  "WARN-WAREHOUSE-CHECK-UNAVAILABLE",
+                  "WARN-WIDE-MEASURE-LABEL-COLLISION",
+                  "WARN-Y-ENCODING-MOSTLY-NULL"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -684,7 +837,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -744,10 +897,11 @@
               "type": "boolean"
             },
             {
-              "type": "null"
+              "pattern": "\\S",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -904,6 +1058,82 @@
           "anyOf": [
             {
               "items": {
+                "enum": [
+                  "WARN-ADJACENT-TEXT-ROWS",
+                  "WARN-AREA-UNSTACKED-READS-AS-STACKED",
+                  "WARN-AXIS-ALIGN-DISCARDED",
+                  "WARN-AXIS-LABEL-COLLISION",
+                  "WARN-AXIS-TITLE-TRUNCATED",
+                  "WARN-BAR-BAND-WIDTH-TOO-NARROW",
+                  "WARN-BAR-GROUPED-SERIES-COINCIDE",
+                  "WARN-CALLOUT-TEXT-TRUNCATED",
+                  "WARN-CATEGORY-COLOR-PIN-UNSEEN",
+                  "WARN-CHART-TITLE-TRUNCATED",
+                  "WARN-COLUMN-CHECK-UNAVAILABLE",
+                  "WARN-DATE-AS-TEXT",
+                  "WARN-DBT-MANIFEST-MISSING",
+                  "WARN-DBT-MODEL-COLUMNS-UNRESOLVED",
+                  "WARN-DBT-QUERY-COLUMNS-INDETERMINATE",
+                  "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
+                  "WARN-DOUBLE-HEADER",
+                  "WARN-DUAL-AXIS-COMPETING-SCALES",
+                  "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-TIED",
+                  "WARN-EXTENDS-LAYOUT-APPENDED",
+                  "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
+                  "WARN-FANOUT-RISK",
+                  "WARN-FLAT-COLS-UNSIZED-OVERFLOW",
+                  "WARN-H1-BODY-NO-TITLE",
+                  "WARN-HTML-POLICY-CAPPED",
+                  "WARN-KPI-ALIGN-OVERFLOW",
+                  "WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
+                  "WARN-KPI-LABEL-TRUNCATED",
+                  "WARN-LAYER-X-DOMAIN-PAINT-ORDER",
+                  "WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH",
+                  "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
+                  "WARN-LEGEND-POSITION-WIDTH-FALLBACK",
+                  "WARN-LEGEND-VALUES-UNRESOLVED",
+                  "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
+                  "WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS",
+                  "WARN-LOW-TEXT-CONTRAST",
+                  "WARN-MISSING-JOIN-PREDICATE",
+                  "WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE",
+                  "WARN-PALETTE-UNSUPPORTED",
+                  "WARN-PARSE-ERROR",
+                  "WARN-PIE-DOMINANT-SEGMENT",
+                  "WARN-PIE-TOO-MANY-SEGMENTS",
+                  "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS",
+                  "WARN-PLOT-HEIGHT-BELOW-MINIMUM",
+                  "WARN-PLOT-WIDTH-BELOW-MINIMUM",
+                  "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
+                  "WARN-POINT-MAP-OUT-OF-PROJECTION",
+                  "WARN-QUERY-RESULT-TRUNCATED",
+                  "WARN-QUERY-RETURNED-ZERO-ROWS",
+                  "WARN-REAGGREGATION",
+                  "WARN-REDUNDANT-AUTHORED-DEFAULT",
+                  "WARN-REDUNDANT-AUTHORED-LABEL",
+                  "WARN-REDUNDANT-ENCODING",
+                  "WARN-SCHEMA-MIGRATED",
+                  "WARN-SERIES-LABEL-TRUNCATED",
+                  "WARN-SERIES-LABELS-REPEAT-WORD",
+                  "WARN-SINGLE-CHART-REDUNDANT-TITLE",
+                  "WARN-SPARK-LABEL-TRUNCATED",
+                  "WARN-STATIC-PAGINATION-CAPPED",
+                  "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
+                  "WARN-TABLE-COLUMNS-OVERFLOW",
+                  "WARN-TABLE-CRAMPED",
+                  "WARN-TABLE-PAGE-SQUEEZED",
+                  "WARN-TABLE-TEXT-TRUNCATED",
+                  "WARN-TEMPORAL-SINGLE-POINT",
+                  "WARN-TOO-MANY-COLOR-CATEGORIES",
+                  "WARN-TOO-MANY-X-CATEGORIES",
+                  "WARN-UNREFERENCED-CHART",
+                  "WARN-VALUE-LABELS-CROWD-WIDTH",
+                  "WARN-WAREHOUSE-CHECK-UNAVAILABLE",
+                  "WARN-WIDE-MEASURE-LABEL-COLLISION",
+                  "WARN-Y-ENCODING-MOSTLY-NULL"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -913,7 +1143,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -973,10 +1203,11 @@
               "type": "boolean"
             },
             {
-              "type": "null"
+              "pattern": "\\S",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -984,11 +1215,13 @@
           "title": "Incremental"
         },
         "type": {
-          "const": "schema",
-          "default": "schema",
+          "default": null,
           "description": "Never inferred; write `type: schema` explicitly.",
-          "title": "Type",
-          "type": "string"
+          "enum": [
+            "schema",
+            null
+          ],
+          "title": "Type"
         },
         "schema": {
           "anyOf": [
@@ -1088,6 +1321,82 @@
           "anyOf": [
             {
               "items": {
+                "enum": [
+                  "WARN-ADJACENT-TEXT-ROWS",
+                  "WARN-AREA-UNSTACKED-READS-AS-STACKED",
+                  "WARN-AXIS-ALIGN-DISCARDED",
+                  "WARN-AXIS-LABEL-COLLISION",
+                  "WARN-AXIS-TITLE-TRUNCATED",
+                  "WARN-BAR-BAND-WIDTH-TOO-NARROW",
+                  "WARN-BAR-GROUPED-SERIES-COINCIDE",
+                  "WARN-CALLOUT-TEXT-TRUNCATED",
+                  "WARN-CATEGORY-COLOR-PIN-UNSEEN",
+                  "WARN-CHART-TITLE-TRUNCATED",
+                  "WARN-COLUMN-CHECK-UNAVAILABLE",
+                  "WARN-DATE-AS-TEXT",
+                  "WARN-DBT-MANIFEST-MISSING",
+                  "WARN-DBT-MODEL-COLUMNS-UNRESOLVED",
+                  "WARN-DBT-QUERY-COLUMNS-INDETERMINATE",
+                  "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
+                  "WARN-DOUBLE-HEADER",
+                  "WARN-DUAL-AXIS-COMPETING-SCALES",
+                  "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-TIED",
+                  "WARN-EXTENDS-LAYOUT-APPENDED",
+                  "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
+                  "WARN-FANOUT-RISK",
+                  "WARN-FLAT-COLS-UNSIZED-OVERFLOW",
+                  "WARN-H1-BODY-NO-TITLE",
+                  "WARN-HTML-POLICY-CAPPED",
+                  "WARN-KPI-ALIGN-OVERFLOW",
+                  "WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
+                  "WARN-KPI-LABEL-TRUNCATED",
+                  "WARN-LAYER-X-DOMAIN-PAINT-ORDER",
+                  "WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH",
+                  "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
+                  "WARN-LEGEND-POSITION-WIDTH-FALLBACK",
+                  "WARN-LEGEND-VALUES-UNRESOLVED",
+                  "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
+                  "WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS",
+                  "WARN-LOW-TEXT-CONTRAST",
+                  "WARN-MISSING-JOIN-PREDICATE",
+                  "WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE",
+                  "WARN-PALETTE-UNSUPPORTED",
+                  "WARN-PARSE-ERROR",
+                  "WARN-PIE-DOMINANT-SEGMENT",
+                  "WARN-PIE-TOO-MANY-SEGMENTS",
+                  "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS",
+                  "WARN-PLOT-HEIGHT-BELOW-MINIMUM",
+                  "WARN-PLOT-WIDTH-BELOW-MINIMUM",
+                  "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
+                  "WARN-POINT-MAP-OUT-OF-PROJECTION",
+                  "WARN-QUERY-RESULT-TRUNCATED",
+                  "WARN-QUERY-RETURNED-ZERO-ROWS",
+                  "WARN-REAGGREGATION",
+                  "WARN-REDUNDANT-AUTHORED-DEFAULT",
+                  "WARN-REDUNDANT-AUTHORED-LABEL",
+                  "WARN-REDUNDANT-ENCODING",
+                  "WARN-SCHEMA-MIGRATED",
+                  "WARN-SERIES-LABEL-TRUNCATED",
+                  "WARN-SERIES-LABELS-REPEAT-WORD",
+                  "WARN-SINGLE-CHART-REDUNDANT-TITLE",
+                  "WARN-SPARK-LABEL-TRUNCATED",
+                  "WARN-STATIC-PAGINATION-CAPPED",
+                  "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
+                  "WARN-TABLE-COLUMNS-OVERFLOW",
+                  "WARN-TABLE-CRAMPED",
+                  "WARN-TABLE-PAGE-SQUEEZED",
+                  "WARN-TABLE-TEXT-TRUNCATED",
+                  "WARN-TEMPORAL-SINGLE-POINT",
+                  "WARN-TOO-MANY-COLOR-CATEGORIES",
+                  "WARN-TOO-MANY-X-CATEGORIES",
+                  "WARN-UNREFERENCED-CHART",
+                  "WARN-VALUE-LABELS-CROWD-WIDTH",
+                  "WARN-WAREHOUSE-CHECK-UNAVAILABLE",
+                  "WARN-WIDE-MEASURE-LABEL-COLLISION",
+                  "WARN-Y-ENCODING-MOSTLY-NULL"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -1097,7 +1406,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -1157,10 +1466,11 @@
               "type": "boolean"
             },
             {
-              "type": "null"
+              "pattern": "\\S",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -1223,6 +1533,7 @@
                 "databricks",
                 "duckdb",
                 "fabric",
+                "lakecompute",
                 "mysql",
                 "postgres",
                 "presto",
@@ -1285,6 +1596,82 @@
           "anyOf": [
             {
               "items": {
+                "enum": [
+                  "WARN-ADJACENT-TEXT-ROWS",
+                  "WARN-AREA-UNSTACKED-READS-AS-STACKED",
+                  "WARN-AXIS-ALIGN-DISCARDED",
+                  "WARN-AXIS-LABEL-COLLISION",
+                  "WARN-AXIS-TITLE-TRUNCATED",
+                  "WARN-BAR-BAND-WIDTH-TOO-NARROW",
+                  "WARN-BAR-GROUPED-SERIES-COINCIDE",
+                  "WARN-CALLOUT-TEXT-TRUNCATED",
+                  "WARN-CATEGORY-COLOR-PIN-UNSEEN",
+                  "WARN-CHART-TITLE-TRUNCATED",
+                  "WARN-COLUMN-CHECK-UNAVAILABLE",
+                  "WARN-DATE-AS-TEXT",
+                  "WARN-DBT-MANIFEST-MISSING",
+                  "WARN-DBT-MODEL-COLUMNS-UNRESOLVED",
+                  "WARN-DBT-QUERY-COLUMNS-INDETERMINATE",
+                  "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
+                  "WARN-DOUBLE-HEADER",
+                  "WARN-DUAL-AXIS-COMPETING-SCALES",
+                  "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+                  "WARN-ENDPOINT-LABEL-RAIL-TIED",
+                  "WARN-EXTENDS-LAYOUT-APPENDED",
+                  "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
+                  "WARN-FANOUT-RISK",
+                  "WARN-FLAT-COLS-UNSIZED-OVERFLOW",
+                  "WARN-H1-BODY-NO-TITLE",
+                  "WARN-HTML-POLICY-CAPPED",
+                  "WARN-KPI-ALIGN-OVERFLOW",
+                  "WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
+                  "WARN-KPI-LABEL-TRUNCATED",
+                  "WARN-LAYER-X-DOMAIN-PAINT-ORDER",
+                  "WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH",
+                  "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
+                  "WARN-LEGEND-POSITION-WIDTH-FALLBACK",
+                  "WARN-LEGEND-VALUES-UNRESOLVED",
+                  "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
+                  "WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS",
+                  "WARN-LOW-TEXT-CONTRAST",
+                  "WARN-MISSING-JOIN-PREDICATE",
+                  "WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE",
+                  "WARN-PALETTE-UNSUPPORTED",
+                  "WARN-PARSE-ERROR",
+                  "WARN-PIE-DOMINANT-SEGMENT",
+                  "WARN-PIE-TOO-MANY-SEGMENTS",
+                  "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS",
+                  "WARN-PLOT-HEIGHT-BELOW-MINIMUM",
+                  "WARN-PLOT-WIDTH-BELOW-MINIMUM",
+                  "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
+                  "WARN-POINT-MAP-OUT-OF-PROJECTION",
+                  "WARN-QUERY-RESULT-TRUNCATED",
+                  "WARN-QUERY-RETURNED-ZERO-ROWS",
+                  "WARN-REAGGREGATION",
+                  "WARN-REDUNDANT-AUTHORED-DEFAULT",
+                  "WARN-REDUNDANT-AUTHORED-LABEL",
+                  "WARN-REDUNDANT-ENCODING",
+                  "WARN-SCHEMA-MIGRATED",
+                  "WARN-SERIES-LABEL-TRUNCATED",
+                  "WARN-SERIES-LABELS-REPEAT-WORD",
+                  "WARN-SINGLE-CHART-REDUNDANT-TITLE",
+                  "WARN-SPARK-LABEL-TRUNCATED",
+                  "WARN-STATIC-PAGINATION-CAPPED",
+                  "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
+                  "WARN-TABLE-COLUMNS-OVERFLOW",
+                  "WARN-TABLE-CRAMPED",
+                  "WARN-TABLE-PAGE-SQUEEZED",
+                  "WARN-TABLE-TEXT-TRUNCATED",
+                  "WARN-TEMPORAL-SINGLE-POINT",
+                  "WARN-TOO-MANY-COLOR-CATEGORIES",
+                  "WARN-TOO-MANY-X-CATEGORIES",
+                  "WARN-UNREFERENCED-CHART",
+                  "WARN-VALUE-LABELS-CROWD-WIDTH",
+                  "WARN-WAREHOUSE-CHECK-UNAVAILABLE",
+                  "WARN-WIDE-MEASURE-LABEL-COLLISION",
+                  "WARN-Y-ENCODING-MOSTLY-NULL"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -1294,7 +1681,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -1354,10 +1741,11 @@
               "type": "boolean"
             },
             {
-              "type": "null"
+              "pattern": "\\S",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -2120,6 +2508,8 @@
         "fiscal_year_start_month": {
           "anyOf": [
             {
+              "maximum": 12,
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -3241,10 +3631,11 @@
         "headroom": {
           "anyOf": [
             {
-              "type": "null"
+              "minimum": 0,
+              "type": "number"
             },
             {
-              "type": "number"
+              "type": "null"
             }
           ],
           "default": null,
@@ -3399,98 +3790,32 @@
       "title": "BorderStyle",
       "type": "object"
     },
-    "BorderStylePatch": {
-      "additionalProperties": false,
-      "description": "Box border. Does NOT cascade (ADR-003: box properties reset per level).\n\nDoubles as CSS shorthand parser via from_css() for StylePatch.border.",
+    "BoxShadow": {
       "properties": {
-        "radius": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Border corner radius in pixels.",
-          "title": "Radius"
+        "dx": {
+          "title": "Dx",
+          "type": "number"
+        },
+        "dy": {
+          "title": "Dy",
+          "type": "number"
+        },
+        "blur": {
+          "title": "Blur",
+          "type": "number"
         },
         "color": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Border color (CSS color string).",
-          "title": "Color"
-        },
-        "width": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Border width in pixels.",
-          "title": "Width"
-        },
-        "dash_array": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "SVG stroke-dasharray pattern in pixels (e.g. [4, 4]). None means a solid border.",
-          "title": "Dash Array"
-        },
-        "line_cap": {
-          "anyOf": [
-            {
-              "enum": [
-                "butt",
-                "round",
-                "square"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "How each dash's ends are finished on a dashed border. None uses the renderer default (butt).",
-          "title": "Line Cap"
-        },
-        "dash_offset": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "How far into the dash pattern the line starts, in pixels. None means 0.",
-          "title": "Dash Offset"
+          "title": "Color",
+          "type": "string"
         }
       },
-      "title": "BorderStylePatch",
+      "required": [
+        "blur",
+        "color",
+        "dx",
+        "dy"
+      ],
+      "title": "BoxShadow",
       "type": "object"
     },
     "CachePatch": {
@@ -3529,10 +3854,11 @@
         "ttl": {
           "anyOf": [
             {
-              "type": "null"
+              "pattern": "^\\s*(?:[0-9]+\\s*[smhdwSMHDW]\\s*)+$",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -3728,6 +4054,7 @@
               "items": {
                 "type": "string"
               },
+              "minItems": 1,
               "type": "array"
             },
             {
@@ -4006,7 +4333,7 @@
         "background": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ScaleTargetConfig"
+              "$ref": "#/$defs/ColumnScaleTargetConfig"
             },
             {
               "type": "null"
@@ -4018,7 +4345,7 @@
         "color": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ScaleTargetConfig"
+              "$ref": "#/$defs/ColumnScaleTargetConfig"
             },
             {
               "type": "null"
@@ -4029,6 +4356,269 @@
         }
       },
       "title": "ColumnScaleConfig",
+      "type": "object"
+    },
+    "ColumnScaleTargetConfig": {
+      "additionalProperties": false,
+      "description": "A table column's scale target: CSS color strings only.",
+      "properties": {
+        "palette": {
+          "anyOf": [
+            {
+              "enum": [
+                "accent",
+                "bluegreen",
+                "blueorange",
+                "bluepurple",
+                "blues",
+                "brownbluegreen",
+                "browns",
+                "category-6-tonal-blue",
+                "category-6-tonal-blue.dark",
+                "category-6-tonal-blue.deep",
+                "category-6-tonal-blue.light",
+                "category-6-tonal-blue.pale",
+                "category-6-tonal-brown",
+                "category-6-tonal-brown.dark",
+                "category-6-tonal-brown.deep",
+                "category-6-tonal-brown.light",
+                "category-6-tonal-brown.pale",
+                "category-6-tonal-green",
+                "category-6-tonal-green.dark",
+                "category-6-tonal-green.deep",
+                "category-6-tonal-green.light",
+                "category-6-tonal-green.pale",
+                "category-6-tonal-orange",
+                "category-6-tonal-orange.dark",
+                "category-6-tonal-orange.deep",
+                "category-6-tonal-orange.light",
+                "category-6-tonal-orange.pale",
+                "category-6-tonal-purple",
+                "category-6-tonal-purple.dark",
+                "category-6-tonal-purple.deep",
+                "category-6-tonal-purple.light",
+                "category-6-tonal-purple.pale",
+                "category10",
+                "category20",
+                "category20b",
+                "category20c",
+                "cividis",
+                "dark2",
+                "darkblue",
+                "darkgold",
+                "darkgreen",
+                "darkmulti",
+                "darkred",
+                "dbt-creams",
+                "dbt-div-blue-red",
+                "dbt-div-blue-red-dark",
+                "dbt-div-coolwarm",
+                "dbt-div-coolwarm-dark",
+                "dbt-div-crimson-green",
+                "dbt-div-crimson-green-dark",
+                "dbt-div-orange-teal",
+                "dbt-div-orange-teal-dark",
+                "dbt-div-sunset",
+                "dbt-div-sunset-dark",
+                "dbt-grays",
+                "dbt-seq-amber",
+                "dbt-seq-amber-dark",
+                "dbt-seq-blue",
+                "dbt-seq-blue-dark",
+                "dbt-seq-brown",
+                "dbt-seq-brown-dark",
+                "dbt-seq-gray",
+                "dbt-seq-gray-dark",
+                "dbt-seq-green",
+                "dbt-seq-green-dark",
+                "dbt-seq-purple",
+                "dbt-seq-purple-dark",
+                "dbt-seq-rust",
+                "dbt-seq-rust-dark",
+                "dbt-seq-teal",
+                "dbt-seq-teal-dark",
+                "editorial-10",
+                "editorial-10.dark",
+                "editorial-10.deep",
+                "editorial-10.light",
+                "editorial-10.pale",
+                "goldgreen",
+                "goldorange",
+                "goldred",
+                "greenblue",
+                "greens",
+                "greys",
+                "hero-6",
+                "hero-6.dark",
+                "hero-6.deep",
+                "hero-6.light",
+                "hero-6.pale",
+                "inferno",
+                "lightgreyred",
+                "lightgreyteal",
+                "lightmulti",
+                "lightorange",
+                "lighttealblue",
+                "magma",
+                "observable10",
+                "orangered",
+                "oranges",
+                "paired",
+                "pastel1",
+                "pastel2",
+                "pinkyellowgreen",
+                "plasma",
+                "purpleblue",
+                "purplebluegreen",
+                "purplegreen",
+                "purpleorange",
+                "purplered",
+                "purples",
+                "redblue",
+                "redgrey",
+                "redpurple",
+                "reds",
+                "redyellowblue",
+                "redyellowgreen",
+                "set1",
+                "set2",
+                "set3",
+                "sinebow",
+                "spectral",
+                "tableau",
+                "tableau.dark",
+                "tableau.deep",
+                "tableau.light",
+                "tableau.pale",
+                "tableau10",
+                "tableau20",
+                "tealblues",
+                "teals",
+                "turbo",
+                "viridis",
+                "vivid-10",
+                "vivid-10.dark",
+                "vivid-10.deep",
+                "vivid-10.light",
+                "vivid-10.pale",
+                "warmgreys",
+                "yellowgreen",
+                "yellowgreenblue",
+                "yelloworangebrown",
+                "yelloworangered"
+              ],
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Which colors the scale draws from: a built-in palette name or Vega scheme, or a CSS color list.",
+          "title": "Palette"
+        },
+        "domain": {
+          "anyOf": [
+            {
+              "const": "data",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "data",
+          "description": "Scale domain source ('data' uses the data extent, widened to nice round bounds when nice is true; None uses explicit min/max).",
+          "title": "Domain"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Minimum scale domain value (overrides data minimum).",
+          "title": "Min"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Maximum scale domain value (overrides data maximum).",
+          "title": "Max"
+        },
+        "nice": {
+          "default": true,
+          "description": "Widen a data-derived domain to round ('nice') bounds and label every nice tick on the legend, mirroring Vega-Lite's own scale.nice. Applies to the color scale a gradient legend labels, not the x/y position scale. Ignored once min or max is set; a single-sided bound already fixes that edge exactly. Widening is currently honored on heatmap's themed color gradient only; geoshape's choropleth honors `nice: false` (exact endpoint labels) but not `nice: true`'s widening.",
+          "title": "Nice",
+          "type": "boolean"
+        },
+        "null_color": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Color assigned to null values.",
+          "title": "Null Color"
+        },
+        "hinge": {
+          "anyOf": [
+            {
+              "const": "auto",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Diverging scale midpoint value, or 'auto' to use the data midpoint.",
+          "title": "Hinge"
+        },
+        "arm_mode": {
+          "default": "asymmetric",
+          "description": "How diverging scale arms are stretched: 'asymmetric' (proportional) or 'symmetric' (equal arms).",
+          "enum": [
+            "asymmetric",
+            "symmetric"
+          ],
+          "title": "Arm Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "palette"
+      ],
+      "title": "ColumnScaleTargetConfig",
       "type": "object"
     },
     "ColumnSpan": {
@@ -4223,10 +4813,11 @@
         "glyph": {
           "anyOf": [
             {
-              "type": "null"
+              "pattern": "\\S",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -4778,6 +5369,7 @@
               "items": {
                 "type": "number"
               },
+              "minItems": 1,
               "type": "array"
             },
             {
@@ -4792,6 +5384,7 @@
           "anyOf": [
             {
               "items": {},
+              "minItems": 1,
               "type": "array"
             },
             {
@@ -4959,10 +5552,11 @@
         "dasharray": {
           "anyOf": [
             {
-              "type": "null"
+              "pattern": "^\\s*\\d+(\\.\\d+)?([ ,]+\\d+(\\.\\d+)?)*\\s*$",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -5011,10 +5605,11 @@
         "width": {
           "anyOf": [
             {
-              "type": "null"
+              "exclusiveMinimum": 0,
+              "type": "number"
             },
             {
-              "type": "number"
+              "type": "null"
             }
           ],
           "default": null,
@@ -5024,10 +5619,11 @@
         "dasharray": {
           "anyOf": [
             {
-              "type": "null"
+              "pattern": "^\\s*\\d+(\\.\\d+)?([ ,]+\\d+(\\.\\d+)?)*\\s*$",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -5463,6 +6059,59 @@
       "title": "FormatConfig",
       "type": "object"
     },
+    "FormatTable": {
+      "additionalProperties": false,
+      "description": "What resolves a format name on one board: the author's ``style.formats``\naliases, and the ``regional.currency`` whose minor unit ``currency_full``\nprints (None: the locale's own currency, at two decimals).",
+      "properties": {
+        "aliases": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FormatConfig"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Aliases",
+          "type": "object"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "enum": [
+                "AUD",
+                "BRL",
+                "CAD",
+                "CHF",
+                "CNY",
+                "DKK",
+                "EUR",
+                "GBP",
+                "INR",
+                "JPY",
+                "MXN",
+                "NOK",
+                "SEK",
+                "USD"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Currency"
+        }
+      },
+      "required": [
+        "aliases",
+        "currency"
+      ],
+      "title": "FormatTable",
+      "type": "object"
+    },
     "FrameStyle": {
       "additionalProperties": false,
       "description": "Board-level structural dimensions. Do NOT cascade to child boards.",
@@ -5662,7 +6311,7 @@
         "border": {
           "anyOf": [
             {
-              "$ref": "#/$defs/BorderStylePatch"
+              "$ref": "#/$defs/BorderStyle"
             },
             {
               "type": "null"
@@ -6426,7 +7075,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -6728,7 +7377,15 @@
           "type": "number"
         },
         "border": {
-          "$ref": "#/$defs/BorderStyle",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BorderStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
           "description": "KPI card border style."
         },
         "content_padding": {
@@ -6755,7 +7412,6 @@
         }
       },
       "required": [
-        "border",
         "content_padding",
         "default_height",
         "min_card_width",
@@ -6979,15 +7635,15 @@
     },
     "LabelsDefaultTemplate": {
       "additionalProperties": false,
-      "description": "Default Jinja templates for per-slice pie/donut labels.\n\nApplied when the chart author omits ``labels:`` and the chart is\npie/donut with ``theta:`` set. The pick between ``with_color`` and\n``no_color`` happens at resolve time, based on whether the chart\nauthored a ``color:`` channel \u2014 that's a structural fact about the\nchart's authoring surface, not a theme concern.\n\nTemplates use the generic Jinja context vars supplied by the\n``context_extras`` callback in ``render/chart/emitters/pie.py``\n(``percent``, ``color``, ``value``, ``total``) so they work regardless\nof the chart's theta/color field names.",
+      "description": "Default Jinja templates for per-slice pie/donut labels.\n\nApplied when the chart author omits ``labels:`` and the chart is\npie/donut with ``theta:`` set. The pick between ``with_color`` and\n``no_color`` happens at resolve time, based on whether the chart\nauthored a ``color:`` channel \u2014 that's a structural fact about the\nchart's authoring surface, not a theme concern.\n\nTemplates use the generic Jinja context vars supplied by the\n``context_extras`` callback in ``render/chart/emitters/pie.py``\n(``percent``, ``color``, ``value``, ``total``) so they work regardless\nof the chart's theta/color field names.\n\n``{value_line}`` stands for the slice value in the slice tooltip's format.",
       "properties": {
         "with_color": {
-          "description": "Default per-slice label template when the chart has a color binding.",
+          "description": "Default per-slice label template when the chart has a color binding. `{value_line}` stands for the slice value in the slice tooltip's format.",
           "title": "With Color",
           "type": "string"
         },
         "no_color": {
-          "description": "Default per-slice label template when the chart has no color binding.",
+          "description": "Default per-slice label template when the chart has no color binding. `{value_line}` stands for the slice value in the slice tooltip's format.",
           "title": "No Color",
           "type": "string"
         }
@@ -7242,6 +7898,7 @@
         "columns": {
           "anyOf": [
             {
+              "minimum": 0,
               "type": "integer"
             },
             {
@@ -7255,6 +7912,7 @@
         "compact_columns": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -7305,6 +7963,7 @@
         "symbol_limit": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -7841,6 +8500,129 @@
       "title": "MultiplesConfig",
       "type": "object"
     },
+    "NumberLocale": {
+      "additionalProperties": false,
+      "description": "A d3 formatLocale definition.",
+      "properties": {
+        "decimal": {
+          "description": "The decimal mark (e.g. `\".\"`).",
+          "title": "Decimal",
+          "type": "string"
+        },
+        "thousands": {
+          "description": "The group separator (e.g. `\",\"`).",
+          "title": "Thousands",
+          "type": "string"
+        },
+        "grouping": {
+          "description": "The group sizes (e.g. `[3]`), cycled as needed.",
+          "items": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Grouping",
+          "type": "array"
+        },
+        "currency": {
+          "description": "The currency prefix and suffix (e.g. `[\"$\", \"\"]`) a `$` in a d3 spec prints.",
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Currency",
+          "type": "array"
+        },
+        "percent": {
+          "default": "%",
+          "description": "The percent sign.",
+          "title": "Percent",
+          "type": "string"
+        },
+        "minus": {
+          "default": "\u2212",
+          "description": "The minus sign.",
+          "title": "Minus",
+          "type": "string"
+        },
+        "analytic": {
+          "default": [
+            "\u00a0K",
+            "\u00a0M",
+            "\u00a0B",
+            "\u00a0T"
+          ],
+          "description": "The extra-short thousand, million, billion and trillion suffixes, where a magnitude is declared once (en-US: K, M, B, T after a non-breaking space). A leading space is part of the suffix.",
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "pattern": "\\S",
+              "type": "string"
+            }
+          ],
+          "title": "Analytic",
+          "type": "array"
+        },
+        "narrative": {
+          "default": [
+            "k",
+            "mn",
+            "bn",
+            "trn"
+          ],
+          "description": "The abbreviated thousand, million, billion and trillion suffixes on every value (en-US: `[\"k\", \"mn\", \"bn\", \"trn\"]`).",
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "pattern": "\\S",
+              "type": "string"
+            }
+          ],
+          "title": "Narrative",
+          "type": "array"
+        }
+      },
+      "required": [
+        "currency",
+        "decimal",
+        "grouping",
+        "thousands"
+      ],
+      "title": "NumberLocale",
+      "type": "object"
+    },
     "PaddingStyle": {
       "additionalProperties": false,
       "description": "Per-chart padding inset (px). All 4 sides required; theme YAML supplies defaults.\n\nThe board layer adds ``card_padding`` to each side additively so per-chart\npadding composes with the global card layout rather than replacing it.",
@@ -8228,6 +9010,7 @@
         "columns": {
           "anyOf": [
             {
+              "minimum": 0,
               "type": "integer"
             },
             {
@@ -8241,6 +9024,7 @@
         "compact_columns": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -8291,6 +9075,7 @@
         "symbol_limit": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -8719,7 +9504,7 @@
         "border": {
           "anyOf": [
             {
-              "$ref": "#/$defs/BorderStylePatch"
+              "$ref": "#/$defs/BorderStyle"
             },
             {
               "type": "null"
@@ -9058,6 +9843,116 @@
         }
       },
       "title": "RectMarkStyle",
+      "type": "object"
+    },
+    "Regional": {
+      "additionalProperties": false,
+      "description": "How a board writes numbers: its d3 locale and currency symbol.",
+      "properties": {
+        "locale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumberLocale"
+            },
+            {
+              "enum": [
+                "ar-AE",
+                "ar-BH",
+                "ar-DJ",
+                "ar-DZ",
+                "ar-EG",
+                "ar-EH",
+                "ar-ER",
+                "ar-IL",
+                "ar-IQ",
+                "ar-JO",
+                "ar-KM",
+                "ar-KW",
+                "ar-LB",
+                "ar-LY",
+                "ar-MA",
+                "ar-MR",
+                "ar-OM",
+                "ar-PS",
+                "ar-QA",
+                "ar-SA",
+                "ar-SD",
+                "ar-SO",
+                "ar-SS",
+                "ar-SY",
+                "ar-TD",
+                "ar-TN",
+                "ar-YE",
+                "ca-ES",
+                "cs-CZ",
+                "da-DK",
+                "de-CH",
+                "de-DE",
+                "en-CA",
+                "en-GB",
+                "en-IE",
+                "en-IN",
+                "en-US",
+                "es-BO",
+                "es-ES",
+                "es-MX",
+                "fi-FI",
+                "fr-CA",
+                "fr-FR",
+                "he-IL",
+                "hu-HU",
+                "it-IT",
+                "ja-JP",
+                "ko-KR",
+                "mk-MK",
+                "nl-NL",
+                "pl-PL",
+                "pt-BR",
+                "pt-PT",
+                "ru-RU",
+                "sl-SI",
+                "sv-SE",
+                "uk-UA",
+                "zh-CN"
+              ],
+              "type": "string"
+            }
+          ],
+          "default": "en-US",
+          "description": "The d3-format locale for every number on the board: a locale name, or a full d3 locale definition.",
+          "title": "Locale"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "enum": [
+                "AUD",
+                "BRL",
+                "CAD",
+                "CHF",
+                "CNY",
+                "DKK",
+                "EUR",
+                "GBP",
+                "INR",
+                "JPY",
+                "MXN",
+                "NOK",
+                "SEK",
+                "USD"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ISO 4217 code whose symbol replaces the locale's own in its currency template, at the locale's placement. Unset prints the locale's own.",
+          "title": "Currency"
+        }
+      },
+      "title": "Regional",
       "type": "object"
     },
     "RelatedLocation": {
@@ -11592,6 +12487,9 @@
           "title": "Html Policy",
           "type": "string"
         },
+        "regional": {
+          "$ref": "#/$defs/Regional"
+        },
         "level": {
           "title": "Level",
           "type": "integer"
@@ -11771,6 +12669,7 @@
         "notes",
         "page_padding",
         "queries",
+        "regional",
         "style",
         "tags",
         "text",
@@ -12202,23 +13101,12 @@
         "formats": {
           "anyOf": [
             {
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/FormatConfig"
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
-              },
-              "type": "object"
+              "$ref": "#/$defs/FormatTable"
             },
             {
               "type": "null"
             }
-          ],
-          "title": "Formats"
+          ]
         },
         "background": {
           "title": "Background",
@@ -12279,15 +13167,15 @@
     },
     "ResolvedColumnScaleConfig": {
       "additionalProperties": false,
-      "description": "ColumnScaleConfig with resolved scale targets.\n\nConstructed by _with_resolved_scale_stops in compile/resolve/chart/_table.py\nafter the WCAG-safe palette bake runs. background/color carry\nResolvedScaleTarget so resolved_stops survives pydantic serialization\n(board artifact round-trip). The base ColumnScaleConfig is used for\npre-bake authored input; this resolved variant is only constructed at\nresolve time.",
+      "description": "ColumnScaleConfig with resolved scale targets.\n\nConstructed by _with_resolved_scale_stops in compile/resolve/chart/_table.py\nafter the WCAG-safe palette bake runs. background/color carry\nResolvedColumnScaleTarget so resolved_stops survives pydantic serialization\n(board artifact round-trip). The base ColumnScaleConfig is used for\npre-bake authored input; this resolved variant is only constructed at\nresolve time.",
       "properties": {
         "background": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ResolvedNamedPaletteScaleTargetConfig"
+              "$ref": "#/$defs/ResolvedColumnScaleTargetConfig"
             },
             {
-              "$ref": "#/$defs/ResolvedScaleTargetConfig"
+              "$ref": "#/$defs/ResolvedNamedPaletteColumnScaleTargetConfig"
             },
             {
               "type": "null"
@@ -12300,10 +13188,10 @@
         "color": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ResolvedNamedPaletteScaleTargetConfig"
+              "$ref": "#/$defs/ResolvedColumnScaleTargetConfig"
             },
             {
-              "$ref": "#/$defs/ResolvedScaleTargetConfig"
+              "$ref": "#/$defs/ResolvedNamedPaletteColumnScaleTargetConfig"
             },
             {
               "type": "null"
@@ -12315,6 +13203,269 @@
         }
       },
       "title": "ResolvedColumnScaleConfig",
+      "type": "object"
+    },
+    "ResolvedColumnScaleTargetConfig": {
+      "additionalProperties": false,
+      "description": "``ResolvedScaleTargetConfig`` keeping the column's narrowed palette.",
+      "properties": {
+        "palette": {
+          "anyOf": [
+            {
+              "enum": [
+                "accent",
+                "bluegreen",
+                "blueorange",
+                "bluepurple",
+                "blues",
+                "brownbluegreen",
+                "browns",
+                "category-6-tonal-blue",
+                "category-6-tonal-blue.dark",
+                "category-6-tonal-blue.deep",
+                "category-6-tonal-blue.light",
+                "category-6-tonal-blue.pale",
+                "category-6-tonal-brown",
+                "category-6-tonal-brown.dark",
+                "category-6-tonal-brown.deep",
+                "category-6-tonal-brown.light",
+                "category-6-tonal-brown.pale",
+                "category-6-tonal-green",
+                "category-6-tonal-green.dark",
+                "category-6-tonal-green.deep",
+                "category-6-tonal-green.light",
+                "category-6-tonal-green.pale",
+                "category-6-tonal-orange",
+                "category-6-tonal-orange.dark",
+                "category-6-tonal-orange.deep",
+                "category-6-tonal-orange.light",
+                "category-6-tonal-orange.pale",
+                "category-6-tonal-purple",
+                "category-6-tonal-purple.dark",
+                "category-6-tonal-purple.deep",
+                "category-6-tonal-purple.light",
+                "category-6-tonal-purple.pale",
+                "category10",
+                "category20",
+                "category20b",
+                "category20c",
+                "cividis",
+                "dark2",
+                "darkblue",
+                "darkgold",
+                "darkgreen",
+                "darkmulti",
+                "darkred",
+                "dbt-creams",
+                "dbt-div-blue-red",
+                "dbt-div-blue-red-dark",
+                "dbt-div-coolwarm",
+                "dbt-div-coolwarm-dark",
+                "dbt-div-crimson-green",
+                "dbt-div-crimson-green-dark",
+                "dbt-div-orange-teal",
+                "dbt-div-orange-teal-dark",
+                "dbt-div-sunset",
+                "dbt-div-sunset-dark",
+                "dbt-grays",
+                "dbt-seq-amber",
+                "dbt-seq-amber-dark",
+                "dbt-seq-blue",
+                "dbt-seq-blue-dark",
+                "dbt-seq-brown",
+                "dbt-seq-brown-dark",
+                "dbt-seq-gray",
+                "dbt-seq-gray-dark",
+                "dbt-seq-green",
+                "dbt-seq-green-dark",
+                "dbt-seq-purple",
+                "dbt-seq-purple-dark",
+                "dbt-seq-rust",
+                "dbt-seq-rust-dark",
+                "dbt-seq-teal",
+                "dbt-seq-teal-dark",
+                "editorial-10",
+                "editorial-10.dark",
+                "editorial-10.deep",
+                "editorial-10.light",
+                "editorial-10.pale",
+                "goldgreen",
+                "goldorange",
+                "goldred",
+                "greenblue",
+                "greens",
+                "greys",
+                "hero-6",
+                "hero-6.dark",
+                "hero-6.deep",
+                "hero-6.light",
+                "hero-6.pale",
+                "inferno",
+                "lightgreyred",
+                "lightgreyteal",
+                "lightmulti",
+                "lightorange",
+                "lighttealblue",
+                "magma",
+                "observable10",
+                "orangered",
+                "oranges",
+                "paired",
+                "pastel1",
+                "pastel2",
+                "pinkyellowgreen",
+                "plasma",
+                "purpleblue",
+                "purplebluegreen",
+                "purplegreen",
+                "purpleorange",
+                "purplered",
+                "purples",
+                "redblue",
+                "redgrey",
+                "redpurple",
+                "reds",
+                "redyellowblue",
+                "redyellowgreen",
+                "set1",
+                "set2",
+                "set3",
+                "sinebow",
+                "spectral",
+                "tableau",
+                "tableau.dark",
+                "tableau.deep",
+                "tableau.light",
+                "tableau.pale",
+                "tableau10",
+                "tableau20",
+                "tealblues",
+                "teals",
+                "turbo",
+                "viridis",
+                "vivid-10",
+                "vivid-10.dark",
+                "vivid-10.deep",
+                "vivid-10.light",
+                "vivid-10.pale",
+                "warmgreys",
+                "yellowgreen",
+                "yellowgreenblue",
+                "yelloworangebrown",
+                "yelloworangered"
+              ],
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Which colors the scale draws from: a built-in palette name or Vega scheme, or a CSS color list.",
+          "title": "Palette"
+        },
+        "domain": {
+          "anyOf": [
+            {
+              "const": "data",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "data",
+          "description": "Scale domain source ('data' uses the data extent, widened to nice round bounds when nice is true; None uses explicit min/max).",
+          "title": "Domain"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Minimum scale domain value (overrides data minimum).",
+          "title": "Min"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Maximum scale domain value (overrides data maximum).",
+          "title": "Max"
+        },
+        "nice": {
+          "default": true,
+          "description": "Widen a data-derived domain to round ('nice') bounds and label every nice tick on the legend, mirroring Vega-Lite's own scale.nice. Applies to the color scale a gradient legend labels, not the x/y position scale. Ignored once min or max is set; a single-sided bound already fixes that edge exactly. Widening is currently honored on heatmap's themed color gradient only; geoshape's choropleth honors `nice: false` (exact endpoint labels) but not `nice: true`'s widening.",
+          "title": "Nice",
+          "type": "boolean"
+        },
+        "null_color": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Color assigned to null values.",
+          "title": "Null Color"
+        },
+        "hinge": {
+          "anyOf": [
+            {
+              "const": "auto",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Diverging scale midpoint value, or 'auto' to use the data midpoint.",
+          "title": "Hinge"
+        },
+        "arm_mode": {
+          "default": "asymmetric",
+          "description": "How diverging scale arms are stretched: 'asymmetric' (proportional) or 'symmetric' (equal arms).",
+          "enum": [
+            "asymmetric",
+            "symmetric"
+          ],
+          "title": "Arm Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "palette"
+      ],
+      "title": "ResolvedColumnScaleTargetConfig",
       "type": "object"
     },
     "ResolvedColumnSharedScale": {
@@ -12958,7 +14109,7 @@
         "border": {
           "anyOf": [
             {
-              "$ref": "#/$defs/BorderStylePatch"
+              "$ref": "#/$defs/BorderStyle"
             },
             {
               "type": "null"
@@ -13014,9 +14165,8 @@
           "description": "Scatter overlay style for point marks on geo families."
         },
         "tooltip_format": {
-          "description": "Pre-resolved tooltip format string (empty = no format).",
-          "title": "Tooltip Format",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedFormat",
+          "description": "Resolved tooltip format; an affix composes on the hover card."
         },
         "title_font": {
           "anyOf": [
@@ -15311,6 +16461,278 @@
       "title": "ResolvedMirrorAxis",
       "type": "object"
     },
+    "ResolvedNamedPaletteColumnScaleTargetConfig": {
+      "additionalProperties": false,
+      "description": "``ResolvedNamedPaletteScaleTargetConfig`` keeping the column's narrowed palette.",
+      "properties": {
+        "palette": {
+          "anyOf": [
+            {
+              "enum": [
+                "accent",
+                "bluegreen",
+                "blueorange",
+                "bluepurple",
+                "blues",
+                "brownbluegreen",
+                "browns",
+                "category-6-tonal-blue",
+                "category-6-tonal-blue.dark",
+                "category-6-tonal-blue.deep",
+                "category-6-tonal-blue.light",
+                "category-6-tonal-blue.pale",
+                "category-6-tonal-brown",
+                "category-6-tonal-brown.dark",
+                "category-6-tonal-brown.deep",
+                "category-6-tonal-brown.light",
+                "category-6-tonal-brown.pale",
+                "category-6-tonal-green",
+                "category-6-tonal-green.dark",
+                "category-6-tonal-green.deep",
+                "category-6-tonal-green.light",
+                "category-6-tonal-green.pale",
+                "category-6-tonal-orange",
+                "category-6-tonal-orange.dark",
+                "category-6-tonal-orange.deep",
+                "category-6-tonal-orange.light",
+                "category-6-tonal-orange.pale",
+                "category-6-tonal-purple",
+                "category-6-tonal-purple.dark",
+                "category-6-tonal-purple.deep",
+                "category-6-tonal-purple.light",
+                "category-6-tonal-purple.pale",
+                "category10",
+                "category20",
+                "category20b",
+                "category20c",
+                "cividis",
+                "dark2",
+                "darkblue",
+                "darkgold",
+                "darkgreen",
+                "darkmulti",
+                "darkred",
+                "dbt-creams",
+                "dbt-div-blue-red",
+                "dbt-div-blue-red-dark",
+                "dbt-div-coolwarm",
+                "dbt-div-coolwarm-dark",
+                "dbt-div-crimson-green",
+                "dbt-div-crimson-green-dark",
+                "dbt-div-orange-teal",
+                "dbt-div-orange-teal-dark",
+                "dbt-div-sunset",
+                "dbt-div-sunset-dark",
+                "dbt-grays",
+                "dbt-seq-amber",
+                "dbt-seq-amber-dark",
+                "dbt-seq-blue",
+                "dbt-seq-blue-dark",
+                "dbt-seq-brown",
+                "dbt-seq-brown-dark",
+                "dbt-seq-gray",
+                "dbt-seq-gray-dark",
+                "dbt-seq-green",
+                "dbt-seq-green-dark",
+                "dbt-seq-purple",
+                "dbt-seq-purple-dark",
+                "dbt-seq-rust",
+                "dbt-seq-rust-dark",
+                "dbt-seq-teal",
+                "dbt-seq-teal-dark",
+                "editorial-10",
+                "editorial-10.dark",
+                "editorial-10.deep",
+                "editorial-10.light",
+                "editorial-10.pale",
+                "goldgreen",
+                "goldorange",
+                "goldred",
+                "greenblue",
+                "greens",
+                "greys",
+                "hero-6",
+                "hero-6.dark",
+                "hero-6.deep",
+                "hero-6.light",
+                "hero-6.pale",
+                "inferno",
+                "lightgreyred",
+                "lightgreyteal",
+                "lightmulti",
+                "lightorange",
+                "lighttealblue",
+                "magma",
+                "observable10",
+                "orangered",
+                "oranges",
+                "paired",
+                "pastel1",
+                "pastel2",
+                "pinkyellowgreen",
+                "plasma",
+                "purpleblue",
+                "purplebluegreen",
+                "purplegreen",
+                "purpleorange",
+                "purplered",
+                "purples",
+                "redblue",
+                "redgrey",
+                "redpurple",
+                "reds",
+                "redyellowblue",
+                "redyellowgreen",
+                "set1",
+                "set2",
+                "set3",
+                "sinebow",
+                "spectral",
+                "tableau",
+                "tableau.dark",
+                "tableau.deep",
+                "tableau.light",
+                "tableau.pale",
+                "tableau10",
+                "tableau20",
+                "tealblues",
+                "teals",
+                "turbo",
+                "viridis",
+                "vivid-10",
+                "vivid-10.dark",
+                "vivid-10.deep",
+                "vivid-10.light",
+                "vivid-10.pale",
+                "warmgreys",
+                "yellowgreen",
+                "yellowgreenblue",
+                "yelloworangebrown",
+                "yelloworangered"
+              ],
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Which colors the scale draws from: a built-in palette name or Vega scheme, or a CSS color list.",
+          "title": "Palette"
+        },
+        "domain": {
+          "anyOf": [
+            {
+              "const": "data",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "data",
+          "description": "Scale domain source ('data' uses the data extent, widened to nice round bounds when nice is true; None uses explicit min/max).",
+          "title": "Domain"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Minimum scale domain value (overrides data minimum).",
+          "title": "Min"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Maximum scale domain value (overrides data maximum).",
+          "title": "Max"
+        },
+        "nice": {
+          "default": true,
+          "description": "Widen a data-derived domain to round ('nice') bounds and label every nice tick on the legend, mirroring Vega-Lite's own scale.nice. Applies to the color scale a gradient legend labels, not the x/y position scale. Ignored once min or max is set; a single-sided bound already fixes that edge exactly. Widening is currently honored on heatmap's themed color gradient only; geoshape's choropleth honors `nice: false` (exact endpoint labels) but not `nice: true`'s widening.",
+          "title": "Nice",
+          "type": "boolean"
+        },
+        "null_color": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "Color assigned to null values.",
+          "title": "Null Color"
+        },
+        "hinge": {
+          "anyOf": [
+            {
+              "const": "auto",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "description": "Diverging scale midpoint value, or 'auto' to use the data midpoint.",
+          "title": "Hinge"
+        },
+        "arm_mode": {
+          "default": "asymmetric",
+          "description": "How diverging scale arms are stretched: 'asymmetric' (proportional) or 'symmetric' (equal arms).",
+          "enum": [
+            "asymmetric",
+            "symmetric"
+          ],
+          "title": "Arm Mode",
+          "type": "string"
+        },
+        "resolved_stops": {
+          "description": "Hex stops baked once at resolve-time. Structurally required \u2014 only this variant has the field, so callers cannot read a stale/absent value on the wrong type.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Resolved Stops",
+          "type": "array"
+        }
+      },
+      "required": [
+        "palette",
+        "resolved_stops"
+      ],
+      "title": "ResolvedNamedPaletteColumnScaleTargetConfig",
+      "type": "object"
+    },
     "ResolvedNamedPaletteScaleTargetConfig": {
       "additionalProperties": false,
       "description": "Bake ran; palette was a string that was resolved to stops.\n\nCovers both dbt-charts named palettes (resolved via bake_scale_target_stops)\nand the WCAG-safe table column path (_with_resolved_scale_stops). The\nresolved_stops field carries the baked hex stops.",
@@ -16588,9 +18010,8 @@
           "type": "string"
         },
         "tooltip_format": {
-          "description": "Pre-resolved tooltip format string (empty = no format).",
-          "title": "Tooltip Format",
-          "type": "string"
+          "$ref": "#/$defs/ResolvedFormat",
+          "description": "Resolved tooltip format; an affix composes on the hover card."
         },
         "title_font": {
           "anyOf": [
@@ -18501,13 +19922,12 @@
         "box_shadow": {
           "anyOf": [
             {
-              "type": "null"
+              "$ref": "#/$defs/BoxShadow"
             },
             {
-              "type": "string"
+              "type": "null"
             }
-          ],
-          "title": "Box Shadow"
+          ]
         },
         "opacity": {
           "title": "Opacity",
@@ -19457,10 +20877,11 @@
         "glyph": {
           "anyOf": [
             {
-              "type": "null"
+              "pattern": "\\S",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -19520,24 +20941,13 @@
         "formats": {
           "anyOf": [
             {
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/FormatConfig"
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
-              },
-              "type": "object"
+              "$ref": "#/$defs/FormatTable"
             },
             {
               "type": "null"
             }
           ],
-          "description": "Resolved format aliases available to table cells.",
-          "title": "Formats"
+          "description": "Resolved format aliases available to table cells."
         },
         "title_font": {
           "$ref": "#/$defs/ResolvedFontStyle",
@@ -19883,7 +21293,7 @@
     },
     "ScaleTargetConfig": {
       "additionalProperties": false,
-      "description": "Scale configuration for a single style target (background or color).\n\nUsed as a chart channel annotation (``ColumnScaleConfig``) and as the\n``gradient`` field of ``ColorStyle`` / ``StaticGradientColorStyle``.\nLives in primitives so both ``chart/authored.py`` and ``style/authored.py``\ncan import it without creating a circular dependency.",
+      "description": "Scale configuration for a single style target (background or color).\n\nBase of ``ColumnScaleTargetConfig`` and the ``gradient`` field of\n``ColorStyle`` / ``StaticGradientColorStyle``.\nLives in primitives so both ``chart/authored.py`` and ``style/authored.py``\ncan import it without creating a circular dependency.",
       "properties": {
         "palette": {
           "anyOf": [
@@ -20152,7 +21562,7 @@
     },
     "ScaleTargetConfigPatch": {
       "additionalProperties": false,
-      "description": "Authored overlay for ScaleTargetConfig. Scale configuration for a single style target (background or color).\n\nUsed as a chart channel annotation (``ColumnScaleConfig``) and as the\n``gradient`` field of ``ColorStyle`` / ``StaticGradientColorStyle``.\nLives in primitives so both ``chart/authored.py`` and ``style/authored.py``\ncan import it without creating a circular dependency.",
+      "description": "Authored overlay for ScaleTargetConfig. Scale configuration for a single style target (background or color).\n\nBase of ``ColumnScaleTargetConfig`` and the ``gradient`` field of\n``ColorStyle`` / ``StaticGradientColorStyle``.\nLives in primitives so both ``chart/authored.py`` and ``style/authored.py``\ncan import it without creating a circular dependency.",
       "properties": {
         "palette": {
           "anyOf": [
@@ -20757,7 +22167,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -22099,7 +23509,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -22192,6 +23602,7 @@
                 "databricks",
                 "duckdb",
                 "fabric",
+                "lakecompute",
                 "mysql",
                 "postgres",
                 "presto",
@@ -22272,7 +23683,7 @@
     },
     "StrokeStyle": {
       "additionalProperties": false,
-      "description": "Stroke appearance sub-block shared across mark families.\n\nAll fields optional \u2014 StrokeStyle doubles as the overlay type for cascade\npatches and as a nullable sentinel (``stroke: StrokeStyle | None``) on\nMarkStyle. Compiled mark families (LineStyle, AreaStyle, etc.) use it as a\nrequired sub-block and enforce their specific sub-field requirements via\n``@model_validator`` on the family class itself.\n\nNone semantics per field:\n  - color: line/area use the mark's own fill color; other families require it.\n  - width: absent = VL default (1 px) for most compiled families; line and\n    area instead fall back to chart_rendering.stroke.fallback_width /\n    .stacked_fallback_width once the cascade and adaptive bake both leave\n    it unset \u2014 see _apply_stroke_width_fallback.\n  - cap/join: absent = VL default (butt/miter). Only line/arc set these.\n  - dasharray: absent = solid line. Only spark.empty sets this.",
+      "description": "Stroke appearance sub-block shared across mark families.\n\nAll fields optional \u2014 StrokeStyle doubles as the overlay type for cascade\npatches and as a nullable sentinel (``stroke: StrokeStyle | None``) on\nMarkStyle. Compiled mark families (LineStyle, AreaStyle, etc.) use it as a\nrequired sub-block and enforce their specific sub-field requirements via\n``@model_validator`` on the family class itself.\n\nNone semantics per field:\n  - color: line/area use the mark's own fill color; other families require it.\n  - width: absent = VL default (1 px) for most compiled families; line and\n    area instead fall back to chart_rendering.stroke.fallback_width /\n    .stacked_fallback_width once the cascade and adaptive bake both leave\n    it unset \u2014 see _apply_line_width.\n  - cap/join: absent = VL default (butt/miter). Only line/arc set these.\n  - dasharray: absent = solid line. Only spark.empty sets this.",
       "properties": {
         "color": {
           "anyOf": [
@@ -22694,7 +24105,7 @@
     },
     "TableChartStyle": {
       "additionalProperties": false,
-      "description": "Table chart style overrides layered on top of shared chart defaults.\n\nTable uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n\n``_ChartCardStyleMixinAllOptional`` supplies ``border``: table draws its own\ncard, so unlike the Vega-Lite families it keeps the slot. It stopped\ndeclaring its own ``border`` when that field was found to be inert on the\ntable and secretly styling markdown (now ``style.text.divider``), and inherits\nthe shared card border instead \u2014 None when unauthored.",
+      "description": "Table chart style overrides layered on top of shared chart defaults.\n\nTable uses a fixed sizing contract and paints no legend \u2014 ``aspect_ratio``,\n``min_height``, ``max_height``, and ``legend`` are absent by construction\n(``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).\n\n``border`` inherits from ``style.charts.border``: table draws its own card.",
       "properties": {
         "title": {
           "anyOf": [
@@ -22745,7 +24156,7 @@
         "border": {
           "anyOf": [
             {
-              "$ref": "#/$defs/BorderStylePatch"
+              "$ref": "#/$defs/BorderStyle"
             },
             {
               "type": "null"
@@ -23153,10 +24564,11 @@
         "glyph": {
           "anyOf": [
             {
-              "type": "null"
+              "pattern": "\\S",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -23355,10 +24767,11 @@
         "dasharray": {
           "anyOf": [
             {
-              "type": "null"
+              "pattern": "^\\s*\\d+(\\.\\d+)?([ ,]+\\d+(\\.\\d+)?)*\\s*$",
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
@@ -23735,15 +25148,29 @@
       "description": "Inline **bold** text runs in markdown prose, distinct from heading weight.",
       "properties": {
         "weight": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string"
-            }
-          ],
           "description": "CSS font-weight for bold text runs and bold table cells.",
+          "enum": [
+            "100",
+            "200",
+            "300",
+            "400",
+            "500",
+            "600",
+            "700",
+            "800",
+            "900",
+            "bold",
+            "normal",
+            100,
+            200,
+            300,
+            400,
+            500,
+            600,
+            700,
+            800,
+            900
+          ],
           "title": "Weight"
         }
       },
@@ -23777,6 +25204,57 @@
         },
         "theme": {
           "description": "Pygments style name for fenced markdown code tokens.",
+          "enum": [
+            "abap",
+            "algol",
+            "algol_nu",
+            "arduino",
+            "autumn",
+            "borland",
+            "bw",
+            "coffee",
+            "colorful",
+            "default",
+            "dracula",
+            "emacs",
+            "friendly",
+            "friendly_grayscale",
+            "fruity",
+            "github-dark",
+            "gruvbox-dark",
+            "gruvbox-light",
+            "igor",
+            "inkpot",
+            "lightbulb",
+            "lilypond",
+            "lovelace",
+            "manni",
+            "material",
+            "monokai",
+            "murphy",
+            "native",
+            "nord",
+            "nord-darker",
+            "one-dark",
+            "paraiso-dark",
+            "paraiso-light",
+            "pastie",
+            "perldoc",
+            "rainbow_dash",
+            "rrt",
+            "sas",
+            "solarized-dark",
+            "solarized-light",
+            "staroffice",
+            "stata-dark",
+            "stata-light",
+            "tango",
+            "trac",
+            "vim",
+            "vs",
+            "xcode",
+            "zenburn"
+          ],
           "title": "Theme",
           "type": "string"
         }
@@ -24112,7 +25590,7 @@
     },
     "TitleStyle": {
       "additionalProperties": false,
-      "description": "Board and board titles.",
+      "description": "Typography shared by every heading: board, prose, chart, table, and spark titles.",
       "properties": {
         "font": {
           "$ref": "#/$defs/FontStyle",
@@ -24161,6 +25639,7 @@
               "type": "string"
             },
             {
+              "minimum": 1,
               "type": "integer"
             }
           ],
@@ -24185,7 +25664,7 @@
     },
     "TitleStylePatch": {
       "additionalProperties": false,
-      "description": "Authored overlay for TitleStyle. Board and board titles.",
+      "description": "Authored overlay for TitleStyle. Typography shared by every heading: board, prose, chart, table, and spark titles.",
       "properties": {
         "font": {
           "anyOf": [
@@ -24278,6 +25757,7 @@
               "type": "string"
             },
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -24787,7 +26267,7 @@
             }
           ],
           "default": null,
-          "description": "Diagnostic codes to suppress (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']).",
+          "description": "Diagnostic codes to suppress (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).",
           "title": "Ignore"
         },
         "cache": {
@@ -25165,11 +26645,14 @@
                   },
                   {
                     "type": "number"
-                  },
-                  {
-                    "type": "string"
                   }
                 ]
+              },
+              "type": "array"
+            },
+            {
+              "items": {
+                "type": "string"
               },
               "type": "array"
             },
@@ -25471,10 +26954,11 @@
         "headroom": {
           "anyOf": [
             {
-              "type": "null"
+              "minimum": 0,
+              "type": "number"
             },
             {
-              "type": "number"
+              "type": "null"
             }
           ],
           "default": null,

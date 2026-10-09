@@ -37,6 +37,7 @@ import pytest
 import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -161,9 +162,8 @@ class TestDbtProfileDuckdbRouting:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """In deployed/multi-tenant mode, a dbt_profile named source must NOT read
-        profiles.yml off disk — AllowlistedSourceResolver forces dbt_context=None,
-        so expansion raises rather than resolving. This pins the trust boundary.
+        """In deployed/multi-tenant mode, a configured dbt_profile source must NOT
+        read profiles.yml off disk. This pins the trust boundary.
         """
         from dbt_charts.core.compile.config import ProjectSourcesConfig
         from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -172,8 +172,8 @@ class TestDbtProfileDuckdbRouting:
             DbtContext,
         )
 
-        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
         _write_profiles_yml(tmp_path, tmp_path / "warehouse.duckdb")
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(tmp_path))
 
         resolver = AllowlistedSourceResolver()
         project_sources = ProjectSourcesConfig(
@@ -185,9 +185,7 @@ class TestDbtProfileDuckdbRouting:
                 }
             },
         )
-        # Even with a real dbt project path available, the allowlist resolver
-        # discards it (passes dbt_context=None), so the dbt_profile cannot expand.
-        with pytest.raises(DbtChartsError):
+        with pytest.raises(DbtChartsError, match="does not expand it"):
             resolver.resolve(
                 authored="prod",
                 board_sources={},
@@ -402,6 +400,64 @@ class TestDbtProfileDuckdbRefResolution:
         assert result.error is not None
         assert "manifest" in str(result.error).lower()
         assert "undefined" not in str(result.error).lower()
+
+
+class TestDbtProfileSourceWithoutDbtProject:
+    """A `dbt_profile` source with no `profile:` runs in a project with no
+    dbt_project.yml: the name comes from `DBT_PROFILE`, profiles.yml from
+    `DBT_PROFILES_DIR`. Only ref()/source() need a project."""
+
+    @staticmethod
+    def _registry(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> AdapterRegistry:
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        project_dir = tmp_path / "charts_project"
+        project_dir.mkdir()
+        (project_dir / "dbt_charts.yml").write_text(
+            "name: standalone\nsources:\n  prod:\n    type: dbt_profile\n"
+        )
+        profiles_dir = tmp_path / "profiles"
+        profiles_dir.mkdir()
+        db_path = tmp_path / "warehouse.duckdb"
+        _make_duckdb_file(db_path)
+        _write_profiles_yml(profiles_dir, db_path)
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(profiles_dir))
+        monkeypatch.setenv("DBT_PROFILE", "test_project")
+        return build_adapter_registry(local_project(project_dir), read_only=True)
+
+    def test_select_runs(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        registry = self._registry(tmp_path, monkeypatch, local_project)
+
+        result = registry.execute(SqlQuery(sql="SELECT n FROM numbers", source="prod"))
+        assert result.error is None, f"SELECT failed: {result.error}"
+        assert result.data == [{"n": 42}]
+
+    def test_ref_names_the_missing_manifest_not_a_connection_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        registry = self._registry(tmp_path, monkeypatch, local_project)
+
+        result = registry.execute(
+            SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="prod")
+        )
+        assert result.error is not None
+        assert "manifest" in str(result.error).lower()
 
 
 class TestDbtProfileBoardRenderRefResolution:

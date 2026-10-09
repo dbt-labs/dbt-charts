@@ -147,7 +147,7 @@ FOOTER_BRAND_WORD_RE = re.compile(r"\bdbt charts\b", re.IGNORECASE)
 
 def footer_text_width(footer: FooterStyle, font_family: str) -> float:
     """Width of the footer attribution: the brand phrase one weight heavier than the words around it."""
-    # FooterStyle._require_font_size_and_color guarantees both non-None.
+    # FooterStyle.__constraints__ guarantee both non-None.
     assert footer.font.size is not None
     size = float(footer.font.size)
     measure = get_font_measurer(font_family).measure

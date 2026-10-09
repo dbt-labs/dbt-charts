@@ -28,15 +28,13 @@ _EXECUTE_ROOT = DBT_CHARTS_PKG_DIR / "core" / "execute"
 # touching this list. Shrinks only.
 ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
-        # _duckdb_cache_base.py
-        ("_duckdb_cache_base.py", "_DuckDBResultCacheBase.execute_file_source_sql"),
         # adapters/databricks_connection_manager.py
         (
             "adapters/databricks_connection_manager.py",
             "_assert_vendored_methods_unchanged",
         ),
         # adapters/dbt_adapter.py
-        ("adapters/dbt_adapter.py", "DbtAdapter._resolve_target_dict"),
+        ("adapters/dbt_adapter.py", "_read_lakecompute_target"),
         ("adapters/dbt_adapter.py", "_read_profiles_yml"),
         ("adapters/dbt_adapter.py", "_read_target_dict"),
         # adapters/dbt_adapter_factory.py
@@ -56,6 +54,12 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # chart_resolution.py — _LayerRows is a Mapping, so __getitem__ must raise
         # KeyError for an absent key (`in` and .get() depend on it).
         ("chart_resolution.py", "_LayerRows.__getitem__"),
+        # drivers/ — both are implementer contract breaches, not authoring
+        # mistakes: a call site that skips `is_driver_source`, and a pin table
+        # that does not hold exactly one version per driver. No board YAML, CLI
+        # flag, or variable value can reach either.
+        ("drivers/_driver_index.py", "pinned_version"),
+        ("drivers/base.py", "open_driver"),
         # duckdb_config.py
         ("duckdb_config.py", "normalize_duckdb_config"),
         # executor.py — an adapter/test-double's truncated_reason failing
@@ -77,11 +81,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # there with a variable-naming message; a survivor here is a transform
         # the render guard missed, and the message says what to do.
         ("sql_literals.py", "inline_params_for_dialect"),
-        # trivial_local_cache.py — passing an Arrow table on a non-file cache key
-        # is an implementer contract breach, same category as _require_aware
-        # above: only this package's own materializer calls put(arrow=...), so no
-        # board YAML, CLI flag, or variable value can reach it.
-        ("trivial_local_cache.py", "TrivialDuckDBCache.put"),
     }
 )
 

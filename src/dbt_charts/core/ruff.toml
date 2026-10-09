@@ -11,7 +11,7 @@ extend-select = ["TID251"]
 # Project-file access goes through Project, never raw Path (core/AGENTS.md).
 # pathlib.Path is the local-filesystem type; PurePosixPath is the sanctioned
 # type for lexical path math (joins, .name/.parent/.suffix, comparison).
-"pathlib.Path" = { msg = "dbt_charts/core does not read/write local disk — use PurePosixPath for lexical math or go through Project. See core/AGENTS.md." }
+"pathlib.Path" = { msg = "dbt_charts/core does not read/write local disk — use PurePosixPath for lexical math or go through Project." }
 
 # Disk mutation/probe/traverse/temp sinks — real filesystem I/O, not lexical math.
 "os.walk"                     = { msg = "dbt_charts/core does not traverse local disk — go through Project.iter_files()." }

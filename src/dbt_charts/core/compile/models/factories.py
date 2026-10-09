@@ -32,21 +32,6 @@ from pydantic import (
 )
 from pydantic_core import PydanticUndefinedType
 
-from dbt_charts.core.compile.models.markers import (
-    Facet,
-    Inherit,
-    InheritSlot,
-    Merge,
-    SkipInheritSlots,
-)
-
-# Marker types forwarded verbatim from the canonical model field to its Patch
-# variant. `Facet` covers the whole semantic vocabulary at once: a facet states
-# what the field *means*, which a patch of it means just as much, so a new one
-# must never have to be added here to survive generation.
-_FORWARDED_MARKER_TYPES = (Inherit, InheritSlot, SkipInheritSlots, Merge, Facet)
-
-
 FontAlias = Annotated[str, Field(description="Name of a ``style.fonts`` entry.")]
 
 
@@ -110,9 +95,9 @@ def register_as_own_patch(cls: type[BaseModel]) -> type[BaseModel]:
     return cls
 
 
-# Generated patch fields drop field-level validators, so the shorthand parser
-# (whose ``json_schema_input_type`` schema introspection reads) is re-attached
-# here wherever a patch field of that class is generated.
+# A shorthand parser belongs to the patch type, not to any compiled field, so it
+# (and the ``json_schema_input_type`` schema introspection reads) is attached
+# wherever a patch field of that class is generated.
 PATCH_SHORTHAND: dict[type, BeforeValidator] = {}
 
 
@@ -247,18 +232,19 @@ def build_patch_model_ext(
     for name, field_info in compiled_cls.model_fields.items():
         if field_info.exclude:
             continue
-        annotation = field_info.annotation
-        patch_annotation = _make_patch_annotation(annotation, is_recursive=is_recursive)
-        # Forward every _FORWARDED_MARKER_TYPES marker from the source field so
-        # the generated patch type carries the same annotations.
-        forwarded_markers = [
+        patch_annotation = _make_patch_annotation(
+            field_info.annotation, is_recursive=is_recursive
+        )
+        # A registered shorthand already rides on the recursed patch type;
+        # applying it twice re-desugars its own output.
+        metadata = [
             m
-            for m in (field_info.metadata or [])
-            if isinstance(m, _FORWARDED_MARKER_TYPES)
+            for m in field_info.metadata
+            if not (is_recursive and m in PATCH_SHORTHAND.values())
         ]
-        if forwarded_markers:
-            # Annotated[tuple([T, m1, ...])] is the portable subscript form (3.10–3.13).
-            patch_annotation = Annotated[tuple([patch_annotation] + forwarded_markers)]
+        if metadata:
+            # Annotated[(T, m1, ...)] is the portable subscript form (3.10 to 3.13).
+            patch_annotation = Annotated[(patch_annotation, *metadata)]
         fields[name] = (
             patch_annotation,
             Field(

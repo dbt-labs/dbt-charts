@@ -21,7 +21,6 @@ from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
-from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 _HEALTHY_BOARD = (
     "title: Test Board\n"
@@ -294,7 +293,7 @@ def _setup_csv_project(
     registry = AdapterRegistry(
         project=project,
         project_sources=load_project_sources(project),
-        file_materializer=FileSourceMaterializer(project, TrivialDuckDBCache()),
+        file_materializer=FileSourceMaterializer(project),
     )
     return project, registry
 
@@ -390,13 +389,13 @@ class TestWarehouseValidateUnresolvableSource:
 
     def test_unresolvable_source_stops_the_sweep(self, tmp_path):
         """A project-level fault is reported once, not once per query."""
-        from dbt_charts.core.diagnostics import ERR_NO_DEFAULT_SOURCE
+        from dbt_charts.core.diagnostics import ERR_SOURCE_NOT_NAMED
         from dbt_charts.core.diagnostics.base import DbtChartsError
 
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)
         registry = MagicMock()
         registry.resolve_query_source.side_effect = DbtChartsError.from_code(
-            ERR_NO_DEFAULT_SOURCE, available=[]
+            ERR_SOURCE_NOT_NAMED, available=[]
         )
 
         r = _validate(tmp_path, project, registry)
@@ -409,7 +408,7 @@ class TestWarehouseValidateUnresolvableSource:
         The author fixes the source, re-runs, and only then learns the first
         query was broken all along.
         """
-        from dbt_charts.core.diagnostics import ERR_NO_DEFAULT_SOURCE
+        from dbt_charts.core.diagnostics import ERR_SOURCE_NOT_NAMED
         from dbt_charts.core.diagnostics.base import DbtChartsError
 
         project, registry = _setup_duckdb_project(
@@ -437,7 +436,7 @@ class TestWarehouseValidateUnresolvableSource:
 
         def _resolve(query, **kwargs):
             if kwargs.get("query_name") == "z_unresolvable":
-                raise DbtChartsError.from_code(ERR_NO_DEFAULT_SOURCE, available=[])
+                raise DbtChartsError.from_code(ERR_SOURCE_NOT_NAMED, available=[])
             return real_resolve(query, **kwargs)
 
         registry.resolve_query_source = _resolve
@@ -445,7 +444,7 @@ class TestWarehouseValidateUnresolvableSource:
         r = _validate(tmp_path, project, registry)
         codes = {e.code for e in r.errors}
         assert "ERR-WAREHOUSE-QUERY-INVALID" in codes, codes
-        assert "ERR-NO-DEFAULT-SOURCE" in codes, codes
+        assert "ERR-SOURCE-NOT-NAMED" in codes, codes
 
 
 def _postgres_registry() -> MagicMock:
@@ -493,22 +492,14 @@ class TestWarehouseValidateUncheckedAdapter:
     """An adapter with no cheap validity primitive must say so, not report a pass."""
 
     def _unchecked_registry(self) -> MagicMock:
-        """A mysql source — an adapter in the ``anything else`` row: it has no
+        """A trino source — an adapter in the ``anything else`` row: it has no
         entry in ``_PREFIX_CHECKS`` and no dry run, unlike a csv/json/parquet
         file source, which resolves to DuckDB's own DESCRIBE.
         """
-        from dbt_charts.core.compile.models.source import parse_source_config
+        from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 
         registry = MagicMock()
-        registry.resolve_query_source.return_value = parse_source_config(
-            {
-                "type": "mysql",
-                "host": "h",
-                "database": "db",
-                "user": "u",
-                "password": "p",
-            }
-        )
+        registry.resolve_query_source.return_value = DbtTargetSourceConfig(type="trino")
         return registry
 
     def test_unchecked_adapter_warns_rather_than_passing_silently(self, tmp_path):
@@ -519,6 +510,20 @@ class TestWarehouseValidateUncheckedAdapter:
         # It was never checked, so it is not a column-check-only shortfall.
         assert "WARN-COLUMN-CHECK-UNAVAILABLE" not in warn_codes
 
+    def test_unchecked_warning_is_suppressible_by_project_warnings_ignore(
+        self, tmp_path
+    ):
+        """The warehouse tier's warnings go through the same suppression as the
+        stateless ones, so a ``--warehouse --strict`` run has an escape hatch."""
+        project, _ = _setup_duckdb_project(tmp_path, with_data=False)
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text(
+            config.read_text()
+            + "warnings:\n  ignore:\n    - WARN-WAREHOUSE-CHECK-UNAVAILABLE\n"
+        )
+        r = _validate(tmp_path, project, self._unchecked_registry())
+        assert "WARN-WAREHOUSE-CHECK-UNAVAILABLE" not in {w.code for w in r.warnings}
+
     def test_unchecked_warning_names_the_reason(self, tmp_path):
         """ "Unchecked" with no reason is not actionable — the reason is the message."""
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)
@@ -526,7 +531,7 @@ class TestWarehouseValidateUncheckedAdapter:
         warn = next(
             w for w in r.warnings if w.code == "WARN-WAREHOUSE-CHECK-UNAVAILABLE"
         )
-        assert "mysql" in warn.message
+        assert "trino" in warn.message
 
     def test_unchecked_adapter_never_executes_anything(self, tmp_path):
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)

@@ -32,7 +32,7 @@ from dbt_charts.core.compile.models.chart.authored import (
 from dbt_charts.core.compile.models.primitives import (
     DividerStyle,
     FontStyle,
-    FormatAliases,
+    FormatTable,
     ResolvedFormat,
 )
 from dbt_charts.core.compile.models.style.authored import (
@@ -70,10 +70,10 @@ from dbt_charts.core.compile.format import (
     resolve_format_parts,
 )
 from dbt_charts.core.compile.format_value import (
-    MAGNITUDE_SUFFIXES,
     _raise_if_time_format_on_numeric,
     format_kpi_parts,
     format_table_cell_value,
+    magnitude_suffixes,
 )
 from dbt_charts.core.compile.models.style.theme import (
     VALID_FONT_WEIGHTS,
@@ -1367,9 +1367,10 @@ def _has_overflow(
     *,
     header_font: FontStyle | None = None,
     wrap: bool,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
     header_visible: bool = True,
     column_when_rules: Mapping[str, tuple[Any, ...]],
+    symbol_mode: Literal["all", "anchors"] = "all",
 ) -> bool:
     """Return True if any column's widest value OR header exceeds its content area.
 
@@ -1464,6 +1465,11 @@ def _has_overflow(
                     default_number=True,
                     shared_scale=shared_scale,
                     is_anchor=True,
+                    anchored=column_symbol_mode(
+                        resolve_format_parts(fmt, formats), symbol_mode
+                    )
+                    == "anchors",
+                    keep_affix_gaps=True,
                 )
                 rendered = _p + _n + _s
             else:
@@ -1489,7 +1495,8 @@ def _compute_lane_positions(
     cell_pad: int,
     cell_font: FontStyle,
     column_when_rules: Mapping[str, tuple[Any, ...]],
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
+    symbol_mode: Literal["all", "anchors"] = "all",
 ) -> dict[str, tuple[float, float, float, float, float]]:
     """Compute fixed (prefix_x, number_x, suffix_x, content_left, content_right) per numeric column.
 
@@ -1530,6 +1537,7 @@ def _compute_lane_positions(
     )
     font_size = float(cell_font.size)
     measurer = get_font_measurer(cell_font.family, numeric=True)
+    suffixes = magnitude_suffixes()
     positions: dict[str, tuple[float, float, float, float, float]] = {}
     for i, col in enumerate(columns):
         col_config = column_configs.get(col)
@@ -1613,6 +1621,8 @@ def _compute_lane_positions(
                     default_number=True,
                     shared_scale=col_config.shared_scale if col_config else None,
                     is_anchor=True,
+                    anchored=column_symbol_mode(fmt, symbol_mode) == "anchors",
+                    keep_affix_gaps=True,
                 )
                 if not col_suffix and _s:
                     col_suffix = _s
@@ -1677,7 +1687,7 @@ def _compute_lane_positions(
             if is_date_col:
                 suffix_gap = 0
             else:
-                suffix_gap = 3 if col_suffix.strip() in MAGNITUDE_SUFFIXES else 0
+                suffix_gap = 3 if col_suffix.strip() in suffixes else 0
             suffix_x = number_x + suffix_gap
             # Prefix sits 3px left of the widest number so the two never
             # visually kiss.  Matches suffix_gap above.  Rows narrower
@@ -1742,7 +1752,7 @@ def _compute_wrap_layout(
     text_baseline_offset: float,
     measurer: FontMeasurer,
     column_when_rules: Mapping[str, tuple[Any, ...]],
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
 ) -> tuple[list[int], list[dict[str, list[str]]]]:
     """Pre-compute per-row heights and cached wrapped lines for text cells.
 
@@ -1912,7 +1922,7 @@ def _render_data_rows(
     role_summary: TableRowRoleStyle | None = None,
     role_total: TableRowRoleStyle | None = None,
     resolved_style: ResolvedChartDefaults | None = None,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
     row_numbers: TableRowNumbersStyle | None = None,
     page_offset: int = 0,
     row_heights: list[int] | None = None,
@@ -2044,6 +2054,7 @@ def _render_data_rows(
         r for r in rows if not is_summary_role(resolve_row_role(row_role_spec, r))
     ]
 
+    suffixes = magnitude_suffixes()
     for row_idx, row in enumerate(rows):
         # Resolve per-row semantic role (value/summary/total)
         role = resolve_row_role(row_role_spec, row)
@@ -2611,6 +2622,8 @@ def _render_data_rows(
                         default_number=True,
                         shared_scale=shared_scale,
                         is_anchor=is_anchor_row,
+                        anchored=col_symbol_mode == "anchors",
+                        keep_affix_gaps=True,
                     )
                     if col_config is not None and col_config.decimal_pad_table:
                         number_str += decimal_pad_for(
@@ -2644,11 +2657,9 @@ def _render_data_rows(
                 if col_symbol_mode == "anchors" and row_idx != 0 and not row_is_summary:
                     prefix = ""
                     computed_suffix = suffix.removesuffix(
-                        column_formats[col].suffix.strip()
+                        column_formats[col].suffix.rstrip()
                     )
-                    if not any(
-                        computed_suffix.startswith(m) for m in MAGNITUDE_SUFFIXES
-                    ):
+                    if not any(computed_suffix.startswith(m) for m in suffixes):
                         suffix = ""
 
                 # When a glyph is active for this cell, it replaces the
@@ -3159,7 +3170,7 @@ def strip_pagination_chrome(svg: str) -> str:
 
 
 def _column_format(
-    config: TableColumnConfig, formats: FormatAliases | None
+    config: TableColumnConfig, formats: FormatTable | None
 ) -> ResolvedFormat | None:
     if config.format is None:
         return None
@@ -3168,7 +3179,7 @@ def _column_format(
 
 def _as_resolved_table_column(
     config: TableColumnConfig,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     font_family: str,
 ) -> ResolvedTableColumnConfig:
     """Upgrade a plain ``TableColumnConfig`` built at render time to the
@@ -3201,7 +3212,7 @@ def _as_resolved_table_column(
 
 
 def _transpose_data_for_render(
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     columns: dict[str, ResolvedTableColumnConfig] | None,
     column_defaults: TableColumnDefaultsConfig | None,
     data: list[dict[str, Any]],
@@ -3290,7 +3301,7 @@ def _fanned_leaf_config(
     fallback_label: str,
     measure_identity: bool,
     defaults: TableColumnDefaultsConfig | None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     values: list[Any],  # type-state: explicit_any — raw leaf cell values
 ) -> ResolvedTableColumnConfig:
     """Construct the leaf-key variant of a measure-keyed config.
@@ -3696,7 +3707,7 @@ def _prepare_columns(
 
 def _column_demands(
     prepared: _PreparedColumns,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     *,
     font_family: str,
     header_font_family: str,
@@ -3938,6 +3949,7 @@ def _layout_table(
         formats=_formats,
         header_visible=tc.header.visible,
         column_when_rules=column_when_rules,
+        symbol_mode=tc.symbol_mode,
     ):
         # Step 1: reduce cell padding (table-wide)
         cell_pad = _COMPACT_PAD
@@ -3953,6 +3965,7 @@ def _layout_table(
             formats=_formats,
             header_visible=tc.header.visible,
             column_when_rules=column_when_rules,
+            symbol_mode=tc.symbol_mode,
         ):
             # Step 2: step down font size to 11px (table-wide, cascade stops here)
             font_size = _COMPACT_FONT
@@ -4059,6 +4072,7 @@ def _layout_table(
         cell_font=_cell_font,
         column_when_rules=column_when_rules,
         formats=table_style.formats,
+        symbol_mode=tc.symbol_mode,
     )
 
     # When the header row is hidden, skip header wrapping/sizing entirely —

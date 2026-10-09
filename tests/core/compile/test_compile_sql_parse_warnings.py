@@ -137,18 +137,15 @@ def test_unresolvable_dialect_stays_silent() -> None:
 
 
 def test_parse_warning_does_not_drag_in_the_relationship_gated_warnings() -> None:
-    """`validate_compiled_queries` also emits WARN-FANOUT-RISK,
-    WARN-MISSING-JOIN-PREDICATE and WARN-REAGGREGATION. Those are gated
-    behind relationship context so their severity can be scored honestly —
-    turning them on is a separate product call with its own noise budget."""
+    """`validate_compiled_queries` also emits WARN-MISSING-JOIN-PREDICATE and
+    WARN-REAGGREGATION. Turning them on at compile time is a separate product
+    call with its own noise budget."""
     sql = (
         "SELECT o.id, SUM(li.amount) AS total\nFROM orders o, line_items li\nGROUP BY 1"
     )
     codes = {w.code for w in _compile(sql).warnings}
 
-    assert codes.isdisjoint(
-        {"WARN-FANOUT-RISK", "WARN-MISSING-JOIN-PREDICATE", "WARN-REAGGREGATION"}
-    )
+    assert codes.isdisjoint({"WARN-MISSING-JOIN-PREDICATE", "WARN-REAGGREGATION"})
 
 
 def test_parse_warning_message_has_no_terminal_escapes() -> None:

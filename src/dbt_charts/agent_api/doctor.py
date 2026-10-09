@@ -27,6 +27,8 @@ from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
     AdapterNotInstalledError,
     import_adapter_module,
 )
+from dbt_charts.core.execute.drivers import is_driver_source
+from dbt_charts.core.execute.drivers.lakecompute import require_lakecompute_extra
 from dbt_charts.core.project_roots import resolve_profiles_path
 
 
@@ -228,10 +230,13 @@ def _adapter_check(
             return _adapter_skip(
                 name, f"{config.type} source, no adapter needed"
             ), config
-        if config.type.lower() not in SUPPORTED_ADAPTER_TYPES:
+        if is_driver_source(config):
+            require_lakecompute_extra()
+        elif config.type.lower() not in SUPPORTED_ADAPTER_TYPES:
             native = f"{config.type} source, runs natively (no dbt adapter needed)"
             return _adapter_skip(name, native), config
-        import_adapter_module(config.type)
+        else:
+            import_adapter_module(config.type)
     except AdapterNotInstalledError as exc:
         failed = DoctorCheck(
             code="adapter",
@@ -283,7 +288,12 @@ def _connection_check(
             status="skip",
             message="no connection to test",
         )
-    ok, error = test_connection(config)
+    try:
+        ok, error = test_connection(config)
+    except DbtChartsError as exc:
+        return DoctorCheck(
+            code="connection", source=name, status="fail", message=str(exc)
+        )
     if ok:
         return DoctorCheck(
             code="connection", source=name, status="pass", message="connected"

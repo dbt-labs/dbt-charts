@@ -2,29 +2,23 @@
 
 Parses SQL and detects structural issues that indicate likely query bugs:
 
-- **WARN-MISSING-JOIN-PREDICATE**: Cross joins or comma-separated tables
-  without an explicit join predicate — usually an accidental cartesian
-  product.
-- **WARN-FANOUT-RISK**: Aggregation over a joined query where aggregate
-  expressions reference columns from multiple tables, use unqualified
-  columns with 2+ tables in scope, or COUNT(*) with joins — the structural
-  signal for double-counting / aggregate inflation.
-- **WARN-REAGGREGATION**: Outer query applies an aggregate function to a
-  column that is already aggregate-derived in a subquery or CTE — e.g. SUM
-  of a SUM, AVG of an AVG. Uses propagation of aggregate lineage through
-  nested scopes to detect these patterns. Looker's symmetric aggregate (a
-  paired ``SUM(DISTINCT ...)`` difference over a hash-packed dedup key) is
-  exempt — it is an identity over a per-key value, not a second aggregation.
-  See ``_is_symmetric_aggregate_half``.
+- **WARN-MISSING-JOIN-PREDICATE**: Cross joins, comma-separated tables, or
+  joins on a constant (``ON TRUE``) between sources that can both return many
+  rows — usually an accidental cartesian product. A source that is one row by
+  construction (an aggregate with no GROUP BY, ``LIMIT 1``) or a table
+  function is not flagged.
+- **WARN-REAGGREGATION**: Outer query applies an aggregate whose result
+  depends on grouping (AVG, MEDIAN, a percentile, SUM over an AVG, or any
+  DISTINCT aggregate) to a
+  column that is already aggregate-derived in a subquery or CTE. Uses
+  propagation of aggregate lineage through nested scopes to detect these
+  patterns. SUM/COUNT over SUM/COUNT, MAX over MAX and MIN over MIN are exact,
+  and window functions and FILTER pivots do not collapse rows, so none fire.
 - **WARN-PARSE-ERROR**: SQL that SQLGlot cannot parse.
 
-The four codes above are registered in core/diagnostics/codes_query.py — this
+The codes above are registered in core/diagnostics/codes_query.py — this
 module imports them rather than declaring its own vocabulary, so a suppressed
 or reported code here is always a real entry in the unified registry.
-
-Relationship context (multiplicity, fanout factor) is optional. When
-available, it calibrates WARN-FANOUT-RISK severity and grounds
-recommendations in known join metadata.
 
 Pure functions — no DB queries, no side effects.
 """
@@ -42,10 +36,9 @@ from sqlglot.dialects.dialect import Dialect
 from sqlglot.dialects.postgres import Postgres
 from sqlglot.dialects.tsql import TSQL
 
-from dbt_charts.core.compile.sql_guard import as_expression, require_sqlglot_dialect
+from dbt_charts.core.compile.sql_guard import require_sqlglot_dialect
 from dbt_charts.core.diagnostics.codes_query import (
     WARN_DATE_AS_TEXT,
-    WARN_FANOUT_RISK,
     WARN_MISSING_JOIN_PREDICATE,
     WARN_PARSE_ERROR,
     WARN_REAGGREGATION,
@@ -63,27 +56,11 @@ _UNSUPPRESSIBLE_CODES = frozenset({WARN_PARSE_ERROR.code})
 _QUERY_CODES = frozenset(
     {
         WARN_DATE_AS_TEXT.code,
-        WARN_FANOUT_RISK.code,
         WARN_MISSING_JOIN_PREDICATE.code,
         WARN_PARSE_ERROR.code,
         WARN_REAGGREGATION.code,
     }
 )
-
-# Row multiplication factor above which a 1:N join with aggregation is flagged
-# high risk. Also imported by dbt-charts-super-schema's score_fanout_risk.
-HIGH_FANOUT_THRESHOLD = 10.0
-
-# Minimum confidence to trust a relationship hint for severity changes.
-_MIN_CALIBRATION_CONFIDENCE = 0.75
-
-# Multiplicity flip table for direction normalization.
-_FLIP_MULTIPLICITY = {
-    "one-to-many": "many-to-one",
-    "many-to-one": "one-to-many",
-    "one-to-one": "one-to-one",
-    "many-to-many": "many-to-many",
-}
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -113,24 +90,6 @@ class QueryDiagnostic:
                 f"QueryDiagnostic.code {self.code!r} is not a registered query "
                 f"code. Must be one of: {', '.join(sorted(_QUERY_CODES))}."
             )
-
-
-@dataclass(frozen=True)
-class RelationshipHint:
-    """Known relationship between two tables for severity calibration."""
-
-    left_table: str
-    right_table: str
-    multiplicity: str  # "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many"
-    fanout_factor: float
-    confidence: float  # 0.0–1.0
-
-
-@dataclass(frozen=True)
-class RelationshipContext:
-    """Relationship metadata for query validator severity calibration."""
-
-    hints: tuple[RelationshipHint, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -191,235 +150,119 @@ def _direct_join_sources(select: exp.Select) -> list[exp.Table | exp.Subquery]:
     return sources
 
 
-def _build_alias_map(select: exp.Select) -> dict[str, str]:
-    """Map alias → table name for direct (non-subquery) table sources."""
-    alias_map: dict[str, str] = {}
-    for src in _direct_from_sources(select) + _direct_join_sources(select):
-        if isinstance(src, exp.Table):
-            alias_map[_source_name(src)] = src.name
-    return alias_map
+def _is_single_row_select(select: exp.Expression) -> bool:
+    """Whether ``select`` returns at most one row by construction.
+
+    That is a ``LIMIT 1``, a SELECT with no FROM, or an aggregate query with no
+    GROUP BY. A filter that happens to match one row does not count.
+    """
+    if not isinstance(select, exp.Select):
+        return False
+    limit = select.args.get("limit")
+    if limit is not None and limit.expression.name == "1":
+        return True
+    if select.args.get("from_") is None:
+        return True
+    return not select.args.get("group") and bool(_get_aggregate_functions(select))
 
 
-def _has_join(select: exp.Select) -> bool:
-    """Check if the SELECT has any direct JOIN clause (not in subqueries)."""
-    return bool(_direct_join_sources(select))
+def _single_row_ctes(select: exp.Select) -> set[str]:
+    with_ = select.args.get("with_")
+    if with_ is None:
+        return set()
+    return {
+        cte.alias.lower()
+        for cte in with_.expressions
+        if _is_single_row_select(cte.this)
+    }
 
 
-def _has_comma_join(select: exp.Select) -> bool:
-    """Check if FROM clause has multiple direct sources (comma join)."""
-    return len(_direct_from_sources(select)) > 1
+def _is_single_row_source(
+    source: exp.Table | exp.Subquery, single_row_ctes: set[str]
+) -> bool:
+    """Whether a join source cannot multiply the rows it is joined to."""
+    if isinstance(source, exp.Subquery):
+        return _is_single_row_select(source.this)
+    # A table function (generate_series, range) expands rows on purpose.
+    if not isinstance(source.this, exp.Identifier):
+        return True
+    return not source.db and source.name.lower() in single_row_ctes
 
 
-def _find_cross_joins(select: exp.Select) -> list[tuple[str, str]]:
-    """Find explicit CROSS JOINs and return (left_name, right_name)."""
-    pairs: list[tuple[str, str]] = []
+def _unconstrained_join_label(join: exp.Join) -> str | None:
+    """How ``join`` is spelled when nothing constrains it, else ``None``."""
+    on = join.args.get("on")
+    if on is not None:
+        # ON TRUE and ON 1 = 1 constrain nothing: no column is compared.
+        return f"JOIN ... ON {on.sql()}" if on.find(exp.Column) is None else None
+    if join.args.get("using"):
+        return None
+    method = join.args.get("method")
+    if method is not None and method.upper() == "NATURAL":
+        return None
+    # A bare JOIN (or a comma join) has no kind and is a cross join.
+    kind = join.args.get("kind")
+    return "CROSS JOIN" if kind is None or kind.upper() == "CROSS" else None
+
+
+def _find_cross_joins(select: exp.Select) -> list[tuple[str, str, str]]:
+    """Find joins with no predicate between sources that can both multiply rows.
+
+    Returns ``(left_name, right_name, how)`` per join, where ``how`` spells the
+    join as authored. A source that is one row by construction multiplies
+    nothing, so it neither raises a join nor hides a later one.
+    """
     from_sources = _direct_from_sources(select)
     if not from_sources:
-        return pairs
+        return []
 
-    left_name = _source_name(from_sources[0])
+    single_row_ctes = _single_row_ctes(select)
+    multi_row_names = [
+        _source_name(source)
+        for source in from_sources
+        if not _is_single_row_source(source, single_row_ctes)
+    ]
+    found: list[tuple[str, str, str]] = []
 
     for join in select.find_all(exp.Join):
-        # Same scope guard as _direct_join_sources — a cross join inside a
-        # CTE or subquery nested in `select` is that scope's own problem,
-        # not `select`'s.
+        # A cross join inside a CTE or subquery nested in `select` is that
+        # scope's own problem, not `select`'s.
         if join.parent_select is not select:
             continue
-        if join.args.get("on") or join.args.get("using"):
+        right = next(
+            (
+                child
+                for child in join.iter_expressions()
+                if isinstance(child, (exp.Table, exp.Subquery))
+            ),
+            None,
+        )
+        if right is None or _is_single_row_source(right, single_row_ctes):
             continue
-        # NATURAL JOIN has implicit predicates — not a cross join
-        if (join.args.get("method") or "").upper() == "NATURAL":
-            continue
-        kind = (join.args.get("kind") or "").upper()
-        if kind == "CROSS" or kind == "":
-            # Find the table/subquery in this join
-            for child in join.iter_expressions():
-                if isinstance(child, (exp.Table, exp.Subquery)):
-                    pairs.append((left_name, _source_name(child)))
-                    break
-    return pairs
+        how = _unconstrained_join_label(join)
+        if how and multi_row_names:
+            found.append((multi_row_names[0], _source_name(right), how))
+        multi_row_names.append(_source_name(right))
+    return found
+
+
+def _collapses_rows(agg: exp.AggFunc) -> bool:
+    """Whether ``agg`` collapses rows, rather than running per row (``OVER``) or
+    selecting a subset of one (``FILTER (WHERE ...)``)."""
+    scope = agg.find_ancestor(exp.Window, exp.Filter, exp.Select)
+    return not isinstance(scope, (exp.Window, exp.Filter))
 
 
 def _get_aggregate_functions(select: exp.Select) -> list[exp.AggFunc]:
-    """Get all aggregate function calls in SELECT and HAVING clauses."""
-    aggs: list[exp.AggFunc] = []
-    for expr in select.expressions:
-        aggs.extend(expr.find_all(exp.AggFunc))
+    """Get the row-collapsing aggregate calls in SELECT and HAVING clauses."""
     having = select.find(exp.Having)
-    if having:
-        aggs.extend(having.find_all(exp.AggFunc))
-    return aggs
-
-
-def _column_table_ref(col: exp.Column) -> str | None:
-    """Get the table reference (alias or name) from a Column expression."""
-    return col.table if col.table else None
-
-
-def _resolve_table(ref: str, alias_map: dict[str, str]) -> str:
-    """Resolve a table reference through the alias map."""
-    return alias_map.get(ref, ref)
-
-
-# ---------------------------------------------------------------------------
-# Relationship hint matching and calibration
-# ---------------------------------------------------------------------------
-
-
-def _find_matching_hint(
-    query_tables: set[str],
-    from_tables: set[str],
-    hints: tuple[RelationshipHint, ...],
-) -> tuple[RelationshipHint, str, bool] | None:
-    """Find the riskiest matching hint, direction-normalized multiplicity, and flip flag.
-
-    MVP limitation: returns only one hint. For multi-join queries (3+ tables),
-    only one table pair gets calibrated. Selects the riskiest multiplicity
-    first (error > warning > info), then highest confidence as tiebreaker.
-
-    Matches when both sides of a hint appear in the query's resolved table set.
-    Flips multiplicity when the hint's left_table is not in FROM (i.e. tables
-    are reversed relative to the query's join direction).
-
-    When both or neither hint sides are in FROM (e.g. comma joins), no flip
-    occurs — there's no clear directionality to normalize against.
-
-    Returns (hint, normalized_multiplicity, was_flipped) or None.
-    """
-    tables_lower = {t.lower() for t in query_tables}
-    from_lower = {t.lower() for t in from_tables}
-    best: tuple[RelationshipHint, str, bool] | None = None
-    best_risk: int = -1  # Higher = riskier
-    for hint in hints:
-        left = hint.left_table.lower()
-        right = hint.right_table.lower()
-        if left not in tables_lower or right not in tables_lower:
-            continue
-        mult = hint.multiplicity
-        flipped = False
-        if right in from_lower and left not in from_lower:
-            mult = _FLIP_MULTIPLICITY.get(mult, mult)
-            flipped = True
-        severity = _severity_for_multiplicity(mult, hint.confidence, hint.fanout_factor)
-        risk = {"error": 2, "warning": 1, "info": 0}.get(severity, 1)
-        # Prefer riskiest; break ties by confidence.
-        if risk > best_risk or (
-            risk == best_risk and (best is None or hint.confidence > best[0].confidence)
-        ):
-            best = (hint, mult, flipped)
-            best_risk = risk
-    return best
-
-
-def _severity_for_multiplicity(
-    mult: str,
-    confidence: float,
-    fanout_factor: float,
-) -> Literal["error", "warning", "info"]:
-    """Determine calibrated severity from multiplicity, confidence, and fanout."""
-    if confidence < _MIN_CALIBRATION_CONFIDENCE:
-        return "warning"
-    if mult == "one-to-one":
-        return "info"
-    if mult == "many-to-one":
-        return "info"
-    if mult == "many-to-many":
-        return "error"
-    if mult == "one-to-many" and fanout_factor > HIGH_FANOUT_THRESHOLD:
-        return "error"
-    return "warning"
-
-
-def _message_for_multiplicity(
-    mult: str,
-    from_table: str,
-    join_table: str,
-    fanout_factor: float,
-    severity: Literal["error", "warning", "info"],
-) -> tuple[str, str]:
-    """Return (message, recommendation) grounded in known multiplicity.
-
-    ``from_table`` / ``join_table`` are query-oriented: the FROM-clause side
-    and the JOIN-clause side after direction normalization.
-    """
-    lt, rt = from_table, join_table
-    ff = fanout_factor
-    if mult == "one-to-one":
-        return (
-            "Aggregation over joined tables — 1:1 join confirmed, no inflation risk",
-            "Join is 1:1 — aggregation is safe. "
-            "Verify the 1:1 assumption holds as data evolves.",
-        )
-    if mult == "many-to-one":
-        return (
-            "Aggregation over joined tables — N:1 join, no row multiplication",
-            f"Join {lt} → {rt} is N:1 (dimension lookup). "
-            f"Aggregates on {lt} are safe. "
-            f"Aggregates on {rt} columns may repeat values — "
-            f"verify they are grouping keys, not measures.",
-        )
-    if mult == "many-to-many":
-        if severity == "error":
-            return (
-                "N:M join with aggregation — results almost certainly inflated",
-                f"Use a bridge table or pre-aggregate each side to the correct "
-                f"grain before joining {lt} ↔ {rt}.",
-            )
-        return (
-            "Possible N:M join with aggregation — review join relationship",
-            f"Verify the join relationship between {lt} and {rt}. "
-            f"If N:M, pre-aggregate each side before joining.",
-        )
-    if mult == "one-to-many":
-        if severity == "error":
-            return (
-                f"1:N join with aggregation and high fanout "
-                f"({ff:.1f}x) — results likely inflated",
-                f"Pre-aggregate {rt} to the {lt} grain before joining "
-                f"({ff:.1f}x average row multiplication).",
-            )
-        return (
-            f"1:N join with aggregation ({ff:.1f}x fanout) "
-            f"— verify aggregate correctness",
-            f"Pre-aggregate {rt} to the {lt} join key grain before joining, "
-            f"or verify aggregation handles the {ff:.1f}x row expansion correctly.",
-        )
-    # Unknown multiplicity
-    return (
-        "Aggregation over joined tables may inflate results",
-        "Pre-aggregate each table to the join key grain "
-        "before joining, or verify the join is 1:1 / N:1.",
-    )
-
-
-def _calibrate_fanout(
-    hint: RelationshipHint,
-    mult: str,
-    flipped: bool,
-    detail_parts: list[str],
-) -> QueryDiagnostic:
-    """Produce a calibrated fanout_risk diagnostic using a matched relationship hint."""
-    # Orient table names to match the query's join direction.
-    from_table = hint.right_table if flipped else hint.left_table
-    join_table = hint.left_table if flipped else hint.right_table
-    evidence = (
-        f"Relationship: {from_table} ↔ {join_table} "
-        f"({mult}, {hint.fanout_factor:.1f}x fanout, "
-        f"confidence {hint.confidence:.0%})",
-    )
-    severity = _severity_for_multiplicity(mult, hint.confidence, hint.fanout_factor)
-    message, recommendation = _message_for_multiplicity(
-        mult, from_table, join_table, hint.fanout_factor, severity
-    )
-    return QueryDiagnostic(
-        code=WARN_FANOUT_RISK.code,
-        severity=severity,
-        message=message,
-        detail=". ".join(detail_parts) if detail_parts else None,
-        recommendation=recommendation,
-        confidence=hint.confidence,
-        evidence=evidence,
-    )
+    clauses = [*select.expressions, *([having] if having else [])]
+    return [
+        agg
+        for clause in clauses
+        for agg in clause.find_all(exp.AggFunc)
+        if _collapses_rows(agg)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -430,222 +273,17 @@ def _calibrate_fanout(
 def _detect_missing_join_predicates(
     select: exp.Select,
 ) -> list[QueryDiagnostic]:
-    """Detect comma joins and explicit CROSS JOINs."""
-    diags: list[QueryDiagnostic] = []
-
-    # Comma joins: multiple direct sources in FROM
-    if _has_comma_join(select):
-        sources = _direct_from_sources(select)
-        names = [_source_name(s) for s in sources]
-        diags.append(
-            QueryDiagnostic(
-                code=WARN_MISSING_JOIN_PREDICATE.code,
-                severity="error",
-                message=f"Implicit cross join between {', '.join(names)} — "
-                f"no explicit join predicate",
-                detail=f"Tables {', '.join(names)} appear in FROM without "
-                f"a JOIN ... ON clause. This produces a cartesian product.",
-                recommendation="Use explicit JOIN with ON clause to specify "
-                "the join relationship.",
-            )
-        )
-
-    # Explicit CROSS JOINs
-    for left, right in _find_cross_joins(select):
-        diags.append(
-            QueryDiagnostic(
-                code=WARN_MISSING_JOIN_PREDICATE.code,
-                severity="error",
-                message=f"CROSS JOIN between {left} and {right} — no join predicate",
-                detail=f"CROSS JOIN produces a cartesian product of {left} × {right}.",
-                recommendation="If intentional, document why. Otherwise, "
-                "use JOIN with ON clause.",
-            )
-        )
-
-    return diags
-
-
-def _resolve_unqualified_agg_source(
-    col_name: str,
-    known_sources: dict[str, str],
-    agg_map: dict[str, dict[str, bool]],
-) -> str | None:
-    """Resolve an unqualified aggregate column to the one source that defines it.
-
-    Whether a column is written qualified or not is cosmetic — the fanout
-    verdict must be driven by which table it actually belongs to (FR-79).
-    Only sources we've actually analyzed (``known_sources``, from CTEs/inline
-    subqueries) count as evidence. Exactly one match resolves the column to
-    that source, to be treated identically to a qualified reference. Zero
-    matches (no lineage evidence at all — e.g. a raw base table) or 2+
-    matches (a genuine name collision across sources) stay unresolved, since
-    neither case lets us safely name a single owning table.
-    """
-    # known_sources.values() are, by construction, all agg_map keys — direct
-    # indexing, not .get(s, {}), since a miss here would mean the resolver
-    # above is broken, not that the source is merely unanalyzed.
-    containing = {s for s in known_sources.values() if col_name in agg_map[s]}
-    return next(iter(containing)) if len(containing) == 1 else None
-
-
-def _detect_fanout_risk(
-    select: exp.Select,
-    relationship_context: RelationshipContext | None,
-) -> list[QueryDiagnostic]:
-    """Detect structural fanout risk: aggregation over joined tables.
-
-    Triggers when:
-    1. The query has JOINs (explicit or comma-join)
-    2. The query has aggregate functions (in SELECT or HAVING)
-    3. Any of:
-       a. Aggregate functions reference columns from 2+ distinct tables, OR
-       b. COUNT(*) is used (inflated by row multiplication from join), OR
-       c. Unqualified columns appear in aggregates with 2+ tables in scope
-
-    When relationship_context is provided, matched hints calibrate severity:
-    - 1:1 → info (no inflation possible)
-    - N:1 → info (dimension lookup, safe for many-side aggregates)
-    - 1:N + high fanout → error
-    - N:M → error (with sufficient confidence)
-    """
-    has_joins = _has_join(select) or _has_comma_join(select)
-    if not has_joins:
-        return []
-
-    aggs = _get_aggregate_functions(select)
-    if not aggs:
-        return []
-
-    alias_map = _build_alias_map(select)
-    table_count = len(_direct_from_sources(select)) + len(_direct_join_sources(select))
-    agg_lineage_map = _propagate_aggregate_columns(select)
-    known_sources = _resolve_known_sources(select, agg_lineage_map)
-
-    # Check for COUNT(*) — always risky with joins
-    has_count_star = any(
-        isinstance(agg, exp.Count) and isinstance(agg.this, exp.Star) for agg in aggs
-    )
-
-    # Track aliases (source refs) for multi-table detection — so self-joins
-    # (e1.salary, e2.salary → same table) are correctly flagged.
-    # Resolved names are only for detail messages.
-    agg_source_refs: set[str] = set()
-    agg_resolved_tables: set[str] = set()
-    has_unqualified_agg_cols = False
-    for agg in aggs:
-        for col in agg.find_all(exp.Column):
-            ref = _column_table_ref(col)
-            if ref:
-                agg_source_refs.add(ref)
-                agg_resolved_tables.add(_resolve_table(ref, alias_map))
-                continue
-            # Unqualified — try to resolve it against known lineage before
-            # falling back to "ambiguous" so a mere qualification change
-            # doesn't flip the verdict (FR-79).
-            resolved = _resolve_unqualified_agg_source(
-                col.name.lower(), known_sources, agg_lineage_map
-            )
-            if resolved is not None:
-                agg_source_refs.add(resolved)
-                agg_resolved_tables.add(resolved)
-            else:
-                has_unqualified_agg_cols = True
-
-    multi_table_agg = len(agg_source_refs) > 1
-    # Unqualified columns in aggregates with 2+ tables = ambiguous ownership
-    ambiguous_agg = has_unqualified_agg_cols and table_count >= 2
-
-    has_structural_signal = has_count_star or multi_table_agg or ambiguous_agg
-
-    # --- Relationship-triggered detection path ---
-    # When no structural signal (COUNT(*), multi-table agg, ambiguous cols) but
-    # relationship context indicates a risky join (1:N or N:M), any aggregation
-    # + join should fire. This covers the most common real-world fanout pattern:
-    # single-table aggregate inflated by a 1:N join (e.g. SUM(o.amount) with
-    # JOIN line_items).
-    if not has_structural_signal:
-        if not relationship_context or not relationship_context.hints:
-            return []
-        all_query_tables = set(alias_map.values())
-        from_tables = {
-            src.name
-            for src in _direct_from_sources(select)
-            if isinstance(src, exp.Table)
-        }
-        match = _find_matching_hint(
-            all_query_tables, from_tables, relationship_context.hints
-        )
-        if match is None:
-            return []
-        hint, mult, flipped = match
-        # Only fire for risky multiplicities — 1:1 and N:1 are safe.
-        if mult in ("one-to-one", "many-to-one"):
-            return []
-        return [
-            _calibrate_fanout(
-                hint,
-                mult,
-                flipped,
-                [
-                    "Single-table aggregation after row-multiplying join — "
-                    "aggregate values are inflated by the join fanout"
-                ],
-            )
-        ]
-
-    # Build detail parts describing the structural signal
-    detail_parts: list[str] = []
-    if has_count_star:
-        detail_parts.append("COUNT(*) is inflated by row multiplication from JOIN")
-    if multi_table_agg:
-        if len(agg_resolved_tables) == 1:
-            tname = next(iter(agg_resolved_tables))
-            aliases = sorted(agg_source_refs)
-            detail_parts.append(
-                f"Aggregate expressions reference columns from "
-                f"aliases {', '.join(aliases)} (all from table {tname})"
-            )
-        else:
-            detail_parts.append(
-                f"Aggregate expressions reference columns from tables: "
-                f"{', '.join(sorted(agg_resolved_tables))}"
-            )
-    if ambiguous_agg:
-        detail_parts.append(
-            "Unqualified columns in aggregate expressions with multiple "
-            "tables in scope — column ownership is ambiguous"
-        )
-
-    # --- Relationship-based severity calibration ---
-    # Match against resolved table names only (not aliases) to avoid
-    # phantom matches with short alias names like 'o' or 'c'.
-    all_query_tables = set(alias_map.values())
-    # FROM tables for direction normalization.
-    from_tables = {
-        src.name for src in _direct_from_sources(select) if isinstance(src, exp.Table)
-    }
-    if relationship_context and relationship_context.hints:
-        match = _find_matching_hint(
-            all_query_tables, from_tables, relationship_context.hints
-        )
-        if match is not None:
-            hint, mult, flipped = match
-            # Early return: the calibrated finding subsumes the generic
-            # structural warning. detail_parts (COUNT(*), multi-table refs)
-            # are preserved in the calibrated diagnostic.
-            return [_calibrate_fanout(hint, mult, flipped, detail_parts)]
-
-    # No relationship context or no matching hint — generic structural finding
+    """Detect cross joins, comma joins, and constant-predicate joins."""
     return [
         QueryDiagnostic(
-            code=WARN_FANOUT_RISK.code,
-            severity="warning",
-            message="Aggregation over joined tables may inflate results",
-            detail=". ".join(detail_parts) if detail_parts else None,
-            recommendation="Pre-aggregate each table to the join key grain "
-            "before joining, or verify the join is 1:1 / N:1.",
+            code=WARN_MISSING_JOIN_PREDICATE.code,
+            severity="error",
+            message=f"{how} between {left} and {right} — no join predicate",
+            detail=f"{how} produces a cartesian product of {left} × {right}.",
+            recommendation="If intentional, document why. Otherwise, "
+            "use JOIN with ON clause.",
         )
+        for left, right, how in _find_cross_joins(select)
     ]
 
 
@@ -654,11 +292,43 @@ def _detect_fanout_risk(
 # ---------------------------------------------------------------------------
 
 
-def _select_output_columns(select: exp.Select) -> dict[str, bool]:
-    """Map output alias → is_aggregate_derived for a SELECT.
+_AggFuncType = type[exp.AggFunc]
+# source name -> output column -> the aggregate function it derives from
+_AggMap = dict[str, dict[str, _AggFuncType | None]]
 
-    Returns a dict where keys are the output column names (alias or column name)
-    and values indicate whether the column is derived from an aggregate function.
+# Aggregates whose result depends on the grouping they ran over: taking one of
+# them over a prior aggregate, or a SUM over one of them, changes the answer.
+_GROUPING_DEPENDENT = (
+    exp.Avg,
+    exp.Median,
+    exp.Quantile,
+    exp.PercentileCont,
+    exp.PercentileDisc,
+    exp.ApproxQuantile,
+    exp.ApproxQuantiles,
+)
+
+
+def _is_non_composable(
+    outer: _AggFuncType, inner: _AggFuncType, *, distinct: bool
+) -> bool:
+    """Whether ``outer`` over a column produced by ``inner`` is grouping-dependent.
+
+    SUM/COUNT over SUM/COUNT, MAX over MAX and MIN over MIN are exact. DISTINCT
+    never composes: it collapses equal pre-aggregated values.
+    """
+    return (
+        distinct
+        or issubclass(outer, _GROUPING_DEPENDENT)
+        or (issubclass(outer, exp.Sum) and issubclass(inner, _GROUPING_DEPENDENT))
+    )
+
+
+def _select_output_columns(select: exp.Select) -> dict[str, _AggFuncType | None]:
+    """Map output alias → the aggregate function it derives from, for a SELECT.
+
+    Keys are the output column names (alias or column name); a value is the
+    aggregate function class the column derives from, ``None`` when it does not.
     Group-by keys are explicitly marked as non-aggregate.
     """
     # Collect GROUP BY column names to exclude them from aggregate tagging
@@ -669,7 +339,7 @@ def _select_output_columns(select: exp.Select) -> dict[str, bool]:
             if isinstance(expr, exp.Column):
                 group_by_keys.add(expr.name.lower())
 
-    outputs: dict[str, bool] = {}
+    outputs: dict[str, _AggFuncType | None] = {}
     for expr in select.expressions:
         alias = expr.alias if isinstance(expr, exp.Alias) else None
         if alias:
@@ -677,29 +347,31 @@ def _select_output_columns(select: exp.Select) -> dict[str, bool]:
             # AggFunc inside a Window node is a window function (per-row),
             # not a collapsed aggregate — don't tag as aggregate-derived.
             agg_node = inner.find(exp.AggFunc)
-            is_agg = bool(agg_node) and not bool(inner.find(exp.Window))
-            outputs[alias.lower()] = is_agg
+            if agg_node is not None and inner.find(exp.Window) is None:
+                outputs[alias.lower()] = type(agg_node)
+            else:
+                outputs[alias.lower()] = None
         elif isinstance(expr, exp.Column):
-            outputs[expr.name.lower()] = False
+            outputs[expr.name.lower()] = None
         elif isinstance(expr, exp.Star):
             # Can't track through SELECT * — skip
             pass
     # Group-by keys are never aggregate-derived even if aliased from one
     for key in group_by_keys:
         if key in outputs:
-            outputs[key] = False
+            outputs[key] = None
     return outputs
 
 
 def _propagate_aggregate_columns(
     parsed: exp.Expression,
-) -> dict[str, dict[str, bool]]:
+) -> _AggMap:
     """Build a map of source_name → {column_name: is_aggregate_derived}.
 
     Walks CTEs and inline subqueries to determine which output columns
     are aggregate-derived so the outer query can detect re-aggregation.
     """
-    agg_map: dict[str, dict[str, bool]] = {}
+    agg_map: _AggMap = {}
 
     # CTEs — process in order so later CTEs can inherit from earlier ones
     with_ = parsed.find(exp.With)
@@ -732,18 +404,16 @@ def _propagate_aggregate_columns(
     return agg_map
 
 
-def _resolve_known_sources(
-    select: exp.Select, agg_map: dict[str, dict[str, bool]]
-) -> dict[str, str]:
+def _resolve_known_sources(select: exp.Select, agg_map: _AggMap) -> dict[str, str]:
     """Map each FROM/JOIN source name visible in ``select`` to its ``agg_map`` key.
 
     Only sources we've actually analyzed — CTEs and inline subqueries, whose
     own output columns ``agg_map`` tracks — resolve to an entry. A raw base
     table never appears here since we have no way to see its columns.
 
-    Shared by re-aggregation and fanout-risk detection: both need to resolve
-    a column reference (qualified or not) back to the source that actually
-    defines it, rather than guessing from the column's name alone.
+    Re-aggregation detection uses it to resolve a column reference back to
+    the source that actually defines it, rather than guessing from the
+    column's name alone.
     """
     resolved: dict[str, str] = {}
     for src in _direct_from_sources(select) + _direct_join_sources(select):
@@ -761,9 +431,9 @@ def _column_inherits_aggregate(
     col_name: str,
     ref: str,
     source_keys: dict[str, str],
-    agg_map: dict[str, dict[str, bool]],
-) -> bool:
-    """Whether an output column inherits aggregate-derived status from lineage.
+    agg_map: _AggMap,
+) -> _AggFuncType | None:
+    """The aggregate function an output column inherits from lineage, if any.
 
     A qualified reference (``ref`` present in ``source_keys``) binds
     unambiguously to that one source — trust it directly. An unqualified
@@ -773,21 +443,24 @@ def _column_inherits_aggregate(
     elsewhere in the query (FR-79). Instead, only the sources that actually
     define the column count as evidence, and all of them must agree it's
     aggregate-derived — a real name collision (some agree, some don't) must
-    not silently propagate as if it were unambiguous.
+    not silently propagate as if it were unambiguous. Sources that agree via
+    different functions report the first source's.
     """
     # source_keys.values() are, by construction, all agg_map keys — direct
     # indexing throughout, not .get(..., {}), matching _resolve_unqualified_
     # agg_source's reasoning above.
     if ref and ref in source_keys:
-        return bool(agg_map[source_keys[ref]].get(col_name))
+        return agg_map[source_keys[ref]].get(col_name)
     containing = [s for s in source_keys.values() if col_name in agg_map[s]]
-    return bool(containing) and all(agg_map[s][col_name] for s in containing)
+    if containing and all(agg_map[s][col_name] for s in containing):
+        return agg_map[containing[0]][col_name]
+    return None
 
 
 def _inherit_aggregate_lineage(
     select: exp.Select,
-    outputs: dict[str, bool],
-    agg_map: dict[str, dict[str, bool]],
+    outputs: dict[str, _AggFuncType | None],
+    agg_map: _AggMap,
 ) -> None:
     """Propagate aggregate-derived status through pass-through columns.
 
@@ -809,8 +482,10 @@ def _inherit_aggregate_lineage(
             if outputs.get(col_name):
                 continue
             ref = (expr.table or "").lower()
-            if _column_inherits_aggregate(col_name, ref, source_keys, agg_map):
-                outputs[col_name] = True
+            if inherited := _column_inherits_aggregate(
+                col_name, ref, source_keys, agg_map
+            ):
+                outputs[col_name] = inherited
         elif isinstance(expr, exp.Alias):
             inner = expr.this
             alias_name = expr.alias.lower()
@@ -820,92 +495,21 @@ def _inherit_aggregate_lineage(
             if isinstance(inner, exp.Column):
                 col_name = inner.name.lower()
                 ref = (inner.table or "").lower()
-                if _column_inherits_aggregate(col_name, ref, source_keys, agg_map):
-                    outputs[alias_name] = True
-
-
-# Hash-of-a-key expressions, as sqlglot types the BigQuery/Snowflake spellings —
-# TO_HEX(MD5(k)) and bare MD5(k) parse to different nodes, hence both forms.
-_KEY_HASH_NODES = (
-    exp.MD5,
-    exp.MD5Digest,
-    exp.SHA,
-    exp.SHA1Digest,
-    exp.SHA2,
-    exp.SHA2Digest,
-    exp.FarmFingerprint,
-)
-
-
-def _is_hashed_sum_distinct(node: exp.Expression) -> bool:
-    """True for ``SUM(DISTINCT <expr containing a hash of a key>)``."""
-    return (
-        isinstance(node, exp.Sum)
-        and node.find(exp.Distinct) is not None
-        and node.find(*_KEY_HASH_NODES) is not None
-    )
-
-
-def _unwrap_paren(node: exp.Expression) -> exp.Expression:
-    """``node`` with any wrapping parentheses stripped."""
-    while isinstance(node, exp.Paren):
-        node = node.this
-    return node
-
-
-def _enclosing_sub(node: exp.Expression) -> exp.Sub | None:
-    """The subtraction ``node`` is an operand of, looking through parentheses."""
-    parent = node.parent
-    while isinstance(parent, exp.Paren):
-        parent = parent.parent
-    return parent if isinstance(parent, exp.Sub) else None
-
-
-def _is_symmetric_aggregate_half(agg: exp.AggFunc) -> bool:
-    """True when ``agg`` is one half of Looker's symmetric aggregate.
-
-    Looker reads a measure across a fan-out join without double-counting by
-    packing the measure with a hash of the dedup key, ``SUM(DISTINCT ...)``-ing
-    so duplicate keys collapse, then subtracting a second ``SUM(DISTINCT
-    hash-only)`` to remove the packed hash mass::
-
-        ( SUM(DISTINCT (CAST(ROUND(COALESCE(M,0)*s, 9) AS NUMERIC) + OFFSET(K)))
-          - SUM(DISTINCT OFFSET(K)) ) / s        ==  sum of M over distinct K
-
-    Both halves are required: the subtraction is what makes the pair an identity
-    over a per-key value, and a lone ``SUM(DISTINCT value + hash)`` is not a
-    meaningful quantity at all. So this stays a narrow shape match rather than an
-    exemption for ``SUM(DISTINCT ...)`` generally, which would hide real
-    re-aggregation. The emitting side is
-    ``libs/looker/likeml/src/likeml/symmetric.py``.
-    """
-    agg_expr = as_expression(agg)
-    # AggFunc is an Expr trait, not an Expression subclass, so this narrowing
-    # is what satisfies the type checker, not a runtime-meaningful check. None
-    # falls through to the same "not a match" answer this predicate already
-    # gives a plain non-hashed-sum aggregate.
-    if agg_expr is None or not _is_hashed_sum_distinct(agg_expr):
-        return False
-    sub = _enclosing_sub(agg_expr)
-    if sub is None:
-        return False
-    # Each operand must itself BE a hashed SUM(DISTINCT ...) — searching its
-    # subtree instead would let any hashed sum buried anywhere inside the sibling
-    # satisfy the pairing, and a real re-aggregation could ride along beside it.
-    return all(
-        _is_hashed_sum_distinct(_unwrap_paren(side))
-        for side in (sub.this, sub.expression)
-    )
+                if inherited := _column_inherits_aggregate(
+                    col_name, ref, source_keys, agg_map
+                ):
+                    outputs[alias_name] = inherited
 
 
 def _detect_reaggregation(
     select: exp.Select, parsed: exp.Expression
 ) -> list[QueryDiagnostic]:
-    """Detect re-aggregation: outer aggregate wrapping an already-aggregated column.
+    """Detect re-aggregation: a grouping-dependent aggregate over an aggregate.
 
     Uses propagation of aggregate lineage through subqueries and CTEs to
-    identify columns that are aggregate-derived, then checks whether
-    the outer query applies aggregate functions to those columns.
+    identify columns that are aggregate-derived and which function produced
+    them, then checks whether the outer query applies a non-composable
+    aggregate to those columns.
     """
     agg_map = _propagate_aggregate_columns(parsed)
     if not agg_map:
@@ -921,12 +525,14 @@ def _detect_reaggregation(
         return []
 
     diags: list[QueryDiagnostic] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, _AggFuncType, bool]] = set()
 
     for agg in outer_aggs:
-        if _is_symmetric_aggregate_half(agg):
-            continue
-        for col in agg.find_all(exp.Column):
+        outer_type = type(agg)
+        is_distinct = isinstance(agg.this, exp.Distinct)
+        # An ordered-set aggregate keeps its column in the WITHIN GROUP wrapper.
+        call = agg.parent if isinstance(agg.parent, exp.WithinGroup) else agg
+        for col in call.find_all(exp.Column):
             col_name = col.name.lower()
             # Try to resolve which source this column comes from
             table_ref = (col.table or "").lower()
@@ -945,29 +551,40 @@ def _detect_reaggregation(
                 candidate_sources = containing
 
             for src_name in candidate_sources:
-                col_info = agg_map.get(src_name, {})
-                key = (src_name, col_name)
-                if col_info.get(col_name) and key not in seen:
+                inner_type = agg_map[src_name].get(col_name)
+                key = (src_name, col_name, outer_type, is_distinct)
+                if (
+                    inner_type
+                    and key not in seen
+                    and _is_non_composable(outer_type, inner_type, distinct=is_distinct)
+                ):
                     seen.add(key)
-                    outer_func = type(agg).__name__.upper()
+                    outer_func = outer_type.sql_name()
+                    outer_call = (
+                        f"{outer_func}({'DISTINCT ' if is_distinct else ''}{col.name})"
+                    )
+                    if is_distinct:
+                        outer_func += " DISTINCT"
+                    inner_func = inner_type.sql_name()
                     diags.append(
                         QueryDiagnostic(
                             code=WARN_REAGGREGATION.code,
                             severity="warning",
                             message=(
-                                f"{outer_func}({col.name}) re-aggregates an "
-                                f"already aggregate-derived column"
+                                f"{outer_func} over {inner_func}: "
+                                f"{outer_call} re-aggregates a column "
+                                f"already computed with {inner_func}"
                             ),
                             detail=(
-                                f"Column '{col.name}' is produced by an aggregate "
-                                f"in source '{src_name}'. Applying {outer_func} "
-                                f"on top is likely a statistical error."
+                                f"Column '{col.name}' is produced by "
+                                f"{inner_func} in source '{src_name}'. "
+                                f"{outer_func} of it depends on how the rows "
+                                f"were grouped, so the result is likely wrong."
                             ),
                             recommendation=(
-                                "Review whether the outer aggregation is correct. "
-                                "Summing a pre-summed column or averaging an "
-                                "already-averaged column usually produces "
-                                "incorrect results."
+                                "Compute the aggregate once over the underlying "
+                                "rows, or carry the SUM and COUNT and divide "
+                                "them at the outer level."
                             ),
                         )
                     )
@@ -1174,8 +791,8 @@ def parse_inline_suppressions(sql: str) -> set[str]:
     """Extract suppressed diagnostic codes from ``-- dct:ignore`` comments.
 
     Supports:
-    - ``-- dct:ignore WARN-FANOUT-RISK`` — suppress one code
-    - ``-- dct:ignore WARN-FANOUT-RISK WARN-REAGGREGATION`` — suppress multiple
+    - ``-- dct:ignore WARN-REAGGREGATION`` — suppress one code
+    - ``-- dct:ignore WARN-REAGGREGATION WARN-DATE-AS-TEXT`` — suppress multiple
     - ``-- dct:ignore`` — blanket suppress all (returns ``{"*"}``)
 
     Note: Uses a simple line scan. Does not distinguish SQL comments from
@@ -1222,7 +839,6 @@ def validate_query(
     sql: str,
     *,
     dialect: str | None = ...,
-    relationship_context: RelationshipContext | None = ...,
     x_columns: frozenset[str] = ...,
     suppress: set[str] | None = ...,
     return_suppressed: Literal[False] = ...,
@@ -1234,7 +850,6 @@ def validate_query(
     sql: str,
     *,
     dialect: str | None = ...,
-    relationship_context: RelationshipContext | None = ...,
     x_columns: frozenset[str] = ...,
     suppress: set[str] | None = ...,
     return_suppressed: Literal[True],
@@ -1245,7 +860,6 @@ def validate_query(
     sql: str,
     *,
     dialect: str | None = None,
-    relationship_context: RelationshipContext | None = None,
     x_columns: frozenset[str] = frozenset(),
     suppress: set[str] | None = None,
     return_suppressed: bool = False,
@@ -1255,9 +869,6 @@ def validate_query(
     Args:
         sql: SQL query string to validate.
         dialect: Optional SQLGlot dialect name (e.g. "duckdb", "bigquery").
-        relationship_context: Optional relationship metadata for severity
-            calibration. When provided, fanout_risk findings are refined
-            using known multiplicity, fanout factor, and confidence.
         x_columns: Output column names some chart uses as its x. Only these
             are checked for dates turned into text; empty skips that check.
         suppress: Optional set of diagnostic codes to suppress externally
@@ -1303,7 +914,6 @@ def validate_query(
 
     diags: list[QueryDiagnostic] = []
     diags.extend(_detect_missing_join_predicates(parsed))
-    diags.extend(_detect_fanout_risk(parsed, relationship_context))
     diags.extend(_detect_reaggregation(parsed, parsed))
     diags.extend(_detect_date_as_text(parsed, x_columns, dialect))
 

@@ -35,7 +35,11 @@ from dbt_charts.core.compile.models.chart.authored import (
 )
 from dbt_charts.core.compile.models.factories import PATCH_SHORTHAND
 from dbt_charts.core.compile.models.markers import Channel, FontFamily, Format
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import (
+    CHANNEL_COLUMN,
+    NON_BLANK,
+    FormatConfig,
+)
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
     AuthoredSqlQuery,
@@ -72,6 +76,7 @@ from dbt_charts.core.compile.template.variables import (
 from dbt_charts.core.diagnostics.execution import ExecutionError, UnparseableSqlError
 from dbt_charts.core.fonts import offered_font_families
 from dbt_charts.core.project import Project
+from dbt_charts.core.render.variables_layout import traits_of
 
 Widget = Literal["text", "number", "checkbox", "select", "combo", "list"]
 
@@ -247,6 +252,7 @@ _CONTENT_FIELDS = ("title", "text")
 _NUMERIC_TYPES = frozenset({"int", "float"})
 _SCALAR_TYPES = _NUMERIC_TYPES | {"str", "bool"}
 _SCALAR_SHORTHAND = frozenset({"str", "int", "float"})
+_NAME_GUARDS = frozenset({NON_BLANK, CHANNEL_COLUMN})
 
 # Every wide-capable family folds its measures onto one mark family, which spends
 # the layer stack (and the mark fill) on the measures themselves — so a
@@ -389,7 +395,7 @@ _NEVER_A_LIST = {
 _PIVOT_ARITY = {"TableChart": (("rows", "values"), ("columns",))}
 
 # Groups that mean something only while a sibling holds a particular value.
-# `ScaleContinuousStyle._validate_log_pow_symlog_params` rejects a per-type
+# `ScaleContinuousStyle.__constraints__` rejects a per-type
 # parameter block whose `type` does not name that type, and it fires on the
 # *merged* result — so a chart-local `log.base` under a non-log type parses
 # fine and then raises in `merge_onto_base` at style resolution. The parse gate
@@ -591,6 +597,19 @@ class DesignProperty(BaseModel):
         ),
     )
 
+    minimum: float | None = Field(
+        default=None, description="Smallest value the field accepts."
+    )
+    exclusive_minimum: float | None = Field(
+        default=None, description="Value the field must stay above."
+    )
+    maximum: float | None = Field(
+        default=None, description="Largest value the field accepts."
+    )
+    exclusive_maximum: float | None = Field(
+        default=None, description="Value the field must stay below."
+    )
+
 
 class DesignNode(BaseModel):
     """One authored model's own controls, and the groups nested under it.
@@ -694,9 +713,11 @@ def _widget_for(field: SchemaField) -> Widget | None:
     # a model arm the IR does not report as nested, so a text box showed an
     # authored object as empty and one keystroke replaced it with a string.
     arms = _arms(field.type_repr)
-    if "str" in field.extra_union_type_patterns:
+    str_pattern = field.extra_union_type_patterns.get("str")
+    if str_pattern is not None and str_pattern not in _NAME_GUARDS:
         # A pattern-constrained string is parse-time sugar, not free text: a
-        # text box would take what the pattern rejects (`gap: "x"`).
+        # text box would take what the pattern rejects (`gap: "x"`). A name
+        # guard only excludes blanks, so the string stays free text.
         arms.discard("str")
     list_arms = {arm for arm in arms if arm.startswith("list[")}
     if list_arms:
@@ -849,16 +870,16 @@ def _suppressed(
     if isinstance(node, Variable):
         if variable_value_is_absent(node.default):
             withheld = (*withheld, "required")
-        # And the numeric fields, for the same reason on the other side: writing
-        # one can strand the default or promote the variable to an input its
-        # default was never valid for, and either is the edit the panel cannot
-        # take back.
+        # Where the renderer reads bounds, writing one can strand the default or promote the
+        # variable to an input its default was never valid for, and either is
+        # the edit the panel cannot take back.
+        bounded = traits_of(detect_variable_input_type(node)).bounds != "none"
         withheld = (
             *withheld,
             *(
                 f
                 for f in ("min", "max", "step")
-                if not _variable_bound_is_safe(node, f)
+                if not bounded or not _variable_bound_is_safe(node, f)
             ),
         )
     if not is_root:
@@ -930,9 +951,8 @@ def _variable_bound_is_safe(var: Variable, field: str) -> bool:
 
     Two ways to break, and the field only tells you which probe answers:
 
-    - *Promotion.* On an `auto` variable, writing any of the three makes it a
-      slider — whose default must be a number. So when the default is not one,
-      one probe with an arbitrary value settles all three fields at once, and
+    - *Type.* A bounded input's default must be a number. When it is not, one
+      probe with an arbitrary value settles all three fields at once, and
       `step` is in the guard for this reason alone.
     - *Crossing.* Once the default is numeric, only `min`/`max` are compared
       against it, and a bound is monotone: if the value one step past the
@@ -940,11 +960,10 @@ def _variable_bound_is_safe(var: Variable, field: str) -> bool:
       trap for half its domain. `step` is compared against nothing, so a numeric
       default leaves it an ordinary control.
 
-    A `bool` default takes the promotion probe, not the crossing one. `bool`
+    A `bool` default takes the type probe, not the crossing one. `bool`
     subclasses `int`, so `isinstance` alone would call it numeric and hand
     `step` the early-out below — but numeric is exactly what `_coerce_number`
-    says it is not, and promotion to `slider` is what puts it in front of that
-    coercer. The probe is the only thing that asks, so a bool has to reach it.
+    says it is not, and a slider puts it in front of that coercer. The probe is the only thing that asks, so a bool has to reach it.
 
     Narrowing the *control* — a numeric ceiling the way `input:` gets a value
     list — is the better answer and is the follow-up's, not this one's:
@@ -1273,6 +1292,10 @@ def _describe(
             facets=tuple(type(f).__name__.lower() for f in field.facets),
             list_only=_list_only(field),
             readonly=readonly,
+            minimum=field.bounds.get("ge"),
+            exclusive_minimum=field.bounds.get("gt"),
+            maximum=field.bounds.get("le"),
+            exclusive_maximum=field.bounds.get("lt"),
         )
     return DesignNode(
         model=model_name,

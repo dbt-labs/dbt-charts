@@ -8,7 +8,7 @@ user inputs (select, slider, etc.) or have static default values.
 """
 
 import math
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -19,7 +19,7 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.markers import DisplayText
-from dbt_charts.core.compile.models.primitives import VariableDependencies
+from dbt_charts.core.compile.models.primitives import ErrorHint, VariableDependencies
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import infer_query_type_from_keys
 
@@ -56,6 +56,9 @@ def _normalize_var_query(v: object) -> object:
 # ============================================================================
 
 
+_Raw = TypeVar("_Raw")
+
+
 class VariableOptions(BaseModel):
     """Options configuration for variable inputs.
 
@@ -64,7 +67,13 @@ class VariableOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    static: list[str | int | float] | None = Field(
+    static: Annotated[
+        list[str] | list[int | float] | None,
+        ErrorHint(
+            "options.static must be all strings or all numbers (one type), got {value!r}",
+            only=None,
+        ),
+    ] = Field(
         default=None,
         description=(
             "Option values written out in place, all strings or all numbers. "
@@ -72,21 +81,6 @@ class VariableOptions(BaseModel):
             "unless data_type says otherwise."
         ),
     )
-
-    @field_validator("static")
-    @classmethod
-    def _one_type(
-        cls, static: list[str | int | float] | None
-    ) -> list[str | int | float] | None:
-        if (
-            static
-            and any(isinstance(o, str) for o in static)
-            and any(not isinstance(o, str) for o in static)
-        ):
-            raise ValueError(
-                f"options.static must be all strings or all numbers (one type), got {static!r}"
-            )
-        return static
 
     query: str | None = Field(
         default=None, description="Query name whose result rows provide option values."
@@ -322,3 +316,17 @@ INTERNAL_VARIABLE_FIELDS: frozenset[str] = frozenset(
     if isinstance(field.json_schema_extra, dict)
     and field.json_schema_extra.get("internal") is True
 )
+
+
+def reject_internal_variable_keys(data: _Raw) -> _Raw:
+    """Refuse compiler-owned fields on a variable authored in YAML.
+
+    ``Variable`` itself keeps them: a compiled board round-trips through it.
+    """
+    if isinstance(data, dict):
+        internal = sorted(INTERNAL_VARIABLE_FIELDS & data.keys())
+        if internal:
+            raise ValueError(
+                f"{', '.join(internal)}: set by the compiler, not authorable"
+            )
+    return data

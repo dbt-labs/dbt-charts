@@ -49,7 +49,11 @@ from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
     is_sql_query,
 )
-from dbt_charts.core.compile.models.source import DuckDBSourceConfig, SourceOptionScalar
+from dbt_charts.core.compile.models.source import (
+    UNSUPPORTED_DUCKDB_FIELDS,
+    DuckDBSourceConfig,
+    SourceOptionScalar,
+)
 from dbt_charts.core.compile.sql_guard import validate_select_only, validate_setup_sql
 from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -64,6 +68,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import QueryError
+from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.dialects import get_dialect
 from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
@@ -108,16 +113,6 @@ DuckDBAttachValue = SourceOptionScalar | dict[str, SourceOptionScalar]
 # ...) routed to this adapter, before the duckdb-specific fields are read out
 # of it. Heterogeneous by construction across warehouse types.
 RawSourceConfig = dict[str, Any]  # type-state: explicit_any — warehouse dump
-
-# DuckDB source fields the in-process adapter does not implement (they need
-# dbt-duckdb's own connection lifecycle: plugin hooks, fsspec registration,
-# remote transport). Authoring one is a fail-loud error, not a silent no-op.
-_UNSUPPORTED_DUCKDB_FIELDS = (
-    "plugins",
-    "filesystems",
-    "remote",
-    "use_credential_provider",
-)
 
 # Every source field _connect applies to a pooled connection, beyond path and
 # schema. The connection-pool cache key must cover all of them: two sources
@@ -197,19 +192,30 @@ def _classify_duckdb_error(
 
     if isinstance(exc, duckdb.InterruptException):
         return interrupted()
-    detail = str(exc)
+    return QueryResult(
+        data=[],
+        error=QueryError.from_code(duckdb_error_code(exc), detail=str(exc)),
+    )
+
+
+def duckdb_error_code(exc: Exception) -> ErrorCode:
+    """The registered code for a DuckDB exception: the one mapping every DuckDB
+    execution path (warehouse adapter, file-source engine) classifies through."""
+    import duckdb
+
     if isinstance(exc, (duckdb.BinderException, duckdb.CatalogException)):
-        code = ERR_BINDER_UNKNOWN_COLUMN
-    elif isinstance(exc, duckdb.TypeMismatchException):
-        code = ERR_BINDER_TYPE_MISMATCH
-    else:
-        code = ERR_WAREHOUSE_RUNTIME
-    return QueryResult(data=[], error=QueryError.from_code(code, detail=detail))
+        return ERR_BINDER_UNKNOWN_COLUMN
+    if isinstance(exc, duckdb.TypeMismatchException):
+        return ERR_BINDER_TYPE_MISMATCH
+    return ERR_WAREHOUSE_RUNTIME
 
 
 def _reject_unsupported_duckdb_fields(source_config: RawSourceConfig) -> None:
-    """Fail loud on DuckDB source fields the in-process adapter cannot honor."""
-    for field in _UNSUPPORTED_DUCKDB_FIELDS:
+    """Fail loud on unsupported DuckDB fields a dbt_profile target carries.
+
+    Directly authored sources are rejected at parse time.
+    """
+    for field in sorted(UNSUPPORTED_DUCKDB_FIELDS):
         if source_config.get(field):
             raise DbtChartsError.from_code(
                 ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD, field=field

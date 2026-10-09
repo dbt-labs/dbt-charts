@@ -133,7 +133,14 @@ KEYFILE_FIELDS = {"bigquery": "credentials_json", "snowflake": "private_key"}
 # Field names that carry credentials. `--set` refuses all of them: a secret in
 # argv is in the shell history and the process listing.
 SECRET_FIELDS = frozenset(
-    {"password", "credentials_json", "private_key", "private_key_passphrase", "token"}
+    {
+        "password",
+        "credentials_json",
+        "private_key",
+        "private_key_passphrase",
+        "token",
+        "client_secret",
+    }
 )
 
 OrgOption = Annotated[

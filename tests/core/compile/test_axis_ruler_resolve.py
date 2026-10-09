@@ -218,6 +218,92 @@ def test_anchor_at_start_is_true_for_an_all_negative_zero_topped_ladder():
     assert ay.ruler.anchor_at_start is True
 
 
+def test_zero_crossing_ladder_anchors_on_its_positive_end():
+    """Under a baked top edge, a ladder whose negative extreme outweighs its
+    positive one anchors the unit on the largest positive tick."""
+    ay_merged = _merged_axis_y()
+    ay = build_resolved_axis(
+        ay_merged,
+        format=baked_format(ay_merged),
+        tick_values=(-400e6, -200e6, 0.0, 200e6),
+        domain_max=330e6,
+        chart_id="test",
+        formats=None,
+    )
+    assert ay.ruler is not None
+    assert ay.ruler.anchor_at_start is False
+
+
+def test_dropped_top_rung_moves_the_anchor_to_the_drawn_bottom():
+    """Vega draws only the ladder inside the baked domain: with the 20M rung
+    above domain_max, no positive tick is drawn, so the unit anchors on the
+    bottom."""
+    ay_merged = _merged_axis_y()
+    ay = build_resolved_axis(
+        ay_merged,
+        format=baked_format(ay_merged),
+        tick_values=(-40e6, -20e6, 0.0, 20e6),
+        domain_max=16e6,
+        chart_id="test",
+        formats=None,
+    )
+    assert ay.ruler is not None
+    assert ay.ruler.anchor_at_start is True
+
+
+@pytest.mark.parametrize("headroom", [None, 0])
+@pytest.mark.parametrize("top", [15e6, 3e6])
+def test_negative_heavy_bar_axis_paints_its_unit(top: float, headroom: float | None):
+    import re
+
+    from .._svg_render import render_board_to_svg
+
+    scale = (
+        ""
+        if headroom is None
+        else f"""
+      axis_y:
+        scale:
+          headroom: {headroom}"""
+    )
+    svg = render_board_to_svg(
+        f"""
+title: t
+queries:
+  q:
+    columns: [k, v]
+    values:
+      - [a, -38000000]
+      - [b, {top}]
+charts:
+  c:
+    query: q
+    type: bar
+    x: k
+    y: v
+    style:{scale}
+      number_format:
+        spec: ".3~s"
+        prefix: "US "
+        repeat: anchor
+rows:
+  - c
+"""
+    )
+    labels = re.findall(r"<text[^>]*>([^<]*)</text>", svg)
+    assert any(label.startswith("US ") for label in labels), labels
+
+
+def test_ladderless_zero_crossing_affix_anchors_on_the_last_tick():
+    from dbt_charts.core.compile.models.primitives import ResolvedFormat
+    from dbt_charts.core.compile.resolve.style.axis_cascade import (
+        ladderless_tick_label,
+    )
+
+    fmt = ResolvedFormat(spec=".3~s", prefix="$", repeat="anchor")
+    assert ladderless_tick_label(fmt, (-2_000.0, 500.0)).anchor_at_start is False
+
+
 def test_no_tick_values_never_compacts():
     """Empty tick_values (a chart family that never bakes a ladder) yields
     None regardless of the font — there is nothing to raise about either.
@@ -1117,8 +1203,8 @@ def test_non_compacting_currency_mixed_sign_anchors_on_largest_positive():
     """A non-compacting currency axis whose ladder crosses zero with a larger
     negative magnitude than positive anchors '$' on the largest positive tick.
 
-    (-1000, -500, 0, 500): the largest positive (500) is the last tick in the
-    ascending ladder, so anchor_at_start is False.
+    (-1000, -500, 0, 500) under a baked top edge: the largest positive (500)
+    is the last tick in the ascending ladder, so anchor_at_start is False.
     """
     ay_merged = _merged_axis_y()
     ay_currency = ay_merged.model_copy(
@@ -1129,6 +1215,7 @@ def test_non_compacting_currency_mixed_sign_anchors_on_largest_positive():
         ay_currency,
         format=baked_format(ay_currency, raw="number"),
         tick_values=ticks,
+        domain_max=520.0,
         column_forming=True,
         edge="right",
         chart_id="test",

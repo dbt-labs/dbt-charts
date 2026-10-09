@@ -89,3 +89,36 @@ def test_weight_500_is_a_distinct_render_from_regular(family: str) -> None:
         return to_png(svg, scale=2.0)
 
     assert render(400) != render(500)
+
+
+@pytest.mark.parametrize(
+    "family", ["Source Serif 4", "dbt Sans Tabular", "Inter Variable"]
+)
+def test_inline_style_weight_on_a_tspan_renders_heavier_than_regular(
+    family: str,
+) -> None:
+    """mdsvg paints bold as ``<tspan style="font-weight: 600">`` inside a text
+    whose family comes from a ``<style>`` class rule, not from the tag."""
+    Image = pytest.importorskip("PIL.Image")
+    pytest.importorskip("vl_convert")
+
+    from dbt_charts.core.render.converters.png import to_png
+
+    stack = FONT_STACKS[family].replace("'", "&#x27;")
+
+    def ink(weight: int) -> int:
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160">'
+            f"<style>.md-text {{ font-family: {stack}; }}</style>"
+            '<rect width="240" height="160" fill="white"/>'
+            '<text class="md-text" x="5" y="96" font-size="80" fill="black">'
+            f'<tspan style="font-weight: {weight}">40</tspan></text></svg>'
+        )
+        image = Image.open(io.BytesIO(to_png(svg, scale=2.0))).convert("L")
+        return sum(1 for pixel in image.getdata() if pixel < 200)
+
+    regular, semibold = ink(400), ink(600)
+    assert regular < semibold, (
+        f"{family} inline-style weight 600 painted no heavier than 400 "
+        f"(400={regular}, 600={semibold})"
+    )

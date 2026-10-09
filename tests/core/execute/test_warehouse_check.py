@@ -820,26 +820,24 @@ class TestWarehouseCheckBigQuery:
 class TestWarehouseCheckUnchecked:
     """An adapter with no cheap validity primitive reports unchecked — never valid."""
 
-    def _mysql_registry(self):
-        from dbt_charts.core.compile.models.source import MySQLSourceConfig
+    def _trino_registry(self):
+        from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 
         registry = MagicMock()
-        registry.resolve_query_source.return_value = MySQLSourceConfig(
-            type="mysql", host="db", database="d", user="u", password="p"
-        )
+        registry.resolve_query_source.return_value = DbtTargetSourceConfig(type="trino")
         return registry
 
     def test_unallowlisted_adapter_is_unchecked_not_valid(self):
-        """mysql has an EXPLAIN too, but no branch here yet (see the module
+        """trino has an EXPLAIN too, but no branch here yet (see the module
         docstring)."""
-        result = _check_sql("SELECT 1", self._mysql_registry())
+        result = _check_sql("SELECT 1", self._trino_registry())
         assert result.status == "unchecked"
         assert result.mechanism == "no-validity-primitive"
         assert result.columns_checked is False
-        assert "mysql" in result.reason
+        assert "trino" in result.reason
 
     def test_unallowlisted_adapter_never_calls_execute(self):
-        registry = self._mysql_registry()
+        registry = self._trino_registry()
         _check_sql("SELECT 1", registry)
         registry.execute.assert_not_called()
 
@@ -1045,6 +1043,33 @@ class TestWarehouseCheckClickHouse:
         result = _check_sql("SELECT nope FROM orders", registry)
         assert result.status == "invalid"
         assert "nope" in result.error
+
+
+class TestWarehouseCheckLakeCompute:
+    """Lake compute's engine is DuckDB, so it checks the way DuckDB does: a bare
+    DESCRIBE whose rows are the result schema."""
+
+    def test_valid_query_reads_columns_from_describe(self):
+        from dbt_charts.core.compile.models.source import LakeComputeTokenSource
+
+        registry = MagicMock()
+        registry.resolve_query_source.return_value = LakeComputeTokenSource(
+            type="lakecompute", token="t"
+        )
+        registry.execute.return_value = QueryResult(
+            data=[
+                {"column_name": "month", "column_type": "DATE"},
+                {"column_name": "revenue", "column_type": "DOUBLE"},
+            ]
+        )
+        result = _check_sql("SELECT month, revenue FROM orders", registry)
+        assert result.status == "valid"
+        assert result.mechanism == "DESCRIBE"
+        assert result.adapter_type == "lakecompute"
+        assert result.columns == [
+            WarehouseCheckColumn(name="month", type="DATE"),
+            WarehouseCheckColumn(name="revenue", type="DOUBLE"),
+        ]
 
 
 def _sqlserver_registry(

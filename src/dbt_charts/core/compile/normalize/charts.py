@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     SUPPORTED_AUTHORED_CHART_TYPES,
     AuthoredChart,
     CartesianLayer,
+    _BaseChartFields,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -44,6 +46,7 @@ from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.refs import QueryRef
+from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
 from dbt_charts.core.compile.normalize.queries import (
     expand_composed_variable_dependencies,
     normalize_query,
@@ -62,6 +65,11 @@ from dbt_charts.core.text.case import apply_case, inferred_display_name
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
 
 
+def authored_visible(chart: AuthoredChart) -> bool | str | SingleRowBoolProbe | None:
+    """The layout `visible:` a chart authored; a callout has none."""
+    return chart.visible if isinstance(chart, _BaseChartFields) else None
+
+
 @dataclass(frozen=True)
 class RegisteredChart:
     """A chart registry entry and the directory of the file that declares it.
@@ -78,6 +86,13 @@ class RegisteredChart:
     ) = (  # type-state: optional — None is a local chart, whose text names its own queries
         None
     )
+
+    @cached_property
+    def visible(self) -> bool | str | SingleRowBoolProbe | None:
+        """The layout `visible:` the chart authored, for any item placing it."""
+        return authored_visible(
+            _AUTHORED_CHART_ADAPTER.validate_python(self.definition)
+        )
 
 
 def display_text_fields(chart_type: str) -> tuple[str, ...]:
@@ -606,6 +621,10 @@ def _build_cartesian(
             cache_root=cache_root,
             board_cache=board_cache,
         )
+        layer_queries = [layer.query for layer in layers if layer.query]
+        expand_composed_variable_dependencies(query_registry, layer_queries)
+        for name in layer_queries:
+            base["variable_dependencies"] |= query_registry[name].variable_dependencies
     return cls(
         **base,
         **shared,

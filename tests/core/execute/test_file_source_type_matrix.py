@@ -1,16 +1,14 @@
 """Every file format × every column type, asserted through author SQL.
 
 One fixture table carries every type a format can express; it is serialized to
-each of the four formats and materialized through ``FileSourceMaterializer``
-into ``TrivialDuckDBCache``. Each cell then asserts both the SQL-visible
+each of the four formats and materialized through ``FileSourceMaterializer``.
+Each cell then asserts both the SQL-visible
 ``typeof(col)`` and the value an aggregate over it produces — the pair the
 Parquet DECIMAL bug slipped between, where the value looked plausible and the
 type was VARCHAR.
 
-The Cloud half of the same matrix, over ``PostgresResultCache``, is
-``apps/cloud/apps/renders/tests/test_file_source_type_matrix.py``. The two
-tables are stated separately, not shared, because the hosts genuinely differ —
-a CSV timestamp reads TIMESTAMP_NS here and TIMESTAMP there.
+Cloud uses this same session-owned materializer, so this one matrix is
+authoritative for both hosts.
 """
 
 from __future__ import annotations
@@ -35,7 +33,6 @@ from dbt_charts.core.compile.models.source import (
     ParquetSourceConfig,
 )
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
-from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 _UTC = timezone.utc
 
@@ -135,10 +132,8 @@ _MATRIX: dict[str, dict[str, tuple[str, Any]]] = {
             "b": "BOOLEAN",
             "s": "VARCHAR",
             "dt": "DATE",
-            # pyarrow's CSV reader infers nanosecond precision from the
-            # microsecond-tailed literal; DuckDB keeps the unit rather than
-            # rounding it to TIMESTAMP. Coupled to the pinned pyarrow and
-            # duckdb versions — either one's inference changing moves this cell.
+            # PyArrow's CSV reader infers nanosecond precision from the
+            # microsecond-tailed literal; DuckDB keeps that unit.
             "ts": "TIMESTAMP_NS",
             "ts_tz": "TIMESTAMP WITH TIME ZONE",
             "n": "BIGINT",
@@ -212,7 +207,7 @@ def test_file_column_type_and_value(
     local_project: Callable[..., FilesystemProject],
 ) -> None:
     project, source = _matrix_source(fmt, tmp_path, local_project)
-    mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+    mat = FileSourceMaterializer(project)
     expected_type, expected_value = _MATRIX[fmt][column]
 
     rows = mat.materialize_and_run(
@@ -234,7 +229,7 @@ def test_null_cells_survive_materialization(
     local_project: Callable[..., FilesystemProject],
 ) -> None:
     project, source = _matrix_source(fmt, tmp_path, local_project)
-    mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+    mat = FileSourceMaterializer(project)
 
     rows = mat.materialize_and_run(
         source, "SELECT b, d, dt, n FROM matrix ORDER BY i", {}, "matrix_source"

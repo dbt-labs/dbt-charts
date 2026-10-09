@@ -15,7 +15,7 @@ full calibration table and design rationale.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.resolve.chart._chart_rows import PanelRows, reduce_panels
@@ -26,11 +26,7 @@ if TYPE_CHECKING:
         ResolvedStyleChannel,
     )
     from dbt_charts.core.compile.models.chart.resolved._partition import PartitionAxis
-    from dbt_charts.core.compile.models.style.theme.area import AreaLineStyle
-    from dbt_charts.core.compile.models.style.theme.marks import (
-        LineMarkStyle,
-        PointMarkStyle,
-    )
+    from dbt_charts.core.compile.models.style.theme.marks import PointMarkStyle
     from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
 
 _PointMarkT = TypeVar("_PointMarkT", bound="PointMarkStyle")
@@ -304,101 +300,37 @@ def density_adaptive_stroke(
     return stroke_from_px_per_point(px_per_point)
 
 
-@overload
-def bake_line_stroke(mark: LineMarkStyle, adaptive: float) -> LineMarkStyle: ...
-
-
-@overload
-def bake_line_stroke(mark: AreaLineStyle, adaptive: float) -> AreaLineStyle: ...
-
-
-def bake_line_stroke(
-    mark: LineMarkStyle | AreaLineStyle,
-    adaptive: float,
-) -> LineMarkStyle | AreaLineStyle:
-    """Bake an adaptive stroke width into a line-like mark if eligible.
-
-    Returns the mark unchanged when any of the following are true:
-    - ``adaptive <= 0`` — no adaptive value computed (no data, no x field, etc.)
-    - ``mark.stroke is None`` — no stroke slot to update
-    - ``mark.stroke.width is not None`` — some tier of the cascade already
-      pinned a width (including the ``0.0`` zero-sentinel, "no stroke");
-      a pin always wins outright and must never be resurrected or
-      overwritten by the adaptive pass. This is the single place that
-      decision is made — callers pass the already-merged mark, so a width
-      inherited from any tier (theme, board, chart-local, or a layer's own
-      patch) is treated identically; a caller must not re-derive its own
-      "is this pinned" check before calling in.
-
-    Otherwise returns a model_copy with ``stroke.width`` replaced by
-    ``adaptive``.
-
-    Args:
-        mark: The pre-resolved line (or area line) mark (a frozen model).
-        adaptive: The adaptive stroke value from ``density_adaptive_stroke``.
-
-    Returns:
-        A ``model_copy`` with the baked width, or the original mark unchanged
-        when any of the conditions above hold.
-    """
-    if adaptive <= 0 or mark.stroke is None or mark.stroke.width is not None:
-        return mark
-    return mark.model_copy(
-        update={"stroke": mark.stroke.model_copy(update={"width": adaptive})}
-    )
-
-
 def bake_point_companions(
     point_mark: _PointMarkT,
     stroke: float,
     px_per_point: float,
-    size_authored: bool,
-    ring_authored: bool,
 ) -> _PointMarkT:
-    """Derive a line's point-marker geometry from its baked stroke and density.
+    """Derive a line's point-marker ring and size from its resolved stroke.
 
-    Lives next to ``bake_line_stroke`` because the two are one decision: once
-    the stroke is set, the point ring and disk track it so the dot-to-line
-    proportion holds across densities. Callers pass ``stroke`` = the effective
-    (post-bake) line stroke and ``px_per_point`` = the same density signal
-    ``resolve_px_per_point`` computes (the shared input both
-    ``density_adaptive_stroke`` and a family resolver's own
-    ``stroke_from_px_per_point`` call turn into a stroke width), which is
-    ``0.0`` when there was no density to measure — a line overlay on a
-    non-line base, or a line base with no x channel, no rows, or no width.
-    Call whenever there is a real stroke to track; the density signal gates
-    the ``size`` half below, not the call.
+    ``stroke`` is the effective line stroke and ``px_per_point`` the density
+    signal from ``resolve_px_per_point`` (``0.0`` when none was measured: a
+    line overlay on a non-line base, or a line base with no x channel, no
+    rows, or no width). A companion any cascade tier already set on
+    ``point_mark`` is left alone. Both gates read the cascaded mark, which is
+    honest only while the parent style carries no theme literal for either
+    companion: ``charts.line`` carries neither, but ``charts.area``/
+    ``scatter``/``point_map`` set ``point.stroke_width``, so a call site
+    parented on one of those must not reuse this unchanged.
 
-    - Ring ``stroke_width`` follows the line stroke unless some tier authored
-      ``marks.point.stroke_width``. Unconditional: a line overlay on a bar,
-      scatter or area base has no density signal at all, and its ring must
-      still read with the weight of the line it rings rather than falling
-      through to Vega-Lite's unthemeable 2px.
-    - ``size`` is density-driven, not a themed literal: it is the square of
-      ``chart_rendering.point.diameter_ratio * stroke`` — VL ``size`` is area,
-      but the diameter-to-size relationship here is ``diameter = sqrt(size)``,
-      measured directly off the rendered mark path radius (the textbook
-      ``π·r²`` reading is wrong for this mark and gives the wrong dot) — while
-      ``px_per_point`` clears ``chart_rendering.point.min_px_per_point``, and
-      ``0.0`` (points off) below it. Skipped entirely when there is no density
-      signal (``px_per_point <= 0``): ``0.0`` is the resolved model's word for
-      "measured, and too dense to show dots", which is not what "never
-      measured" means. Leave the cascaded value standing rather than assert a
-      density that was never taken.
-
-    Both gates read the *cascaded* mark, so an authoring tier is an authoring
-    tier — board, family, chart or layer alike. That read is only honest while
-    the parent style carries no theme literal for either companion: today the
-    only parent handed here is ``charts.line``, which carries neither.
-    ``charts.area``/``scatter``/``point_map`` do set ``point.stroke_width``,
-    so a future call site parented on one of those must not reuse this gate
-    unchanged.
-
-    Returns the mark unchanged when both companions are authored.
+    - Ring ``stroke_width`` follows the stroke, with or without a density
+      signal: a line overlay on a bar, scatter or area base has none, and its
+      ring must still read with the weight of the line it rings rather than
+      falling through to Vega-Lite's unthemeable 2px.
+    - ``size`` is ``(point.diameter_ratio * stroke) ** 2`` (VL ``size`` is
+      area, but the rendered diameter is ``sqrt(size)``, not the textbook
+      ``pi * r**2`` reading) once ``px_per_point`` clears
+      ``point.min_px_per_point``, and ``0.0`` (points off) below it. Without a
+      density signal the cascaded size stands: ``0.0`` means "measured, and too
+      dense to show dots", which is not "never measured".
     """
-    if not ring_authored:
+    if point_mark.stroke_width is None:
         point_mark = point_mark.model_copy(update={"stroke_width": stroke})
-    if not size_authored and px_per_point > 0:
+    if point_mark.size is None and px_per_point > 0:
         point_cfg = get_chart_rendering().point
         auto_size = (
             (point_cfg.diameter_ratio * stroke) ** 2

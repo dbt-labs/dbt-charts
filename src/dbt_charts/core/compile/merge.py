@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeVar, overload
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from dbt_charts.core.compile.errors import CompilationError, MergeValidationError
+from dbt_charts.core.compile.errors import CompilationError, FileValidationError
 from dbt_charts.core.compile.file_refs import anchor_images, resolve_ref
 from dbt_charts.core.compile.models.factories import FontSlotBase
 from dbt_charts.core.compile.models.markers import Merge, Strategy
@@ -53,7 +53,11 @@ from dbt_charts.core.compile.models.style.authored import (
     PaddingStylePatch,
 )
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
-from dbt_charts.core.diagnostics.codes_compile import ERR_EXTENDS_UNRESOLVED
+from dbt_charts.core.diagnostics import Diagnostic
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_EXTENDS_UNRESOLVED,
+    WARN_EXTENDS_LAYOUT_APPENDED,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory, ProjectPath
@@ -577,19 +581,8 @@ def _fragment_from_yaml(
     try:
         return BOARD_PATCH_ADAPTER.validate_python(data)
     except PydanticValidationError as e:
-        from dbt_charts.core.compile.parse.source_map import (
-            build_source_index,
-            stamp_diagnostics,
-        )
-        from dbt_charts.core.compile.parse.yaml_error_formatter import (
-            format_validation_errors_structured,
-        )
-
-        diags = format_validation_errors_structured(e, content)
-        stamp_diagnostics(diags, *build_source_index(content, relpath))
-        raise MergeValidationError(
-            f"extends: schema error in {relpath}",
-            diags,
+        raise FileValidationError.from_pydantic(
+            f"extends: schema error in {relpath}", e, content, relpath
         ) from e
 
 
@@ -923,22 +916,11 @@ def merge_metas(
                 anchor_images(meta_mapping, meta_path.parent)
                 fragment = BOARD_PATCH_ADAPTER.validate_python(meta_mapping)
             except PydanticValidationError as e:
-                from dbt_charts.core.compile.parse.source_map import (
-                    build_source_index,
-                    stamp_diagnostics,
-                )
-                from dbt_charts.core.compile.parse.yaml_error_formatter import (
-                    format_validation_errors_structured,
-                )
-
-                meta_content = meta_path.read_text()
-                diags = format_validation_errors_structured(e, meta_content)
-                stamp_diagnostics(
-                    diags, *build_source_index(meta_content, meta_path.relpath)
-                )
-                raise MergeValidationError(
+                raise FileValidationError.from_pydantic(
                     f"meta schema error in {meta_path.relpath}",
-                    diags,
+                    e,
+                    meta_path.read_text(),
+                    meta_path.relpath,
                 ) from e
             meta_ctx = _ExtendCtx(
                 board_dir=meta_path.parent,
@@ -956,11 +938,35 @@ def merge_metas(
     return acc
 
 
+def _appended_layout_warnings(
+    board_node: BaseModel, extends_patch: BaseModel, own_patch: BaseModel
+) -> list[Diagnostic]:
+    """One WARN-EXTENDS-LAYOUT-APPENDED per list layout the board and its parents share."""
+    raw = board_node.extends  # type: ignore[attr-defined]  # type-state: type_ignore — any BaseModel carrying `extends`
+    if not raw:
+        return []
+    parents = ", ".join([raw] if isinstance(raw, str) else raw)
+    return [
+        Diagnostic.from_code(
+            WARN_EXTENDS_LAYOUT_APPENDED,
+            message=WARN_EXTENDS_LAYOUT_APPENDED.message_template.format(
+                axis=axis, inherited_count=len(inherited), parents=parents
+            ),
+            fix=WARN_EXTENDS_LAYOUT_APPENDED.fix_template,
+            path=axis,
+        )
+        for axis in ("rows", "cols")
+        if getattr(own_patch, axis) is not None
+        and (inherited := getattr(extends_patch, axis)) is not None
+    ]
+
+
 def merged_patch(
     board_node: BaseModel,
     board_path: ProjectPath,
     boards_root: ProjectDirectory,
     theme_sink: list[str] | None = None,
+    warning_sink: list[Diagnostic] | None = None,
 ) -> BaseModel:
     """Compute the fully-merged patch for a board: metas folded under board.
 
@@ -982,6 +988,7 @@ def merged_patch(
             effective theme; compiler.py re-injects it so the normalizer applies
             the theme exactly once via get_theme_style(). When None (theme-build
             lane), theme YAMLs are loaded directly as style fragments.
+        warning_sink: When not None, merge-time warnings are appended here.
     """
     # Base: merge of all meta files root→leaf
     base = merge_metas(board_path.parent, boards_root, theme_sink)
@@ -989,6 +996,10 @@ def merged_patch(
     extends_patch = merge_extends(board_node, board_path, boards_root, theme_sink)
     # Top: board's own explicitly-set fields (identity fields stripped)
     own_patch = _fragment_own_patch(board_node)
+    if warning_sink is not None:
+        warning_sink.extend(
+            _appended_layout_warnings(board_node, extends_patch, own_patch)
+        )
     # fold: base < extends < own
     board_contribution = merge_patches(extends_patch, own_patch, nested=False)
     return merge_patches(base, board_contribution, nested=False)

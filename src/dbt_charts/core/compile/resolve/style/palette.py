@@ -1146,7 +1146,7 @@ def _bound_palette(
     bound = palettes.get(role)
     if bound is None:
         raise UnknownColorError(
-            f"theme has no palette assigned to role '{role}'."
+            f"color token {token!r}: theme has no palette assigned to role '{role}'."
             f"{_retired_companion_hint(token)} "
             f"Defined roles: {sorted(palettes)}"
         )

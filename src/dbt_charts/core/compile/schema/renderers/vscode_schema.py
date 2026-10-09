@@ -132,46 +132,6 @@ def _decorate_for_vscode(base: dict[str, Any]) -> dict[str, Any]:
                 "items": {"$ref": "#/$defs/LayoutItem"},
             }
 
-    # Widen CachePatch to its scalar authoring forms (`cache: 1h`, `cache: false`).
-    # Every scope $refs this one definition, so decorating it here covers them all.
-    # The IR emits only the block shape — the scalars are expanded by CachePatch's
-    # before-validator, which JSON Schema generation cannot see.
-    if "CachePatch" in defns:
-        # Closed: `enabled` is not authorable, so the IDE offers only the
-        # scalars and the keys the reference actually teaches. This is the
-        # board-scope shape; the project root's extra `path` key lives in
-        # `dbt_charts.yml`, which this board schema does not match.
-        block_arm = {**defns["CachePatch"], "additionalProperties": False}
-        # `ttl` is Optional in Python because unset means "inherit", but the
-        # validator rejects a written `ttl: null` as ambiguous — so the null
-        # arm the generic renderer emits for every Optional field would have
-        # the IDE green-light the one spelling the compiler goes out of its
-        # way to refuse.
-        ttl = block_arm["properties"]["ttl"]
-        block_arm["properties"] = {
-            **block_arm["properties"],
-            "ttl": {
-                **ttl,
-                # The `forever` arm is a bare enum and carries no `type`.
-                "anyOf": [arm for arm in ttl["anyOf"] if arm.get("type") != "null"],
-            },
-        }
-        defns["CachePatch"] = {
-            "oneOf": [
-                block_arm,
-                {
-                    "type": "boolean",
-                    "description": "false disables caching at this scope; true "
-                    "enables it with the inherited ttl.",
-                },
-                {
-                    "type": "string",
-                    "description": "Cache ttl: a duration ('5m', '1h', '7d', "
-                    "'1h30m') or 'forever' to never auto-expire.",
-                },
-            ]
-        }
-
     defns["LayoutItem"] = _build_layout_item_def()
 
     return schema

@@ -182,18 +182,6 @@ class TestKpiRenderOrder:
             f"Second <text> should carry the title label, got tspan text: {title_text!r}"
         )
 
-    def test_no_default_card_border(self):
-        resolved, data = _resolved_kpi(value="revenue", label="Revenue")
-        svg = render_kpi_svg(
-            resolved,
-            data,
-            width=300,
-            height=180,
-            board_style=resolve_style(get_theme_style()),
-        )
-        # Background rect is emitted from cascade, but no border stroke by default.
-        assert "stroke=" not in svg
-
 
 class TestKpiSupportBlock:
     def test_support_renders_glyph_value_and_neutral_explainer(self):

@@ -33,13 +33,18 @@ from dbt_charts.core.render.chart.emitters._channels import (
     channel_to_encoding,
     gradient_scale_to_vl,
 )
-from dbt_charts.core.render.chart.emitters._label_overlap import resolve_axis_x_overlap
+from dbt_charts.core.render.chart.emitters._label_overlap import (
+    resolve_axis_x_overlap,
+    resolve_axis_y_overlap,
+)
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
+from dbt_charts.core.render.chart.time_unit_detect import BUCKETED_CALENDAR_UNITS
 from dbt_charts.core.render.chart.type_inference import (
     HEATMAP_FORMAT_REMEDY,
     apply_x_tick_cadence,
     build_cartesian_x_encoding,
     gate_label_format,
+    resolve_cartesian_x_type,
 )
 from dbt_charts.core.render.chart.vl_field_maps import (
     axis_to_vl,
@@ -179,7 +184,7 @@ class HeatmapEmitter:
             field_labels=chart.field_labels,
         )
 
-        x_transformed = False
+        transformed = False
         if chart.x:
             # Labeled bucket strings ("Q1 2024") and non-date-only temporal
             # values (datetime.datetime) reach build_cartesian_x_encoding's
@@ -187,7 +192,7 @@ class HeatmapEmitter:
             # bar/line/area canonicalize their x rows before this same call;
             # heatmap has no gap-fill scaffold of its own, so it needs the
             # same two-step precondition directly. No-ops for non-date data.
-            data, x_transformed = canonicalize_cartesian_x_data(
+            data, transformed = canonicalize_cartesian_x_data(
                 data, chart.x, ax.time_unit
             )
             # Walk the strategy list; directive is render-local (not on the model).
@@ -251,14 +256,32 @@ class HeatmapEmitter:
                 setting="axis_y.labels.format",
                 remedy=HEATMAP_FORMAT_REMEDY,
             )
-            # Row labels are the literal per-row values (no d3 format applies
-            # to a nominal field), so an own-side align (resolved from
-            # axis_y.labels.align: inward, or an authored left/right) is
-            # measured directly against them — same exact-content case
-            # bar.py's categorical own-side gate uses. Only worth the
-            # O(rows) dedup pass when align is actually set — otherwise
-            # measure_axis_to_vl's own-side gate can never fire and the
-            # labels would go unused.
+            # A date-valued y is the same continuous data x is: it earns the
+            # calendar vocabulary and a height-budgeted cadence. The scale
+            # stays the nominal band a rect cell needs.
+            _, y_type_from_data, y_time_unit = resolve_cartesian_x_type(
+                data, chart.y, ay, "heatmap", False, ()
+            )
+            y_dated = y_time_unit in BUCKETED_CALENDAR_UNITS and y_type_from_data in (
+                "temporal",
+                "ordinal",
+            )
+            y_layout = None
+            if y_dated:
+                data, y_transformed = canonicalize_cartesian_x_data(
+                    data, chart.y, ay.time_unit, sort=False
+                )
+                transformed = transformed or y_transformed
+                y_layout = resolve_axis_y_overlap(
+                    ay,
+                    chart.y,
+                    data,
+                    chart.style.label_usable_ratio,
+                    chart_height=box.height,
+                    time_unit=y_time_unit,
+                )
+            # A dated y paints a synthesized labelExpr, which own-side gutter
+            # measurement does not cover, so it takes the away-side fallback.
             y_category_labels = (
                 tuple(
                     dict.fromkeys(
@@ -267,10 +290,28 @@ class HeatmapEmitter:
                         if row.get(chart.y) is not None
                     )
                 )
-                if ay.labels.align is not None
+                if ay.labels.align is not None and not y_dated
                 else ()
             )
-            y_axis = measure_axis_to_vl(ay, data, (), category_labels=y_category_labels)
+            y_axis = measure_axis_to_vl(
+                ay,
+                data,
+                (),
+                category_labels=y_category_labels,
+                label_overlap=y_layout.label_overlap if y_layout else None,
+            )
+            if y_layout:
+                _, y_axis, _ = build_cartesian_x_encoding(
+                    data,
+                    chart.y,
+                    ay,
+                    y_axis,
+                    "heatmap",
+                    format_time_unit=y_layout.format_time_unit,
+                    visibility_time_unit=y_layout.visibility_time_unit,
+                    label_anchor_index=y_layout.anchor_index,
+                    panel_fields=(),
+                )
             y_enc: dict[str, Any] = {
                 "field": chart.y,
                 "type": y_type,
@@ -368,8 +409,8 @@ class HeatmapEmitter:
             config=config,
             mark_props=mark_props,
         )
-        # When x canonicalization fired, stamp transformed rows onto the spec
+        # When canonicalization fired, stamp transformed rows onto the spec
         # so the session does not overwrite with raw query data.
-        if x_transformed:
+        if transformed:
             spec.data = normalize_data_types(data)
         return spec

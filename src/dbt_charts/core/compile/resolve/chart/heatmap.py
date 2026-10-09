@@ -42,7 +42,6 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
-    has_structured_tooltip,
     plan_cartesian,
 )
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
@@ -158,9 +157,6 @@ def _resolve_heatmap(
             else None
         ),
         tooltip_format_values=tooltip_format_values,
-        structured_tooltip_eligible=has_structured_tooltip(
-            normalized, heatmap_color_field=color_field
-        ),
         # Both of a heatmap's channels are nominal -- see plan_cartesian's
         # own "nominal", "nominal" call above.
         ax_is_quantitative=False,

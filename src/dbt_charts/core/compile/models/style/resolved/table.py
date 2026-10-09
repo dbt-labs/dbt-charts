@@ -5,14 +5,16 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import (
-    FormatAliases,
+    FormatTable,
     ResolvedFontStyle,
     ResolvedFormat,
-    ResolvedScaleTarget,
+    ResolvedNamedPaletteScaleTargetConfig,
+    ResolvedScaleTargetConfig,
 )
 from dbt_charts.core.compile.models.style.authored import PaginationConfig
 from dbt_charts.core.compile.models.style.authored.table import (
     ColumnScaleConfig,
+    ColumnScaleTargetConfig,
     TableColumnConfig,
 )
 from dbt_charts.core.compile.models.style.theme import TableChartStyle, TitleStyle
@@ -31,7 +33,7 @@ class ResolvedTableStyle(BaseModel):
     title: TitleStyle = Field(
         description="Resolved chart title style from the cascade.",
     )
-    formats: FormatAliases | None = Field(
+    formats: FormatTable | None = Field(
         description="Resolved format aliases available to table cells.",
     )
     title_font: ResolvedFontStyle = Field(
@@ -48,12 +50,30 @@ class ResolvedTableStyle(BaseModel):
     )
 
 
+class ResolvedColumnScaleTargetConfig(
+    ColumnScaleTargetConfig, ResolvedScaleTargetConfig
+):
+    """``ResolvedScaleTargetConfig`` keeping the column's narrowed palette."""
+
+
+class ResolvedNamedPaletteColumnScaleTargetConfig(
+    ColumnScaleTargetConfig, ResolvedNamedPaletteScaleTargetConfig
+):
+    """``ResolvedNamedPaletteScaleTargetConfig`` keeping the column's narrowed palette."""
+
+
+# Same smart-union contract as ``ResolvedScaleTarget``.
+ResolvedColumnScaleTarget = (
+    ResolvedNamedPaletteColumnScaleTargetConfig | ResolvedColumnScaleTargetConfig
+)
+
+
 class ResolvedColumnScaleConfig(ColumnScaleConfig):
     """ColumnScaleConfig with resolved scale targets.
 
     Constructed by _with_resolved_scale_stops in compile/resolve/chart/_table.py
     after the WCAG-safe palette bake runs. background/color carry
-    ResolvedScaleTarget so resolved_stops survives pydantic serialization
+    ResolvedColumnScaleTarget so resolved_stops survives pydantic serialization
     (board artifact round-trip). The base ColumnScaleConfig is used for
     pre-bake authored input; this resolved variant is only constructed at
     resolve time.
@@ -61,10 +81,10 @@ class ResolvedColumnScaleConfig(ColumnScaleConfig):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    background: ResolvedScaleTarget | None = Field(
+    background: ResolvedColumnScaleTarget | None = Field(
         default=None, description="Resolved background color mapping for this column."
     )
-    color: ResolvedScaleTarget | None = Field(
+    color: ResolvedColumnScaleTarget | None = Field(
         default=None, description="Resolved text color mapping for this column."
     )
 

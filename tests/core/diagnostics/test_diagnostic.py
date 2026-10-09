@@ -100,31 +100,33 @@ class TestSqlLintAdapterUnconcatenated:
     """
 
     def test_message_carries_only_the_templated_head(self) -> None:
-        from dbt_charts.core.diagnostics.codes_query import WARN_FANOUT_RISK
+        from dbt_charts.core.diagnostics.codes_query import (
+            WARN_MISSING_JOIN_PREDICATE,
+        )
         from dbt_charts.core.diagnostics.from_query_diagnostic import (
             from_query_diagnostic,
         )
         from dbt_charts.core.inspect.query_validator import QueryDiagnostic
 
         diag = QueryDiagnostic(
-            code=WARN_FANOUT_RISK.code,
+            code=WARN_MISSING_JOIN_PREDICATE.code,
             severity="warning",
-            message="orders fans out",
-            detail="joins orders to line_items on a 1:N relationship",
+            message="orders has no join predicate",
+            detail="orders CROSS JOIN line_items has no ON clause",
             recommendation=None,
             confidence=0.87,
-            evidence=("orders.id -> line_items.order_id",),
+            evidence=("sources: orders, line_items",),
         )
         d = from_query_diagnostic("revenue", diag)
 
-        expected_head = WARN_FANOUT_RISK.message_template.format(
-            query_name="revenue", message="orders fans out"
+        expected_head = WARN_MISSING_JOIN_PREDICATE.message_template.format(
+            query_name="revenue", message="orders has no join predicate"
         )
         assert d.message == expected_head
-        assert "joins orders to line_items" not in d.message
-        assert "line_items.order_id" not in d.message
+        assert "CROSS JOIN line_items" not in d.message
+        assert "sources: orders" not in d.message
 
         assert d.fields["severity"] == "warning"
         assert d.fields["confidence"] == 0.87
-        assert d.fields["detail"] == "joins orders to line_items on a 1:N relationship"
-        assert d.fields["evidence"] == ["orders.id -> line_items.order_id"]
+        assert d.fields["detail"] == "orders CROSS JOIN line_items has no ON clause"
+        assert d.fields["evidence"] == ["sources: orders, line_items"]

@@ -17,7 +17,6 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
-    model_validator,
 )
 
 from dbt_charts.core.compile.models.constraints import (
@@ -31,13 +30,22 @@ from dbt_charts.core.compile.models.factories import (
     build_patch_model,
     build_patch_model_ext,
 )
-from dbt_charts.core.compile.models.markers import Color, DisplayText, Format, Url
+from dbt_charts.core.compile.models.markers import (
+    Color,
+    DisplayText,
+    Format,
+    Merge,
+    Palette,
+    Strategy,
+    Url,
+)
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     FormatConfig,
+    GlyphText,
     ScaleTargetConfig,
 )
-from dbt_charts.core.compile.models.schema_names import FormatAlias
+from dbt_charts.core.compile.models.schema_names import FormatAlias, ScalePaletteName
 from dbt_charts.core.compile.models.style.theme import (
     SparkStyle,
     TableChartStyle,
@@ -218,9 +226,16 @@ class SparkConfig(BaseModel):
         return value
 
 
-def _validate_glyph_text(glyph: str | None, label: str) -> None:
-    if glyph is not None and not glyph.strip():
-        raise ValueError(f"{label} glyph must be a non-empty string")
+class ColumnScaleTargetConfig(ScaleTargetConfig):
+    """A table column's scale target: CSS color strings only."""
+
+    palette: Annotated[
+        ScalePaletteName | list[str] | str,
+        Merge(Strategy.OVERRIDE),
+        Palette(),
+    ] = Field(
+        description="Which colors the scale draws from: a built-in palette name or Vega scheme, or a CSS color list."
+    )
 
 
 class ColumnScaleConfig(BaseModel):
@@ -228,23 +243,12 @@ class ColumnScaleConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    background: ScaleTargetConfig | None = Field(
+    background: ColumnScaleTargetConfig | None = Field(
         default=None, description="Continuous background color mapping for this column."
     )
-    color: ScaleTargetConfig | None = Field(
+    color: ColumnScaleTargetConfig | None = Field(
         default=None, description="Continuous text color mapping for this column."
     )
-
-    @model_validator(mode="after")
-    def _validate_color_palettes(self) -> ColumnScaleConfig:
-        for key, target in (("background", self.background), ("color", self.color)):
-            if target is not None and not all(
-                isinstance(c, str) for c in target.palette
-            ):
-                raise ValueError(
-                    f"ColumnScaleConfig.{key}.palette must be CSS color strings, not numbers."
-                )
-        return self
 
 
 class TableColumnConfig(ConstrainedModel):
@@ -344,7 +348,7 @@ class TableColumnConfig(ConstrainedModel):
         default=None,
         description="Continuous color mapping configuration for this column.",
     )
-    glyph: str | None = Field(
+    glyph: GlyphText | None = Field(
         default=None,
         description="Text shown before every cell value; fills the same slot as format.prefix and wins over it.",
     )
@@ -365,12 +369,6 @@ class TableColumnConfig(ConstrainedModel):
                 raise ValueError(_SPARK_RENAMED_AWAY[value])
             return {"type": value}
         return value
-
-    @field_validator("glyph")
-    @classmethod
-    def _validate_glyph(cls, glyph: str | None) -> str | None:
-        _validate_glyph_text(glyph, label="TableColumnConfig")
-        return glyph
 
 
 _SIZING_FIELDS = frozenset({"width", "max_width"})

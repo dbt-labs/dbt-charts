@@ -77,6 +77,7 @@ rows:
             board.title,
             board.variable_defaults,
             board.level,
+            board.base_dir,
         )
         assert board.title is not None
         title_h = max(
@@ -241,6 +242,7 @@ rows:
             board.title,
             board.variable_defaults,
             board.level,
+            board.base_dir,
         )
         assert title_w >= 280.0
 
@@ -760,38 +762,40 @@ rows:
         assert 'data-dbt-align="end"' not in svg
 
 
-class TestMeasureTitleSingleLineWidth:
-    """Regression tests for the title natural-width measurement helper.
+class TestTitleSingleLineWidth:
+    """The title column is reserved from mdsvg's one-line title measure.
 
-    The PIL-backed measurer was introduced because mdsvg's `measure()`
-    returns the constraint width when asked for an unbounded layout, not the
-    natural content extent. The heading-prefix strip uses an anchored regex
-    rather than `lstrip("# ")` to avoid mangling titles like "#1 Product"
-    or "## Q3 ##".
+    The heading prefix must not mangle titles like "#1 Product" or "## Q3 ##".
     """
 
-    def _measure(self, title: str | None) -> float:
+    def _measure(self, title: str) -> float:
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.sizing import _measure_title_single_line_width
-
-        return _measure_title_single_line_width(
-            title, {}, resolve_style(get_theme_style()), 1
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            title_max_content_width,
         )
 
-    def test_empty_title_returns_zero(self) -> None:
-        assert self._measure(None) == 0.0
-        assert self._measure("") == 0.0
+        return title_max_content_width(
+            title, 1, resolve_style(get_theme_style()), {}, None
+        )
+
+    def test_untitled_board_reserves_the_minimum_column(self) -> None:
+        from dbt_charts.core.compile.resolve.style.board import resolve_style
+
+        title_w, _vars_w = resolve_title_variables_inline_widths(
+            1000.0,
+            resolve_style(get_theme_style()),
+            {"a": Variable(input="text")},
+            None,
+            {},
+            1,
+            None,
+        )
+        assert title_w == 48.0
 
     def test_longer_title_returns_proportionally_more_width(self) -> None:
         short = self._measure("Hi")
         long = self._measure("Hi there friends, hello")
         assert long > short * 5, (short, long)
-
-    def test_markdown_heading_prefix_is_stripped(self) -> None:
-        plain = self._measure("Sales Dashboard")
-        with_prefix = self._measure("# Sales Dashboard")
-        # Width should match (the `# ` is markdown noise, not glyphs to render).
-        assert abs(plain - with_prefix) < 1.0, (plain, with_prefix)
 
     def test_standalone_hash_is_preserved(self) -> None:
         """`#1 Product` is a legitimate title, not a heading. The `#1` must
@@ -909,6 +913,59 @@ rows:
             resolve_board(board), executor, values, background=None, render_cache=cache
         )
 
+    def test_band_fit_is_decided_against_the_title_as_drawn(self) -> None:
+        """The title column is the width mdsvg draws the title in, case and
+        weight included, not a bare-glyph measure of the same string.
+
+        Upper-casing the heading widens the title; a variables column that fits
+        beside the uncased glyphs but not beside the drawn title must be
+        refused, not packed against the far edge of a column it overlaps.
+        """
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            title_max_content_width,
+        )
+        from dbt_charts.core.render.sizing import _variables_layout
+
+        board = self._board(
+            self._MULTISELECT_BOARD.replace(
+                "style:\n", "style:\n  fonts:\n    heading:\n      case: upper\n", 1
+            )
+        )
+        style = board.resolved_style
+        card_pad = float(style.frame.card_padding)
+        drawn = title_max_content_width(
+            board.title,
+            board.level,
+            style,
+            board.variable_defaults,
+            board.base_dir,
+        )
+        widest = max(
+            box.x + box.width
+            for box in _variables_layout(
+                board.visible_variables,
+                4000.0,
+                board.variable_defaults,
+                style.variables,
+            ).boxes
+        )
+        exact_fit = drawn + 8.0 + float(style.variables.gap) + widest
+
+        def fits(inner: float) -> bool:
+            return should_use_title_inline_band(
+                board.title,
+                board.visible_variables,
+                inner + 2 * card_pad,
+                style,
+                card_pad,
+                board.variable_defaults,
+                board.level,
+                board.base_dir,
+            )
+
+        assert fits(exact_fit + 1.0)
+        assert not fits(exact_fit - 5.0)
+
     def test_title_column_grows_with_the_boards_own_title_size(self) -> None:
         """A board that renders a bigger title reserves a wider title column.
 
@@ -930,6 +987,7 @@ rows:
                 title=board.title,
                 variable_values=board.variable_defaults,
                 level=board.level,
+                base_dir=board.base_dir,
             )
             widths.append(title_w)
 
@@ -957,8 +1015,8 @@ rows:
 
         from dbt_charts.core.compile.resolve.style.markdown_style import (
             title_font_family,
+            title_max_content_width,
         )
-        from dbt_charts.core.render.sizing import _measure_title_single_line_width
 
         style = self._board(self._MULTISELECT_BOARD).resolved_style
         # A distinctive family, not the theme's: the shipped default sets the
@@ -982,7 +1040,7 @@ rows:
         # assumed — that coincidence is exactly what a re-vendored board can introduce.
         title = "Quarterly revenue by segment"
         widths = [
-            _measure_title_single_line_width(title, {}, s, 1)
+            title_max_content_width(title, 1, s, {}, None)
             for s in (style, in_a_different_family)
         ]
         assert widths[0] != widths[1], (
@@ -1008,6 +1066,7 @@ rows:
             card_pad,
             board.variable_defaults,
             level=board.level,
+            base_dir=board.base_dir,
         )
         fits_with_everything_selected = should_use_title_inline_band(
             board.title,
@@ -1017,6 +1076,7 @@ rows:
             card_pad,
             {"categories": ["Analytics", "Collaboration", "Security", "Support"]},
             level=board.level,
+            base_dir=board.base_dir,
         )
 
         assert fits_at_defaults, "the default two-member value fits its column"
@@ -1043,6 +1103,7 @@ rows:
             card_pad,
             board.variable_defaults,
             level=board.level,
+            base_dir=board.base_dir,
         )
 
     _JINJA_TITLE_BOARD = """
@@ -1148,6 +1209,7 @@ style:
     width: 1200
   variables:
     position: title-inline
+    title_inline_title_max_width: 200
 variables:
   date_range:
     input: daterange
@@ -1202,6 +1264,7 @@ rows:
             board.title,
             board.variable_defaults,
             board.level,
+            board.base_dir,
         )
 
         assert board.title is not None

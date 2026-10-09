@@ -23,15 +23,17 @@ when support_table is non-None — auto-sized specs have no anchor.
 The caller owns the space reservation for position:bottom via
 ``bump_padding_bottom``. For position:top the mechanism depends on whether
 the chart has a title (not subtitle alone):
-- Titled charts: ``title.offset = strip_h`` (the probe value) so the title's
-  absolute position is invariant to the offset amount (verified: under
-  autosize:pad the title stays fixed regardless of title.offset value).
-  ``layout_sizing._correct_support_table_height`` calibrates the probe offset
-  downward so the true gap between title baseline and strip top equals
-  strip_h rather than strip_h + VL's natural baseline gap.
+- Titled charts: the strip's own text layers sit at negative y, so under
+  autosize:pad Vega's view-bounds union already grows the top margin by the
+  strip's real ink — no title.offset term is needed to reserve room for
+  strip_h itself. ``title.offset`` only needs to cancel VL's own title
+  baseline algebra (vega-scenegraph text.js `offset()`: a "top"-baseline
+  title's text sits ``round(0.79 * font_size)`` px below its group's nominal
+  top), a closed-form correction that depends only on the title's font size —
+  see ``_support_table_title_offset_correction``.
 - Subtitle-only and titleless charts: ``bump_padding_top`` — VL does not emit
-  a role-title-text element that _measure_vl_title_plot_gap can anchor on
-  when there is no title, so the original padding mechanism is used instead.
+  a role-title-text element the title-offset correction can anchor on when
+  there is no title, so the original padding mechanism is used instead.
 The renderer's downstream finalize step respects the external padding kwarg
 when supplied.
 """
@@ -140,10 +142,13 @@ from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 from dbt_charts.core.render.utils import font_style_to_mark
 from dbt_charts.core.text.case import inferred_display_name
 from dbt_charts.core.text.format_d3 import (
+    active_format_locale,
     affix_signed,
+    composed_currency,
     format_d3,
 )
 from dbt_charts.core.text.numeral_scale import (
+    SharedScale,
     SuffixMode,
     build_decimal_pad_table,
     column_digit_format,
@@ -490,13 +495,14 @@ DRAWN_INDEX_FIELD = "__support_table_drawn_index"
 # whose first period is 0 would otherwise anchor on "$0" and declare the
 # magnitude nowhere.
 CARRIES_FIELD = "__support_table_carries"
+DOMAIN_RANK_FIELD = "__support_table_domain_rank"
 
 
 def _drawn_index_transform(
     x_field: str,
     value_field: str,
     suffix_is_magnitude: bool,
-    sort_ascending: bool = True,
+    anchor: StripAnchor,
 ) -> list[VLDict]:
     """Rank drawn cells so the anchor lands on the first unit-carrying one.
 
@@ -512,26 +518,40 @@ def _drawn_index_transform(
     ``axis_cascade.py``'s non-compacting ``tick_label`` branch) makes the
     opposite call and excludes zero.
 
-    When sort_ascending is True (default, temporal path) the window sorts by
-    x ascending to match VL's own paint order. When False (sort:null category
-    path), the window uses the input row order, which for sort:null axes is
-    the data-insertion order — the same order VL uses to assign bands.
+    The window sorts the way VL paints: by x ascending (temporal path), by
+    position in the pinned domain (sorted category path), or not at all
+    (sort:null category path), where input row order is the data-insertion
+    order VL assigns bands in.
     """
     nonzero = (
         f" && datum[{json.dumps(value_field)}] !== 0" if suffix_is_magnitude else ""
     )
+    # A category outside the pinned domain (null) is not in the paint order.
+    in_domain = f" && datum.{DOMAIN_RANK_FIELD} >= 0" if anchor.domain else ""
     carries = (
         f"isValid(datum[{json.dumps(value_field)}]) "
         f"&& isFinite(datum[{json.dumps(value_field)}])"
-        f"{nonzero} ? 1 : 0"
+        f"{nonzero}{in_domain} ? 1 : 0"
     )
     window: VLDict = {
         "window": [{"op": "sum", "field": CARRIES_FIELD, "as": DRAWN_INDEX_FIELD}],
         "frame": [None, 0],
     }
-    if sort_ascending:
+    transforms: list[VLDict] = []
+    if anchor.domain:
+        transforms.append(
+            {
+                "calculate": (
+                    f"indexof({json.dumps(list(anchor.domain))}, "
+                    f"datum[{json.dumps(x_field)}])"
+                ),
+                "as": DOMAIN_RANK_FIELD,
+            }
+        )
+        window["sort"] = [{"field": DOMAIN_RANK_FIELD, "order": "ascending"}]
+    elif not anchor.data_order:
         window["sort"] = [{"field": x_field, "order": "ascending"}]
-    return [{"calculate": carries, "as": CARRIES_FIELD}, window]
+    return [*transforms, {"calculate": carries, "as": CARRIES_FIELD}, window]
 
 
 @dataclass(frozen=True)
@@ -550,9 +570,13 @@ class StripAnchor:
     follows that same insertion order. This path is immune to period-filter
     (window runs after filter) and datetime normalization (no x-value comparison).
 
-    ``nowhere`` covers everything that can't be anchored (authored sort, left-
-    aligned strip, quantitative x): no window, no conditional expression, just
-    affix-free per-cell formatting.
+    A **sorted category** axis carries a pinned ``scale.domain``
+    (``_pin_sorted_category_domain``); ``by_domain_order`` sorts the window by
+    each cell's position in it.
+
+    ``nowhere`` covers everything that can't be anchored (an unpinned sort,
+    quantitative x): no window, no conditional expression, just affix-free
+    per-cell formatting.
     """
 
     test: str
@@ -560,6 +584,8 @@ class StripAnchor:
     # True when the window must run in data-insertion order (sort:null category
     # path) rather than ascending-x order (temporal path).
     data_order: bool = False
+    # The pinned paint order; empty off the sorted category path.
+    domain: tuple[str | int | float | bool, ...] = ()
 
     @staticmethod
     def by_drawn_index() -> StripAnchor:
@@ -583,6 +609,17 @@ class StripAnchor:
         )
 
     @staticmethod
+    def by_domain_order(
+        domain: Sequence[str | int | float | bool],
+    ) -> StripAnchor:
+        """Sorted category path: the window follows the pinned domain."""
+        return StripAnchor(
+            f"datum.{CARRIES_FIELD} === 1 && datum.{DRAWN_INDEX_FIELD} === 1",
+            True,
+            domain=tuple(domain),
+        )
+
+    @staticmethod
     def everywhere() -> StripAnchor:
         """Every cell declares the unit (``repeat: every``): the anchor test
         always holds, so no window is needed."""
@@ -592,7 +629,7 @@ class StripAnchor:
     def nowhere() -> StripAnchor:
         """No cell declares the unit — the row repeats it, as it always has.
 
-        Used where the leftmost painted cell cannot be identified: an authored
+        Used where the leftmost painted cell cannot be identified: an unpinned
         ``sort:``, a quantitative x, or a time-format spec. Carries no test
         expression because it pairs only with affix-free numerals, which emit
         no conditional at all — a test string here would be one the emitter can
@@ -646,6 +683,9 @@ class StripNumerals:
     # behavior. "right": affix trails the digits, hanging into the anchor cell's
     # own band — left-oriented axis behavior, which keeps digits left-aligned.
     hang: Literal["left", "right"] = "left"
+    # A leading prefix on every cell while the magnitude suffix still anchors:
+    # a left-aligned strip's anchor prefix would push its digits off the edge.
+    prefix_repeats: bool = False
     # Plain trim-`f` columns only (see decimal_pad_table_for's own gate) --
     # measured trailing pad that lines cells up on the decimal point without
     # padding a whole number with false-precision zeros. Empty for every
@@ -700,14 +740,15 @@ class StripNumerals:
             return self._compose_affixed_text(value, self.authored)
         if self.anchor == StripAnchor.everywhere() and (self.prefix or self.suffix):
             return self.anchor_text(value)
+        if self.prefix_repeats:
+            return self._composed_text(value, self.repeat_suffix)
         text = format_value(value / self.divisor, self.digit_spec, None)
         if self.decimal_pad_table:
             text += decimal_pad_for(self.decimal_pad_table, text)
         if self.suffix_is_magnitude:
             return text + self.suffix if self.repeat_suffix and value != 0 else text
-        for affix in (self.prefix, self.suffix):
-            if affix:
-                text = text.replace(affix, "", 1)
+        if self.suffix:
+            text = text.replace(self.suffix, "", 1)
         return text
 
     def anchor_text(self, value: float) -> str:
@@ -722,19 +763,23 @@ class StripNumerals:
             return self._compose_affixed_text(value, self.authored)
         if not (self.prefix or self.suffix):
             return self.bare_text(value)
-        if self.suffix_is_magnitude:
-            digits = format_value(abs(value) / self.divisor, self.digit_spec, None)
-            if self.decimal_pad_table:
-                digits += decimal_pad_for(self.decimal_pad_table, digits)
-            # A value rounding to zero under this spec paints no sign.
-            zero_digits = format_value(0.0, self.digit_spec, None)
-            if self.decimal_pad_table:
-                zero_digits += decimal_pad_for(self.decimal_pad_table, zero_digits)
-            sign = "−" if value < 0 and digits != zero_digits else ""
-            suffix = self.suffix if value != 0 else ""
-            return sign + self.prefix + digits + suffix
+        if self.suffix_is_magnitude or self.prefix:
+            return self._composed_text(value, True)
         # Trimmed: the d3 format output already contains the affix.
         return format_value(value, self.digit_spec, None)
+
+    def _composed_text(self, value: float, with_suffix: bool) -> str:
+        digits = format_value(abs(value) / self.divisor, self.digit_spec, None)
+        if self.decimal_pad_table:
+            digits += decimal_pad_for(self.decimal_pad_table, digits)
+        # A value rounding to zero under this spec paints no sign.
+        zero_digits = format_value(0.0, self.digit_spec, None)
+        if self.decimal_pad_table:
+            zero_digits += decimal_pad_for(self.decimal_pad_table, zero_digits)
+        minus = active_format_locale().minus
+        sign = minus if value < 0 and digits != zero_digits else ""
+        shows = with_suffix and (value != 0 or not self.suffix_is_magnitude)
+        return sign + self.prefix + digits + (self.suffix if shows else "")
 
     @property
     def hung_suffix(self) -> str:
@@ -763,17 +808,16 @@ class StripNumerals:
             return False
         if self.authored is not None:
             return True
-        anchored = bool(self.prefix) or (bool(self.suffix) and not self.repeat_suffix)
-        return anchored
+        return (bool(self.prefix) and not self.prefix_repeats) or (
+            bool(self.suffix) and not self.repeat_suffix
+        )
 
 
 def _strip_numerals_text_expr(value_expr: str, numerals: StripNumerals) -> str:
     """Cell text for a row whose unit is declared once.
 
-    A magnitude suffix speaks the narrative register (``441mn``), not
-    ``SharedScale.register``'s mode-derived answer: a strip's cells are already
-    separated by band space, so the analytic form's leading space would be a
-    second separator competing with the first.
+    The magnitude suffix arrives baked at its register on ``numerals.suffix``;
+    never re-derive it here from ``SharedScale.register``.
 
     The prefix anchors even when the suffix repeats — repeating a currency
     symbol on every cell disambiguates nothing (the convention
@@ -811,43 +855,39 @@ def _strip_numerals_text_expr(value_expr: str, numerals: StripNumerals) -> str:
         formatted_e = f"format({value_expr}, '{numerals.digit_spec}')"
         return _apply_decimal_pad(formatted_e, numerals.decimal_pad_table)
 
-    if not numerals.suffix_is_magnitude:
+    if not numerals.suffix_is_magnitude and not numerals.prefix:
         # Trimmed: format through the author's spec, then remove the affix it
         # repeats. Rebuilding the spec from parts is what silently dropped a
         # `+` sign or a zero pad; removing a known affix from the result
         # cannot, whatever else the spec asks for.
         full = f"format({value_expr}, '{numerals.digit_spec}')"
-        bare = full
-        for affix in (numerals.prefix, numerals.suffix):
-            if affix:
-                bare = f"replace({bare}, {json.dumps(affix)}, '')"
+        bare = f"replace({full}, {json.dumps(numerals.suffix)}, '')"
         if numerals.hang == "left":
             return f"({anchor_test} ? {full} : {bare})"
-        # hang="right" (left-axis): prefix-carrying formats route to nowhere before
-        # reaching here, so this path only ever carries a suffix (percent). The
-        # early `if not (prefix or suffix)` return above already excludes the
-        # empty case, so suffix is always truthy by the time control reaches here.
-        # Anchor arm is bare + conditional suffix so digit left-edges align.
+        # A left-axis strip carries only a suffix here (a currency repeats there);
+        # bare + conditional suffix keeps the digits' left edges aligned.
         anchor_expr = f"({bare} + ({anchor_test} ? {json.dumps(numerals.suffix)} : ''))"
         return f"({anchor_test} ? {anchor_expr} : {bare})"
 
-    # The sign expression leads the composition: d3 renders a negative currency
-    # as "-$448", so the sign must precede the anchored symbol. All reachable
-    # predefined SI specs use the default "-" sign convention (negative \u2192
-    # U+2212, positive \u2192 nothing).
+    # The sign leads the anchored currency ("−$448"). Every house spec uses
+    # d3's default sign: the locale's minus when negative, nothing otherwise.
     scaled_value_e = f"abs({value_expr}) / {numerals.divisor!r}"
     digits = _apply_decimal_pad(
         f"format({scaled_value_e}, '{numerals.digit_spec}')",
         numerals.decimal_pad_table,
     )
     nonzero = f"{value_expr} !== 0"
+    if not numerals.suffix_is_magnitude:
+        nonzero = "true"  # a unit suffix, unlike a magnitude, shows on zero
     present = nonzero if numerals.repeat_suffix else f"{nonzero} && {anchor_test}"
     suffix_part = f"({present} ? {json.dumps(numerals.suffix)} : '')"
-    sign_part = f"({value_expr} < 0 ? '\u2212' : '')"
+    minus = json.dumps(active_format_locale().minus, ensure_ascii=False)
+    sign_part = f"({value_expr} < 0 ? {minus} : '')"
     parts = [sign_part, digits, suffix_part]
-    if numerals.prefix:
-        # Prefix leads digits, hanging into the y-axis gutter (right-axis only;
-        # prefix-carrying formats on left-axis route to StripAnchor.nowhere()).
+    if numerals.prefix_repeats:
+        parts.insert(1, json.dumps(numerals.prefix))
+    elif numerals.prefix:
+        # Prefix leads digits, hanging into the y-axis gutter on a right axis.
         parts.insert(1, f"({anchor_test} ? {json.dumps(numerals.prefix)} : '')")
     return " + ".join(parts)
 
@@ -929,6 +969,8 @@ def _magnitude_numerals(
     anchor: StripAnchor,
     font_family: str,
     hang: Literal["left", "right"] = "left",
+    prefix_repeats: bool = False,
+    vertical: bool = False,
 ) -> StripNumerals:
     """Numerals for an SI row: one shared tier, and a derived decimal depth.
 
@@ -956,12 +998,12 @@ def _magnitude_numerals(
     ``column_shares_one_printed_unit`` rather than baking a pad from a
     mismatched set of magnitudes.
 
-    For a left-oriented axis (``hang="right"``), a currency prefix cannot anchor
-    without leaving the unit absent from non-anchor cells. Such formats route to
-    ``StripAnchor.nowhere()`` so every cell formats with its own spec unchanged.
+    ``prefix_repeats`` paints the currency prefix on every cell while the
+    magnitude suffix still declares once.
+
+    A ``vertical`` block speaks a table column's ``SharedScale.register``; a
+    horizontal row is always narrative.
     """
-    if hang == "right" and parsed.symbol:
-        return StripNumerals(digit_spec=resolved, anchor=StripAnchor.nowhere())
     # Filter before the scale call: shared_scale_for_column floors and counts
     # digits, which raises on NaN and overflows on inf.
     voters = [v for v in values if v != 0 and math.isfinite(v)]
@@ -1021,15 +1063,29 @@ def _magnitude_numerals(
     # value that truncates to 3 digits can round to 4 (e.g. 999,600 → "1,000").
     repeat = scale.mode is SuffixMode.REPEAT or len(str(int(printed_extreme))) >= 4
     pad_table = _shared_scale_decimal_pad(values, digit_spec, magnitude, font_family)
+    # A left-axis strip repeats a leading currency; a trailing one is a unit
+    # suffix and declares once with the magnitude.
+    lead, trail = _currency_affixes(
+        parsed, StripAnchor.everywhere() if prefix_repeats else anchor
+    )
     return StripNumerals(
         digit_spec=digit_spec,
         anchor=anchor,
-        prefix=parsed.symbol,
-        suffix=suffix_at_register(scale.exponent, "narrative"),
+        prefix=lead,
+        suffix=suffix_at_register(
+            scale.exponent,
+            SharedScale(
+                scale.exponent, SuffixMode.REPEAT if repeat else scale.mode
+            ).register
+            if vertical
+            else "narrative",
+        )
+        + trail,
         divisor=magnitude,
         suffix_is_magnitude=True,
         repeat_suffix=repeat,
         hang=hang,
+        prefix_repeats=prefix_repeats and bool(lead),
         decimal_pad_table=pad_table,
     )
 
@@ -1041,6 +1097,8 @@ def strip_numerals_for_values(
     *,
     font_family: str,
     hang: Literal["left", "right"] = "left",
+    prefix_repeats: bool = False,
+    vertical: bool = False,
 ) -> StripNumerals:
     """How a strip row spells its numbers.
 
@@ -1059,10 +1117,10 @@ def strip_numerals_for_values(
     and so cannot misread one. Only ``s`` is rebuilt, and only there does the
     type need to be understood.
 
-    For a left-oriented axis (``hang="right"``), a currency prefix cannot anchor
-    without leaving the unit absent from non-anchor cells or using non-standard
-    trailing-prefix typography. Such formats route to ``StripAnchor.nowhere()``
-    so every cell formats with its own spec and the symbol always appears.
+    ``prefix_repeats`` (a left-oriented axis without ``repeat: anchor``): a
+    leading currency prefix on the left-aligned anchor would push its digits
+    off the shared edge, so the prefix repeats on every cell. A trailing unit
+    (percent, magnitude suffix) still declares once.
 
     Called only after the provenance gate in ``_entry_numerals`` confirms
     ``resolved`` is a predefined number name, so a time format or an unresolved
@@ -1074,25 +1132,66 @@ def strip_numerals_for_values(
     """
     parsed = _d3_parse(resolved)
     if parsed.type == "s":
-        return _magnitude_numerals(values, resolved, parsed, anchor, font_family, hang)
-    if hang == "right" and parsed.symbol:
-        # A prefix on a left-axis strip cannot anchor without losing the unit
-        # on non-anchor cells. Every cell formats through its own spec instead.
+        return _magnitude_numerals(
+            values,
+            resolved,
+            parsed,
+            anchor,
+            font_family,
+            hang,
+            prefix_repeats,
+            vertical,
+        )
+    if prefix_repeats and parsed.symbol:
         return StripNumerals(digit_spec=resolved, anchor=StripAnchor.nowhere())
-    suffix = "%" if parsed.type == "%" else ""
+    suffix = active_format_locale().percent if parsed.type == "%" else ""
+    lead, trail = _currency_affixes(parsed, anchor)
+    if trail:
+        return StripNumerals(
+            digit_spec=resolved, anchor=anchor, suffix=suffix, hang=hang
+        )
     return StripNumerals(
-        digit_spec=resolved,
+        digit_spec=with_symbol(resolved, "") if lead else resolved,
         anchor=anchor,
-        prefix=parsed.symbol,
+        prefix=lead,
         suffix=suffix,
         hang=hang,
     )
+
+
+def _currency_affixes(parsed: FormatSpec, anchor: StripAnchor) -> tuple[str, str]:
+    """``(lead, trail)``: a ``$`` spec's currency composed around the digits and
+    a magnitude suffix. Declared once it leads; on every cell it keeps the
+    locale's side."""
+    if parsed.symbol != "$":
+        return "", ""
+    lead, trail = composed_currency("$", anchor == StripAnchor.everywhere())
+    if not (lead or trail):
+        return active_format_locale().currency[0], ""
+    return lead, trail
 
 
 def _valid_value_expr(value_expr: str) -> str:
     return (
         f"isValid({value_expr}) && (!isNumber({value_expr}) || isFinite({value_expr}))"
     )
+
+
+def _hung_suffix_width(numerals: StripNumerals, style: SupportTableStyle) -> float:
+    """Measured width of the suffix only the anchor paints; 0 without one."""
+    suffix = numerals.hung_suffix
+    if not suffix:
+        return 0.0
+    font_size = style.font.size
+    if font_size is None:
+        raise RenderError.from_code(
+            ERR_INPUT_INVALID,
+            message=(
+                "support_table.font.size must be set by the theme cascade; "
+                "a missing value means the theme is misconfigured."
+            ),
+        )
+    return get_font_measurer(style.font.family, numeric=True).measure(suffix, font_size)
 
 
 def _hung_anchor_layers(
@@ -1109,21 +1208,9 @@ def _hung_anchor_layers(
     Per-cell offsets are not an option: any ``xOffset`` channel makes a
     band-scaled x ignore ``bandPosition``.
     """
-    suffix = numerals.hung_suffix
-    if not suffix:
+    width = _hung_suffix_width(numerals, style)
+    if not width:
         return [layer]
-    font_size = style.font.size
-    if font_size is None:
-        raise RenderError.from_code(
-            ERR_INPUT_INVALID,
-            message=(
-                "support_table.font.size must be set by the theme cascade; "
-                "a missing value means the theme is misconfigured."
-            ),
-        )
-    width = get_font_measurer(style.font.family, numeric=True).measure(
-        suffix, font_size
-    )
     value_expr = f"datum[{json.dumps(source)}]"
     # A magnitude suffix is dropped on a zero cell, so there is nothing to hang.
     nonzero = f" && {value_expr} !== 0" if numerals.suffix_is_magnitude else ""
@@ -1415,7 +1502,7 @@ def _row_text_layer(
                     x_field,
                     agg_name,
                     numerals.suffix_is_magnitude,
-                    sort_ascending=not numerals.anchor.data_order,
+                    numerals.anchor,
                 )
             )
         transforms.append(_vl_format_calc(agg_name, value_format, cell_name, numerals))
@@ -1432,7 +1519,7 @@ def _row_text_layer(
                     x_field,
                     entry.source,
                     numerals.suffix_is_magnitude,
-                    sort_ascending=not numerals.anchor.data_order,
+                    numerals.anchor,
                 )
             )
         transforms.append(
@@ -1546,7 +1633,7 @@ def _per_series_row_layers(
                     parent_x_enc["field"],
                     entry.per_series,
                     numerals.suffix_is_magnitude,
-                    sort_ascending=not numerals.anchor.data_order,
+                    numerals.anchor,
                 )
             )
         bm_transforms.append(
@@ -1641,7 +1728,7 @@ def _per_series_row_layers(
                     x_field,
                     agg_name,
                     numerals.suffix_is_magnitude,
-                    sort_ascending=not numerals.anchor.data_order,
+                    numerals.anchor,
                 )
             )
         transforms.append(_vl_format_calc(agg_name, value_format, cell_name, numerals))
@@ -2549,6 +2636,7 @@ def _entry_numerals(
     font_family: str,
     anchor: StripAnchor,
     hang: Literal["left", "right"] = "left",
+    vertical: bool = False,
 ) -> list[StripNumerals]:
     """How each entry spells its numbers.
 
@@ -2576,6 +2664,8 @@ def _entry_numerals(
                     else anchor,
                     font_family=font_family,
                     hang=hang,
+                    prefix_repeats=hang == "right" and entry.format.repeat != "anchor",
+                    vertical=vertical,
                 )
             )
             continue
@@ -2612,13 +2702,11 @@ def _entry_cell_widths(
     it overhangs into.
 
     ``conservative=True`` measures the **anchor-decorated** cell instead. A
-    column has no such free gutter: every column's cells align right, so any
-    affix always overhangs left, and every column but the first has another
-    column's own cells sitting there. Sizing to the bare cell would let the
-    anchor's affix bleed into the neighboring column — a value painted so
-    it visually merges with its neighbor is exactly the "clipped-looking"
-    value this measurement must never produce, so the column path measures
-    every cell as if it could be the anchor.
+    column has no such free gutter: a leading affix overhangs left, where
+    every column but the first has another column's cells, and the hung
+    suffix fills the column's right edge (``_column_cell_layers``). Sizing to
+    the bare cell would let the anchor bleed into the neighboring column, so
+    the column path measures every cell as if it could be the anchor.
     """
     font_size = dt_style.font.size
     if font_size is None:
@@ -3196,8 +3284,12 @@ def _column_cell_transforms(
     value_format: ResolvedFormat | None,
     cell_name: str,
     numerals: StripNumerals,
-) -> list[dict[str, Any]]:  # type-state: explicit_any — VL fragment
-    """Value-producing transform chain for one column cell.
+) -> tuple[
+    list[dict[str, Any]],  # type-state: explicit_any — VL fragment
+    str,
+]:
+    """Value-producing transform chain for one column cell, and the field
+    holding the cell's value.
 
     The transpose of the row strip's per-entry-type chains (``_row_text_layer``,
     ``_per_series_row_layers``) grouped by the category field instead of x, with
@@ -3227,11 +3319,11 @@ def _column_cell_transforms(
                     category_field,
                     agg_name,
                     numerals.suffix_is_magnitude,
-                    sort_ascending=not numerals.anchor.data_order,
+                    numerals.anchor,
                 )
             )
         transforms.append(_vl_format_calc(agg_name, value_format, cell_name, numerals))
-        return transforms
+        return transforms, agg_name
     if isinstance(entry, ResolvedSupportTablePerSeries):
         if entry.by_measure:
             transforms = []
@@ -3241,13 +3333,13 @@ def _column_cell_transforms(
                         category_field,
                         entry.per_series,
                         numerals.suffix_is_magnitude,
-                        sort_ascending=not numerals.anchor.data_order,
+                        numerals.anchor,
                     )
                 )
             transforms.append(
                 _vl_format_calc(entry.per_series, value_format, cell_name, numerals)
             )
-            return transforms
+            return transforms, entry.per_series
         if color_field is None or series_value is None:
             raise RenderError.from_code(
                 ERR_INPUT_INVALID,
@@ -3271,11 +3363,11 @@ def _column_cell_transforms(
                     category_field,
                     agg_name,
                     numerals.suffix_is_magnitude,
-                    sort_ascending=not numerals.anchor.data_order,
+                    numerals.anchor,
                 )
             )
         transforms.append(_vl_format_calc(agg_name, value_format, cell_name, numerals))
-        return transforms
+        return transforms, agg_name
     transforms = []
     if numerals.needs_drawn_index_window:
         transforms.extend(
@@ -3283,11 +3375,11 @@ def _column_cell_transforms(
                 category_field,
                 entry.source,
                 numerals.suffix_is_magnitude,
-                sort_ascending=not numerals.anchor.data_order,
+                numerals.anchor,
             )
         )
     transforms.append(_vl_format_calc(entry.source, value_format, cell_name, numerals))
-    return transforms
+    return transforms, entry.source
 
 
 def _column_cell_layer(
@@ -3335,6 +3427,29 @@ def _column_cell_layer(
         },
         "transform": transforms,
     }
+
+
+def _column_cell_layers(
+    parent_y_enc: dict[str, Any],  # type-state: explicit_any — VL fragment
+    style: SupportTableStyle,
+    right: float,
+    cell_name: str,
+    transforms: list[dict[str, Any]],  # type-state: explicit_any — VL fragment
+    value_field: str,
+    numerals: StripNumerals,
+    yoffset_enc: dict[str, Any] | None = None,  # type-state: explicit_any — VL fragment
+) -> list[dict[str, Any]]:  # type-state: explicit_any — VL fragment
+    """A column's cell layers: digits share one edge, the anchor's suffix
+    hangs to ``right`` (the column width already holds every anchored cell)."""
+    layer = _column_cell_layer(
+        parent_y_enc,
+        style,
+        right - _hung_suffix_width(numerals, style),
+        cell_name,
+        transforms,
+        yoffset_enc,
+    )
+    return _hung_anchor_layers(layer, value_field, numerals, style)
 
 
 def _column_header_layer(
@@ -3865,7 +3980,7 @@ def attach_support_table_columns(
                 )
                 for series_idx, series_value in enumerate(series_order):
                     cell_name = f"__support_table_col_{visual_idx}_{series_idx}"
-                    transforms = _column_cell_transforms(
+                    transforms, value_field = _column_cell_transforms(
                         entry,
                         category_field,
                         color_field,
@@ -3874,12 +3989,20 @@ def attach_support_table_columns(
                         cell_name,
                         numerals,
                     )
-                    layer = _column_cell_layer(
-                        parent_y_enc, style, right, cell_name, transforms, yoffset_enc
+                    cell_layers = _column_cell_layers(
+                        parent_y_enc,
+                        style,
+                        right,
+                        cell_name,
+                        transforms,
+                        value_field,
+                        numerals,
+                        yoffset_enc,
                     )
                     if dark_fills is not None and series_idx < len(dark_fills):
-                        layer["mark"]["fill"] = dark_fills[series_idx]
-                    layers.append(layer)
+                        for layer in cell_layers:
+                            layer["mark"]["fill"] = dark_fills[series_idx]
+                    layers.extend(cell_layers)
                 layers.append(
                     _column_header_layer(
                         style, right, column_headers[visual_idx], header_y
@@ -3892,7 +4015,7 @@ def attach_support_table_columns(
                 for series_idx, series_value in enumerate(series_order):
                     _left, right = edges[visual_idx]
                     cell_name = f"__support_table_col_{visual_idx}"
-                    transforms = _column_cell_transforms(
+                    transforms, value_field = _column_cell_transforms(
                         entry,
                         category_field,
                         color_field,
@@ -3901,12 +4024,19 @@ def attach_support_table_columns(
                         cell_name,
                         numerals,
                     )
-                    layer = _column_cell_layer(
-                        parent_y_enc, style, right, cell_name, transforms
+                    cell_layers = _column_cell_layers(
+                        parent_y_enc,
+                        style,
+                        right,
+                        cell_name,
+                        transforms,
+                        value_field,
+                        numerals,
                     )
                     if dark_fills is not None and series_idx < len(dark_fills):
-                        layer["mark"]["fill"] = dark_fills[series_idx]
-                    layers.append(layer)
+                        for layer in cell_layers:
+                            layer["mark"]["fill"] = dark_fills[series_idx]
+                    layers.extend(cell_layers)
                     layers.append(
                         _column_header_layer(
                             style, right, column_headers[visual_idx], header_y
@@ -3918,7 +4048,7 @@ def attach_support_table_columns(
         else:
             _left, right = edges[visual_idx]
             cell_name = f"__support_table_col_{visual_idx}"
-            transforms = _column_cell_transforms(
+            transforms, value_field = _column_cell_transforms(
                 entry,
                 category_field,
                 color_field,
@@ -3927,8 +4057,16 @@ def attach_support_table_columns(
                 cell_name,
                 numerals,
             )
-            layers.append(
-                _column_cell_layer(parent_y_enc, style, right, cell_name, transforms)
+            layers.extend(
+                _column_cell_layers(
+                    parent_y_enc,
+                    style,
+                    right,
+                    cell_name,
+                    transforms,
+                    value_field,
+                    numerals,
+                )
             )
             header_fill = (
                 header_fills.get(entry_idx) if header_fills is not None else None
@@ -4108,6 +4246,15 @@ def _pin_sorted_category_domain(
     return {**spec, "encoding": {**top_encoding, channel: new_enc}}
 
 
+def _pinned_domain_anchor(encoding: VLDict) -> StripAnchor | None:
+    """Anchor a sorted category axis by its pinned domain, else nowhere."""
+    scale = encoding.get("scale")
+    domain = scale.get("domain") if isinstance(scale, dict) else None
+    if isinstance(domain, list) and domain and _is_json_scalar_domain(domain):
+        return StripAnchor.by_domain_order(domain)
+    return None
+
+
 def _is_json_scalar_domain(
     domain: list[Any],  # type-state: explicit_any — a domain value, any JSON scalar
 ) -> bool:
@@ -4185,7 +4332,7 @@ def _apply_support_table_columns_post_pass(
     ):
         anchor: StripAnchor | None = StripAnchor.by_drawn_index_data_order()
     elif category_type in ("nominal", "ordinal") and "sort" in y_encoding:
-        anchor = None
+        anchor = _pinned_domain_anchor(y_encoding)
     elif category_type == "temporal":
         anchor = StripAnchor.by_drawn_index()
     else:
@@ -4200,6 +4347,7 @@ def _apply_support_table_columns_post_pass(
             pad_font_family,
             anchor,
             "left",
+            vertical=True,
         )
         if anchor is not None
         else plain_numerals(support_table, pad_font_family, entry_values)
@@ -4420,6 +4568,30 @@ def _tilted_label_axis_offset(
     return baked_offset + max(0.0, x_label_block_px - reserved)
 
 
+def _support_table_title_offset_correction(title_font_size: float) -> float:
+    """Closed-form title.offset correction for a titled top support_table strip.
+
+    Vega's title-baseline algebra (vega-scenegraph ``text.js``'s ``offset()``)
+    shifts a "top"-baseline title's text ``round(0.79 * font_size)`` px below
+    its group's nominal top. This expression adds that shift back in, then
+    cancels the residual it leaves against the raw font size (``font_size -
+    round(0.79 * font_size)``) with a fixed ``11.0`` px constant, so the
+    title lands where the theme's own ``title.position.offset`` says it
+    should. Under ``autosize: pad``, the strip's own ink already grows the
+    view-bounds top margin by exactly its own height, so this correction
+    never needs to add ``strip_h`` itself.
+
+    The ``11.0`` constant is empirical, not derived from Vega's source:
+    measured directly against live vl-convert renders across bar/line/area
+    and the single-series/per_series/stacked shapes in
+    ``examples/playground/charts/cards/support-table-attached.yml``, and
+    found independent of strip height, series count, and chart type.
+    Verified at font sizes 14, 18, and 24 — the width tiers that the board
+    actually renders at.
+    """
+    return 11.0 - title_font_size + round(0.79 * title_font_size)
+
+
 def apply_chart_support_table_post_pass(
     spec: dict[str, Any],
     resolved_chart: _CartesianResolvedChartFields,
@@ -4473,7 +4645,10 @@ def apply_chart_support_table_post_pass(
     # resolved chart style (not the board-level charts_style which is "auto").
     _ay_style = getattr(
         resolved_chart, "style", None
-    )  # type-state: silent_fallback — a resolved cartesian chart may carry no style; pre-existing, relocated by this diff
+    )  # type-state: silent_fallback — the base type does not declare `style`; every cartesian family does, and the assert below enforces it
+    assert _ay_style is not None, (
+        f"cartesian resolved chart must carry style — got {resolved_chart!r}"
+    )
     resolved_ay = getattr(
         _ay_style, "axis_y", None
     )  # type-state: silent_fallback — optional axis_y off that style; pre-existing, relocated by this diff
@@ -4586,9 +4761,9 @@ def apply_chart_support_table_post_pass(
     # Declaring the unit once requires knowing which cell is painted leftmost.
     # An ordered axis can be thinned, so only a row number computed after every
     # filter answers that; a category axis is never thinned and carries
-    # `sort: null`, so its leftmost cell is the first x in data order. An
-    # authored `sort:` on a category axis defeats both, and there the strip
-    # keeps today's per-cell formatting rather than stranding the unit mid-row.
+    # `sort: null`, so its leftmost cell is the first x in data order. A
+    # sorted category axis paints its pinned domain in order; an unpinned
+    # sort keeps per-cell formatting rather than stranding the unit mid-row.
     # dt_style/axis_label_padding/axis_y_orient are already resolved above
     # (shared with the column-path dispatch).
     # Which side the anchor's affix overhangs. Right-oriented y-axis: affix leads
@@ -4610,11 +4785,9 @@ def apply_chart_support_table_post_pass(
         # anchors the leftmost visible band regardless of query sort direction,
         # datetime normalization differences, or whether the period filter drops
         # the first emitter row.
-        anchor = StripAnchor.by_drawn_index_data_order()
+        anchor: StripAnchor | None = StripAnchor.by_drawn_index_data_order()
     elif x_encoding.get("type") in ("nominal", "ordinal") and "sort" in x_encoding:
-        # Authored non-null sort: paint order is determined externally.
-        # Fail-closed — no anchor.
-        anchor = None
+        anchor = _pinned_domain_anchor(x_encoding)
     elif validator_x_type == "temporal":
         # True temporal OR reclassified nominal/ordinal with no explicit sort:
         # VL sorts ascending by x, matching drawn_index's ascending window sort.
@@ -4899,15 +5072,16 @@ def apply_chart_support_table_post_pass(
             # Only charts with a title use title.offset — VL anchors the title
             # group above the outer container, so title.offset shifts it without
             # displacing the plot. Subtitle-only charts (no title element) use
-            # bump_padding_top: _measure_vl_title_plot_gap cannot anchor on
-            # role-title-text when no title is present.
+            # bump_padding_top: there is no role-title-text element to correct
+            # a baseline shift against when no title is present.
             has_title = bool(resolved_chart.title)
             if has_title:
-                # Use title.offset to reserve strip space so the title's absolute
-                # position is invariant to the offset amount (verified under
-                # autosize:pad: title stays fixed at (x, title_y) regardless of
-                # title.offset value). bump_padding_top shifts the title down with
-                # everything else, causing cross-row title misalignment.
+                # Use title.offset to correct VL's own baseline algebra so the
+                # title's absolute position is invariant to strip_h (verified
+                # under autosize:pad: title stays fixed at (x, title_y)
+                # regardless of title.offset value). bump_padding_top shifts
+                # the title down with everything else, causing cross-row
+                # title misalignment.
                 title_block = spec.get("title")
                 assert isinstance(title_block, dict), (
                     "spec['title'] must be a dict when resolved_chart has a title; "
@@ -4921,7 +5095,16 @@ def apply_chart_support_table_post_pass(
                 existing_offset = (
                     theme_title_offset if theme_title_offset is not None else 0.0
                 )
-                spec["title"] = {**title_block, "offset": existing_offset + strip_h}
+                title_font = _ay_style.title_font
+                assert title_font is not None, (
+                    "resolved_chart.style.title_font must be baked when the "
+                    "chart has a title — see compile.resolve.chart._kwargs._title_font"
+                )
+                spec["title"] = {
+                    **title_block,
+                    "offset": existing_offset
+                    + _support_table_title_offset_correction(title_font.size),
+                }
             elif padding is not None:
                 padding = {
                     **padding,

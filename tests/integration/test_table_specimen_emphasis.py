@@ -61,7 +61,7 @@ def _compile_and_render(
     assert board is not None
 
     cache = TrivialDuckDBCache()
-    mat = FileSourceMaterializer(project, cache)
+    mat = FileSourceMaterializer(project)
     executor = Executor(
         board,
         adapter_registry=_registry(local_project),

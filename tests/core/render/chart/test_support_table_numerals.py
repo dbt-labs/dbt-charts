@@ -8,7 +8,7 @@ until now only the vertical ruler used.
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -849,7 +849,7 @@ def test_a_negative_magnitude_cell_signs_before_the_currency_symbol():
     calc = _cell_calc(_attach(_goal_table(), entry_numerals=[_MILLIONS]))
 
     # sign expr precedes the anchored prefix in the concatenation
-    sign_at = calc.index("datum[\"goal\"] < 0 ? '−'")
+    sign_at = calc.index('datum["goal"] < 0 ? "−"')
     prefix_at = calc.index('? "$"')
     assert sign_at < prefix_at
     assert 'abs(datum["goal"])' in calc
@@ -1112,49 +1112,61 @@ def test_predefined_prefix_free_si_format_anchors_on_left_axis():
     assert numerals[0].hang == "right"
 
 
-def test_prefix_carrying_format_left_axis_routes_to_nowhere():
-    """A format with a currency prefix routes to StripAnchor.nowhere() on a left-oriented axis.
+def test_left_axis_currency_si_anchors_the_magnitude_and_repeats_the_symbol():
+    """A left axis keeps digits on one left edge, so the leading "$" repeats
+    on every cell while the trailing magnitude suffix declares once."""
+    values = [441e6, 448e6, -456e6]
+    strip = _house_affix_numerals_values(values, hang="right", spec="currency")
+    painted = _paint(strip, values)
+    assert painted == ["$441mn", "$448", "−$456"]
+    assert painted == [
+        strip.anchor_text(values[0]),
+        strip.bare_text(values[1]),
+        strip.bare_text(values[2]),
+    ]
 
-    Anchoring a currency strip on a left axis would require the prefix to appear
-    somewhere. Trailing it after digits ('441$mn') is non-standard typography, and
-    leading it misaligns digit columns. The strip instead repeats the full format
-    on every cell (standard per-cell behavior) so the unit is never suppressed.
-    """
-    from dbt_charts.core.render.chart.support_table_attachment import (
-        StripAnchor,
-        _entry_numerals,
+
+@pytest.mark.parametrize(
+    ("spec", "values", "expected"),
+    [
+        ("currency", [441e6, 448e6], ["$441mn", "448"]),
+        ("currency_whole", [168000.0, -41500.0], ["$168,000", "−41,500"]),
+    ],
+)
+def test_left_axis_currency_honors_an_explicit_repeat_anchor(spec, values, expected):
+    strip = _house_affix_numerals_values(
+        values, hang="right", spec=spec, repeat="anchor"
     )
-
-    table = _goal_table(fmt="currency")
-    values = [[441e6, 448e6, 456e6]]
-    numerals = _entry_numerals(
-        table, values, font_family="Inter", anchor=_DRAWN, hang="right"
-    )
-    assert numerals[0].anchor == StripAnchor.nowhere(), (
-        "currency prefix format must route to nowhere on left-axis"
-    )
+    assert strip.anchor == _DRAWN
+    painted = _paint(strip, values)
+    assert painted == expected
+    assert painted == [strip.anchor_text(values[0]), strip.bare_text(values[1])]
 
 
-def test_left_axis_currency_prefix_routes_to_nowhere_expression():
-    """A predefined currency format on a left axis emits a plain per-cell expression.
+def test_left_axis_trailing_currency_declares_once_with_the_magnitude():
+    """A currency the locale writes after the digits is a trailing unit, so a
+    left-axis strip states it once with the magnitude suffix."""
+    from dbt_charts.core.compile.models.primitives import Regional
+    from dbt_charts.core.text.format_d3 import locale_definition, number_locale_scope
 
-    With StripAnchor.nowhere(), every cell formats through its own spec unchanged
-    -- no replace(), no anchor_test, just format(datum["goal"], '$~s').
-    """
-    from dbt_charts.core.render.chart.support_table_attachment import _entry_numerals
+    locale = Regional(locale="de-DE").format_locale
+    values = [441e6, 448e6, -456e6]
+    with number_locale_scope(locale):
+        strip = _house_affix_numerals_values(values, hang="right", spec="currency")
+        painted = _paint(strip, values, locale_definition(locale))
+        twins = [
+            strip.anchor_text(values[0]),
+            strip.bare_text(values[1]),
+            strip.bare_text(values[2]),
+        ]
+    assert painted[0].endswith("€")
+    assert "€" not in painted[1] + painted[2]
+    assert painted == twins
 
-    table = _goal_table(fmt="currency")
-    values = [[441e6, 448e6, 456e6]]
-    numerals_left = _entry_numerals(
-        table, values, font_family="Inter", anchor=_DRAWN, hang="right"
-    )
-    calc = _cell_calc(
-        _attach(table, entry_numerals=numerals_left, axis_y_orient="left")
-    )
 
-    assert "replace(" not in calc
-    assert "__support_table_drawn_index" not in calc
-    assert "format(datum[\"goal\"], '$.3~s')" in calc
+def test_left_axis_currency_whole_repeats_the_symbol_by_default():
+    strip = _house_affix_numerals_values([168000.0, -41500.0], hang="right")
+    assert strip.anchor == StripAnchor.nowhere()
 
 
 # --- Fix 3: tier_distance refusal parity with table ---
@@ -1382,7 +1394,9 @@ def _house_affix_numerals_values(
     )[0]
 
 
-def _paint(numerals: StripNumerals, values: list[float]) -> list[str]:
+def _paint(
+    numerals: StripNumerals, values: list[float], locale: Any = None
+) -> list[str]:
     import re
 
     import vl_convert as vlc
@@ -1410,6 +1424,8 @@ def _paint(numerals: StripNumerals, values: list[float]) -> list[str]:
             "y": {"field": DRAWN_INDEX_FIELD, "type": "ordinal", "axis": None},
         },
     }
+    if locale is not None:
+        spec["config"] = {"locale": {"number": locale}}
     svg = vlc.vegalite_to_svg(spec)
     return re.findall(r"<text[^>]*>([^<]*(?:EUR|\d)[^<]*)</text>", svg)
 
@@ -1769,3 +1785,29 @@ def test_a_wide_row_and_a_hung_suffix_in_different_rows_do_not_add_up():
         )
     surfaces = {t.surface for records in sink.values() for t in records}
     assert "support_table_cell_overflow" not in surfaces
+
+
+@pytest.mark.parametrize(
+    ("vertical", "values", "suffix", "repeats"),
+    [
+        (True, [441e6, 448e6], " M", False),
+        (True, [999_600.0, 500_000.0], "k", True),
+        (False, [441e6, 448e6], "mn", False),
+    ],
+)
+def test_magnitude_register_follows_orientation_and_frequency(
+    vertical: bool, values: list[float], suffix: str, repeats: bool
+) -> None:
+    """A vertical block reads like a table column: analytic stated once,
+    narrative when repeated. A horizontal row stays narrative."""
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        strip_numerals_for_values,
+    )
+
+    strip = strip_numerals_for_values(
+        values, "$.3~s", _DRAWN, font_family="Inter", vertical=vertical
+    )
+    assert strip.suffix == suffix
+    assert strip.repeat_suffix is repeats
+    assert strip.anchor_text(values[0]).endswith(suffix)
+    assert strip.bare_text(values[1]).endswith(suffix) is repeats

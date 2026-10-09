@@ -105,29 +105,6 @@ _FIXTURES: dict[str, dict[str, Any]] = {
 }
 
 
-def test_kpi_card_border_dash_array_emits_svg_dasharray() -> None:
-    """style.border.dash_array on a KPI card reaches the card chrome's stroke."""
-    chart_def: dict[str, Any] = {
-        "type": "kpi",
-        "query": "q",
-        "value": "revenue",
-        "label": "Revenue",
-        "style": {
-            "border": {
-                "width": 1,
-                "color": "#333333",
-                "radius": 4,
-                "dash_array": [4, 4],
-                "line_cap": "round",
-            },
-        },
-    }
-    board_rs, board_ctx = _styles()
-    svg = _v2_svg(chart_def, _QUERY_REGISTRY, _DATA, board_rs, board_ctx)
-    assert 'stroke-dasharray="4,4"' in svg
-    assert 'stroke-linecap="round"' in svg
-
-
 @pytest.mark.parametrize("fixture_name", sorted(_FIXTURES))
 def test_v2_kpi_svg_byte_identical(fixture_name: str) -> None:
     chart_def = _FIXTURES[fixture_name]

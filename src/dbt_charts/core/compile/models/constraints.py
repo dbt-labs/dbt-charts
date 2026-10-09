@@ -35,10 +35,11 @@ class IsSet:
 
 @dataclasses.dataclass(frozen=True)
 class ValueIn:
-    """Holds when the value at ``key`` is one of ``values`` (or, negated, is not)."""
+    """Holds when the value at ``key`` is one of ``values`` (or, negated, is not).
+    An absent key reads as ``None``."""
 
     key: str
-    values: tuple[JsonScalar, ...]
+    values: tuple[JsonScalar | None, ...]
     negate: bool = False
 
 
@@ -97,7 +98,19 @@ class ItemsMatch:
     when: tuple[Condition, ...] = ()
 
 
-Constraint = AtLeastOneOf | AtMostOneOf | Requires | Forbids | ItemsMatch
+@dataclasses.dataclass(frozen=True)
+class NotNull:
+    """No key may be written as null: omit it instead.
+
+    YAML reads a bare ``key:`` as null, which a nullable field would take for
+    "unset" and quietly apply the default.
+    """
+
+    keys: tuple[str, ...]
+    message: str
+
+
+Constraint = AtLeastOneOf | AtMostOneOf | Requires | Forbids | ItemsMatch | NotNull
 
 
 def declared_constraints(model_cls: type[BaseModel]) -> tuple[Constraint, ...]:
@@ -158,6 +171,8 @@ def _keys(constraint: Constraint) -> tuple[str, ...]:
     match constraint:
         case ItemsMatch(key, _, _, when):
             return (key, *(c.key for c in when))
+        case NotNull(keys, _):
+            return keys
         case AtLeastOneOf(keys, _, nonempty) | AtMostOneOf(keys, _, nonempty):
             return (*keys, *nonempty)
         case Requires(keys, _, when, nonempty) | Forbids(keys, _, when, nonempty):
@@ -231,6 +246,15 @@ def check_constraints(model: BaseModel) -> None:
                     _is_set(model, k, k in nonempty) for k in keys
                 ):
                     raise _fail(model, message)
+            case NotNull(keys, message):
+                for key in keys:
+                    name = next(
+                        n
+                        for n, f in type(model).model_fields.items()
+                        if (f.alias or n) == key
+                    )
+                    if name in model.model_fields_set and getattr(model, name) is None:
+                        raise _fail(model, message)
             case ItemsMatch(key, pattern, message, when):
                 items = _value_at(model, key)
                 if not isinstance(items, (list, tuple)) or not all(
@@ -264,6 +288,12 @@ class ConstrainedModel(BaseModel):
         if not cls.model_fields:
             return
         for constraint in declared_constraints(cls):
+            if isinstance(constraint, NotNull) and any(
+                "." in k for k in constraint.keys
+            ):
+                raise TypeError(
+                    f"{cls.__name__}: NotNull takes top-level keys, got {constraint.keys}"
+                )
             missing = [k for k in _keys(constraint) if not _resolves(cls, k)]
             if missing:
                 raise TypeError(

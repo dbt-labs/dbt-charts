@@ -24,6 +24,7 @@ from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import FormatTable
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -118,7 +119,8 @@ def test_support_table_source_format_alias_resolves():
     spec = generate_vega_lite_spec(chart, _BAR_DATA, width=400, height=200)
     calcs = _all_calculate_exprs(spec)
 
-    assert any(_RESOLVED_CURRENCY in c for c in calcs), (
+    # The anchored currency composes ahead of the digits.
+    assert any(",.2f" in c and '"$"' in c for c in calcs), (
         f"Expected '{_RESOLVED_CURRENCY}' in a calculate expression; got: {calcs}"
     )
     assert not any(f"'{_ALIAS_CURRENCY}'" in c for c in calcs), (
@@ -324,10 +326,13 @@ def test_tooltip_format_alias_resolves_in_measure_encoding():
     patched_context = dataclasses.replace(
         _BOARD_CONTEXT,
         tooltip=patched_tooltip,
-        formats={
-            **(_BOARD_CONTEXT.formats or {}),
-            _ALIAS_CURRENCY: _RESOLVED_CURRENCY,
-        },
+        formats=FormatTable(
+            aliases={
+                **(_BOARD_CONTEXT.formats.aliases if _BOARD_CONTEXT.formats else {}),
+                _ALIAS_CURRENCY: _RESOLVED_CURRENCY,
+            },
+            currency=None,
+        ),
     )
 
     spec = generate_vega_lite_spec(
@@ -362,7 +367,7 @@ def test_predefined_format_member_gets_house_rules_inline_d3_gets_native() -> No
     round-aware trim + analytic notation register (1.5 M with space before M).
     Writing the resolved spec ".3~s" directly as an inline d3 string is a
     different authoring choice and must produce different output: the predefined
-    name gets notation registers (analytic "1.5 M"), the inline d3 string gets
+    name gets notation registers (analytic "1.5\u00a0M"), the inline d3 string gets
     native d3 output ("1.5M" — no space, lowercase m for mega).
     """
     from dbt_charts.core.compile.format_value import format_value
@@ -370,10 +375,10 @@ def test_predefined_format_member_gets_house_rules_inline_d3_gets_native() -> No
     # Predefined member: house rules apply (analytic notation register).
     enum_output = format_value(1_500_000.0, "number")
     # Inline d3 with same trimmed spec: native d3, no house notation.
-    # The space distinguishes house analytic ("1.5 M") from native d3 ("1.5M").
+    # The space distinguishes house analytic ("1.5\u00a0M") from native d3 ("1.5M").
     inline_output = format_value(1_500_000.0, _RESOLVED_COMPACT)
 
-    assert enum_output == "1.5 M", (
+    assert enum_output == "1.5\u00a0M", (
         f"predefined member 'number' must apply analytic notation; got {enum_output!r}"
     )
     assert inline_output == "1.5M", (

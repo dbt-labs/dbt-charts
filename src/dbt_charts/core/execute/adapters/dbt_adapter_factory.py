@@ -296,6 +296,9 @@ def build_adapter(
             creds_kwargs.get("keyfile"), creds_kwargs.get("keyfile_json")
         )
     if adapter_type_lower == "databricks":
+        # dbt-databricks rejects a token-less profile without auth_type: oauth.
+        if creds_kwargs.get("client_secret") and not creds_kwargs.get("token"):
+            creds_kwargs["auth_type"] = "oauth"
         # dbt charts' source schema names this field `socket_timeout`; dbt-databricks
         # has no top-level field for it — it lives under
         # connection_parameters._socket_timeout instead. Fold it in here, the

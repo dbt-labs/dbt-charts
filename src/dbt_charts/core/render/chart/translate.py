@@ -261,6 +261,8 @@ def _translate_geo_layer(layer: ChartSpec) -> dict[str, Any]:
         vl_layer["encoding"] = layer.encoding
     if layer.transforms:
         vl_layer["transform"] = layer.transforms
+    if layer.tooltip_description:
+        vl_layer = _apply_structured_tooltip(vl_layer, layer.tooltip_description)
     return vl_layer
 
 

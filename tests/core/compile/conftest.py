@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import TypeAdapter
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import CompileResult, compile as _compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.models.cache import CacheInput, CachePatch
 from dbt_charts.core.project import ProjectDirectory
 
 
@@ -50,3 +52,11 @@ def project_with_db_source() -> FilesystemProject:
         sources={"db": {"type": "duckdb", "path": ":memory:"}}
     )
     return project
+
+
+_CACHE_INPUT = TypeAdapter(CacheInput)
+
+
+def cache_layer(raw: Any) -> CachePatch:  # type-state: explicit_any — raw authored YAML
+    """Parse an authored ``cache:`` value (scalar or block) into a layer."""
+    return _CACHE_INPUT.validate_python(raw)

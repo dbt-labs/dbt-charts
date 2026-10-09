@@ -14,6 +14,7 @@ from typing import Any
 
 from d3_format import format as _d3_format, parse as _d3_parse
 from dbt_charts.core.compile.format_value import format_kpi_parts
+from dbt_charts.core.compile.models.primitives import FormatTable
 from dbt_charts.core.compile.models.style.authored.table import TableColumnConfig
 from dbt_charts.core.compile.models.style.resolved.table import (
     ResolvedColumnSharedScale,
@@ -820,7 +821,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
     ) -> None:
         # Regression: table.py's format_kpi_parts prints a sub-$1 currency
         # cell through a different, deeper spec than the rest of the column
-        # (si_sub_unit_floor's per-row swap). A bake that measures every row
+        # (the per-row sub-unit swap). A bake that measures every row
         # with the bare SI spec is too shallow for that swapped row.
         columns = {"amount": TableColumnConfig(format="currency")}
         values = (0.25, 84.3, 88, 42)
@@ -907,13 +908,10 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         assert col.shared_scale is None
         assert col.decimal_pad_table == ()
 
-    def test_sub_unit_value_mixed_with_a_bare_value_bakes_no_pad(self) -> None:
-        """0.671 prints "671m" (a milli-prefixed SI suffix); 84.3 prints
-        bare. Regression: a raw-value tier classifier (``_natural_tier``)
-        only recognizes tiers at or above thousands, so it reads 0.671 as
-        having no tier at all -- the same bucket as 84.3 -- and would
-        wrongly treat this as the all-below-tier case above. The two cells
-        print in different units and must not be padded together.
+    def test_sub_unit_value_mixed_with_a_bare_value_pads_to_the_deepest(self) -> None:
+        """0.671 prints "0.67" (the plain-digit sibling, never a milli
+        suffix); 84.3 prints "84.3". Both are bare, so they share one printed
+        unit and align to the deeper cell's two decimals.
         """
         columns = {"amount": TableColumnConfig(format="number")}
         rows = [{"amount": v} for v in (0.671, 84.3)]
@@ -931,7 +929,26 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         assert resolved is not None
         col = resolved["amount"]
         assert col.shared_scale is None
-        assert col.decimal_pad_table == ()
+        assert len(col.decimal_pad_table) - 2 == 2
+
+    def test_sub_cent_value_pads_to_its_significant_digits(self) -> None:
+        """0.0023 prints "0.0023" (significant digits, below the two-decimal
+        floor); 84.3 pads to the same four decimals."""
+        columns = {"amount": TableColumnConfig(format="number")}
+        rows = [{"amount": v} for v in (0.0023, 84.3)]
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+            allow_shared_scale=True,
+            own_formats={n: c.format for n, c in (columns or {}).items()},
+            defaults_format=None,
+            declared=None,
+        )
+        assert resolved is not None
+        assert len(resolved["amount"].decimal_pad_table) - 2 == 4
 
     def test_currency_spec_via_format_config_measures_the_sub_dollar_swap(
         self,
@@ -968,12 +985,9 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         assert decimal_pad_for(col.decimal_pad_table, "84.3") != ""
         assert decimal_pad_for(col.decimal_pad_table, "88") != ""
 
-    def test_explicit_suffix_money_code_measures_the_sub_dollar_swap(self) -> None:
-        """``explicit_suffix`` (from ``get_format_prefix_suffix``) feeds
-        ``si_sub_unit_floor``'s money detection even when the ``spec`` itself
-        carries no currency symbol -- a `` USD`` suffix must still route 0.25
-        through the deeper two-decimal fallback spec, not the bare SI one.
-        Must not raise.
+    def test_affixed_number_measures_the_sub_one_swap(self) -> None:
+        """A ``number`` column with an affix routes 0.25 through the deeper
+        two-decimal fallback spec, not the bare SI one. Must not raise.
         """
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
@@ -1010,7 +1024,7 @@ def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
     """An alias naming a preset pads sub-$1 rows like the preset itself."""
     rows: list[dict[str, Any]] = [{"amount": v} for v in (0.67, 1.5, 2.25)]
 
-    def pad(fmt: str, formats: dict[str, str] | None) -> tuple[str, ...]:
+    def pad(fmt: str, formats: FormatTable | None) -> tuple[str, ...]:
         resolved = _with_resolved_scale_stops(
             {"amount": TableColumnConfig(format=fmt)},
             text_color=None,
@@ -1030,4 +1044,30 @@ def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
 
     direct = pad("currency", None)
     assert direct
-    assert pad("mine", {"mine": "currency"}) == direct
+    assert (
+        pad("mine", FormatTable(aliases={"mine": "currency"}, currency="USD")) == direct
+    )
+
+
+def test_shared_scale_width_text_keeps_the_authored_prefix_gap() -> None:
+    from dbt_charts.core.compile.models.primitives import FormatConfig
+    from dbt_charts.core.render.chart.table_support import _rendered_cell_text
+
+    columns = {
+        "amount": TableColumnConfig(format=FormatConfig(spec="number", prefix="EUR "))
+    }
+    resolved = _with_resolved_scale_stops(
+        columns,
+        text_color=None,
+        formats=None,
+        font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+        rows=[{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)],
+        allow_shared_scale=True,
+        own_formats={n: c.format for n, c in columns.items()},
+        defaults_format=None,
+        declared=None,
+    )
+    assert resolved is not None
+    assert resolved["amount"].shared_scale is not None
+    text = _rendered_cell_text(3_500_000, resolved["amount"], None)
+    assert text.startswith("EUR "), text

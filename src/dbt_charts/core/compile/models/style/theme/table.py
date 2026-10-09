@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 if TYPE_CHECKING:
     # These authored types are injected into theme/__init__.py's module globals at
@@ -15,14 +15,20 @@ if TYPE_CHECKING:
         TableColumnDefaultsConfig,
     )
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
+from dbt_charts.core.compile.models.constraints import (
+    ConstrainedModel,
+    Constraint,
+    Requires,
+)
 from dbt_charts.core.compile.models.markers import (
     Color,
     Inherit,
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
+    BorderStyle,
     CornerStyle,
     DividerStyle,
     FontStyle,
@@ -195,30 +201,21 @@ class TableEdgeStyle(BaseModel):
     )
 
 
-class SparkEmptyStyle(BaseModel):
+class SparkEmptyStyle(ConstrainedModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = tuple(
+        Requires(
+            (f"stroke.{field}",),
+            f"spark.empty.stroke.{field} is required "
+            "(renderer reads color/width/dasharray)",
+        )
+        for field in ("color", "width", "dasharray")
+    )
     inset_x: float = Field(
         description="Horizontal inset for the empty sparkline placeholder in pixels."
     )
     stroke: StrokeStyle = Field(description="Empty-state placeholder stroke style.")
-
-    @model_validator(mode="after")
-    def _require_stroke_fields(self) -> SparkEmptyStyle:
-        s = self.stroke
-        missing = [
-            f
-            for f, v in [
-                ("color", s.color),
-                ("width", s.width),
-                ("dasharray", s.dasharray),
-            ]
-            if v is None
-        ]
-        if missing:
-            raise ValueError(
-                f"spark.empty.stroke.{missing[0]} is required (renderer reads color/width/dasharray)"
-            )
-        return self
 
 
 class SparkSingleValueStyle(BaseModel):
@@ -411,14 +408,16 @@ class TableChartStyle(
     ``min_height``, ``max_height``, and ``legend`` are absent by construction
     (``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).
 
-    ``_ChartCardStyleMixinAllOptional`` supplies ``border``: table draws its own
-    card, so unlike the Vega-Lite families it keeps the slot. It stopped
-    declaring its own ``border`` when that field was found to be inert on the
-    table and secretly styling markdown (now ``style.text.divider``), and inherits
-    the shared card border instead — None when unauthored.
+    ``border`` inherits from ``style.charts.border``: table draws its own card.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Cascade tier sentinel: None means "not authored"; the cascade fills it from
+    # charts.border, so no theme populates it.
+    border: Annotated[
+        BorderStyle | None, InheritSlot(from_path="Style.charts.border")
+    ] = Field(default=None, description="Chart card border style.")
 
     preferred_width: Annotated[
         float, Inherit(from_path="Style.charts.preferred_width")

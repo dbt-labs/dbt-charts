@@ -296,6 +296,7 @@ EXPECTED_CLASSIFICATION = {
     "postgres": False,
     "postgresql": False,
     "duckdb": False,
+    "lakecompute": False,
     "sqlite": False,
     "mysql": True,
     "mariadb": True,

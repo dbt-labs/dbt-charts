@@ -50,6 +50,7 @@ from dbt_charts.core.compile.models.config import (
     ConfigNode,
     ExecutionConfig,
     InspectorConfig,
+    LakeComputeExecutionConfig,
     ProjectCacheConfig,
     RenderingConfig,
     ServerConfig,
@@ -253,6 +254,11 @@ def get_vega_config() -> VegaRuntimeConfig:
 def get_execution_config() -> ExecutionConfig:
     """Narrow getter — query execution config (e.g. max_workers)."""
     return get_config().execution
+
+
+def get_lakecompute_config() -> LakeComputeExecutionConfig:
+    """Narrow getter — lake compute endpoint defaults."""
+    return get_config().execution.lakecompute
 
 
 @dataclass(frozen=True)

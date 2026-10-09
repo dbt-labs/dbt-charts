@@ -117,7 +117,7 @@ class TestLoadMetaFile:
                 {
                     "source": "db",
                     "lint": {
-                        "ignore": ["WARN-FANOUT-RISK"],
+                        "ignore": ["WARN-REAGGREGATION"],
                         "ignore_queries": {"q": ["WARN-REAGGREGATION"]},
                     },
                 }
@@ -129,7 +129,7 @@ class TestLoadMetaFile:
 
         assert "lint" not in data  # lint is not board content
         assert data == {"source": "db"}
-        assert lint.ignore == ["WARN-FANOUT-RISK"]
+        assert lint.ignore == ["WARN-REAGGREGATION"]
         assert lint.ignore_queries == {"q": ["WARN-REAGGREGATION"]}
 
     def test_lint_ignore_typo_raises(
@@ -137,11 +137,11 @@ class TestLoadMetaFile:
     ):
         """A typo'd lint.ignore code is a loud compile error, not a silent no-op."""
         (temp_project / "meta.yml").write_text(
-            yaml.dump({"lint": {"ignore": ["WARN-FANOUT-RISKK"]}})
+            yaml.dump({"lint": {"ignore": ["WARN-REAGGREGATIONN"]}})
         )
         meta_file = local_project(temp_project).path("meta.yml")
 
-        with pytest.raises(CompilationError, match="WARN-FANOUT-RISKK"):
+        with pytest.raises(CompilationError, match="WARN-REAGGREGATIONN"):
             load_meta_file(meta_file)
 
     def test_lint_ignore_queries_typo_raises(
@@ -720,7 +720,7 @@ class TestCompileFileWithMeta:
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
         (temp_project / "meta.yml").write_text(
-            yaml.dump({"lint": {"ignore": ["WARN-FANOUT-RISK"]}})
+            yaml.dump({"lint": {"ignore": ["WARN-REAGGREGATION"]}})
         )
         board = {"title": "T", "rows": [{"cols": [{"text": "hi"}]}]}
         board_path = temp_project / "dashboard.yaml"
@@ -733,7 +733,7 @@ class TestCompileFileWithMeta:
 
         assert result.success
         assert result.meta_lint is not None
-        assert "WARN-FANOUT-RISK" in result.meta_lint.ignore
+        assert "WARN-REAGGREGATION" in result.meta_lint.ignore
 
     def test_malformed_meta_fails_loud(
         self, temp_project, local_project: Callable[..., FilesystemProject]

@@ -63,7 +63,7 @@ from dbt_charts.core.compile.resolve.chart._layers import (
     _resolve_layer_list,
 )
 from dbt_charts.core.compile.resolve.chart._marks import (
-    _apply_stroke_width_fallback,
+    _apply_line_width,
     _build_resolved_area_line,
     _build_resolved_area_mark,
     _label_format_fallback,
@@ -78,7 +78,6 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
-    has_structured_tooltip,
     plan_cartesian,
     quantitative_channel_values,
 )
@@ -87,7 +86,6 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     resolve_wide_measure_channels,
 )
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
-    bake_line_stroke,
     density_adaptive_stroke,
 )
 from dbt_charts.core.compile.resolve.chart.enrich import (
@@ -541,7 +539,6 @@ def _resolve_area(
             normalized, primary, chart_style_context, values=tooltip_format_values
         ),
         tooltip_format_values=tooltip_format_values,
-        structured_tooltip_eligible=has_structured_tooltip(normalized),
         # Area semantics fix x=dimension, y=value -- see _validate_area_encoding.
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=True,
@@ -636,16 +633,8 @@ def _resolve_area(
         chart_style_context.formats,
         tooltip_format_values,
     )
-    # Density-adaptive stroke for area's top-edge line.  For stacked charts the
-    # effective stroke is on the stacked perimeter -- already merged above
-    # (the on_stacked_recipe REPLACE) into line_mark_merged; for overlap it's
-    # the top-edge line. Compute the adaptive value unconditionally --
-    # bake_line_stroke() owns the "is this pinned" decision (a None-check on
-    # the merged width, answering "did any tier pin this" directly, including
-    # the stacked-mark REPLACE) and no-ops on a pinned mark, so this resolver
-    # must not re-derive that check itself: doing so zeroed the value for an
-    # unpinned overlay layer sharing this same _area_adaptive_stroke, whenever
-    # the BASE mark happened to be pinned.
+    # Density-adaptive stroke for the overlap top-edge line and for overlay
+    # layers, which are trend marks of their own.
     _area_adaptive_stroke = 0.0
     if normalized.x is not None:
         _area_adaptive_stroke = density_adaptive_stroke(
@@ -656,34 +645,17 @@ def _resolve_area(
             normalized.multiples,
             bool(ay.mirror),
         )
-    # On the stacked recipe the edge is a SEPARATOR, not a trend line. The
-    # thick-at-sparse half of the formula is a line-presence rule that does not
-    # fit a separator (the fills carry the weight), so cap the BASE edge at the
-    # engine's stacked-fallback constant — never thicker — while still letting
-    # it thin with density for crisp boundaries. Single-series takes the same
-    # cap for a sharper reason: its edge is background-colored, so an uncapped
-    # width would knock visible pixels off the top of the band and understate
-    # every value. This cap only ever feeds the BASE bake below --
-    # bake_line_stroke() no-ops on a pinned mark regardless of what this
-    # computes to, so a pin still always wins outright and never reaches
-    # render.
-    # Overlay layers get the uncapped value: a line/area layer is its own trend
-    # mark, not a separator.
-    _area_baked_stroke = _area_adaptive_stroke
-    if _area_baked_stroke > 0 and on_stacked_recipe:
-        _area_baked_stroke = min(
-            _area_baked_stroke, get_chart_rendering().stroke.stacked_fallback_width
-        )
-    line_mark_merged = bake_line_stroke(line_mark_merged, _area_baked_stroke)
-    # The stacked recipe gets its own (thinner) fallback constant, matching
-    # the cap above.
-    _area_fallback_width = (
-        get_chart_rendering().stroke.stacked_fallback_width
+    stroke_cfg = get_chart_rendering().stroke
+    # The stacked edge is a separator, not a trend line, so it never adapts to
+    # density (adaptive = 0.0). Its single-series form is background-colored:
+    # a thicker edge would knock visible pixels off the band and understate
+    # every value.
+    line_mark_merged = (
+        _apply_line_width(line_mark_merged, 0.0, stroke_cfg.stacked_fallback_width)
         if on_stacked_recipe
-        else get_chart_rendering().stroke.fallback_width
-    )
-    line_mark_merged = _apply_stroke_width_fallback(
-        line_mark_merged, _area_fallback_width
+        else _apply_line_width(
+            line_mark_merged, _area_adaptive_stroke, stroke_cfg.fallback_width
+        )
     )
     # Area charts have no point-companion block: area.marks.point size is not
     # coupled to the top-edge stroke thickness (unlike line where point rings

@@ -223,6 +223,6 @@ class TestTableTransposeRender:
                 f"Expected label {lbl!r} exactly once in transposed SVG, got {count}"
             )
 
-        # Values use the theme SI default: 1500 -> "1.5 K", 3000 -> "3 K".
-        assert "1.5 K" in svg, f"Expected '1.5 K' in SVG but got: {svg[:300]}"
-        assert "3 K" in svg, f"Expected '3 K' in SVG but got: {svg[:300]}"
+        # Values use the theme SI default: 1500 -> "1.5\u00a0K", 3000 -> "3\u00a0K".
+        assert "1.5\u00a0K" in svg, f"Expected '1.5\u00a0K' in SVG but got: {svg[:300]}"
+        assert "3\u00a0K" in svg, f"Expected '3\u00a0K' in SVG but got: {svg[:300]}"

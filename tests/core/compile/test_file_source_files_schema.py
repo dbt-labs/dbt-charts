@@ -22,7 +22,9 @@ from dbt_charts.core.compile.models.source import (
 class TestCsvSourceConfig:
     def test_empty_files_raises(self) -> None:
         """Empty files mapping must raise a clear ValidationError."""
-        with pytest.raises(ValidationError, match="files.*must not be empty"):
+        with pytest.raises(
+            ValidationError, match="files\n  Dictionary should have at least 1 item"
+        ):
             CsvSourceConfig(type="csv", files={})
 
     def test_legacy_file_key_rejected(self) -> None:
@@ -78,7 +80,9 @@ class TestCsvSourceConfig:
 
 class TestJsonSourceConfig:
     def test_empty_files_raises(self) -> None:
-        with pytest.raises(ValidationError, match="files.*must not be empty"):
+        with pytest.raises(
+            ValidationError, match="files\n  Dictionary should have at least 1 item"
+        ):
             JsonSourceConfig(type="json", files={})
 
     def test_legacy_file_key_rejected(self) -> None:
@@ -96,7 +100,9 @@ class TestJsonSourceConfig:
 
 class TestParquetSourceConfig:
     def test_empty_files_raises(self) -> None:
-        with pytest.raises(ValidationError, match="files.*must not be empty"):
+        with pytest.raises(
+            ValidationError, match="files\n  Dictionary should have at least 1 item"
+        ):
             ParquetSourceConfig(type="parquet", files={})
 
     def test_legacy_file_key_rejected(self) -> None:

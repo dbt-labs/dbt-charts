@@ -119,6 +119,22 @@ def pin_render_tz_utc() -> None:
     vlc.get_local_tz()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def use_empty_git_template_dir(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """Stop disposable git repos from writing default hook sample scripts.
+
+    This package's own ``pyproject.toml`` makes it a separate pytest rootdir,
+    so the repo-root conftest's copy of this fixture never applies here.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(
+            "GIT_TEMPLATE_DIR", str(tmp_path_factory.mktemp("empty-git-template"))
+        )
+        yield
+
+
 @pytest.fixture
 def non_utc_tz(monkeypatch):
     """Run the test with a local clock that is NOT UTC.

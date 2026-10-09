@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -371,3 +372,261 @@ class TestExpandDbtProfileSource:
 
         assert result.type == "snowflake"
         assert result.account == "xy12345"  # type: ignore[union-attr]
+
+
+def _write_duckdb_profile(directory: Path, profile: str, db_path: str) -> None:
+    (directory / "profiles.yml").write_text(
+        yaml.dump(
+            {
+                profile: {
+                    "target": "dev",
+                    "outputs": {"dev": {"type": "duckdb", "path": db_path}},
+                }
+            }
+        )
+    )
+
+
+def _expand(
+    cfg_profile: str | None, project_path: Path | None, **cfg_fields: str
+) -> dict[str, Any]:
+    from dbt_charts.core.compile.models.source import DbtProfileSourceConfig
+    from dbt_charts.core.execute.source_resolver import (
+        DbtContext,
+        DefaultSourceResolver,
+    )
+
+    cfg = DbtProfileSourceConfig(type="dbt_profile", profile=cfg_profile, **cfg_fields)
+    resolved = DefaultSourceResolver()._expand_dbt_profile(
+        cfg, DbtContext(dbt_project_path=project_path)
+    )
+    return resolved.model_dump(by_alias=True)
+
+
+class TestDbtProfileNameLadder:
+    """profile: is optional; the name comes from the first rung that has one."""
+
+    def test_profile_field_is_optional(self) -> None:
+        from dbt_charts.core.compile.models.source import DbtProfileSourceConfig
+
+        assert DbtProfileSourceConfig(type="dbt_profile").profile is None
+
+    def test_name_read_from_dbt_project_yml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DBT_PROFILE", raising=False)
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "dbt_project.yml").write_text(
+            yaml.dump({"name": "p", "profile": "from_project"})
+        )
+        _write_duckdb_profile(tmp_path, "from_project", ":memory:")
+
+        assert _expand(None, tmp_path)["type"] == "duckdb"
+
+    def test_env_var_beats_dbt_project_yml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DBT_PROFILE", "from_env")
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "dbt_project.yml").write_text(
+            yaml.dump({"name": "p", "profile": "from_project"})
+        )
+        _write_duckdb_profile(tmp_path, "from_env", "env.duckdb")
+
+        assert _expand(None, tmp_path)["path"] == str(
+            (tmp_path / "env.duckdb").resolve()
+        )
+
+    def test_explicit_profile_beats_env_and_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DBT_PROFILE", "from_env")
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "dbt_project.yml").write_text(
+            yaml.dump({"name": "p", "profile": "from_project"})
+        )
+        _write_duckdb_profile(tmp_path, "explicit", "explicit.duckdb")
+
+        result = _expand("explicit", tmp_path)
+        assert result["path"] == str((tmp_path / "explicit.duckdb").resolve())
+
+    def test_no_name_anywhere_names_all_three_places(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.diagnostics.execution import ExecutionError
+
+        monkeypatch.delenv("DBT_PROFILE", raising=False)
+        (tmp_path / "dbt_project.yml").write_text(yaml.dump({"name": "p"}))
+
+        with pytest.raises(ExecutionError) as exc_info:
+            _expand(None, tmp_path)
+        message = str(exc_info.value)
+        assert "profile:" in message
+        assert "DBT_PROFILE" in message
+        assert "dbt_project.yml" in message
+
+    def test_no_name_without_project_names_all_three_places(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.diagnostics.execution import ExecutionError
+
+        monkeypatch.delenv("DBT_PROFILE", raising=False)
+
+        with pytest.raises(ExecutionError, match="DBT_PROFILE") as exc_info:
+            _expand(None, None)
+        assert "dbt_project.yml" in str(exc_info.value)
+
+
+class TestDbtProfileWithoutProject:
+    """A dbt_profile source expands with no linked dbt project."""
+
+    def test_reads_global_dbt_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / ".dbt").mkdir()
+        _write_duckdb_profile(tmp_path / ".dbt", "global_profile", ":memory:")
+
+        assert _expand("global_profile", None)["type"] == "duckdb"
+
+    def test_reads_dbt_profiles_dir_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_dir = tmp_path / "env_dir"
+        env_dir.mkdir()
+        _write_duckdb_profile(env_dir, "env_profile", ":memory:")
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(env_dir))
+
+        assert _expand("env_profile", None)["type"] == "duckdb"
+
+    def test_relative_duckdb_path_is_left_as_authored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_dir = tmp_path / "env_dir"
+        env_dir.mkdir()
+        _write_duckdb_profile(env_dir, "env_profile", "warehouse.duckdb")
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(env_dir))
+
+        assert _expand("env_profile", None)["path"] == "warehouse.duckdb"
+
+    def test_cwd_profiles_yml_is_not_a_project_local_step(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.diagnostics.execution import ExecutionError
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        _write_duckdb_profile(tmp_path, "local_only", ":memory:")
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(ExecutionError, match="No profiles.yml found"):
+            _expand("local_only", None)
+
+    def test_profiles_dir_field_needs_a_project_to_be_relative_to(
+        self, tmp_path: Path
+    ) -> None:
+        from dbt_charts.core.diagnostics.execution import ExecutionError
+
+        with pytest.raises(ExecutionError, match="profiles_dir"):
+            _expand("anything", None, profiles_dir="services/dbt")
+
+    def test_resolve_profiles_path_without_project_skips_project_step(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.project_roots import resolve_profiles_path
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / ".dbt").mkdir()
+        (tmp_path / ".dbt" / "profiles.yml").write_text("x: 1\n")
+
+        assert resolve_profiles_path(None, profiles_dir=None) == (
+            tmp_path / ".dbt" / "profiles.yml"
+        )
+
+
+class TestOneProfileNameLadder:
+    """Every reader of the profile name follows the same precedence."""
+
+    def test_env_var_wins_in_every_reader(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.cli.filesystem_project import FilesystemProject
+        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+        from dbt_charts.core.project_roots import infer_dialect_from_dbt
+
+        monkeypatch.setenv("DBT_PROFILE", "profile_b")
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "dbt_project.yml").write_text(
+            yaml.dump({"name": "p", "profile": "profile_a"})
+        )
+        (tmp_path / "profiles.yml").write_text(
+            yaml.dump(
+                {
+                    "profile_a": {
+                        "target": "dev",
+                        "outputs": {"dev": {"type": "snowflake"}},
+                    },
+                    "profile_b": {
+                        "target": "dev",
+                        "outputs": {"dev": {"type": "duckdb", "path": "b.db"}},
+                    },
+                }
+            )
+        )
+        adapter = DbtAdapter(
+            project=FilesystemProject(tmp_path),
+            dbt_project_path=tmp_path,
+            target_name="dev",
+        )
+
+        assert adapter.resolve_target_type() == "duckdb"
+        assert infer_dialect_from_dbt(tmp_path) == "duckdb"
+        assert _expand(None, tmp_path)["path"] == str((tmp_path / "b.db").resolve())
+
+    def test_adapter_without_any_name_names_all_three_places(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.cli.filesystem_project import FilesystemProject
+        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+
+        monkeypatch.delenv("DBT_PROFILE", raising=False)
+        adapter = DbtAdapter(
+            project=FilesystemProject(tmp_path),
+            dbt_project_path=tmp_path,
+            target_name="dev",
+        )
+
+        with pytest.raises(ValueError, match="DBT_PROFILE"):
+            adapter.resolve_target_type()
+
+
+class TestReadDbtProjectProfile:
+    @pytest.mark.parametrize("value", ["[a]", "123", "{a: b}"])
+    def test_non_string_profile_raises(self, tmp_path: Path, value: str) -> None:
+        from dbt_charts.core.project_roots import read_dbt_project_profile
+
+        (tmp_path / "dbt_project.yml").write_text(f"name: p\nprofile: {value}\n")
+        with pytest.raises(ValueError, match="profile"):
+            read_dbt_project_profile(tmp_path)
+
+    def test_invalid_yaml_raises_value_error(self, tmp_path: Path) -> None:
+        from dbt_charts.core.project_roots import read_dbt_project_profile
+
+        (tmp_path / "dbt_project.yml").write_text("name: [unclosed\n")
+        with pytest.raises(ValueError, match="dbt_project.yml"):
+            read_dbt_project_profile(tmp_path)
+
+    def test_returns_profile_key(self, tmp_path: Path) -> None:
+        from dbt_charts.core.project_roots import read_dbt_project_profile
+
+        (tmp_path / "dbt_project.yml").write_text("name: p\nprofile: warehouse\n")
+        assert read_dbt_project_profile(tmp_path) == "warehouse"
+
+    def test_none_without_file_or_key(self, tmp_path: Path) -> None:
+        from dbt_charts.core.project_roots import read_dbt_project_profile
+
+        assert read_dbt_project_profile(tmp_path) is None
+        (tmp_path / "dbt_project.yml").write_text("name: p\n")
+        assert read_dbt_project_profile(tmp_path) is None

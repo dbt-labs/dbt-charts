@@ -271,7 +271,7 @@ class TestRegistryShape:
             "WARN-PIE-TOO-MANY-SEGMENTS",
             "WARN-REDUNDANT-ENCODING",
             "WARN-UNREFERENCED-CHART",
-            "WARN-FANOUT-RISK",
+            "WARN-REAGGREGATION",
             "WARN-REDUNDANT-AUTHORED-LABEL",
         }
         missing = expected - warn_codes
@@ -433,6 +433,9 @@ def _find_emitted_codes(root_dirs: list[Path]) -> set[str]:
             parts = py_file.parts
             if "tests" in parts or "test_" in py_file.name:
                 continue
+            # Generated list of every registered code: a mention, not an emit site.
+            if py_file.name == "schema_names.py":
+                continue
             if py_file.parent.name == "diagnostics" and (
                 py_file.name.startswith("codes_") or py_file.name in _DIAG_NON_EMITTERS
             ):
@@ -488,7 +491,6 @@ class TestEmissionScan:
 
         narrow_emitted = _find_emitted_codes(narrow_roots_for_fn)
         sql_lint_codes = {
-            "WARN-FANOUT-RISK",
             "WARN-MISSING-JOIN-PREDICATE",
             "WARN-PARSE-ERROR",
             "WARN-REAGGREGATION",

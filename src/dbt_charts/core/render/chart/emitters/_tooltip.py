@@ -213,7 +213,7 @@ def series_row_promoted(field: str, data: ChartRenderData) -> bool:
     return field_cardinality(field, data) > 1
 
 
-def _format_quantitative_expr(value_expr: str, fmt: ResolvedFormat) -> str:
+def format_quantitative_expr(value_expr: str, fmt: ResolvedFormat) -> str:
     """A quantitative Vega expression's number format; an affix composes through
     ``_affixed_digits_expr`` like the axis labelExpr. ``value_expr`` may be any
     expression."""
@@ -227,7 +227,7 @@ def _value_expr(tf: TooltipField) -> str:
         return json.dumps(tf.field)
     ref = f"datum[{json.dumps(tf.field)}]"
     if tf.kind == "quantitative":
-        return _format_quantitative_expr(ref, tf.format)
+        return format_quantitative_expr(ref, tf.format)
     if tf.kind == "temporal":
         if tf.format.spec:
             return f"utcFormat(toDate({ref}), {json.dumps(tf.format.spec)})"
@@ -405,7 +405,7 @@ def span_tooltip_rows(
     else:
         e = f"datum[{json.dumps(end.field)}]"
         s = f"datum[{json.dumps(start.field)}]"
-        magnitude = _format_quantitative_expr(f"abs({e} - {s})", end.format)
+        magnitude = format_quantitative_expr(f"abs({e} - {s})", end.format)
         if span_rises_only(rows, end.field, start.field):
             fields = [TooltipField(_SPAN_DIFFERENCE_FIELD, "Range")]
             expr = magnitude

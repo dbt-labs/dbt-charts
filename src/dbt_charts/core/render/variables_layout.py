@@ -39,9 +39,11 @@ class InputTraits:
     text it will draw, the rest name a theme width or a shape that has its own.
     ``ornament`` is the glyph the chrome draws inside the field's right edge.
     ``unset`` is which "no value" affordance the control offers, and whose label
-    vocabulary it reads.
+    vocabulary it reads. ``bounds`` is whether ``min``/``max``/``step`` reach the
+    control: ``slider`` falls back to the theme's range, ``authored`` reads only
+    what the board sets.
 
-    One row rather than three subsets because the three questions have always
+    One row rather than four subsets because the four questions have always
     been asked of the same fourteen values, and answering them apart is what let
     them disagree.
     """
@@ -49,12 +51,13 @@ class InputTraits:
     sizing: Literal["content", "text", "number", "daterange", "checkbox", "slider"]
     ornament: Literal["arrow", "calendar", "none"]
     unset: Literal["chooser", "range", "date", "none"]
+    bounds: Literal["slider", "authored", "none"]
 
 
 # Every member of `VariableInputType`, and the gate is that it *is* every member
 # — `test_every_variable_input_type_is_classified` compares this table's keys
 # against the enum, so a new input kind cannot render until someone has decided
-# these three things about it.
+# these four things about it.
 #
 # That gate is the point. The three hand-written subsets this replaces shared a
 # silent fall-through: an unclassified kind was sized as text, drew no glyph, and
@@ -66,20 +69,20 @@ class InputTraits:
 # deliberate hole in it is the shape this exists to prevent, and "unreachable"
 # is a claim that stops being true quietly.
 _INPUT_TRAITS: dict[VariableInputType, InputTraits] = {
-    "auto": InputTraits("text", "none", "none"),
-    "select": InputTraits("content", "arrow", "chooser"),
-    "multiselect": InputTraits("content", "arrow", "chooser"),
-    "radio": InputTraits("content", "arrow", "chooser"),
-    "date": InputTraits("content", "calendar", "date"),
-    "datepicker": InputTraits("content", "calendar", "date"),
-    "daterange": InputTraits("daterange", "calendar", "range"),
-    "input": InputTraits("text", "none", "none"),
-    "text": InputTraits("text", "none", "none"),
-    "textarea": InputTraits("text", "none", "none"),
-    "number": InputTraits("number", "none", "none"),
-    "slider": InputTraits("slider", "none", "none"),
-    "range": InputTraits("slider", "none", "none"),
-    "checkbox": InputTraits("checkbox", "none", "none"),
+    "auto": InputTraits("text", "none", "none", "none"),
+    "select": InputTraits("content", "arrow", "chooser", "none"),
+    "multiselect": InputTraits("content", "arrow", "chooser", "none"),
+    "radio": InputTraits("content", "arrow", "chooser", "none"),
+    "date": InputTraits("content", "calendar", "date", "none"),
+    "datepicker": InputTraits("content", "calendar", "date", "none"),
+    "daterange": InputTraits("daterange", "calendar", "range", "none"),
+    "input": InputTraits("text", "none", "none", "none"),
+    "text": InputTraits("text", "none", "none", "none"),
+    "textarea": InputTraits("text", "none", "none", "none"),
+    "number": InputTraits("number", "none", "none", "authored"),
+    "slider": InputTraits("slider", "none", "none", "slider"),
+    "range": InputTraits("slider", "none", "none", "slider"),
+    "checkbox": InputTraits("checkbox", "none", "none", "none"),
 }
 
 

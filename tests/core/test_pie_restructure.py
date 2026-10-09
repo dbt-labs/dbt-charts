@@ -673,6 +673,60 @@ class TestTotalFormatResolution:
         assert "$0.67" in svg
         assert "670m" not in svg
 
+    @pytest.mark.parametrize(
+        ("fmt", "data", "expected"),
+        [
+            ("currency", [0.42, 0.25], ["$0.42", "$0.25"]),
+            ("currency_full", [1234.5, 1000.0], ["$1,234.50", "$1,000.00"]),
+            (None, [1234, 1000], ["1,234", "1,000"]),
+            ("usd", [1234, 1000], ["1,234 USD", "1,000 USD"]),
+            ("'>8,.0f", [1234, 1000], ["'''1,234", "'''1,000"]),
+        ],
+        ids=[
+            "sub-dollar-currency",
+            "authored-format",
+            "unauthored-default",
+            "suffix-carried",
+            "quote-fill-spec",
+        ],
+    )
+    def test_default_slice_label_follows_the_slice_format(self, fmt, data, expected):
+        """The default 2-line label's value line is formatted like the slice's
+        tooltip, not a hardcoded integer: $0.42 must not paint as ``0`` or
+        ``$420m``."""
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.compile.resolve.style.board import (
+            resolve_style_and_context,
+        )
+        from dbt_charts.core.render.chart.emitters.pie import prepare_pie_render_rows
+
+        patches = (
+            [
+                StylePatch.model_validate(
+                    {
+                        "formats": {"usd": {"spec": ",.0f", "suffix": " USD"}},
+                        "charts": {"tooltip": {"format": fmt}},
+                    }
+                )
+            ]
+            if fmt
+            else []
+        )
+        _, ctx = resolve_style_and_context(get_theme_style(), *patches)
+        chart = PieChart(
+            id="t",
+            type="pie",
+            theta="v",
+            color="cat",
+            query=SqlQuery(sql="SELECT 1", source="src"),
+            query_name="q",
+        )
+        rows = [{"cat": name, "v": v} for name, v in zip("AB", data, strict=True)]
+        rc = resolve(chart, rows, chart_style_context=ctx)
+        painted, _ = prepare_pie_render_rows(rc, rows)
+        assert [row["__dbt_label"][1] for row in painted] == expected
+
 
 # ---------------------------------------------------------------------------
 # 8. style.total.value.format accepts FormatConfig

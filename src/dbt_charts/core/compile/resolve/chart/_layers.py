@@ -42,7 +42,7 @@ from dbt_charts.core.compile.models.style.resolved._base import ResolvedTickLabe
 from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows, LayerDatasets
 from dbt_charts.core.compile.resolve.chart._marks import (
-    _apply_stroke_width_fallback,
+    _apply_line_width,
     _build_resolved_area_line,
     _build_resolved_area_mark,
     _build_resolved_line_mark,
@@ -52,7 +52,6 @@ from dbt_charts.core.compile.resolve.chart._marks import (
 )
 from dbt_charts.core.compile.resolve.chart._palette import _with_color_tokens
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
-    bake_line_stroke,
     bake_point_companions,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -204,10 +203,6 @@ def _resolve_one_layer(
         )
         _layer_line_patch = line_marks.line if line_marks is not None else None
         line_merged = merge_onto_base(line_parent.marks.line, _layer_line_patch)
-        # bake_line_stroke itself skips a mark whose width is already pinned
-        # by any cascade tier -- inherited from line_parent as much as this
-        # layer's own patch -- so no separate gate is needed here.
-        line_merged = bake_line_stroke(line_merged, line_adaptive_stroke)
         pre_fallback_point_mark = merge_onto_base(
             line_parent.marks.point,
             line_marks.point if line_marks is not None else None,
@@ -233,10 +228,11 @@ def _resolve_one_layer(
             line_label_is_house if line_labels.visible is True else point_label_is_house
         )
         # A layer is always its own trend line, never a separator — the
-        # stacked-perimeter fallback constant is base-chart-recipe-specific
-        # and does not apply here.
-        line_merged = _apply_stroke_width_fallback(
-            line_merged, get_chart_rendering().stroke.fallback_width
+        # stacked width is base-chart-recipe-specific and does not apply here.
+        line_merged = _apply_line_width(
+            line_merged,
+            line_adaptive_stroke,
+            get_chart_rendering().stroke.fallback_width,
         )
         resolved_line_layer_mark = _build_resolved_line_mark(line_merged, line_labels)
         line_layer_point_mark = resolved_as(
@@ -252,8 +248,6 @@ def _resolve_one_layer(
                 line_layer_point_mark,
                 resolved_line_layer_mark.stroke.width,
                 line_px_per_point,
-                size_authored=line_layer_point_mark.size is not None,
-                ring_authored=line_layer_point_mark.stroke_width is not None,
             )
         return ResolvedLineLayer(
             type="line",
@@ -274,21 +268,16 @@ def _resolve_one_layer(
         )
         _layer_area_patch = area_marks.line if area_marks is not None else None
         area_line_merged = merge_onto_base(area_parent.marks.line, _layer_area_patch)
-        # bake_line_stroke itself skips a mark whose width is already pinned
-        # by any cascade tier -- inherited from area_parent as much as this
-        # layer's own patch -- so no separate gate is needed here.
-        area_line_merged = bake_line_stroke(area_line_merged, line_adaptive_stroke)
         area_fmt, area_label_is_house = resolve_label_format(
             area_line_merged.labels.format, chart_style_context.formats, _layer_values()
         )
         area_line_labels = _with_label_format(
             area_line_merged.labels, ResolvedPointLabels, area_fmt
         )
-        # A layer is always its own trend line, never a separator — the
-        # stacked-perimeter fallback constant is base-chart-recipe-specific
-        # and does not apply here.
-        area_line_merged = _apply_stroke_width_fallback(
-            area_line_merged, get_chart_rendering().stroke.fallback_width
+        area_line_merged = _apply_line_width(
+            area_line_merged,
+            line_adaptive_stroke,
+            get_chart_rendering().stroke.fallback_width,
         )
         return ResolvedAreaLayer(
             type="area",

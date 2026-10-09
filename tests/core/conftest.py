@@ -245,25 +245,33 @@ def pie_style() -> ResolvedPieStyle:
     """Minimal valid ResolvedPieStyle — built from the cascade (avoids pinning theme values)."""
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.format import resolve_format
+    from dbt_charts.core.compile.resolve.chart.label_data import (
+        default_slice_label_template,
+    )
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     rcs = resolve_chart_style_context(get_theme_style())
     slice_mark = rcs.pie.marks.slice
     labels = slice_mark.labels
     assert labels is not None
+    tooltip_format = ResolvedFormat(
+        spec=resolve_format(rcs.tooltip.format, rcs.formats)
+    )
     slice_mark = slice_mark.model_copy(
         update={
             "labels": labels.model_copy(
-                update={"template": labels.default_template.no_color}
+                update={
+                    "template": default_slice_label_template(
+                        labels, False, tooltip_format, "pie"
+                    )
+                }
             )
         }
     )
     return ResolvedPieStyle(
         inner_radius=0.0,
         slice_mark=slice_mark,
-        tooltip_format=ResolvedFormat(
-            spec=resolve_format(rcs.tooltip.format, rcs.formats)
-        ),
+        tooltip_format=tooltip_format,
         total_style=resolved_as(
             ResolvedTotalStyle,
             rcs.pie.total,
@@ -293,7 +301,7 @@ def table_style() -> ResolvedTableStyle:
 def geoshape_style() -> ResolvedGeoshapeStyle:
     """Minimal valid ResolvedGeoshapeStyle for test injection."""
     from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.format import resolve_format
+    from dbt_charts.core.compile.format import resolve_format_parts
     from dbt_charts.core.compile.resolve.chart.geo import (  # noqa: PLC0415
         _with_baked_color_gradient,
     )
@@ -307,7 +315,7 @@ def geoshape_style() -> ResolvedGeoshapeStyle:
     return ResolvedGeoshapeStyle(
         geoshape=resolved_geoshape,
         scatter=rcs.scatter,
-        tooltip_format=resolve_format(rcs.tooltip.format, rcs.formats),
+        tooltip_format=resolve_format_parts(rcs.tooltip.format, rcs.formats),
     )
 
 
@@ -315,7 +323,7 @@ def geoshape_style() -> ResolvedGeoshapeStyle:
 def point_map_style() -> ResolvedPointMapStyle:
     """Minimal valid ResolvedPointMapStyle for test injection."""
     from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.format import resolve_format
+    from dbt_charts.core.compile.format import resolve_format_parts
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     rcs = resolve_chart_style_context(get_theme_style())
@@ -328,7 +336,7 @@ def point_map_style() -> ResolvedPointMapStyle:
                 ResolvedPointLabels, rcs.point_map.marks.point.labels, format=None
             ),
         ),
-        tooltip_format=resolve_format(rcs.tooltip.format, rcs.formats),
+        tooltip_format=resolve_format_parts(rcs.tooltip.format, rcs.formats),
         single_series_fill=rcs.single_series_palette[0],
     )
 

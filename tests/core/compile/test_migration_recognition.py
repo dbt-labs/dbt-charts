@@ -166,21 +166,13 @@ def test_current_document_with_a_newer_key_is_left_alone() -> None:
 def test_unfinished_migration_is_announced() -> None:
     """A migration that runs but cannot finish must say so.
 
-    ``cache: "1h"`` is documented scalar shorthand for ``CachePatch`` — expanded
-    by a `model_validator(mode="before")` the generated JSON Schema cannot
-    express (the schema only knows the block form: ``{$ref: CachePatch}``, no
-    string/bool arm) — so the migrated document still fails the
-    current-grammar gate and is handed to the parser unmigrated. That is
-    survivable; doing it silently is what made the reported bug undiagnosable
-    from the error text.
-
-    (``queries: {q: "<sql>"}`` used to be this test's trigger for the same
-    reason, before introspection learned to read a `BeforeValidator`'s
-    `json_schema_input_type` — that shorthand migrates cleanly now, see
-    test_authoring_shorthand_migration.py.)
+    A document that still fails the current-grammar gate after its retired
+    constructs migrate (here, a `rows:` that is not a list) is handed to the parser
+    unmigrated. That is survivable; doing it silently is what made the reported
+    bug undiagnosable from the error text.
     """
     board = _retired_board()
-    board["cache"] = "1h"
+    board["rows"] = "not-a-list"
 
     # The location is pinned, not just the fact of a warning: "migration was
     # skipped" without "and here is where" is most of the way back to the
@@ -189,7 +181,7 @@ def test_unfinished_migration_is_announced() -> None:
     # node and names no path at all.
     with pytest.warns(
         SchemaMigrationWarning,
-        match=r"could not finish migrating.*at cache: ",
+        match=r"could not finish migrating.*at rows: ",
     ):
         prepared = prepare_board_mapping(board, allow_expired=True)
 
@@ -564,11 +556,10 @@ def test_a_discarded_migration_does_not_claim_it_dropped_anything() -> None:
         "fixture no longer drops anything — pick a live conditional move"
     )
 
-    # `cache: "1h"` is CachePatch's scalar shorthand — the schema only knows
-    # the block form (`{$ref: CachePatch}`), so the migrated result is
-    # discarded and the original — tone included — is kept.
+    # A `rows:` that is not a list keeps the migrated result failing the gate, so it
+    # is discarded and the original — tone included — is kept.
     survived = deepcopy(dropped)
-    survived["cache"] = "1h"
+    survived["rows"] = "not-a-list"
     assert drop_warnings_for(cast(JsonObject, survived)) == []
 
 

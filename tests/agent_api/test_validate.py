@@ -1029,7 +1029,7 @@ _CARTESIAN_JOIN_BOARD_IGNORE = """\
 queries:
   revenue:
     sql: |
-      -- dct:ignore WARN-MISSING-JOIN-PREDICATE WARN-FANOUT-RISK
+      -- dct:ignore WARN-MISSING-JOIN-PREDICATE WARN-REAGGREGATION
       SELECT SUM(o.amount), SUM(oi.qty)
       FROM orders o, order_items oi
       GROUP BY o.id
@@ -1460,3 +1460,46 @@ def test_validate_content_names_the_successor_of_a_retired_key(
     assert (
         zero.fields["successor"] == "charts.revenue_trend.style.axis_y.grid.threshold"
     )
+
+
+def test_validate_content_honors_project_warnings_ignore(tmp_path: Path) -> None:
+    """The in-memory path (MCP, Playground) applies the same ``warnings.ignore``
+    as ``validate_paths``."""
+    import json
+
+    from dbt_charts.agent_api.validate import validate_content
+
+    (tmp_path / "target").mkdir()
+    (tmp_path / "target" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"adapter_type": "postgres"},
+                "nodes": {
+                    "model.p.orders": {
+                        "resource_type": "model",
+                        "name": "orders",
+                        "schema": "main",
+                        "raw_code": "SELECT id FROM raw",
+                    }
+                },
+            }
+        )
+    )
+    board = (
+        "source: s\nqueries:\n  q: SELECT * FROM {{ ref('orders') }}\n"
+        "charts:\n  c:\n    query: q\n    type: bar\n    x: id\n    y: id\n"
+        "rows:\n  - c\n"
+    )
+    code = "WARN-DBT-QUERY-COLUMNS-INDETERMINATE"
+
+    (tmp_path / "dbt_charts.yml").write_text("name: p\n")
+    project = FilesystemProject(tmp_path)
+    assert code in [w.code for w in validate_content(board, project=project).warnings]
+
+    (tmp_path / "dbt_charts.yml").write_text(
+        f"name: p\nwarnings:\n  ignore:\n    - {code}\n"
+    )
+    project = FilesystemProject(tmp_path)
+    assert code not in [
+        w.code for w in validate_content(board, project=project).warnings
+    ]

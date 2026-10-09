@@ -19,7 +19,6 @@ Entry Point:
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 from types import EllipsisType
 from typing import TYPE_CHECKING, Any
@@ -101,15 +100,6 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 _FIXED_ASPECT_PIE_TYPES = frozenset({"pie", "arc"})
-
-# Compiled patterns for VL SVG title-gap measurement used in title-offset calibration.
-# Role-title group's inner <g> y (relative to the VL outer container, so negative when
-# the title is above the plot):  <g class="mark-group role-title"><g transform="translate(x,y)">
-_ROLE_TITLE_GROUP_Y_RE = re.compile(
-    r'role-title[^<]*<g[^>]*transform="translate\([^,]+,(-?[0-9.]+)\)"'
-)
-# Title text element baseline y (relative to role-title group): <text ... transform="translate(x, y)">
-_TITLE_TEXT_Y_RE = re.compile(r'<text[^>]*transform="translate\([^,]+,(-?[0-9.]+)\)"')
 
 # Sizing-pass render cache: (chart_id, width, height, title_shift) → (svg_string, actual_height).
 # The shift is part of the key because one chart renders differently in rows whose
@@ -614,70 +604,6 @@ def rows_for_query(
     return rows if rows is not None else fallback
 
 
-def _measure_vl_title_plot_gap(svg: str) -> float | None:
-    """Return the gap (px) from title baseline to plot top in a VL chart SVG.
-
-    VL positions the title group relative to the outer container (the plot).
-    The role-title group sits above the outer container at ``role_title_group_y``
-    (negative). The title text baseline sits at ``text_y`` within that group.
-    Absolute title baseline = outer_y + role_title_group_y + text_y, so:
-
-        gap = outer_y - (outer_y + role_title_group_y + text_y)
-            = -(role_title_group_y + text_y)
-
-    This is independent of outer_y, which means we never need to measure the
-    outer container at all. Prior code read text_y as if it were absolute
-    (missing role_title_group_y), overstating the gap by the title group's
-    absolute y offset.
-
-    Returns None when the expected VL structure is absent (no title, or chart
-    family whose SVG layout differs from the standard cartesian pattern).
-    """
-    group_m = _ROLE_TITLE_GROUP_Y_RE.search(svg)
-    if group_m is None:
-        return None
-    role_title_group_y = float(group_m.group(1))
-    role_title_pos = svg.find("role-title-text")
-    if role_title_pos == -1:
-        return None
-    text_m = _TITLE_TEXT_Y_RE.search(svg, role_title_pos)
-    if text_m is None:
-        return None
-    text_y = float(text_m.group(1))
-    return -(role_title_group_y + text_y)
-
-
-def _support_table_title_corrected_offset(
-    chart_svg: str, probe_title_offset: float
-) -> float | None:
-    """Compute the corrected title.offset given the probe SVG and its title.offset.
-
-    apply_chart_support_table_post_pass sets title.offset = strip_h (the probe
-    value; passed here as ``probe_title_offset``). VL adds a baseline gap on
-    top so actual gap = baseline + probe_title_offset. This function measures
-    the gap from the probe SVG and returns the corrected total title.offset that
-    eliminates the over-allocation:
-
-        gap_probe = baseline + probe_title_offset
-        corrected_offset = max(0, 2·probe_title_offset − gap_probe)
-                         = max(0, probe_title_offset − baseline)
-
-    Clamped to 0 when baseline ≥ strip_h: the VL natural spacing already
-    accommodates the strip, so no extra offset is needed, and going negative
-    would place the title baseline at the strip top (descender overlap).
-
-    Returns None when the SVG lacks the expected structure or the correction
-    would be a no-op (corrected_offset ≈ probe_title_offset, i.e. baseline ≈ 0).
-    """
-    gap_probe = _measure_vl_title_plot_gap(chart_svg)
-    if gap_probe is None:
-        return None
-    corrected_offset = max(0.0, 2.0 * probe_title_offset - gap_probe)
-    if abs(corrected_offset - probe_title_offset) < 1.0:
-        return None  # No meaningful correction needed.
-    return corrected_offset
-
-
 def _render_chart_to_svg(
     resolved: ResolvedChart,
     executor: Executor,
@@ -687,24 +613,13 @@ def _render_chart_to_svg(
     height: float | None = None,
     resolved_style: ResolvedStyle,
     padding: dict[str, int | float] | None = None,
-    title_offset_override: float | None = None,
     title_shift: TitleShift = NO_TITLE_SHIFT,
-) -> tuple[str, float, float, float | None]:
-    """Render a pre-resolved chart to SVG, returning (svg, width, height, probe_title_offset).
+) -> tuple[str, float, float]:
+    """Render a pre-resolved chart to SVG, returning (svg, width, height).
 
     Uses the single already-resolved ResolvedChart — no re-resolution.
     The executor's query cache makes data fetch free (no re-execution).
-
-    ``probe_title_offset`` is the spec's title.offset BEFORE any
-    ``title_offset_override`` is applied — it equals the value set by
-    apply_chart_support_table_post_pass (= strip_h for titled top support_table charts,
-    None for charts without a title.offset block). Callers use this to drive
-    title-offset calibration without re-running support_table_strip_height.
-
-    When ``title_offset_override`` is set, the VL spec's title.offset is patched
-    to that value before vl-convert converts the spec to SVG.
     """
-    from dbt_charts.core.render.chart.artifacts import RenderArtifact
     from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
     from dbt_charts.core.render.converters.chart import render_chart_artifact
     from dbt_charts.core.render.svg_utils import extract_svg_dimensions
@@ -721,40 +636,7 @@ def _render_chart_to_svg(
         datasets=datasets,
         title_shift=title_shift,
     )
-    # The shift goes on first so the probe offset and the returned SVG describe
-    # the same spec; an override is an absolute offset and already accounts for it.
     shift_artifact_title(artifact, title_shift)
-    # Read the probe title.offset BEFORE any override (set by apply_chart_support_table_post_pass).
-    probe_title_offset: float | None = None
-    if (
-        _support_table_of(resolved) is not None
-        and artifact.kind == "vega_spec"
-        and isinstance(artifact.payload, dict)
-    ):
-        spec_root = artifact.payload
-        spec_target = spec_root["hconcat"][0] if "hconcat" in spec_root else spec_root
-        title_block = (
-            spec_target.get("title") if isinstance(spec_target, dict) else None
-        )
-        if isinstance(title_block, dict):
-            raw = title_block.get("offset")
-            if isinstance(raw, (int, float)):
-                probe_title_offset = float(raw)
-    if (
-        title_offset_override is not None
-        and artifact.kind == "vega_spec"
-        and isinstance(artifact.payload, dict)
-    ):
-        spec = artifact.payload
-        spec_target_for_patch = spec["hconcat"][0] if "hconcat" in spec else spec
-        title_block_patch = (
-            spec_target_for_patch.get("title")
-            if isinstance(spec_target_for_patch, dict)
-            else None
-        )
-        if isinstance(title_block_patch, dict):
-            title_block_patch["offset"] = title_offset_override
-            artifact = RenderArtifact(kind="vega_spec", payload=spec)
     svg = render_chart_artifact(
         artifact,
         "svg",
@@ -764,7 +646,7 @@ def _render_chart_to_svg(
         chart_id=resolved.id,
     )
     dims = extract_svg_dimensions(svg)
-    return svg, dims.width, dims.height, probe_title_offset
+    return svg, dims.width, dims.height
 
 
 def _make_data_aware_height_provider(
@@ -894,7 +776,7 @@ def _make_data_aware_height_provider(
                 if resolved_callout is None:
                     return _unresolved_height(item.chart, width, resolved_style)
                 try:
-                    _chart_svg, _, actual_height, _ = _render_chart_to_svg(
+                    _chart_svg, _, actual_height = _render_chart_to_svg(
                         resolved_callout,
                         executor,
                         variables,
@@ -939,7 +821,7 @@ def _make_data_aware_height_provider(
                 # single bad spark_bar escapes to renderer.py's board-level
                 # handler and takes down every chart on the board.
                 try:
-                    _chart_svg, _, actual_height, _ = _render_chart_to_svg(
+                    _chart_svg, _, actual_height = _render_chart_to_svg(
                         resolved_spark_bar,
                         executor,
                         variables,
@@ -1015,16 +897,14 @@ def _make_data_aware_height_provider(
                         return max(cached_height, static_estimate)
 
                     try:
-                        chart_svg, actual_width, actual_height, probe_title_offset = (
-                            _render_chart_to_svg(
-                                resolved_chart,
-                                render_ctx.executor,
-                                render_ctx.variables,
-                                render_inner_width,
-                                height=slot_height,
-                                resolved_style=resolved_style,
-                                padding=additive_padding(card_pad, chart_padding),
-                            )
+                        chart_svg, actual_width, actual_height = _render_chart_to_svg(
+                            resolved_chart,
+                            render_ctx.executor,
+                            render_ctx.variables,
+                            render_inner_width,
+                            height=slot_height,
+                            resolved_style=resolved_style,
+                            padding=additive_padding(card_pad, chart_padding),
                         )
                     except (ExecutionError, ChartDataError) as exc:
                         # Migrate-or-fail: only ExecutionError (query failed) and
@@ -1180,7 +1060,7 @@ def _make_data_aware_height_provider(
                                         item.chart, width, resolved_style
                                     )
                                 try:
-                                    chart_svg, _, correction_height, _ = (
+                                    chart_svg, _, correction_height = (
                                         _render_chart_to_svg(
                                             corrected_resolved,
                                             render_ctx.executor,
@@ -1217,59 +1097,6 @@ def _make_data_aware_height_provider(
                                     render_ctx.support_table_corrected_widths[
                                         item.chart.id
                                     ] = shrunk_width
-
-                        # Calibrate title.offset for titled top support_table charts.
-                        # probe_title_offset (from the initial render's spec) is the
-                        # value set by apply_chart_support_table_post_pass using the
-                        # real series_count. Re-render with a corrected offset so
-                        # VL's baseline gap is cancelled. Runs after width correction
-                        # so the SVG being measured has the correct slot width.
-                        effective_width = render_ctx.support_table_corrected_widths.get(  # type-state: silent_fallback — render_inner_width is the correct default when no width correction was done for this chart
-                            item.chart.id, render_inner_width
-                        )
-                        if probe_title_offset is not None:
-                            title_offset_override = (
-                                _support_table_title_corrected_offset(
-                                    chart_svg, probe_title_offset
-                                )
-                            )
-                            if title_offset_override is not None:
-                                effective_resolved = _require_resolved(
-                                    render_ctx,
-                                    item.chart,
-                                    executor,
-                                    render_ctx.variables,
-                                    effective_width,
-                                    resolved_style,
-                                    style_contexts[id(resolved_style)],
-                                )
-                                if effective_resolved is not None:
-                                    try:
-                                        chart_svg, _, calibrated_height, _ = (
-                                            _render_chart_to_svg(
-                                                effective_resolved,
-                                                executor,
-                                                render_ctx.variables,
-                                                effective_width,
-                                                height=slot_height,
-                                                resolved_style=resolved_style,
-                                                padding=additive_padding(
-                                                    card_pad, chart_padding
-                                                ),
-                                                title_offset_override=title_offset_override,
-                                            )
-                                        )
-                                    except (ExecutionError, ChartDataError) as exc:
-                                        _log.warning(
-                                            "Title-calibration re-render failed for "
-                                            "chart %r (keeping uncalibrated render): %s",
-                                            item.chart.id,
-                                            exc,
-                                        )
-                                    else:
-                                        actual_height = max(
-                                            calibrated_height, static_estimate
-                                        )
 
                         render_ctx.render_cache[
                             (
@@ -1466,30 +1293,22 @@ def _correct_support_table_height(
     executor: Executor,
     caught: tuple[type[Exception], ...],
     log_msg: str,
-    title_offset_override: float | None = None,
 ) -> tuple[str, float]:
-    """Correct autosize:pad height overhead and/or title.offset for a support_table chart.
+    """Correct autosize:pad height overhead for a support_table chart.
 
-    A no-op when the chart has no support_table, no height correction is needed,
-    and no title calibration is required. Otherwise re-renders once with the
-    corrected height and/or corrected title.offset.
+    A no-op when the chart has no support_table or no height correction is
+    needed. Otherwise re-renders once with the corrected height.
 
     Shared by ``_align_cols_heights`` and ``_fix_slot_heights_in_tree``.
-    ``title_offset_override`` is the calibrated title.offset from
-    ``_support_table_title_corrected_offset``; None means skip title calibration.
     """
     assert item.chart is not None, "_correct_support_table_height requires a chart item"
     if _support_table_of(item.chart) is None:
         return chart_svg, actual_height
     overhead = actual_height - target
-    needs_height_correction = overhead > 0
-    needs_title_calibration = title_offset_override is not None
-    if not needs_height_correction and not needs_title_calibration:
+    if overhead <= 0:
         return chart_svg, actual_height
 
-    corrected_height = (
-        max(target - overhead, 1.0) if needs_height_correction else target
-    )
+    corrected_height = max(target - overhead, 1.0)
     resolved = _require_resolved(
         render_ctx,
         item.chart,
@@ -1502,7 +1321,7 @@ def _correct_support_table_height(
     if resolved is None:
         return chart_svg, actual_height
     try:
-        corrected_svg, _, corrected_actual, _ = _render_chart_to_svg(
+        corrected_svg, _, corrected_actual = _render_chart_to_svg(
             resolved,
             executor,
             render_ctx.variables,
@@ -1510,32 +1329,11 @@ def _correct_support_table_height(
             height=corrected_height,
             resolved_style=render_ctx.resolved_style,
             padding=additive_padding(card_pad, chart_padding),
-            title_offset_override=title_offset_override,
             title_shift=item.title_shift,
         )
     except caught as exc:
         _log.warning(log_msg, chart_id, exc)
         return chart_svg, actual_height
-    # When title calibration is active, the smaller offset also shrinks the SVG
-    # (the offset change is part of autosize:pad chrome). A second pass corrects
-    # the undershoot. Pure height correction has constant overhead, so the first
-    # correction render already lands on target -- no second pass needed there.
-    if needs_title_calibration and abs(corrected_actual - target) > 1.0:
-        final_h = max(corrected_height + (target - corrected_actual), 1.0)
-        try:
-            corrected_svg, _, corrected_actual, _ = _render_chart_to_svg(
-                resolved,
-                executor,
-                render_ctx.variables,
-                slot_width,
-                height=final_h,
-                resolved_style=render_ctx.resolved_style,
-                padding=additive_padding(card_pad, chart_padding),
-                title_offset_override=title_offset_override,
-                title_shift=item.title_shift,
-            )
-        except caught as exc:
-            _log.warning(log_msg, chart_id, exc)
     return corrected_svg, corrected_actual
 
 
@@ -1598,7 +1396,7 @@ def _align_cols_heights(
         # Per-family padding, baked onto the resolved chart at construction time.
         chart_padding = resolved_chart.layout_padding
         try:
-            chart_svg, _, actual_height, probe_title_offset = _render_chart_to_svg(
+            chart_svg, _, actual_height = _render_chart_to_svg(
                 resolved_chart,
                 executor,
                 render_ctx.variables,
@@ -1620,15 +1418,7 @@ def _align_cols_heights(
             )
             continue
 
-        # Calibrate title.offset using probe_title_offset from the render spec
-        # (set by apply_chart_support_table_post_pass with the real series_count).
-        title_offset_override = (
-            _support_table_title_corrected_offset(chart_svg, probe_title_offset)
-            if probe_title_offset is not None
-            else None
-        )
-
-        # Correct height overhead and/or title.offset in a single combined re-render.
+        # Correct autosize:pad height overhead for a support_table chart.
         chart_svg, actual_height = _correct_support_table_height(
             render_ctx,
             item,
@@ -1643,7 +1433,6 @@ def _align_cols_heights(
             (ChartDataError,),
             "Height-correction re-render failed for chart %r "
             "(keeping first alignment render): %s",
-            title_offset_override,
         )
 
         render_ctx.render_cache[
@@ -1727,7 +1516,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
         # Per-family padding, baked onto the resolved chart at construction time.
         chart_padding = resolved_chart.layout_padding
         try:
-            chart_svg, _, actual_height, probe_title_offset = _render_chart_to_svg(
+            chart_svg, _, actual_height = _render_chart_to_svg(
                 resolved_chart,
                 render_ctx.executor,
                 render_ctx.variables,
@@ -1745,15 +1534,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
             )
             continue
 
-        # Calibrate title.offset using probe_title_offset from the render spec
-        # (set by apply_chart_support_table_post_pass with the real series_count).
-        title_offset_override = (
-            _support_table_title_corrected_offset(chart_svg, probe_title_offset)
-            if probe_title_offset is not None
-            else None
-        )
-
-        # Correct height overhead and/or title.offset in a single combined re-render.
+        # Correct autosize:pad height overhead for a support_table chart.
         chart_svg, actual_height = _correct_support_table_height(
             render_ctx,
             item,
@@ -1768,7 +1549,6 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
             (ExecutionError, ChartDataError),
             "Height-correction re-render failed for chart %r "
             "(keeping slot-height render): %s",
-            title_offset_override,
         )
 
         render_ctx.render_cache[
@@ -1874,6 +1654,7 @@ def _title_band_target(
         card_pad,
         variable_values,
         board.level,
+        board.base_dir,
     )
     metrics = board_title_metrics(
         board,

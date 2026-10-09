@@ -20,6 +20,7 @@ from dbt_charts.core.dialects.bigquery import BigQueryDialect
 from dbt_charts.core.dialects.clickhouse import ClickHouseDialect
 from dbt_charts.core.dialects.databricks import DatabricksDialect, SparkDialect
 from dbt_charts.core.dialects.duckdb import DuckDBDialect
+from dbt_charts.core.dialects.lakecompute import LakeComputeDialect
 from dbt_charts.core.dialects.mysql import MySQLDialect
 from dbt_charts.core.dialects.postgres import PostgresDialect
 from dbt_charts.core.dialects.redshift import RedshiftDialect
@@ -40,6 +41,7 @@ _spark_dialect = SparkDialect()
 _athena_dialect = AthenaDialect()
 _clickhouse_dialect = ClickHouseDialect()
 _sqlite_dialect = SQLiteDialect()
+_lakecompute_dialect = LakeComputeDialect()
 
 # Registry mapping profile types to dialect instances
 DIALECTS: dict[str, SQLDialect] = {
@@ -73,6 +75,8 @@ DIALECTS: dict[str, SQLDialect] = {
     "trino": _athena_dialect,
     # ClickHouse
     "clickhouse": _clickhouse_dialect,
+    # Lake compute (DuckDB's SQL over dbt's ADBC driver)
+    "lakecompute": _lakecompute_dialect,
 }
 
 # Default dialect when profile type is unknown
@@ -118,6 +122,7 @@ __all__ = [
     # Dialect implementations
     "PostgresDialect",
     "DuckDBDialect",
+    "LakeComputeDialect",
     "SQLiteDialect",
     "MySQLDialect",
     "SnowflakeDialect",

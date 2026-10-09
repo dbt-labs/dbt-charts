@@ -516,9 +516,9 @@ def test_shared_scale_column_pad_agrees_when_capped_below_declared_precision():
     assert resolved_chart.effective_support_table_style is not None
     font_family = resolved_pad_font_family(resolved_chart.effective_support_table_style)
     painted = _render_v2_svg_text_nodes(chart, data, width=400, height=200)
-    one_point_two_m = next(t for t in painted if t.startswith("1.2") and "mn" not in t)
-    three_m = next(t for t in painted if t.startswith("3") and "mn" not in t)
-    five_m = next(t for t in painted if t.startswith("5") and "mn" not in t)
+    one_point_two_m = next(t for t in painted if t.startswith("1.2"))
+    three_m = next(t for t in painted if t.startswith("3"))
+    five_m = next(t for t in painted if t.startswith("5") and t.endswith("\u00a0M"))
 
     # The capped table (precision=1, from the OBSERVED max depth, not the
     # ,.2~f spec's own declared 2) is the single independent source of truth
@@ -527,11 +527,11 @@ def test_shared_scale_column_pad_agrees_when_capped_below_declared_precision():
     capped_table = decimal_pad_table_for(",.2~f", font_family, max_precision=1)
     assert len(capped_table) - 2 == 1
 
-    assert one_point_two_m.removeprefix("1.2").removesuffix("M") == decimal_pad_for(
+    assert one_point_two_m.removeprefix("1.2") == decimal_pad_for(
         capped_table, "1.2"
     ), one_point_two_m
-    three_pad = three_m[len("3M") :]
-    five_pad = five_m[len("5M") :]
+    three_pad = three_m[len("3") :]
+    five_pad = five_m[len("5") :].removesuffix("\u00a0M")
     assert three_pad == decimal_pad_for(capped_table, "3") == five_pad, (
         three_m,
         five_m,
@@ -4049,16 +4049,19 @@ def test_pipeline_category_axis_anchors_on_the_first_cell_in_data_order(monkeypa
     assert '"mn"' in calc
 
 
-def test_pipeline_authored_sort_on_a_category_axis_does_not_anchor(monkeypatch):
-    """An authored `sort:` replaces data order with one we cannot reproduce.
-
-    Fail closed there rather than guess — anchoring the wrong cell would strand
-    the unit somewhere in the middle of the row.
+def test_pipeline_authored_sort_on_a_category_axis_anchors_in_domain_order(
+    monkeypatch,
+):
+    """An authored `sort:` pins the category domain, so the window ranks cells
+    by their position in it and the unit declares on the leftmost painted cell.
     """
     from pydantic import TypeAdapter
 
     from dbt_charts.core.compile.models.chart.normalized import Chart
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        DOMAIN_RANK_FIELD,
+    )
 
     chart = TypeAdapter(Chart).validate_python(
         {
@@ -4083,22 +4086,16 @@ def test_pipeline_authored_sort_on_a_category_axis_does_not_anchor(monkeypatch):
 
     calc = _goal_row_calc(spec)
     assert calc is not None
-    # Authored sort replaces data order — anchor cannot identify the leftmost
-    # cell, so the strip keeps per-cell formatting (no drawn-index window).
-    assert "__support_table_drawn_index" not in calc
-    assert "mn" not in calc
+    assert "__support_table_drawn_index" in calc
+    transforms = [t for layer in spec["layer"] for t in layer.get("transform", [])]
+    rank = next(t for t in transforms if t.get("as") == DOMAIN_RANK_FIELD)
+    assert rank["calculate"] == 'indexof(["Anvil", "Widget"], datum["month"])'
 
 
-def test_pipeline_left_aligned_strip_currency_does_not_anchor(monkeypatch):
-    """A currency strip on a left-oriented axis repeats the unit on every cell.
-
-    For left-oriented y-axes, a prefix-carrying format (currency) cannot anchor
-    without leaving the unit absent from non-anchor cells or using non-standard
-    trailing-prefix typography ('441$mn'). The strip routes to StripAnchor.nowhere()
-    so every cell formats with its own spec, preserving the currency symbol.
-    Orientation controls which side the affix hangs -- for prefix-free SI formats
-    (e.g. '.3s') the magnitude suffix still anchors on a left-axis strip.
-    """
+def test_pipeline_left_aligned_strip_currency_repeats_only_the_symbol(monkeypatch):
+    """A currency strip on a left-oriented axis repeats "$" on every cell (a
+    leading anchor prefix would push its digits off the shared left edge) while
+    the magnitude suffix declares once."""
     from pydantic import TypeAdapter
 
     from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -4124,10 +4121,8 @@ def test_pipeline_left_aligned_strip_currency_does_not_anchor(monkeypatch):
 
     calc = _goal_row_calc(spec)
     assert calc is not None
-    # Currency prefix routes to nowhere: no anchor fires, every cell shows $441mn.
-    assert "__support_table_drawn_index" not in calc, (
-        "currency format on left-axis must not anchor (StripAnchor.nowhere())"
-    )
+    assert '__support_table_drawn_index === 1 ? "mn"' in calc
+    assert '__support_table_drawn_index === 1 ? "$"' not in calc
 
 
 def test_pipeline_zero_first_row_anchors_on_the_first_nonzero_cell(monkeypatch):
@@ -4163,7 +4158,7 @@ def test_pipeline_negative_magnitude_signs_before_the_symbol(monkeypatch):
 
     calc = _goal_row_calc(spec)
     assert calc is not None
-    assert calc.index("datum[\"goal\"] < 0 ? '−'") < calc.index('? "$"')
+    assert calc.index('datum["goal"] < 0 ? "−"') < calc.index('? "$"')
     assert 'abs(datum["goal"])' in calc
 
 
@@ -4742,10 +4737,9 @@ def test_pipeline_column_declares_its_unit_once(monkeypatch):
     fell through to the bare (divided, unlabeled) spelling. A $120,588,000
     total painted "120" with no "mn" anywhere on the column.
 
-    A `color:` channel is required to reach `sort: null` on the category
-    axis (a colorless horizontal bar instead defaults to largest-measure-
-    first, which the anchor mechanism refuses to anchor against — see
-    test_pipeline_authored_sort_on_a_category_axis_does_not_anchor).
+    A `color:` channel reaches `sort: null` on the category axis (a colorless
+    horizontal bar defaults to largest-measure-first, covered by
+    test_value_sorted_horizontal_bar_strip_declares_each_unit_once).
     """
     data = [
         {"region": "East", "seg": "A", "goal": 441_000_000.0},
@@ -4771,7 +4765,7 @@ def test_pipeline_column_declares_its_unit_once(monkeypatch):
     calc = _goal_col_calc(spec)
     assert calc is not None
     assert "datum.__support_table_drawn_index === 1" in calc
-    assert '"mn"' in calc
+    assert '"\\u00a0M"' in calc
     # The magnitude is divided out once rather than left to d3's `s` type.
     assert "1000000.0" in calc
 
@@ -5443,3 +5437,82 @@ def test_layered_bar_bottom_strip_clears_tilted_x_labels() -> None:
         _TILT_HEIGHT,
     )
     assert _first_strip_row_y(spec) >= cleared
+
+
+def test_value_sorted_horizontal_bar_strip_declares_each_unit_once():
+    """A horizontal bar's largest-first sort pins the paint order, so each
+    column still declares its unit once, on the top cell."""
+    import re
+
+    from ._svg_render import render_board_to_svg
+
+    board = """
+title: t
+queries:
+  q:
+    columns: [region, revenue, margin]
+    values:
+      - [Iberia, 456789.0, -0.043]
+      - [DACH, 2345678.75, 0.211]
+      - [Nordics, 1234567.5, 0.184]
+charts:
+  c:
+    query: q
+    type: bar
+    x: region
+    y: revenue
+    support_table:
+      - source: revenue
+        format: currency
+      - source: margin
+        format:
+          spec: percent
+          repeat: anchor
+rows:
+  - c
+"""
+    svg = render_board_to_svg(board)
+    texts = [t.strip() for t in re.findall(r"<text[^>]*>([^<]*)</text>", svg)]
+    assert [t for t in texts if "$" in t] == ["$2.346\u00a0M"], texts
+    assert [t for t in texts if "%" in t] == ["21.1%"]
+
+    # The anchor's "%" hangs past the column's digit edge.
+    def end_x(text: str) -> float:
+        m = re.search(rf"translate\(([-\d.]+),[^>]*>{re.escape(text)}</text>", svg)
+        assert m is not None, text
+        return float(m.group(1))
+
+    assert end_x("21.1%") > end_x("18.4")
+
+
+def test_null_category_never_takes_the_strip_anchor():
+    """A null category sits outside the pinned domain, so it must not take
+    the anchor from the top cell."""
+    import re
+
+    from ._svg_render import render_board_to_svg
+
+    board = """
+title: t
+queries:
+  q:
+    columns: [region, revenue]
+    values:
+      - [null, 9000000.0]
+      - [DACH, 2345678.75]
+      - [Nordics, 1234567.5]
+charts:
+  c:
+    query: q
+    type: bar
+    x: region
+    y: revenue
+    support_table:
+      - source: revenue
+        format: currency
+rows:
+  - c
+"""
+    svg = render_board_to_svg(board)
+    texts = [t.strip() for t in re.findall(r"<text[^>]*>([^<]*)</text>", svg)]
+    assert [t for t in texts if "$" in t] == ["$2.35\u00a0M"], texts

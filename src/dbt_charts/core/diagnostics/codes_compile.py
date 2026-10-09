@@ -1142,6 +1142,28 @@ ERR_FORMAT_INVALID = REGISTRY.register(
     )
 )
 
+ERR_REGIONAL_NESTED_MISMATCH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-REGIONAL-NESTED-MISMATCH",
+        domain="compile",
+        title="A nested board's regional differs from its root board's",
+        message_template=(
+            "{board} sets regional {authored}, but the board it is nested in uses "
+            "{root}. A board and everything nested in it write numbers one way; "
+            "remove the nested `regional:` or make it match."
+        ),
+        doc=(
+            "Fired when a nested board (inline or imported) authors a "
+            "`regional:` locale or currency that differs from the root board's. "
+            "One page reads numbers in one locale and one currency, so nested "
+            "boards take the root's `regional:`. Set it on the root board or in "
+            "`charts/meta.yml`."
+        ),
+        summary="Fired when a nested board's `regional:` differs from its root's.",
+        docs_topic="charts",
+    )
+)
+
 ERR_FONT_UNKNOWN = REGISTRY.register(
     ErrorCode(
         code="ERR-FONT-UNKNOWN",
@@ -1358,26 +1380,22 @@ ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX = REGISTRY.register(
     )
 )
 
-ERR_FORMAT_AFFIX_GEO_TOOLTIP_UNSUPPORTED = REGISTRY.register(
+ERR_FORMAT_ALIAS_CYCLE = REGISTRY.register(
     ErrorCode(
-        code="ERR-FORMAT-AFFIX-GEO-TOOLTIP-UNSUPPORTED",
+        code="ERR-FORMAT-ALIAS-CYCLE",
         domain="compile",
-        title="A FormatConfig prefix/suffix/notation cannot reach a geo tooltip",
+        title="style.formats aliases point at each other in a circle",
         message_template=(
-            "style.tooltip.format at {field_path} authors a "
-            "prefix/suffix/notation, but a {chart_type} tooltip takes a "
-            "plain d3 spec and has no place for an affix. Drop the "
-            "prefix/suffix/notation, or author a plain spec."
+            "style.formats.{name} leads into a circle: {chain}. Give one of "
+            "them a d3 spec of its own."
         ),
         doc=(
-            "A point/bubble map or choropleth tooltip takes a plain d3 "
-            "format string, so a prefix, suffix or notation on "
-            "`style.tooltip.format` (reachable through a `style.formats` "
-            "alias) cannot paint. Author `style.tooltip.format` as a plain "
-            "spec or alias without an affix. The tooltips of bar, line, "
-            "area, scatter and pie charts do paint an affix."
+            "A `style.formats` entry whose target is another entry's name "
+            "(`currency: currency_whole`) resolves through that entry. When the "
+            "entries lead around a circle, no format is ever reached. Break the "
+            "circle by giving one entry a literal d3 spec."
         ),
-        summary="FormatConfig affix on a geo chart's tooltip format.",
+        summary="style.formats aliases form a cycle.",
         docs_topic="charts",
     )
 )
@@ -1400,30 +1418,6 @@ ERR_FORMAT_AFFIX_NOMINAL_AXIS_UNSUPPORTED = REGISTRY.register(
             "paint. Remove it, or author the affix on the measure axis."
         ),
         summary="FormatConfig affix authored on a nominal/ordinal axis.",
-        docs_topic="charts",
-    )
-)
-
-ERR_FORMAT_AFFIX_NATIVE_TOOLTIP_UNSUPPORTED = REGISTRY.register(
-    ErrorCode(
-        code="ERR-FORMAT-AFFIX-NATIVE-TOOLTIP-UNSUPPORTED",
-        domain="compile",
-        title="A FormatConfig prefix/suffix/notation cannot reach this chart's tooltip",
-        message_template=(
-            "The measure format at {field_path} authors a "
-            "prefix/suffix/notation, but chart {chart_id!r} (a {chart_type} "
-            "shape excluded from the structured tooltip) takes a plain d3 "
-            "spec for its hover card and has no place for an affix. Drop the "
-            "prefix/suffix/notation, or author a plain spec."
-        ),
-        doc=(
-            "A faceted `multiples:` chart, a wide multi-measure scatter, a "
-            "histogram and a layered scatter take a plain d3 spec for their "
-            "hover card, so an affix on the measure format cannot paint "
-            "there. Drop the prefix, suffix or notation, or author a plain "
-            "spec; charts with a structured tooltip paint the affix."
-        ),
-        summary="FormatConfig affix on a chart with no structured tooltip.",
         docs_topic="charts",
     )
 )
@@ -1540,6 +1534,29 @@ WARN_UNREFERENCED_CHART = REGISTRY.register(
             "display it. Emitted by `compile/validate/board_warnings.py`."
         ),
         docs_topic="charts",
+    )
+)
+
+WARN_EXTENDS_LAYOUT_APPENDED = REGISTRY.register(
+    WarningCode(
+        code="WARN-EXTENDS-LAYOUT-APPENDED",
+        domain="compile",
+        title="A board's rows or cols are appended to the ones it extends",
+        message_template=(
+            "`{axis}:` here is appended to the {inherited_count} {axis} "
+            "inherited from {parents}, not substituted for them."
+        ),
+        fix_template=(
+            "To replace the inherited layout, use a different layout axis, or "
+            "move the shared parts into a partial and import it from both boards."
+        ),
+        doc=(
+            "Fired when a board sets `rows:` or `cols:` and a board it "
+            "`extends:` already sets the same one. Same-axis layouts append, "
+            "so the board shows the parent's items followed by its own."
+        ),
+        summary="Fired when a board restates a rows or cols layout that an extended board already sets.",
+        docs_topic="layout",
     )
 )
 
@@ -1990,6 +2007,24 @@ ERR_VARIABLE_NAME_INVALID = REGISTRY.register(
         ),
         summary="Fired when a variable name is not a valid identifier.",
         docs_topic="variables",
+    )
+)
+
+ERR_CHART_COLOR_TOKEN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CHART-COLOR-TOKEN",
+        domain="compile",
+        title="Chart style color token does not resolve",
+        message_template="Chart {chart_id!r}: {reason}",
+        doc=(
+            "Fired when a color in a chart's own `style:` block is a palette "
+            "token (`palette.slot`, `role[N]`) that no palette or theme role "
+            "resolves, such as a misspelled palette name or slot. The error "
+            "names the chart and the token; other charts on the board render "
+            "normally."
+        ),
+        summary="Fired when a chart-local style color token matches no palette or theme role.",
+        docs_topic="charts",
     )
 )
 

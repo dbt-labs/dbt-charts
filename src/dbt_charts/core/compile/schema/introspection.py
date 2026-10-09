@@ -18,7 +18,14 @@ from enum import Enum
 from typing import Annotated, Any, ForwardRef, Literal, Union, get_args, get_origin
 
 from annotated_types import Ge, GroupedMetadata, Gt, Le, Lt, MaxLen, MinLen
-from pydantic import BaseModel, Field, StringConstraints, Tag, ValidationError
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    StringConstraints,
+    Tag,
+    ValidationError,
+)
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined, PydanticUndefinedType
 
@@ -53,7 +60,10 @@ from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
     HttpSourceConfig,
     JsonSourceConfig,
-    MySQLSourceConfig,
+    LakeComputeApiKeySource,
+    LakeComputeFivetranSource,
+    LakeComputeOktaSource,
+    LakeComputeTokenSource,
     ParquetSourceConfig,
     PostgresSourceConfig,
     RedshiftSourceConfig,
@@ -92,9 +102,10 @@ class SchemaField:
     # tuple[int, float] -> ("int", "float")); None for every other shape,
     # including a variadic tuple[X, ...] (which is list-shaped, not fixed).
     tuple_item_reprs: tuple[str, ...] | None = None
-    # Value constraints Pydantic enforces, keyed by annotated_types attribute name
-    # (gt, ge, lt, le, min_length, max_length) or "pattern".
-    constraints: dict[str, int | float | str] = dataclasses.field(default_factory=dict)
+    # Numeric bounds Pydantic enforces, keyed gt, ge, lt, le.
+    bounds: dict[str, int | float] = dataclasses.field(default_factory=dict)
+    # Other value constraints: min_length, max_length, pattern.
+    constraints: dict[str, int | str] = dataclasses.field(default_factory=dict)
     # min_length/max_length declared on one union arm, keyed by that arm's kind
     # ("str", "list", "dict", ...), so they bind only values of that kind.
     arm_length_constraints: dict[str, dict[str, int]] = dataclasses.field(
@@ -631,7 +642,11 @@ def _extra_union_type_patterns(
         return {}
 
     if origin in (list, dict):
-        return _extra_union_type_patterns(args[-1])
+        item = args[-1]
+        pattern = _string_constraint_pattern(item)
+        if pattern is not None and _unwrap_annotated(item) is str:
+            return {"str": pattern}
+        return _extra_union_type_patterns(item)
 
     non_none_args = [a for a in args if a is not type(None)]
     skip_containers = len(non_none_args) > 1
@@ -713,7 +728,6 @@ def _container_list_models(
     return list(dict.fromkeys(result))
 
 
-_NUMERIC_BOUNDS = frozenset({"gt", "ge", "lt", "le"})
 # The (private) class Field(pattern=) and StringConstraints put a pattern on.
 _PATTERN_METADATA = type(Field(pattern="x").metadata[0])
 
@@ -727,20 +741,20 @@ def _json_number(
     return bound
 
 
-def _value_constraints(
+def _value_bounds(
     metadata: Iterable[Any],  # type-state: explicit_any — arbitrary metadata
-) -> dict[str, int | float | str]:
-    """Constraints in annotation metadata, keyed like `SchemaField.constraints`.
+) -> dict[str, int | float]:
+    """Numeric bounds in annotation metadata, keyed like `SchemaField.bounds`.
 
     `Annotated[X, Field(...)]` keeps the FieldInfo unexpanded in `__metadata__`,
     and `StringConstraints` groups its markers, so both are opened up.
     """
-    found: dict[str, int | float | str] = {}
+    found: dict[str, int | float] = {}
     for meta in metadata:
         if isinstance(meta, FieldInfo):
-            found |= _value_constraints(meta.metadata)
+            found |= _value_bounds(meta.metadata)
         elif isinstance(meta, GroupedMetadata):
-            found |= _value_constraints(meta)
+            found |= _value_bounds(meta)
         elif isinstance(meta, Gt):
             found["gt"] = _json_number(meta.gt)
         elif isinstance(meta, Ge):
@@ -749,6 +763,20 @@ def _value_constraints(
             found["lt"] = _json_number(meta.lt)
         elif isinstance(meta, Le):
             found["le"] = _json_number(meta.le)
+    return found
+
+
+def _value_constraints(
+    metadata: Iterable[Any],  # type-state: explicit_any — arbitrary metadata
+) -> dict[str, int | str]:
+    """Length and pattern constraints in annotation metadata, keyed like
+    `SchemaField.constraints`; opened up like `_value_bounds`."""
+    found: dict[str, int | str] = {}
+    for meta in metadata:
+        if isinstance(meta, FieldInfo):
+            found |= _value_constraints(meta.metadata)
+        elif isinstance(meta, GroupedMetadata):
+            found |= _value_constraints(meta)
         elif isinstance(meta, MinLen):
             found["min_length"] = meta.min_length
         elif isinstance(meta, MaxLen):
@@ -758,16 +786,16 @@ def _value_constraints(
     return found
 
 
-def _field_constraints(
+def _field_bounds(
     name: str,
     field_info: FieldInfo,
     annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names
-) -> dict[str, int | float | str]:
-    """Field-level constraints plus a bound on the sole numeric union arm.
+) -> dict[str, int | float]:
+    """Field-level bounds plus a bound on the sole numeric union arm.
 
     Numeric keywords ignore non-numbers, so hoisting leaves the other arms free.
     """
-    found = _value_constraints(field_info.metadata)
+    found = _value_bounds(field_info.metadata)
     if get_origin(annotation) not in (Union, types.UnionType):
         return found
     numeric_arms = [
@@ -776,11 +804,7 @@ def _field_constraints(
     for arm in numeric_arms:
         if not hasattr(arm, "__metadata__"):
             continue
-        bounds = {
-            key: value
-            for key, value in _value_constraints(arm.__metadata__).items()
-            if key in _NUMERIC_BOUNDS
-        }
+        bounds = _value_bounds(arm.__metadata__)
         if bounds and len(numeric_arms) > 1:
             raise TypeError(
                 f"field {name!r}: a numeric bound on one of several numeric union "
@@ -873,10 +897,57 @@ def _names_a_font_slot(
     return False
 
 
+def _authored_annotation(
+    field_info: FieldInfo,
+) -> Any:  # type-state: explicit_any — arbitrary typing construct
+    """The annotation an author writes against.
+
+    A field-level ``Annotated[X, BeforeValidator(f, json_schema_input_type=T)]``
+    leaves ``X`` in ``field_info.annotation`` and the validator in its metadata;
+    ``T`` is the shape the coercion accepts, so it is what gets walked.
+    """
+    for meta in field_info.metadata:
+        if isinstance(meta, BeforeValidator) and not isinstance(
+            meta.json_schema_input_type, PydanticUndefinedType
+        ):
+            return meta.json_schema_input_type
+    return field_info.annotation
+
+
+def _is_schema_skipped(
+    arm: Any,  # type-state: explicit_any — arbitrary typing construct
+) -> bool:
+    """Whether a union arm is ``SkipJsonSchema[...]``.
+
+    Pydantic's type-checking stub types SkipJsonSchema as an alias, so the
+    metadata instance can only be recognized by its runtime class name.
+    """
+    if get_origin(arm) is not Annotated:
+        return False
+    return any(type(m).__name__ == "SkipJsonSchema" for m in get_args(arm)[1:])
+
+
+def _drop_schema_skipped_arms(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct
+) -> Any:  # type-state: explicit_any — arbitrary typing construct
+    """Remove ``SkipJsonSchema[...]`` arms from a top-level union.
+
+    Python accepts the arm but the authored surface must not state it.
+    """
+    if get_origin(annotation) not in (Union, types.UnionType):
+        return annotation
+    args = get_args(annotation)
+    kept = tuple(a for a in args if not _is_schema_skipped(a))
+    if len(kept) == len(args):
+        return annotation
+    return Union[kept]  # noqa: UP007 — built from a runtime tuple
+
+
 def _build_schema_field(
     name: str, field_info: FieldInfo, annotation: Any
 ) -> SchemaField:
     """Convert one Pydantic field into a SchemaField."""
+    annotation = _drop_schema_skipped_arms(annotation)
     from dbt_charts.core.compile.models.markers import Inherit, InheritSlot
 
     required = field_info.is_required()
@@ -904,7 +975,8 @@ def _build_schema_field(
         container_mapping_models=_container_mapping_models(annotation),
         container_list_models=_container_list_models(annotation),
         tuple_item_reprs=_tuple_item_reprs(annotation),
-        constraints=_field_constraints(name, field_info, annotation),
+        bounds=_field_bounds(name, field_info, annotation),
+        constraints=_value_constraints(field_info.metadata),
         arm_length_constraints=_arm_length_constraints(name, annotation),
         inherit_from=(inherit.from_path,) if inherit is not None else (),
         inherit_slot=inherit_slot.from_path if inherit_slot is not None else None,
@@ -937,12 +1009,11 @@ def _collect_models(
     fields: list[SchemaField] = []
 
     for field_name, field_info in model_cls.model_fields.items():
-        # Two ways to say "not authorable, keep it out of the reference":
-        # `exclude=True` for fields that also must not serialize, and
-        # `json_schema_extra={"internal": True}` for fields that must still parse
-        # and dump: derived values, and unsupported fields the executor rejects.
+        # `internal` keeps a field out of the schema: derived values the
+        # compiler sets, which authored input must not carry. `exclude=True` only
+        # hides a field from serialization; the key is still authorable.
         extra = field_info.json_schema_extra
-        if field_info.exclude or (isinstance(extra, dict) and extra.get("internal")):
+        if isinstance(extra, dict) and extra.get("internal"):
             continue
         if (
             field_name == "extends"
@@ -950,7 +1021,7 @@ def _collect_models(
             and not model_cls.accepts_name
         ):
             continue
-        annotation = field_info.annotation
+        annotation = _authored_annotation(field_info)
         display_name = field_info.alias or field_name
         sf = _build_schema_field(display_name, field_info, annotation)
         fields.append(sf)
@@ -1135,7 +1206,6 @@ def introspect() -> AuthorableSchema:
         BigQuerySourceConfig,
         RedshiftSourceConfig,
         DatabricksSourceConfig,
-        MySQLSourceConfig,
         DuckDBSourceConfig,
         SQLiteSourceConfig,
         CsvSourceConfig,
@@ -1143,6 +1213,10 @@ def introspect() -> AuthorableSchema:
         JsonSourceConfig,
         HttpSourceConfig,
         DbtProfileSourceConfig,
+        LakeComputeTokenSource,
+        LakeComputeApiKeySource,
+        LakeComputeOktaSource,
+        LakeComputeFivetranSource,
         # Compiled style root — walks style/theme/ types so inherit-chain metadata
         # (Inherit/InheritSlot markers) is visible in the schema IR.
         Style,

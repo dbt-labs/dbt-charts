@@ -4,15 +4,16 @@ core/diagnostics/codes_render.py for what this fires on.
 Detection rule:
   some mark unit's effective color encoding has type in {"nominal", "ordinal"}
   AND chart.palette is non-empty
-  AND distinct color values in chart_results > len(chart.palette)
+  AND distinct color values in chart_results > max(len(chart.palette), 8)
 
-The threshold is the chart's own resolved palette length: `spatial_color_scale`
-(render/chart/emitters/_cartesian.py) assigns colors via
-`palette[i % len(palette)]`, so two series collide as soon as distinct values
-exceed however many colors that chart's palette actually has. An empty
-palette is a legal authored value, and no emit path recycles from one --
-cartesian/wide/heatmap emitters skip the color scale outright, layered and pie
-charts raise -- so `max_categories == 0` must not trip this detector.
+The threshold is the larger of the chart's resolved palette length and a floor
+of eight: a reader tells about eight categorical hues apart, so a short palette
+that recycles colors across a handful of series is not by itself unreadable
+(`spatial_color_scale` in render/chart/emitters/_cartesian.py assigns
+`palette[i % len(palette)]`). An empty palette is a legal authored value, and no
+emit path recycles from one -- cartesian/wide/heatmap emitters skip the color
+scale outright, layered and pie charts raise -- so it must not trip this
+detector at any series count.
 
 The color channel is walked via `iter_mark_units`, not read off the spec's
 top-level `encoding`. A plain bar or line chart's own `color` channel sits on
@@ -41,6 +42,7 @@ from dbt_charts.core.render.warnings.base import (
 )
 
 _CATEGORICAL_TYPES = frozenset({"nominal", "ordinal"})
+_READABLE_CATEGORIES = 8
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
@@ -79,8 +81,10 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 authored_field = chart.color
         else:
             distinct = len({row[color_field] for row in rows if color_field in row})
-        max_categories = len(chart.palette)
-        if max_categories == 0 or distinct <= max_categories:
+        if not chart.palette:
+            continue
+        max_categories = max(len(chart.palette), _READABLE_CATEGORIES)
+        if distinct <= max_categories:
             continue
 
         warnings.append(

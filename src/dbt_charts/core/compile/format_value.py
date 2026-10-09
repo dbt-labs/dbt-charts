@@ -15,12 +15,8 @@ axis (real d3, inside vl-convert) therefore renders identically here, which is
 what lets compile validate every format slot against one grammar.
 
 dbt charts-specific extensions over d3-format:
-- ``analytic`` notation: SI ``k/M/G/T`` suffixes mapped to ``K/M/B/T`` with a
-  space separator (e.g. d3's ``"1.5G"`` becomes ``"1.5 B"``).
-- ``narrative`` notation: ``k/M/G/T`` mapped to ``k/mn/bn/trn`` (no space,
-  journalistic abbreviations — not part of the d3-format standard). Above
-  trillions, narrative borrows the analytic (spaced) suffix — no accepted
-  narrative form exists past "trn".
+- ``analytic`` and ``narrative`` notation: SI ``k/M/G/T`` suffixes mapped to
+  the active locale's words (en-US: ``1.5 B`` and ``1.5bn`` for d3's ``1.5G``).
 - ``None`` value: rendered as ``NULL_DISPLAY`` (em dash) regardless of spec.
 
 See also:
@@ -32,14 +28,13 @@ import datetime
 import re
 from typing import Any
 
-from d3_format import format as _d3_format
 from dbt_charts.core.compile.format import (
     column_format,
     resolve_format,
     resolve_format_parts,
-    sub_unit_spec,
+    sub_unit_spec_for_value,
 )
-from dbt_charts.core.compile.models.primitives import AuthoredFormat, FormatAliases
+from dbt_charts.core.compile.models.primitives import AuthoredFormat, FormatTable
 from dbt_charts.core.compile.models.style.resolved.table import (
     ResolvedColumnSharedScale,
 )
@@ -51,11 +46,13 @@ from dbt_charts.core.diagnostics.codes_render import (
     ERR_TABLE_TEMPORAL_FORMAT_INVALID,
 )
 from dbt_charts.core.text.format_d3 import (
-    _D3_TO_ANALYTIC,
-    _D3_TO_NARRATIVE,
     NULL_DISPLAY,
+    SI_LETTERS,
     SignPlacement,
     _is_si_spec,
+    active_format_locale,
+    currency_front,
+    d3_format,
     find_unsupported_directive,
     format_d3,
     is_time_format,
@@ -65,10 +62,7 @@ from dbt_charts.core.text.format_d3 import (
 from dbt_charts.core.text.numeral_scale import SuffixMode, suffix_at_register
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
-    PREDEFINED_SUB_UNIT_FALLBACK,
     PredefinedNumberFormat,
-    _with_minus,
-    si_sub_unit_floor,
 )
 from dbt_charts.core.utils import is_date_like
 
@@ -107,22 +101,20 @@ def _check_percent_range(value: int | float, format_spec: str) -> None:
 # ============================================================================
 
 
-# Magnitude suffixes (K/M/B/G/…) that format_kpi_parts splits into its suffix
-# field. Unlike a currency prefix or a %/unit suffix, these carry the number's
-# magnitude, so table `symbol_mode: anchors` must keep them on every row —
-# stripping "K" would make 3000 read as "3". Includes both house notation values
-# (K/M/B/T) AND raw d3 keys (k/M/G/T): the native-d3 path (inline specs, user
-# aliases) emits raw d3 characters, so "G" (giga/billions) must be included or
-# it would be stripped on non-first anchor rows. Stripped uniformly: above
-# trillions, narrative borrows the analytic (spaced) suffix.
-MAGNITUDE_SUFFIXES: frozenset[str] = frozenset(
-    v.strip()
-    for v in (
-        *_D3_TO_ANALYTIC.keys(),
-        *_D3_TO_ANALYTIC.values(),
-        *_D3_TO_NARRATIVE.values(),
+def magnitude_suffixes() -> frozenset[str]:
+    """The magnitude suffixes ``format_kpi_parts`` splits into its suffix field,
+    bare: the active locale's words in both registers and d3's raw letters (the
+    native-d3 path). They carry the number's magnitude, so table
+    ``symbol_mode: anchors`` keeps them on every row."""
+    locale = active_format_locale()
+    return frozenset(
+        s.strip()
+        for s in (
+            *SI_LETTERS,
+            *locale.magnitudes("analytic").values(),
+            *locale.magnitudes("narrative").values(),
+        )
     )
-)
 
 
 def default_number_format() -> str:
@@ -141,7 +133,7 @@ def format_value(
     format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
 ) -> str:
     """Format a value using the given format configuration.
 
@@ -165,15 +157,8 @@ def format_value(
     if format_spec in PREDEFINED_NATIVE:
         number, unit = PREDEFINED_NATIVE[format_spec](value)
         return f"{prefix}{number}{unit}{suffix}"
-    if value is not None and parts.raw in PREDEFINED_SUB_UNIT_FALLBACK:
-        floor = si_sub_unit_floor(format_spec, prefix, suffix)
-        # Strict floor: zero is exactly representable, not "below the minor
-        # unit", so it must not take the fallback (si_sub_unit_floor's money
-        # floor is 0.0 -- `<` excludes zero there; the non-money floor is
-        # 1.0, where this comparison is always false either way).
-        if floor < abs(value) < 1.0:
-            format_spec = sub_unit_spec(parts.raw, formats)
     if value is not None:
+        format_spec = sub_unit_spec_for_value(parts.raw, format_spec, value, formats)
         _check_percent_range(value, format_spec)
     effective_notation = (
         parts.notation
@@ -211,13 +196,14 @@ def format_kpi_parts(
     format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
     default_number: bool = False,
     native: bool = False,
     shared_scale: ResolvedColumnSharedScale | None = None,
     is_anchor: bool = False,
     keep_affix_gaps: bool = False,
     sign_in_prefix: bool = False,
+    anchored: bool = False,
 ) -> tuple[str, str, str]:
     """Format a KPI value into (prefix, number, suffix) parts.
 
@@ -252,6 +238,8 @@ def format_kpi_parts(
         sign_in_prefix: place the sign per ``sign_placement`` (a KPI, whose
             prefix lane always paints). Off, it stays in the number lane, which
             ``anchors`` mode keeps when it clears the prefix.
+        anchored: the column declares its unit once, so a `$` currency leads
+            the digits whatever the locale's placement.
     """
     if value is None:
         return "", NULL_DISPLAY, ""
@@ -267,16 +255,11 @@ def format_kpi_parts(
     _raw = parts.raw
     _is_house = parts.is_house
     format_spec = parts.spec
-    # Money below $1 has no sub-cent unit to name and must not take the SI
-    # spec (see si_sub_unit_floor). Only meaningful when this row picks its
-    # own spec -- shared_scale has already baked the column's one magnitude,
-    # so a per-row floor decision here would second-guess that vote.
-    if shared_scale is None and _raw in PREDEFINED_SUB_UNIT_FALLBACK:
-        floor = si_sub_unit_floor(format_spec, explicit_prefix, explicit_suffix)
-        # See the strict-floor note in format_value: zero must not take the
-        # fallback.
-        if floor < abs(value) < 1.0:
-            format_spec = sub_unit_spec(_raw, formats)
+    # Only when this row picks its own spec -- shared_scale has already baked
+    # the column's one magnitude, so a per-row decision here would second-guess
+    # that vote.
+    if shared_scale is None:
+        format_spec = sub_unit_spec_for_value(_raw, format_spec, value, formats)
 
     # Predefined native formatters bypass D3 and know their own unit; the
     # authored affix rides around number-and-unit.
@@ -296,10 +279,12 @@ def format_kpi_parts(
     d3_suffix = ""
     magnitude_suffix = ""
 
+    locale = active_format_locale()
     if format_spec:
-        # Pull $ out of the D3 spec so it renders as a separate element
         if "$" in format_spec:
-            d3_prefix = "$"
+            d3_prefix, d3_suffix = (
+                (currency_front(locale), "") if anchored else locale.currency
+            )
             format_spec_clean = format_spec.replace("$", "")
         else:
             format_spec_clean = format_spec
@@ -319,7 +304,7 @@ def format_kpi_parts(
         # let d3 pick a *second* suffix on top of the shared one.
         if shared_scale is not None:
             scaled_value = value / (10.0**shared_scale.exponent)
-            number_str = _d3_format(shared_scale.digit_spec)(float(scaled_value))
+            number_str = d3_format(shared_scale.digit_spec)(float(scaled_value))
             if value != 0 and (shared_scale.mode is SuffixMode.REPEAT or is_anchor):
                 # An explicitly *authored* notation: wins over the
                 # mode-derived register -- a shared magnitude changes which
@@ -339,7 +324,7 @@ def format_kpi_parts(
                 # .strip(): suffix_at_register's analytic form carries a
                 # leading space (e.g. " M") for prose use; every other
                 # magnitude_suffix assignment in this function stores the
-                # bare token (MAGNITUDE_SUFFIXES is built the same way), so
+                # bare token (magnitude_suffixes() is built the same way), so
                 # anchors-mode's own suffix.startswith(...) check matches.
                 magnitude_suffix = suffix_at_register(
                     shared_scale.exponent, register
@@ -349,48 +334,31 @@ def format_kpi_parts(
         # default_number_format, above) -- no re-injection needed here.
         elif _is_si_spec(format_spec_clean):
             # Format via the lib (without notation post-process), then split suffix
-            raw = _d3_format(format_spec_clean)(float(value))
+            raw = d3_format(format_spec_clean)(float(value))
             number_str = raw
-            if native or effective_notation is None:
-                # No notation substitution: use raw d3 suffix chars (M, k, G, T).
-                # native=True: caller requests raw chars explicitly.
-                # effective_notation is None: inline-d3 / user-alias path (three-way
-                # contract — no house post-process), but symbol_mode still needs the
-                # suffix in its own field so anchors-mode can suppress it on non-first
-                # rows without stripping it from the embedded number string.
-                for d3_sfx in _D3_TO_ANALYTIC:
-                    if raw.endswith(d3_sfx):
-                        number_str = raw[: -len(d3_sfx)]
-                        magnitude_suffix = d3_sfx
-                        break
-            elif effective_notation == "analytic":
-                for d3_sfx, analytic_sfx in _D3_TO_ANALYTIC.items():
-                    if raw.endswith(d3_sfx):
-                        number_str = raw[: -len(d3_sfx)]
-                        magnitude_suffix = analytic_sfx.strip()
-                        break
-            elif effective_notation == "narrative":
-                for d3_sfx, narrative_sfx in _D3_TO_NARRATIVE.items():
-                    if raw.endswith(d3_sfx):
-                        number_str = raw[: -len(d3_sfx)]
-                        # Stripped: above trillions the narrative suffix
-                        # borrows the analytic (spaced) form (invariant: no
-                        # accepted narrative form exists past "trn"). The
-                        # lane split carries visual spacing as geometry
-                        # (kpi.py's dx="2"), not a string character, so
-                        # every magnitude suffix in this field stays bare.
-                        magnitude_suffix = narrative_sfx.strip()
-                        break
-            # else: effective_notation is None -- no substitution, raw d3 suffix intact
+            # The suffix gets its own field even with no notation (native=True,
+            # or the inline-d3 / user-alias path) so anchors-mode can suppress
+            # it on non-first rows. Bare: the lane split carries the gap as
+            # geometry (kpi.py's dx="2"), not a string character.
+            suffixes = (
+                dict(zip(SI_LETTERS, SI_LETTERS, strict=True))
+                if native or effective_notation is None
+                else locale.magnitudes(effective_notation)
+            )
+            for d3_sfx, word in suffixes.items():
+                if raw.endswith(d3_sfx):
+                    number_str = raw[: -len(d3_sfx)]
+                    magnitude_suffix = word.strip()
+                    break
         else:
             number_str = format_d3(
                 value, format_spec_clean, notation=effective_notation
             )
 
         # Pull trailing % that format_d3 appended
-        if "%" in format_spec and number_str.endswith("%"):
-            d3_suffix = "%"
-            number_str = number_str[:-1]
+        if "%" in format_spec and number_str.endswith(locale.percent):
+            d3_suffix = locale.percent
+            number_str = number_str.removesuffix(locale.percent)
     else:
         # No spec and no default supplied (KPI below-threshold contract):
         # render exact digits — integers plain, floats at 2 decimals. Plain
@@ -399,9 +367,9 @@ def format_kpi_parts(
         # gets it for free from d3_format.
         v = float(value)
         if v == int(v) and abs(v) < 1e15:
-            number_str = _with_minus(f"{int(v):,}")
+            number_str = d3_format(",d")(int(v))
         else:
-            number_str = _with_minus(f"{v:,.2f}")
+            number_str = d3_format(",.2f")(v)
 
     number_str = number_str.strip()
     if sign_in_prefix:
@@ -414,6 +382,12 @@ def format_kpi_parts(
     else:
         prefix = (explicit_prefix + d3_prefix).strip()
         suffix = (magnitude_suffix + d3_suffix + explicit_suffix).strip()
+        # The locale's own gap between digits and its currency or percent
+        # sign (``1.234 €``, ``18,4 %``) stays; the painter kerns the rest.
+        if d3_prefix.strip():
+            prefix += d3_prefix[len(d3_prefix.rstrip()) :]
+        if d3_suffix.strip() and not magnitude_suffix.strip():
+            suffix = d3_suffix[: len(d3_suffix) - len(d3_suffix.lstrip())] + suffix
     return prefix, number_str, suffix
 
 
@@ -554,7 +528,7 @@ def format_temporal_value(
 def format_table_cell_value(
     value: Any,  # type-state: explicit_any — DB cell value
     format_config: AuthoredFormat | None,
-    formats: FormatAliases | None = None,
+    formats: FormatTable | None = None,
 ) -> str:
     """Format a cell value for display.
 

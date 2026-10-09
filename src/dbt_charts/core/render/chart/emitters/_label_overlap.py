@@ -29,6 +29,7 @@ from dbt_charts.core.render.chart.time_unit_detect import (
     is_label_opener,
     resolve_label_time_unit,
     resolve_temporal_label_visibility,
+    walk_label_cadence_ladder,
 )
 from dbt_charts.core.render.chart.type_inference import (
     DetectedTimeUnit,
@@ -85,7 +86,7 @@ class AxisLabelLayout(NamedTuple):
     applied.
     """
 
-    label_overlap: Literal["allow", "parity"] | None
+    label_overlap: Literal["allow", "parity", "greedy"] | None
     angle: float | None
     visibility_time_unit: str | None
     anchor_index: int
@@ -938,4 +939,108 @@ def resolve_axis_x_overlap(
         "",
         flat_height,
         collision_label_count=None if flat_fits else len(widths),
+    )
+
+
+def _vertical_label_rows(
+    date: datetime.date,
+    encoding_time_unit: str,
+    format_time_unit: str,
+    is_anchor: bool,
+    authored_format: str | None,
+    fiscal_year_start_month: int,
+) -> int:
+    """Text rows one tick paints: the year-context stack on an anchor or
+    year-opening month/quarter tick, the day/week context row, else one."""
+    if authored_format is not None or format_time_unit == "year":
+        return 1
+    if format_time_unit in {"yearweek", "yearmonthdate"}:
+        return 2
+    opens_year = is_label_opener(
+        date, encoding_time_unit, "year", fiscal_year_start_month
+    )
+    return 2 if is_anchor or opens_year else 1
+
+
+def resolve_axis_y_overlap(
+    axis: ResolvedAxisStyle,
+    y_field: str,
+    data: list[dict[str, AxisDatum]],
+    label_usable_ratio: float,
+    *,
+    chart_height: float,
+    time_unit: DetectedTimeUnit,
+) -> AxisLabelLayout:
+    """Vertical twin of ``resolve_axis_x_overlap`` for a date-valued band axis.
+
+    Same cadence ladder, measured in heights: two adjacent visible labels
+    clear when their band spacing covers half of each label's text block plus
+    ``labels.min_gap`` (Vega's ``labelSeparation``). Nothing rotates and
+    every glyph row is ``font.size`` tall.
+
+    ``time_unit`` is ``resolve_cartesian_x_type``'s verdict for this axis; a
+    non-calendar grain gets a neutral layout. When even the coarsest rung
+    collides, ``"greedy"`` hands the leftovers to Vega's own geometric
+    removal (``"allow"`` when the author forbade skipping).
+    """
+    font = axis.labels.font
+    neutral = AxisLabelLayout(None, 0.0, None, 0, "", font.size)
+    overlap = axis.labels.overlap
+    min_gap = axis.labels.min_gap
+    assert min_gap is not None, (
+        "axis_y.labels.min_gap unset: theme cascade must populate it"
+    )
+    if overlap is None or time_unit not in BUCKETED_CALENDAR_UNITS:
+        return neutral
+    format_time_unit = resolve_label_time_unit(time_unit, axis.labels.time_unit)
+    if format_time_unit not in BUCKETED_CALENDAR_UNITS:
+        return neutral
+
+    values = _axis_label_values(y_field, data, None)
+    dates = [datetime.date.fromisoformat(value[:10]) for value in values]
+    authored_format = authored_time_format(axis)
+    fiscal_year_start_month = axis.fiscal_year_start_month
+    band = chart_height * label_usable_ratio / len(dates)
+
+    def fits(labeled: list[int], vocab: str) -> bool:
+        heights = [
+            font.size
+            * _vertical_label_rows(
+                dates[i],
+                time_unit,
+                vocab,
+                k == 0,
+                authored_format,
+                fiscal_year_start_month,
+            )
+            for k, i in enumerate(labeled)
+        ]
+        return all(
+            (labeled[k + 1] - labeled[k]) * band
+            >= (heights[k] + heights[k + 1]) / 2 + min_gap
+            for k in range(len(labeled) - 1)
+        )
+
+    visibility, ladder_fits = walk_label_cadence_ladder(
+        dates,
+        time_unit,
+        format_time_unit,
+        band,
+        fiscal_year_start_month,
+        overlap.skip,
+        fits,
+    )
+    visible = [
+        i
+        for i, date in enumerate(dates)
+        if is_label_opener(date, time_unit, visibility, fiscal_year_start_month)
+    ]
+    return AxisLabelLayout(
+        "allow" if ladder_fits or not overlap.skip else "greedy",
+        0.0,
+        visibility,
+        visible[0] if visible else 0,
+        "year" if visibility == "year" else format_time_unit,
+        font.size,
+        collision_label_count=None if ladder_fits else len(visible),
     )

@@ -34,6 +34,28 @@ def test_valid_source_types_covers_all_union_members():
     )
 
 
+def test_every_database_source_type_has_a_dbt_adapter():
+    """A database source type that is authorable must be executable: validation
+    must not pass a type that execution rejects as unsupported."""
+    from dbt_charts.core.compile.models.source import _SOURCE_TYPE_MAP
+    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        SUPPORTED_ADAPTER_TYPES,
+    )
+
+    database_types = {
+        type_name
+        for type_name, model in _SOURCE_TYPE_MAP.items()
+        if model.source_category == "database"
+    } - {
+        "sqlite",  # SqliteAdapter is native, not a dbt adapter
+        "lakecompute",  # connects through dbt's ADBC lake compute driver
+    }
+    assert database_types <= SUPPORTED_ADAPTER_TYPES, (
+        f"authorable but no _ADAPTER_TYPE_MAP entry: "
+        f"{sorted(database_types - SUPPORTED_ADAPTER_TYPES)}"
+    )
+
+
 def test_parse_source_config_accepts_all_union_member_types():
     """parse_source_config must return the right class for each SourceConfig type string."""
     from dbt_charts.core.compile.models.source import SourceConfig, parse_source_config
@@ -63,13 +85,6 @@ def test_parse_source_config_accepts_all_union_member_types():
             "user": "u",
             "password": "p",
         },
-        "mysql": {
-            "host": "h",
-            "port": 3306,
-            "database": "db",
-            "user": "u",
-            "password": "p",
-        },
         "trino": {
             "host": "h",
             "port": 8080,
@@ -91,13 +106,23 @@ def test_parse_source_config_accepts_all_union_member_types():
         "http": {"url": "https://api.example.com"},
         "dbt_profile": {"profile": "my_profile"},
     }
+    # One type, one variant per auth method: the variant is chosen by `method`.
+    _LAKECOMPUTE_MINIMAL = {
+        "LakeComputeTokenSource": {"method": "token", "token": "t"},
+        "LakeComputeApiKeySource": {"method": "api_key", "api_key": "k"},
+        "LakeComputeOktaSource": {"method": "okta_browser"},
+        "LakeComputeFivetranSource": {"method": "fivetran", "fivetran_credential": "p"},
+    }
 
     for cls in get_args(SourceConfig):
         type_str = _source_type_str(cls)
-        assert type_str in _MINIMAL, (
-            f"No minimal data template for {type_str!r} — update this test"
-        )
-        data = {"type": type_str, **_MINIMAL[type_str]}
+        if type_str == "lakecompute":
+            data = {"type": type_str, **_LAKECOMPUTE_MINIMAL[cls.__name__]}
+        else:
+            assert type_str in _MINIMAL, (
+                f"No minimal data template for {type_str!r} — update this test"
+            )
+            data = {"type": type_str, **_MINIMAL[type_str]}
         result = parse_source_config(data)
         assert type(result).__name__ == cls.__name__, (
             f"parse_source_config({type_str!r}) returned {type(result).__name__}, expected {cls.__name__}"

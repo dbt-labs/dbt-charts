@@ -281,8 +281,8 @@ class ExecuteQueryResult(BaseModel):
     diagnostics: list[QueryDiagnostic] = Field(
         default_factory=list,
         description=(
-            "Deterministic validate_query findings (WARN-FANOUT-RISK, "
-            "WARN-MISSING-JOIN-PREDICATE, WARN-REAGGREGATION, WARN-PARSE-ERROR). "
+            "Deterministic validate_query findings (WARN-MISSING-JOIN-PREDICATE, "
+            "WARN-REAGGREGATION, WARN-PARSE-ERROR). "
             "Surfaced as warnings — the query still executes. A clean query yields []."
         ),
     )
@@ -329,12 +329,12 @@ def execute_query(
     fetch_limit = limit + 1
 
     # Structural validation runs regardless of execution outcome: a query that
-    # executes cleanly can still double-count (fanout) or build a cartesian
+    # executes cleanly can still double-count (re-aggregation) or build a cartesian
     # product, which execution alone never flags.
     diagnostics = _query_diagnostics(sql, source, adapter_registry)
 
     try:
-        # A sourceless query raises ERR-NO-DEFAULT-SOURCE inside
+        # A sourceless query raises ERR-SOURCE-NOT-NAMED inside
         # adapter_registry.execute() itself — the single enforcement point.
         query = SqlQuery(
             sql=sql,

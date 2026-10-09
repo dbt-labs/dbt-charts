@@ -26,13 +26,25 @@ predefined_formats.py where the native formatters that need them are defined.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from d3_format import format as _d3_format, parse as _d3_parse
+import vl_convert
+
+from d3_format import (
+    EN_US,
+    FormatLocale,
+    LocaleDefinition,
+    format_locale,
+    parse as _d3_parse,
+)
 from d3_format.errors import D3FormatError
+from dbt_charts.core.text.magnitude_words import MagnitudeWords, magnitude_words
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 
 # The house notation vocabulary — analytic (SI-prefix, " K"/" M") or narrative
@@ -50,6 +62,177 @@ def default_sign_placement(prefix: str | None) -> SignPlacement:
     ("−€500")."""
     spaced = prefix is not None and prefix[-1:].isspace()
     return "after_prefix" if spaced else "before_prefix"
+
+
+# The d3-format locales Vega bundles.
+LocaleName = Literal[
+    "ar-AE",
+    "ar-BH",
+    "ar-DJ",
+    "ar-DZ",
+    "ar-EG",
+    "ar-EH",
+    "ar-ER",
+    "ar-IL",
+    "ar-IQ",
+    "ar-JO",
+    "ar-KM",
+    "ar-KW",
+    "ar-LB",
+    "ar-LY",
+    "ar-MA",
+    "ar-MR",
+    "ar-OM",
+    "ar-PS",
+    "ar-QA",
+    "ar-SA",
+    "ar-SD",
+    "ar-SO",
+    "ar-SS",
+    "ar-SY",
+    "ar-TD",
+    "ar-TN",
+    "ar-YE",
+    "ca-ES",
+    "cs-CZ",
+    "da-DK",
+    "de-CH",
+    "de-DE",
+    "en-CA",
+    "en-GB",
+    "en-IE",
+    "en-IN",
+    "en-US",
+    "es-BO",
+    "es-ES",
+    "es-MX",
+    "fi-FI",
+    "fr-CA",
+    "fr-FR",
+    "he-IL",
+    "hu-HU",
+    "it-IT",
+    "ja-JP",
+    "ko-KR",
+    "mk-MK",
+    "nl-NL",
+    "pl-PL",
+    "pt-BR",
+    "pt-PT",
+    "ru-RU",
+    "sl-SI",
+    "sv-SE",
+    "uk-UA",
+    "zh-CN",
+]
+
+
+def number_locale_definition(name: LocaleName) -> LocaleDefinition:
+    """d3's locale definition for ``name``, as Vega's bundled d3-format ships it."""
+    return cast(
+        "LocaleDefinition",
+        vl_convert.get_format_locale(name),
+    )  # type-state: cast — vl_convert's stub types d3's locale JSON as dict[str, Any]
+
+
+# d3's SI letters for thousand through trillion; past trillions both registers
+# print the spaced letter.
+_SI_WORD_LETTERS = ("k", "M", "G", "T")
+_SI_PAST_TRILLIONS = {s: "\u00a0" + s for s in ("P", "E", "Z", "Y")}
+SI_LETTERS: tuple[str, ...] = (*_SI_WORD_LETTERS, *_SI_PAST_TRILLIONS)
+
+
+@dataclass(frozen=True, kw_only=True)
+class HouseLocale(FormatLocale):
+    """A d3 locale plus the words its magnitudes print in each register."""
+
+    analytic: MagnitudeWords
+    narrative: MagnitudeWords
+
+    def magnitudes(self, register: Notation) -> dict[str, str]:
+        if register == "analytic":
+            words = self.analytic
+        elif register == "narrative":
+            words = self.narrative
+        else:
+            raise ValueError(f"Unknown notation: {register!r}")
+        return {**dict(zip(_SI_WORD_LETTERS, words, strict=True)), **_SI_PAST_TRILLIONS}
+
+
+def house_locale(
+    definition: LocaleDefinition, analytic: MagnitudeWords, narrative: MagnitudeWords
+) -> HouseLocale:
+    return HouseLocale(
+        **vars(format_locale(definition)), analytic=analytic, narrative=narrative
+    )
+
+
+HOUSE_EN_US = HouseLocale(
+    **vars(EN_US),
+    analytic=magnitude_words("en-US")[0],
+    narrative=magnitude_words("en-US")[1],
+)
+
+_LOCALE: ContextVar[HouseLocale] = ContextVar("dct_number_locale", default=HOUSE_EN_US)
+
+
+@contextmanager
+def number_locale_scope(locale: HouseLocale) -> Generator[None]:
+    token = _LOCALE.set(locale)
+    try:
+        yield
+    finally:
+        _LOCALE.reset(token)
+
+
+def active_format_locale() -> HouseLocale:
+    return _LOCALE.get()
+
+
+def locale_definition(locale: FormatLocale) -> LocaleDefinition:
+    """``locale`` as the d3 definition Vega's ``config.locale.number`` takes."""
+    definition: LocaleDefinition = {
+        "decimal": locale.decimal,
+        "currency": list(locale.currency),
+        "percent": locale.percent,
+        "minus": locale.minus,
+        "nan": locale.nan,
+    }
+    if locale.grouping is not None:
+        definition["thousands"] = locale.thousands
+        definition["grouping"] = list(locale.grouping)
+    if locale.numerals is not None:
+        definition["numerals"] = list(locale.numerals)
+    return definition
+
+
+def currency_front(locale: FormatLocale) -> str:
+    """The locale's currency ahead of the digits; a word keeps a gap (``kr 12``)."""
+    before, after = locale.currency
+    if before.strip():
+        return before
+    symbol = after.strip()
+    return symbol + ("\u00a0" if symbol[-1:].isalpha() else "")
+
+
+def currency_suffix(spec: str) -> str:
+    """The text the locale's currency places after the digits of ``spec``."""
+    return active_format_locale().currency[1] if "$" in spec else ""
+
+
+def composed_currency(symbol: str, repeats: bool) -> tuple[str, str]:
+    """``(lead, trail)`` a ``$`` composes outside d3 around digits ending in a
+    magnitude suffix: empty where the locale's currency leads (d3 places it),
+    else trailing where it repeats (``500k €``) and leading where declared once."""
+    locale = active_format_locale()
+    if symbol != "$" or locale.currency[0].strip():
+        return "", ""
+    return ("", locale.currency[1]) if repeats else (currency_front(locale), "")
+
+
+def d3_format(spec: str) -> Callable[[float | int | Decimal], str]:
+    """d3 ``format(spec)`` under the active number locale."""
+    return active_format_locale().format(spec)
 
 
 # Rendered wherever a value is absent — never a per-surface literal. A wrong
@@ -348,35 +531,6 @@ def portable_strftime(d: date | datetime, fmt: str) -> str:
     return d.strftime(_apply_padding_modifiers(d, fmt))
 
 
-# d3 SI prefix → dbt charts analytic suffix mapping
-_D3_TO_ANALYTIC: dict[str, str] = {
-    "k": " K",
-    "M": " M",
-    "G": " B",
-    "T": " T",
-    "P": " P",
-    "E": " E",
-    "Z": " Z",
-    "Y": " Y",
-}
-
-# d3 SI prefix → dbt charts narrative suffix mapping. No accepted narrative
-# form exists above trillions (English financial writing stops at "trn"), so
-# peta/exa/zetta/yotta borrow the analytic suffix rather than leave d3's
-# bare, unmapped letter ("1P") to reach a shipped artifact — read from
-# _D3_TO_ANALYTIC rather than restated, so the two tables cannot drift.
-_D3_TO_NARRATIVE: dict[str, str] = {
-    "k": "k",
-    "M": "mn",
-    "G": "bn",
-    "T": "trn",
-    "P": _D3_TO_ANALYTIC["P"],
-    "E": _D3_TO_ANALYTIC["E"],
-    "Z": _D3_TO_ANALYTIC["Z"],
-    "Y": _D3_TO_ANALYTIC["Y"],
-}
-
-
 # Leading sign glyphs: d3's U+2212 plus ASCII "-"/"+". Parenthesized
 # negatives are not split: a prefix lands ahead of the paren.
 _LEADING_SIGN_CHARS = "−+-"
@@ -447,19 +601,17 @@ def format_d3(
     if not format_spec:
         return affix_signed(str(value), prefix, suffix, sign_placement)
 
-    formatted = _d3_format(format_spec)(float(value))
+    formatted = d3_format(format_spec)(float(value))
 
     # dbt charts-specific SI notation post-processing — only when the caller
     # explicitly requests a notation register. Callers on the predefined-format
     # path pass notation="analytic" or "narrative"; callers on the native-d3
     # path (inline specs, user aliases) omit it so no post-process runs.
     if notation is not None and _is_si_spec(format_spec):
-        if notation == "analytic":
-            formatted = _apply_analytic_notation(formatted)
-        elif notation == "narrative":
-            formatted = _apply_narrative_notation(formatted)
-        else:
-            raise ValueError(f"Unknown notation: {notation!r}")
+        # The SI letter ends the digits, ahead of a currency placed after them.
+        body = formatted.removesuffix(currency_suffix(format_spec))
+        trailing = formatted[len(body) :]
+        formatted = _apply_notation(body, notation) + trailing
 
     return affix_signed(formatted, prefix, suffix, sign_placement)
 
@@ -540,17 +692,9 @@ def round_aware_spec(format_spec: str) -> str:
     return str(parsed)
 
 
-def _apply_analytic_notation(d3_str: str) -> str:
-    """Convert d3 SI string (e.g. '1.5M') to analytic notation (e.g. '1.5 M')."""
-    for d3_sfx, analytic_sfx in _D3_TO_ANALYTIC.items():
+def _apply_notation(d3_str: str, notation: Notation) -> str:
+    """Swap d3's SI letter (``1.5M``) for the active locale's word (``1.5 M``)."""
+    for d3_sfx, word in active_format_locale().magnitudes(notation).items():
         if d3_str.endswith(d3_sfx):
-            return d3_str[: -len(d3_sfx)] + analytic_sfx
-    return d3_str
-
-
-def _apply_narrative_notation(d3_str: str) -> str:
-    """Convert d3 SI string (e.g. '1.5G') to narrative notation (e.g. '1.5bn')."""
-    for d3_sfx, narrative_sfx in _D3_TO_NARRATIVE.items():
-        if d3_str.endswith(d3_sfx):
-            return d3_str[: -len(d3_sfx)] + narrative_sfx
+            return d3_str[: -len(d3_sfx)] + word
     return d3_str

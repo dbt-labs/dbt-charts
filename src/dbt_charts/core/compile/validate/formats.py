@@ -39,10 +39,15 @@ from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import missing_format_columns, resolve_format_parts
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.markers import Format
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import (
+    FormatAliases,
+    FormatConfig,
+    FormatTable,
+)
 from dbt_charts.core.compile.models.query.normalized import Query, ValuesQuery
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_TIME_UNSUPPORTED,
+    ERR_FORMAT_ALIAS_CYCLE,
     ERR_FORMAT_INVALID,
     ERR_FORMAT_KIND_MISMATCH,
     ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
@@ -246,7 +251,7 @@ def _raise_if_unsupported_time_directives(spec: str, field_path: str) -> None:
 
 def _validate_spec(
     value: str | FormatConfig,
-    formats: dict[str, str | FormatConfig],
+    formats: FormatTable | None,
     field_path: str,
     time_format: bool,
     vega_painted: bool = False,
@@ -314,8 +319,9 @@ def _validate_spec(
         if reject_time_affix and spec in PREDEFINED_TIME_NAMES:
             _check_time_affix_conflict(value, field_path, spec)
         return
-    if spec in formats:
-        aliased = formats[spec]
+    aliases = {} if formats is None else formats.aliases
+    if spec in aliases:
+        aliased = aliases[spec]
         aliased_spec = aliased.spec if isinstance(aliased, FormatConfig) else aliased
         if aliased_spec in ALL_PREDEFINED_NAMES:
             parts = resolve_format_parts(value, formats)
@@ -394,7 +400,7 @@ def _validate_spec(
         # Scoped to the slot's own half: suggesting `currency` for `currencyy`
         # in a `time_format` would hand the author the very value the kind check
         # rejects one compile later.
-        available = sorted({*formats, *(rule[0] if rule else ALL_PREDEFINED_NAMES)})
+        available = sorted({*aliases, *(rule[0] if rule else ALL_PREDEFINED_NAMES)})
         if kind == "time":
             # No `%` directive was found, so this isn't a d3-format parse
             # failure at all -- pointing the author at number-spec parsing
@@ -451,6 +457,26 @@ def _check_redefinition_kind(name: str, target: str | FormatConfig) -> None:
             available=sorted(names - PREDEFINED_NATIVE_NAMES),
             escape_hatch=_KIND_RULES[kind][1],
         )
+
+
+def _check_alias_cycle(name: str, aliases: FormatAliases) -> None:
+    """Raise when ``name`` leads into a circle of aliases."""
+    chain = [name]
+    spec = name
+    while spec in aliases:
+        target = aliases[spec]
+        following = target.spec if isinstance(target, FormatConfig) else target
+        if following is None or following == spec:
+            return
+        if following in chain:
+            raise CompilationError.from_code(
+                ERR_FORMAT_ALIAS_CYCLE,
+                field_path=f"style.formats.{name}",
+                name=name,
+                chain=" -> ".join([*chain, following]),
+            )
+        chain.append(following)
+        spec = following
 
 
 def _validate_query_formats(
@@ -513,19 +539,20 @@ def _validate_board(board: Board, validated: set[int]) -> None:
             _validate_board(item.board, validated)
 
     formats = board.chart_style_context.formats
-    if formats is None:
-        formats = {}
+    aliases = {} if formats is None else formats.aliases
     # An alias is only useful if its target resolves; checking the keys alone
     # would let `formats: {mine: bogus}` reach the render-time raise. A preset
     # target is judged per slot, where the alias is used. An engine name
     # redefined here must keep its kind: every slot reading it expects it.
+    for alias in aliases:
+        _check_alias_cycle(alias, aliases)
     for query_name, query in board.queries.items():
-        _validate_query_formats(query_name, query, formats)
-    for alias, target in formats.items():
+        _validate_query_formats(query_name, query, aliases)
+    for alias, target in aliases.items():
         _check_redefinition_kind(alias, target)
         _validate_spec(
             target,
-            {},
+            None,
             f"style.formats.{alias}",
             True,
             # Axes read an engine name by default, and Vega paints them.
@@ -585,7 +612,7 @@ def _validate_board(board: Board, validated: set[int]) -> None:
             and chart.query_is_inline
             and chart.query is not None
         ):
-            _validate_query_formats(chart_id, chart.query, formats)
+            _validate_query_formats(chart_id, chart.query, aliases)
         for field_path, spec, timed, is_vega, kind, reject_affix in _iter_format_slots(
             chart, f"charts.{chart_id}", False
         ):

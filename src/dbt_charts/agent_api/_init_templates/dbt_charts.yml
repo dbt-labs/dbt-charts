@@ -12,7 +12,7 @@
 #   # A dbt project — credentials stay in dbt profiles.yml / env vars.
 #   analytics:
 #     type: dbt_profile
-#     profile: my_dbt_project
+#     profile: my_dbt_project   # optional: defaults to the dbt project's profile
 #     target: dev
 #
 #   # A local DuckDB file. Local-only: dbt charts Cloud cannot read it —

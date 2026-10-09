@@ -3,6 +3,8 @@
 TDD: these tests are written before implementation to drive the shape.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
@@ -1376,6 +1378,43 @@ class TestDatabricksAdapter:
         assert creds.host == "tenant.cloud.databricks.com"
         assert creds.http_path == "/sql/1.0/warehouses/abc"
         assert creds.token == "tok"
+
+    _M2M_SOURCE = {
+        **_SOURCE,
+        "token": None,
+        "client_id": "sp-app-id",
+        "client_secret": "dose-issued-by-databricks",
+    }
+
+    def test_m2m_set_maps_to_dbt_databricks_oauth(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        adapter = build_adapter(self._M2M_SOURCE, register_macros=False)
+        creds = adapter.config.credentials
+        assert creds.auth_type == "oauth"
+        assert creds.client_id == "sp-app-id"
+        assert creds.client_secret == "dose-issued-by-databricks"
+        assert creds.token is None
+
+    def test_databricks_issued_secret_authenticates_with_oauth_m2m_first(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """dbt-databricks tries legacy Azure auth first unless the secret starts with
+        `dose`, the prefix Databricks puts on every OAuth secret it issues."""
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        config_cls = MagicMock()
+        monkeypatch.setattr("dbt.adapters.databricks.credentials.Config", config_cls)
+
+        adapter = build_adapter(self._M2M_SOURCE, register_macros=False)
+        adapter.config.credentials.authenticate()._ensure_config()
+
+        config_cls.assert_called_once_with(
+            host="tenant.cloud.databricks.com",
+            client_id="sp-app-id",
+            client_secret="dose-issued-by-databricks",
+            auth_type="oauth-m2m",
+        )
 
     def test_socket_timeout_folds_into_connection_parameters(self) -> None:
         """dbt charts' own socket_timeout field has no top-level dbt-databricks

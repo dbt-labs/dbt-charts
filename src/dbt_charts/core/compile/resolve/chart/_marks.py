@@ -12,7 +12,7 @@ from dbt_charts.core.compile.format import (
     resolve_label_format,
 )
 from dbt_charts.core.compile.models.primitives import (
-    FormatAliases,
+    FormatTable,
     ResolvedFormat,
     resolved_as,
 )
@@ -42,7 +42,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 )
 
 __all__ = [
-    "_apply_stroke_width_fallback",
+    "_apply_line_width",
     "_build_resolved_area_line",
     "_build_resolved_area_mark",
     "_build_resolved_line_mark",
@@ -56,30 +56,26 @@ __all__ = [
 _LineOrAreaLineT = TypeVar("_LineOrAreaLineT", LineMarkStyle, AreaLineStyle)
 
 
-def _apply_stroke_width_fallback(
-    mark: _LineOrAreaLineT, fallback_width: float
+def _apply_line_width(
+    mark: _LineOrAreaLineT, adaptive: float, fallback: float
 ) -> _LineOrAreaLineT:
-    """Fill ``mark.stroke.width`` from ``fallback_width`` if still unset.
+    """Resolve ``mark.stroke.width`` for a line-like mark.
 
-    Called after cascade + adaptive baking, for any line-like mark
-    (line's own stroke, area's overlap-edge or stacked-perimeter stroke, a
-    line-type layer's stroke): if no tier pinned a width and adaptive
-    couldn't compute one either (no data, no x field, non-cartesian), this
-    is the engine's calibrated floor, not a theme choice -- see
-    ``chart_rendering.stroke.fallback_width`` / ``.stacked_fallback_width``
-    in ``default_config.yml``. A zero width (the "no stroke" sentinel) is
-    a real, already-baked value and is left untouched.
+    A width any cascade tier pinned wins, including the ``0.0`` "no stroke"
+    sentinel. Otherwise the density-adaptive ``adaptive`` applies, or
+    ``fallback`` when it is ``0.0`` (no data, no x field, or a base chart that
+    measures no density).
 
-    An authored ``stroke: null`` (``mark.stroke is None``) is left alone too
-    -- filling one in here would silently manufacture a default stroke out
-    of nothing (no cap/join/color) instead of letting the downstream
-    ``_build_resolved_*`` guard raise its "stroke is None after cascade"
-    error.
+    An authored ``stroke: null`` is left alone: filling one in would
+    manufacture a default stroke out of nothing (no cap/join/color) instead of
+    letting the downstream ``_build_resolved_*`` guard raise its "stroke is
+    None after cascade" error.
     """
     if mark.stroke is None or mark.stroke.width is not None:
         return mark
+    width = adaptive if adaptive > 0 else fallback
     return mark.model_copy(
-        update={"stroke": mark.stroke.model_copy(update={"width": fallback_width})}
+        update={"stroke": mark.stroke.model_copy(update={"width": width})}
     )
 
 
@@ -146,7 +142,7 @@ def _label_format_fallback(
     resolved_cls: type[_ResolvedLabelsT],
     axis_format: ResolvedFormat | None,
     axis_house_default: bool,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     values: Iterable[float | None] = (),
 ) -> tuple[_ResolvedLabelsT, bool]:
     """Resolve ``labels`` as ``resolved_cls``, falling an unset format back to the axis's.
@@ -168,7 +164,7 @@ def _label_format_fallback(
 def _resolve_authored_label_format(
     labels: _AuthoredLabelsT,
     resolved_cls: type[_ResolvedLabelsT],
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     values: Iterable[float | None] = (),
 ) -> _ResolvedLabelsT:
     """``labels`` with only its own authored format (no axis fallback) resolved."""
@@ -178,7 +174,7 @@ def _resolve_authored_label_format(
 
 def _resolved_point_mark(
     point_mark: PointMarkStyle,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     values: Iterable[float | None] = (),
 ) -> ResolvedPointMarkStyle:
     return resolved_as(
@@ -194,7 +190,7 @@ def _build_resolved_line_mark(
     merged: LineMarkStyle, labels: ResolvedPointLabels
 ) -> ResolvedLineMarkStyle:
     """Build a ResolvedLineMarkStyle from an already-merged LineMarkStyle."""
-    # merged.stroke.width can't be None here: _apply_stroke_width_fallback
+    # merged.stroke.width can't be None here: _apply_line_width
     # already ran and fills width whenever a stroke object exists. Only
     # merged.stroke itself being None (an authored `stroke: null`) can
     # still reach this guard -- the `or merged.stroke.width is None` half is
@@ -249,7 +245,7 @@ def _build_resolved_area_line(
     _build_resolved_line_mark minus curve/connect (owned solely by
     ResolvedAreaMarkStyle.curve — see AreaLineStyle's docstring).
     """
-    # merged.stroke.width can't be None here: _apply_stroke_width_fallback
+    # merged.stroke.width can't be None here: _apply_line_width
     # already ran and fills width whenever a stroke object exists. Only
     # merged.stroke itself being None (an authored `stroke: null`) can
     # still reach this guard -- the `or merged.stroke.width is None` half is

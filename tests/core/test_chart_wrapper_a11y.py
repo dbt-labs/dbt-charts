@@ -43,6 +43,8 @@ def _wrap(
         resolved_title=title,
         resolved_subtitle=subtitle,
         is_error_fallback=is_error_fallback,
+        card_border=None,
+        card_shadow=None,
     )
     return ET.fromstring(f'<svg xmlns="http://www.w3.org/2000/svg">{html}</svg>')[0]
 

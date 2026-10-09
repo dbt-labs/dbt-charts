@@ -154,6 +154,22 @@ class SQLDialect(ABC):
     Named dialects: @param1, @p1, :param1 — params passed as dict.
     """
 
+    # --- Identifiers ---
+
+    def quote(self, identifier: str) -> str:
+        """Quote *identifier* so the warehouse reads it verbatim.
+
+        ANSI double quotes by default — Postgres, Redshift, Snowflake, DuckDB,
+        SQLite, Trino and Athena all take them. The engines that do not
+        (backtick, bracket) override this. Embedded quote characters are doubled,
+        which is the escape every one of those grammars uses.
+
+        The counterpart to ``adapter.quote()`` for a driver, which has no dbt
+        adapter to ask: a relation must not be spelled two ways for the same
+        warehouse depending on which path opened it.
+        """
+        return '"' + identifier.replace('"', '""') + '"'
+
     # --- Statement timeout ---
 
     def statement_timeout_sql(self, seconds: int) -> str | None:

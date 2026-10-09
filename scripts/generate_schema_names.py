@@ -51,6 +51,8 @@ def main() -> None:
         list_palettes,
         palette,
     )
+    from dbt_charts.core.diagnostics.codes_retired import RETIRED_WARNING_CODES
+    from dbt_charts.core.diagnostics.registry import REGISTRY
     from dbt_charts.core.text.predefined_formats import (
         PREDEFINED_SPECS,
         PREDEFINED_TIME_SPECS,
@@ -106,12 +108,27 @@ def main() -> None:
         {*stops_palette_names, *VEGA_SCHEME_NAMES} - excluded_scheme_names
     )
 
+    # Retired codes stay legal: a board that suppresses one keeps loading, with
+    # a warning (suppression.warn_retired_codes).
+    warning_codes = sorted(REGISTRY.codes(level="warning") | RETIRED_WARNING_CODES)
+    # A query-domain diagnostic never carries a chart id, so a chart-scoped
+    # `warnings_ignore` naming one would silently suppress nothing.
+    chart_warning_codes = sorted(
+        {
+            c
+            for c in REGISTRY.codes(level="warning")
+            if REGISTRY.get(c).domain != "query"
+        }
+        | RETIRED_WARNING_CODES
+    )
+
     content = (
         '"""Generated. Do not edit by hand — run `just generate-schema-names`.\n\n'
         "Source: list_built_in_themes() (compile/config.py), PREDEFINED_SPECS\n"
         "(text/predefined_formats.py), list_palettes() and palette()\n"
         "(compile/resolve/style/palette.py), VEGA_SCHEME_NAMES\n"
-        "(compile/models/primitives.py), get_theme_style() (compile/config.py).\n"
+        "(compile/models/primitives.py), get_theme_style() (compile/config.py),\n"
+        "REGISTRY and RETIRED_WARNING_CODES (diagnostics/).\n"
         '"""\n\n'
         "from __future__ import annotations\n\n"
         "from typing import Literal\n\n"
@@ -152,7 +169,13 @@ def main() -> None:
         "# these are the values worth completing. Like FormatAlias, the field carrying\n"
         "# this reads `CategorySlotToken | str`: dotted palette tokens\n"
         "# (`dbt-grays.muted`) and literal hex stay legal.\n"
-        f"{_literal_block('CategorySlotToken', [f'category[{i}]' for i in range(1, category_slots + 1)])}"
+        f"{_literal_block('CategorySlotToken', [f'category[{i}]' for i in range(1, category_slots + 1)])}\n"
+        "# Every warning code a `query.ignore` may suppress, plus retired codes\n"
+        "# (still accepted, with a warning).\n"
+        f"{_literal_block('WarningCode', warning_codes)}\n"
+        "# WarningCode minus query-domain codes: what a chart's `warnings_ignore`\n"
+        "# can suppress.\n"
+        f"{_literal_block('ChartWarningCode', chart_warning_codes)}"
     )
     _OUT.write_text(content, encoding="utf-8")
     try:
@@ -164,7 +187,8 @@ def main() -> None:
         f"({len(stops_palette_names)} with stops), "
         f"{len(scale_palette_names)} scale palettes, {len(format_aliases)} format "
         f"aliases ({len(number_format_aliases)} number, {len(time_format_aliases)} "
-        f"time), {category_slots} category slots → {out_display}"
+        f"time), {category_slots} category slots, {len(warning_codes)} warning "
+        f"codes → {out_display}"
     )
 
 

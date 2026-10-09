@@ -118,6 +118,7 @@ from dbt_charts.core.render.warnings import (
     registry as _warnings_registry,
     run_all,
 )
+from dbt_charts.core.text.format_d3 import number_locale_scope
 from dbt_charts.core.utils import Rows
 
 # Formats whose payload is a layout-tree walk instead of the drawn svg — every
@@ -424,6 +425,33 @@ def render(
     warnings_ignore: frozenset[str] = frozenset(),
     max_rows_per_query: int = NO_ROW_CAP,
     **options: Any,
+) -> RenderResult:
+    with number_locale_scope(board.regional.format_locale):
+        return _render(
+            board,
+            executor,
+            format,
+            variables,
+            ignore_codes,
+            builtin_variables,
+            max_workers,
+            warnings_ignore,
+            max_rows_per_query,
+            **options,
+        )
+
+
+def _render(
+    board: Board,
+    executor: Executor,
+    format: str,
+    variables: VariableValues | None,
+    ignore_codes: set[str] | None,
+    builtin_variables: VariableValues | None,
+    max_workers: int | None,
+    warnings_ignore: frozenset[str],
+    max_rows_per_query: int,
+    **options: Any,  # type-state: explicit_any — render()'s own pass-through options
 ) -> RenderResult:
     """Render a compiled board.
 

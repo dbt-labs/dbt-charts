@@ -275,18 +275,20 @@ ERR_SOURCE_NOT_FOUND_EMPTY = REGISTRY.register(
     )
 )
 
-ERR_NO_DEFAULT_SOURCE = REGISTRY.register(
+ERR_SOURCE_NOT_NAMED = REGISTRY.register(
     ErrorCode(
-        code="ERR-NO-DEFAULT-SOURCE",
+        code="ERR-SOURCE-NOT-NAMED",
         domain="execute",
-        title="Source name required but none specified",
+        title="Query names no source",
         message_template=(
-            "Source name required: {available}. Name a source for the query."
+            "Query names no source. Available: {available}. "
+            "Set `source:` on the query or at the board root."
         ),
         doc=(
-            "Fired when a query reaches execution without a source name and there "
-            "is no default source configured. Specify a source name on the query "
-            "or configure a default source."
+            "Fired when a SQL query reaches execution without naming a source. "
+            "There is no implicit source to fall back to: set `source:` on the "
+            "query, or once at the board root so every query inherits it, to one "
+            "of the available sources."
         ),
         docs_topic="queries",
     )
@@ -449,11 +451,11 @@ ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD = REGISTRY.register(
             "does not support this field; remove it from the source config."
         ),
         doc=(
-            "Fired when a DuckDB source authors `plugins`, `filesystems`, "
-            "`remote`, or `use_credential_provider` and it is executed by the "
-            "in-process DuckDBAdapter, including a `dbt_profile` source that "
-            "expanded to a duckdb target carrying one of these fields, since "
-            "dbt_profile does not change which adapter runs the query. These "
+            "Fired when a `dbt_profile` source expands to a duckdb target "
+            "carrying `plugins`, `filesystems`, `remote`, or "
+            "`use_credential_provider` and the in-process DuckDBAdapter "
+            "executes it. A directly authored duckdb source is rejected at "
+            "parse time instead. These "
             "fields need dbt-duckdb's own connection lifecycle (plugin hooks, "
             "fsspec registration, remote transport) that the in-process adapter "
             "does not implement; silently ignoring them would connect with "
@@ -564,7 +566,7 @@ ERR_UNPARSEABLE_SQL = REGISTRY.register(
         fix_template=(
             "If the warehouse accepts this query, the SQL is fine; the parser "
             "just does not model that dialect or macro yet, and only dbt charts' "
-            "static checks (read-only enforcement, fanout and reaggregation "
+            "static checks (read-only enforcement, reaggregation and join "
             "lint) are skipped for it. If the warehouse rejects it too, fix the "
             "syntax at the reported position."
         ),
@@ -675,6 +677,130 @@ ERR_ADAPTER_NOT_INSTALLED = REGISTRY.register(
             '`pip install "dbt-charts[snowflake]"` for a pip/venv install. The '
             "message names the command that matches how this dbt Charts was "
             "installed. Raised before any connection is attempted."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_DRIVER_PLATFORM_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DRIVER-PLATFORM-UNSUPPORTED",
+        domain="execute",
+        title="No warehouse driver is published for this machine",
+        message_template=(
+            "No {driver} driver is published for {arch} {os}. Published "
+            "platforms: {available}."
+        ),
+        doc=(
+            "Lake compute has no ADBC driver on PyPI, so dbt Charts downloads "
+            "dbt's own build for this machine's OS and CPU. Fired when no build "
+            "exists for that combination. The download is refused rather than "
+            "attempted, because dbt Charts will only run a binary whose SHA-256 "
+            "it pinned in advance. Run dbt Charts on one of the platforms named "
+            "in the message."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_DRIVER_TOO_LARGE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DRIVER-TOO-LARGE",
+        domain="execute",
+        title="The downloaded warehouse driver expanded past its size ceiling",
+        message_template=(
+            "{url} expanded past {ceiling} bytes and was discarded before it "
+            "could fill the disk."
+        ),
+        doc=(
+            "A pinned SHA-256 says nothing about how far the bytes expand, and "
+            "the expansion necessarily happens before the hash can be compared, "
+            "so dbt Charts also caps the unpacked size. Nothing is written to "
+            "the driver cache. A published driver is far below the cap, so this "
+            "means the response was not the artifact dbt published."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_DRIVER_CHECKSUM_MISMATCH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DRIVER-CHECKSUM-MISMATCH",
+        domain="execute",
+        title="The warehouse driver is not the pinned build",
+        message_template=(
+            "{subject} hashes to {actual}, not the pinned {expected}. {outcome}"
+        ),
+        doc=(
+            "Fired when a warehouse driver does not match the SHA-256 pinned for "
+            "its version and platform, either as downloaded or as already cached "
+            "on disk. A downloaded file is discarded and no library is loaded. A "
+            "cached file is never overwritten, because the cache is shared with "
+            "dbt: delete the named file and retry. A download that repeats the "
+            "mismatch is usually a truncated or proxy-rewritten response; a cached "
+            "file that fails is truncated, corrupted or replaced."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_RESULT_NUMERIC_OVERFLOW = REGISTRY.register(
+    ErrorCode(
+        code="ERR-RESULT-NUMERIC-OVERFLOW",
+        domain="execute",
+        title="A returned number is too large to represent",
+        message_template=(
+            "Column {column!r} holds a whole number too large for a 64-bit integer. "
+            "Cast it in the query (e.g. to VARCHAR or FLOAT) to choose how it should "
+            "be read."
+        ),
+        doc=(
+            "Fired when a warehouse returns an integer wider than 64 bits. dbt "
+            "Charts refuses to narrow it, because a driver's own narrowing can "
+            "wrap silently and produce a plausible wrong number. Cast the column "
+            "in the query to state what you want instead."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_WAREHOUSE_RESULT_WARNING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-WAREHOUSE-RESULT-WARNING",
+        domain="execute",
+        title="The warehouse reported a warning about this result",
+        message_template=(
+            "The warehouse reported a warning about this result: {warnings}"
+        ),
+        doc=(
+            "Fired when the warehouse answered a query and attached a warning, "
+            "such as an export limit that truncated the rows. A result the "
+            "warehouse itself flagged as incomplete is a wrong answer that looks "
+            "right, so dbt Charts raises rather than rendering it. Change the "
+            "query so the warning no longer applies, for example by selecting "
+            "fewer rows."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_DBT_TARGET_NEEDS_SOURCE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DBT-TARGET-NEEDS-SOURCE",
+        domain="execute",
+        title="This dbt target is reachable only through a declared source",
+        message_template=(
+            "This dbt project's target {target!r} is {warehouse}, which dbt "
+            "Charts reaches only through a declared source. Add a source with "
+            "`dbt_profile: {profile}` and `target: {target}`, and set `source:` "
+            "on the query."
+        ),
+        doc=(
+            "Fired when a query uses dbt Jinja such as `{{ ref() }}` with no "
+            "`source:`, and the dbt project's own target is lake compute. Such "
+            "a query would run through dbt Core against that target, and dbt "
+            "Core has no lake compute adapter. Declare a source that names the "
+            "profile and target, and set `source:` on the query."
         ),
         docs_topic="queries",
     )

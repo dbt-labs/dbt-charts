@@ -26,7 +26,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.chart.normalized.kpi import KpiChart
-from dbt_charts.core.compile.models.primitives import FormatAliases
+from dbt_charts.core.compile.models.primitives import FormatTable
 from dbt_charts.core.compile.template.display_text import resolve_display_text
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_resolution import collect_display_text_inputs
@@ -249,7 +249,7 @@ def render_chart_item_terminal(
     available_width: int,
     available_height: int,
     *,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> str:
     """Render a chart item to terminal.
 

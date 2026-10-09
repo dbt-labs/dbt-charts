@@ -18,14 +18,14 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    StringConstraints,
     Tag,
     TypeAdapter,
     field_validator,
     model_validator,
 )
 
-from dbt_charts.core.aliases import normalize_alias_url
-from dbt_charts.core.compile.models.cache import CachePatch
+from dbt_charts.core.compile.models.cache import CacheInput, CachePatch
 from dbt_charts.core.compile.models.chart.authored import AuthoredChart
 from dbt_charts.core.compile.models.constraints import (
     AtLeastOneOf,
@@ -43,8 +43,10 @@ from dbt_charts.core.compile.models.markers import (
     Strategy,
 )
 from dbt_charts.core.compile.models.primitives import (
+    ErrorHint,
     HtmlPolicy,
     IncrementalValue,
+    Regional,
     validate_incremental_value,
 )
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
@@ -63,6 +65,7 @@ from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.variable.authored import (
     SingleRowBoolProbe,
     Variable,
+    reject_internal_variable_keys,
 )
 
 
@@ -85,7 +88,7 @@ def _chart_discriminator(v: object) -> str:
 # — the migrator's projected schema widens for free instead of needing a
 # hand-maintained copy (renderers/json_schema.py, renderers/vscode_schema.py).
 VariableOrRef = Annotated[
-    Annotated[Variable, Tag("@inline")]
+    Annotated[Variable, BeforeValidator(reject_internal_variable_keys), Tag("@inline")]
     | Annotated[
         VariableRef,
         BeforeValidator(
@@ -416,6 +419,16 @@ def desugar_theme(
     return data
 
 
+AbsoluteAlias = Annotated[
+    str,
+    StringConstraints(pattern=r"^/"),
+    ErrorHint(
+        "Alias {value!r} is not absolute: aliases must start with a leading /. "
+        "Example: /old-reports/"
+    ),
+]
+
+
 class AuthoredBoard(ConstrainedModel):
     """AuthoredBoard definition from YAML.
 
@@ -484,7 +497,7 @@ class AuthoredBoard(ConstrainedModel):
     tags: Annotated[list[str] | None, Merge(Strategy.APPEND, nested=Strategy.CHILD)] = (
         Field(default=None, description="Keywords for grouping and searching boards.")
     )
-    aliases: list[str] | None = (
+    aliases: list[AbsoluteAlias] | None = (
         Field(  # no Merge marker -- identity field, validate-absent in extends/meta lane
             default=None,
             description=(
@@ -551,7 +564,7 @@ class AuthoredBoard(ConstrainedModel):
     # field-for-field. Overriding the meta.yml block whole would make
     # `cache: true` — the one spelling that sets nothing but the switch — drop
     # the directory's ttl for the project root's.
-    cache: CachePatch = Field(
+    cache: CacheInput = Field(
         default_factory=CachePatch,
         description=(
             "Cache policy for every query in this dashboard, e.g. cache: 1h: "
@@ -642,7 +655,11 @@ class AuthoredBoard(ConstrainedModel):
 
     # Collapsible section (details)
     details: Annotated[
-        BoardDetails | None, BeforeValidator(_coerce_details), Merge(Strategy.OVERRIDE)
+        BoardDetails | None,
+        BeforeValidator(
+            _coerce_details, json_schema_input_type=str | BoardDetails | None
+        ),
+        Merge(Strategy.OVERRIDE),
     ] = Field(
         default=None,
         description=(
@@ -711,6 +728,14 @@ class AuthoredBoard(ConstrainedModel):
         ),
     )
 
+    regional: Regional | None = Field(
+        default=None,
+        description=(
+            "Locale and currency for every number on the board. Set it in "
+            "charts/meta.yml to cover a folder; a nested board takes its root's."
+        ),
+    )
+
     @field_validator("incremental", mode="before")
     @classmethod
     def _validate_incremental(
@@ -729,21 +754,6 @@ class AuthoredBoard(ConstrainedModel):
                 "should be at the top level of the YAML file, not nested under 'board:'."
             )
         return data
-
-    @model_validator(mode="after")
-    def validate_aliases(self) -> AuthoredBoard:
-        """Every alias must be absolute, per ``aliases``' own description.
-
-        Checked through ``normalize_alias_url`` so the authored surface and the
-        redirect index cannot disagree about what a well-formed alias is; the
-        normalized value is discarded, since the board stores what the author
-        wrote.
-        """
-        if self.aliases is None:
-            return self
-        for alias in self.aliases:
-            normalize_alias_url(alias)
-        return self
 
     def get_default_source(self) -> str | None:
         """Return the default source name, or None."""

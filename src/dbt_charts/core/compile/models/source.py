@@ -26,7 +26,6 @@ Read-only posture per warehouse:
     | DuckDB          | read_only=True  | Handled in-process by DuckDBAdapter                   |
     | SQLite          | URI ?mode=ro    | Handled in-process by SqliteAdapter and InspectConnection|
     | Postgres        | none            | Bind a SELECT-only role to the dbt profile credential |
-    | MySQL/MariaDB   | none            | Bind a SELECT-only user to the dbt profile credential |
     | Snowflake       | none            | Bind a SELECT-only role to the Snowflake user/key-pair|
     | BigQuery        | none            | Bind credentials to roles/bigquery.dataViewer         |
     | Databricks      | none            | Unity Catalog: bind service principal to SELECT-only  |
@@ -46,13 +45,24 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import Annotated, Any, ClassVar, Literal, get_args, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Literal,
+    TypeVar,
+    get_args,
+    get_type_hints,
+)
 
 from pydantic import (
     AliasChoices,
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
+    Tag,
+    TypeAdapter,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -60,7 +70,20 @@ from pydantic import (
 
 from dbt_charts.core.attribution import validate_attribution
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.models.cache import CachePatch, validate_cache_layer
+from dbt_charts.core.compile.models.cache import (
+    CacheInput,
+    CachePatch,
+    validate_cache_layer,
+)
+from dbt_charts.core.compile.models.constraints import (
+    AtLeastOneOf,
+    AtMostOneOf,
+    ConstrainedModel,
+    Constraint,
+    Forbids,
+    IsSet,
+    Requires,
+)
 from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_CREDENTIAL_LITERAL
 
@@ -76,10 +99,10 @@ _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #
 # Scoped follow-up (needs dbt-profile field-contract owner sign-off before adding,
 # per the initiative's open decision): other documented dbt secret fields —
-# client_secret, refresh_token, access_token, private_key_passphrase, sslkey, and
-# bigquery credentials_base64 — are not yet covered here.
+# refresh_token, access_token, private_key_passphrase, sslkey, and bigquery
+# credentials_base64 — are not yet covered here.
 KNOWN_SECRET_FIELDS: frozenset[str] = frozenset(
-    {"password", "private_key", "keyfile_json", "token", "secret"}
+    {"password", "private_key", "keyfile_json", "token", "secret", "client_secret"}
 )
 
 
@@ -199,7 +222,7 @@ class BaseSourceConfig(BaseModel):
 
     # None = no source-level cache override authored; queries against this
     # source inherit the project default (then board/query refinements).
-    cache: CachePatch | None = Field(
+    cache: CacheInput | None = Field(
         default=None,
         description=(
             "Cache policy default for every query against this source, e.g. "
@@ -420,38 +443,6 @@ class DuckDBSecretConfig(BaseModel):
                     f"scalars, or a flat mapping of scalars; got {type(value).__name__}"
                 )
         return self
-
-
-class DuckDBRemoteConfig(BaseModel):
-    """dbt-duckdb remote connection settings."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    host: Annotated[str, Field(description="Remote DuckDB host name.")]
-    port: Annotated[int, Field(description="Remote DuckDB port number.")]
-    user: Annotated[str, Field(description="Remote DuckDB user name.")]
-    password: Annotated[
-        str | None,
-        Field(description="Remote DuckDB password."),
-    ] = None
-
-
-class DuckDBPluginConfig(BaseModel):
-    """One dbt-duckdb plugin declaration."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    module: Annotated[
-        str, Field(description="Python module that implements the plugin.")
-    ]
-    alias: Annotated[
-        str | None,
-        Field(description="Optional import alias for the plugin module."),
-    ] = None
-    config: Annotated[
-        dict[str, SourceOptionScalar] | None,
-        Field(description="Plugin-specific scalar configuration values."),
-    ] = None
 
 
 class DuckDBRetriesConfig(BaseModel):
@@ -691,7 +682,9 @@ class SnowflakeSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = 0.0
 
 
-class BigQuerySourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
+class BigQuerySourceConfig(
+    AttributedSourceConfig, DatabaseSourceConfig, ConstrainedModel
+):
     """BigQuery source configuration.
 
     Field names match dbt profiles.yml exactly.
@@ -699,6 +692,14 @@ class BigQuerySourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     Read-only posture: no native driver flag. Bind credentials to
     roles/bigquery.dataViewer (or equivalent) at the IAM layer.
     """
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtMostOneOf(
+            ("keyfile", "keyfile_json"),
+            "BigQuery credentials must use either 'keyfile' (path to JSON file) "
+            "or 'keyfile_json' (inline dict), not both.",
+        ),
+    )
 
     source_category: ClassVar[str] = "database"
     type: Literal["bigquery"] = Field(description="Source type identifier.")
@@ -845,13 +846,7 @@ class BigQuerySourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = None
 
     @model_validator(mode="after")
-    def _resolve_auth(self) -> BigQuerySourceConfig:
-        """Validate credential fields and infer method when not explicitly set."""
-        if self.keyfile is not None and self.keyfile_json is not None:
-            raise ValueError(
-                "BigQuery credentials must use either 'keyfile' (path to JSON file) "
-                "or 'keyfile_json' (inline dict), not both."
-            )
+    def _infer_method(self) -> BigQuerySourceConfig:
         if self.method is None:
             self.method = infer_bq_method(self.keyfile, self.keyfile_json)
         return self
@@ -1063,7 +1058,33 @@ def validate_databricks_http_path(v: str) -> str:
     return v
 
 
-class DatabricksSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
+# Without a credential, dbt-databricks opens a browser login and hangs headless workers.
+DATABRICKS_CREDENTIAL_CONSTRAINTS: tuple[Constraint, ...] = (
+    AtLeastOneOf(
+        ("token", "client_id", "client_secret"),
+        "Databricks needs either token or client_id and client_secret.",
+    ),
+    Forbids(
+        ("client_id", "client_secret"),
+        "Databricks takes either token or client_id and client_secret, not both.",
+        when=(IsSet("token"),),
+    ),
+    Requires(
+        ("client_secret",),
+        "client_id and client_secret must be set together; client_secret is missing.",
+        when=(IsSet("client_id"),),
+    ),
+    Requires(
+        ("client_id",),
+        "client_id and client_secret must be set together; client_id is missing.",
+        when=(IsSet("client_secret"),),
+    ),
+)
+
+
+class DatabricksSourceConfig(
+    AttributedSourceConfig, DatabaseSourceConfig, ConstrainedModel
+):
     """Databricks source configuration.
 
     Field names match dbt profiles.yml exactly, with one exception:
@@ -1073,15 +1094,35 @@ class DatabricksSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ``catalog`` is required: dbt's own ``__post_init__`` silently defaults an
     unset catalog to ``hive_metastore``.
 
+    Credentials are a ``token`` or an OAuth M2M ``client_id`` plus
+    ``client_secret``; the method is whichever set is present, so there is no
+    ``auth_type`` field. ``build_adapter`` maps the M2M set to dbt-databricks'
+    ``auth_type: oauth``.
+
     Read-only posture: no native driver flag. Unity Catalog: bind the service
     principal or token to a SELECT-only grant set.
     """
 
     source_category: ClassVar[str] = "database"
+    __constraints__ = DATABRICKS_CREDENTIAL_CONSTRAINTS
     type: Literal["databricks"] = Field(description="Source type identifier.")
     host: str = Field(description="Databricks workspace host name.")
     http_path: str = Field(description="HTTP path of the SQL warehouse.")
-    token: str = Field(min_length=1, description="Personal access token.")
+    token: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Personal access token. Use this or client_id with client_secret.",
+    )
+    client_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Application ID of an OAuth service principal. Set with client_secret.",
+    )
+    client_secret: str | None = Field(
+        default=None,
+        min_length=1,
+        description="OAuth secret of the service principal. Set with client_id.",
+    )
     catalog: str = Field(description="Unity Catalog catalog name.")
     schema_: str | None = Field(
         alias="schema", default=None, description="Default schema for queries."
@@ -1115,27 +1156,6 @@ class DatabricksSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     @classmethod
     def _validate_http_path(cls, v: str) -> str:
         return validate_databricks_http_path(v)
-
-
-class MySQLSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
-    """MySQL source configuration.
-
-    Field names match dbt profiles.yml exactly.
-
-    Read-only posture: no native driver flag. Bind a SELECT-only user to the
-    dbt profile credential at the database level.
-    """
-
-    source_category: ClassVar[str] = "database"
-    type: Literal["mysql"] = Field(description="Source type identifier.")
-    host: str = Field(description="MySQL host name or IP address.")
-    port: int = Field(default=3306, description="MySQL port number.")
-    database: str = Field(description="MySQL database name.")
-    schema_: str = Field(
-        alias="schema", default="", description="Default schema for queries."
-    )
-    user: str = Field(description="MySQL user name.")
-    password: str = Field(description="MySQL password.")
 
 
 class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
@@ -1283,6 +1303,14 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = None
 
 
+# dbt-duckdb fields that need its own connection lifecycle (plugin hooks, fsspec
+# registration, remote transport), which the in-process adapter does not implement.
+UNSUPPORTED_DUCKDB_FIELDS = frozenset(
+    {"plugins", "filesystems", "remote", "use_credential_provider"}
+)
+_RawInput = TypeVar("_RawInput")
+
+
 class DuckDBSourceConfig(DatabaseSourceConfig):
     """DuckDB source configuration.
 
@@ -1351,38 +1379,9 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
             description="Root path for dbt-duckdb external materializations.",
         ),
     ] = "."
-    # Unsupported fields parse only so the executor can name them in its error.
-    use_credential_provider: Annotated[
-        str | None,
-        Field(
-            description="Not supported; remove this field from the source config.",
-            json_schema_extra={"internal": True},
-        ),
-    ] = None
     attach: Annotated[
         list[DuckDBAttachmentConfig] | None,
         Field(description="Databases to attach to the DuckDB connection."),
-    ] = None
-    filesystems: Annotated[
-        list[dict[str, SourceOptionScalar]] | None,
-        Field(
-            description="Not supported; remove this field from the source config.",
-            json_schema_extra={"internal": True},
-        ),
-    ] = None
-    remote: Annotated[
-        DuckDBRemoteConfig | None,
-        Field(
-            description="Not supported; remove this field from the source config.",
-            json_schema_extra={"internal": True},
-        ),
-    ] = None
-    plugins: Annotated[
-        list[DuckDBPluginConfig] | None,
-        Field(
-            description="Not supported; remove this field from the source config.",
-            json_schema_extra={"internal": True},
-        ),
     ] = None
     disable_transactions: Annotated[
         bool,
@@ -1427,6 +1426,19 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
                 f"no leading digit): got {v!r}"
             )
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_unsupported_fields(cls, data: _RawInput) -> _RawInput:
+        """Reject fields the in-process adapter cannot honor at parse time."""
+        if isinstance(data, dict):
+            unsupported = sorted(UNSUPPORTED_DUCKDB_FIELDS & data.keys())
+            if unsupported:
+                raise ValueError(
+                    f"DuckDB source field {unsupported[0]!r} is not supported; "
+                    "remove it from the source config."
+                )
+        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -1490,6 +1502,7 @@ class CsvSourceConfig(BaseSourceConfig):
     source_category: ClassVar[str] = "file"
     type: Literal["csv"] = Field(description="Source type identifier.")
     files: dict[str, str] = Field(
+        min_length=1,
         description=(
             "Mapping of table_name → file path or glob (``*``/``?``), relative "
             "to the project root. A glob must match at least one file; matched "
@@ -1498,18 +1511,13 @@ class CsvSourceConfig(BaseSourceConfig):
             "per table (``execution.max_glob_file_count`` / "
             "``file_source_max_tables`` / ``file_source_max_bytes``). "
             "Required, non-empty."
-        )
+        ),
     )
     delimiter: str = Field(default=",", description="Field delimiter character.")
     encoding: str = Field(default="utf-8", description="File encoding.")
 
     @model_validator(mode="after")
-    def _require_nonempty_files(self) -> CsvSourceConfig:
-        if not self.files:
-            raise ValueError(
-                "CsvSourceConfig: files must not be empty — "
-                "provide at least one table_name → path entry."
-            )
+    def _validate_files(self) -> CsvSourceConfig:
         _validate_files_mapping("CsvSourceConfig", self.files, ".csv")
         return self
 
@@ -1535,6 +1543,7 @@ class ParquetSourceConfig(BaseSourceConfig):
     source_category: ClassVar[str] = "file"
     type: Literal["parquet"] = Field(description="Source type identifier.")
     files: dict[str, str] = Field(
+        min_length=1,
         description=(
             "Mapping of table_name → file path or glob (``*``/``?``), relative "
             "to the project root. A glob must match at least one file; matched "
@@ -1543,16 +1552,11 @@ class ParquetSourceConfig(BaseSourceConfig):
             "per table (``execution.max_glob_file_count`` / "
             "``file_source_max_tables`` / ``file_source_max_bytes``). "
             "Required, non-empty."
-        )
+        ),
     )
 
     @model_validator(mode="after")
-    def _require_nonempty_files(self) -> ParquetSourceConfig:
-        if not self.files:
-            raise ValueError(
-                "ParquetSourceConfig: files must not be empty — "
-                "provide at least one table_name → path entry."
-            )
+    def _validate_files(self) -> ParquetSourceConfig:
         _validate_files_mapping("ParquetSourceConfig", self.files, ".parquet")
         return self
 
@@ -1581,6 +1585,7 @@ class JsonSourceConfig(BaseSourceConfig):
     source_category: ClassVar[str] = "file"
     type: Literal["json"] = Field(description="Source type identifier.")
     files: dict[str, str] = Field(
+        min_length=1,
         description=(
             "Mapping of table_name → file path or glob (``*``/``?``), relative "
             "to the project root. A glob must match at least one file; matched "
@@ -1588,7 +1593,7 @@ class JsonSourceConfig(BaseSourceConfig):
             "glob, max 500 tables, max 5 GB per table "
             "(``execution.max_glob_file_count`` / ``file_source_max_tables`` "
             "/ ``file_source_max_bytes``). Required, non-empty."
-        )
+        ),
     )
     union_by_name: bool = Field(
         default=False,
@@ -1601,12 +1606,7 @@ class JsonSourceConfig(BaseSourceConfig):
     )
 
     @model_validator(mode="after")
-    def _require_nonempty_files(self) -> JsonSourceConfig:
-        if not self.files:
-            raise ValueError(
-                "JsonSourceConfig: files must not be empty — "
-                "provide at least one table_name → path entry."
-            )
+    def _validate_files(self) -> JsonSourceConfig:
         _validate_files_mapping("JsonSourceConfig", self.files, (".json", ".jsonl"))
         return self
 
@@ -1644,7 +1644,13 @@ class DbtProfileSourceConfig(AttributedSourceConfig, BaseSourceConfig):
     # warehouse it names. is_database_source stays False for it, as it was.
     source_category: ClassVar[str] = "dbt_profile"
     type: Literal["dbt_profile"] = Field(description="Source type identifier.")
-    profile: str = Field(description="dbt profile name from profiles.yml.")
+    profile: str | None = Field(
+        default=None,
+        description=(
+            "dbt profile name from profiles.yml. Defaults to $DBT_PROFILE, then "
+            "the `profile:` of the linked dbt project's dbt_project.yml."
+        ),
+    )
     target: str | None = Field(
         default=None,
         description="dbt target to use; defaults to the profile's default target.",
@@ -1669,6 +1675,122 @@ class DbtProfileSourceConfig(AttributedSourceConfig, BaseSourceConfig):
             "target-path → target."
         ),
     )
+
+
+# ============================================================================
+# LAKE COMPUTE
+# ============================================================================
+
+# dbt v2's `method` values, which are also the variant tags below.
+_LAKECOMPUTE_METHODS = ("token", "api_key", "okta_browser", "fivetran")
+
+
+class LakeComputeSourceBase(DatabaseSourceConfig):
+    """Fields every lake compute auth method shares.
+
+    The key names are dbt v2's profile keys verbatim (`okta_*`, `fivetran_*`
+    stay flat and prefixed, unlike this tree's nesting rule), so a profile
+    target maps one-to-one onto a source and a direct source reads the same as
+    the profile `dbt run` uses. `database:`/`schema:` are deliberately not
+    declared: nothing on the read path would consume them, and `attribution:`
+    is absent because the driver has no query-header channel yet.
+
+    Validation errors hide their input: a profile target carries every method's
+    credential, and a missing-field error would otherwise print the others.
+    """
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    source_category: ClassVar[str] = "database"
+    type: Literal["lakecompute"] = Field(description="Source type identifier.")
+    base_url: str | None = Field(
+        default=None,
+        description="Lake compute API endpoint.",
+    )
+    catalog_bundle: str | None = Field(
+        default=None,
+        description="Catalog bundle the lake compute session reads.",
+    )
+
+
+class LakeComputeTokenSource(LakeComputeSourceBase):
+    """Lake compute authenticated with an access token (the default method).
+
+    Example:
+        sources:
+          lake:
+            type: lakecompute
+            token: "{{ env_var('DBT_COMPUTE_AUTH_TOKEN') }}"
+    """
+
+    method: Literal["token"] = Field(
+        default="token", description="Authentication method."
+    )
+    token: str = Field(description="Lake compute access token.")
+
+
+class LakeComputeApiKeySource(LakeComputeSourceBase):
+    """Lake compute authenticated with an API key."""
+
+    method: Literal["api_key"] = Field(description="Authentication method.")
+    api_key: str = Field(description="Lake compute API key.")
+
+
+class LakeComputeOktaSource(LakeComputeSourceBase):
+    """Lake compute authenticated through Okta in the browser."""
+
+    method: Literal["okta_browser"] = Field(description="Authentication method.")
+    okta_auth_url: str | None = Field(
+        default=None, description="Okta authorization endpoint."
+    )
+    okta_token_url: str | None = Field(default=None, description="Okta token endpoint.")
+    okta_client_id: str | None = Field(
+        default=None, description="Okta application client ID."
+    )
+
+
+class LakeComputeFivetranSource(LakeComputeSourceBase):
+    """Lake compute authenticated with a Fivetran credential."""
+
+    method: Literal["fivetran"] = Field(description="Authentication method.")
+    fivetran_credential: str = Field(description="Fivetran API credential.")
+    fivetran_auth_url: str | None = Field(
+        default=None, description="Fivetran API endpoint for exchanging the credential."
+    )
+
+
+def _lakecompute_method(
+    data: Any,  # type-state: explicit_any — raw YAML dict or an already-built variant
+) -> str:
+    """Pick the variant by `method`, which dbt v2 defaults to `token`."""
+    method = (
+        data.get(
+            "method", "token"
+        )  # type-state: silent_fallback — dbt's documented default method
+        if isinstance(data, dict)
+        else data.method
+    )
+    if method not in _LAKECOMPUTE_METHODS:
+        raise ValueError(
+            f"Unknown lakecompute method {method!r}; expected one of: "
+            f"{', '.join(_LAKECOMPUTE_METHODS)}."
+        )
+    return method
+
+
+LakeComputeSourceConfig = Annotated[
+    Annotated[LakeComputeTokenSource, Tag("token")]
+    | Annotated[LakeComputeApiKeySource, Tag("api_key")]
+    | Annotated[LakeComputeOktaSource, Tag("okta_browser")]
+    | Annotated[LakeComputeFivetranSource, Tag("fivetran")],
+    Discriminator(_lakecompute_method),
+]
+LAKECOMPUTE_ADAPTER: TypeAdapter[
+    LakeComputeTokenSource
+    | LakeComputeApiKeySource
+    | LakeComputeOktaSource
+    | LakeComputeFivetranSource
+] = TypeAdapter(LakeComputeSourceConfig, config=ConfigDict(hide_input_in_errors=True))
 
 
 # ============================================================================
@@ -1709,7 +1831,6 @@ SourceConfig = (
     | BigQuerySourceConfig
     | RedshiftSourceConfig
     | DatabricksSourceConfig
-    | MySQLSourceConfig
     | TrinoSourceConfig
     | DuckDBSourceConfig
     | SQLiteSourceConfig
@@ -1718,6 +1839,10 @@ SourceConfig = (
     | JsonSourceConfig
     | HttpSourceConfig
     | DbtProfileSourceConfig
+    | LakeComputeTokenSource
+    | LakeComputeApiKeySource
+    | LakeComputeOktaSource
+    | LakeComputeFivetranSource
 )
 
 # What the execute layer receives from a SourceResolver. Wider than SourceConfig
@@ -1733,9 +1858,21 @@ def _source_type_str(cls: type[SourceConfig]) -> str:
 
 
 # Derived from the SourceConfig union — no manual maintenance needed.
-# Adding a new SourceConfig variant automatically updates this map.
+# Adding a new SourceConfig variant automatically updates this map. A type with
+# several variants (lakecompute, one per auth method) maps to the last of them;
+# the map is read only for what the variants share, and parsing goes through
+# `_SOURCE_ADAPTERS`.
 _SOURCE_TYPE_MAP: dict[str, type[SourceConfig]] = {
     _source_type_str(m): m for m in get_args(SourceConfig)
+}
+
+# Each entry validates one SourceConfig member; TypeAdapter is invariant.
+_AnyTypeAdapter = TypeAdapter[Any]  # type-state: explicit_any — invariant generic
+_SOURCE_ADAPTERS: dict[str, _AnyTypeAdapter] = {
+    type_name: (
+        LAKECOMPUTE_ADAPTER if type_name == "lakecompute" else TypeAdapter(model)
+    )
+    for type_name, model in _SOURCE_TYPE_MAP.items()
 }
 
 VALID_SOURCE_TYPES: frozenset[str] = frozenset(_SOURCE_TYPE_MAP)
@@ -1754,6 +1891,25 @@ FILE_SOURCE_TYPES: frozenset[str] = frozenset(
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+
+_RETIRED_LAKECOMPUTE_TYPES = frozenset({"alt", "lake_compute"})
+
+
+def reject_retired_lakecompute_type(source_type: str) -> None:
+    """Refuse dbt v2's retired spellings, which it rejects rather than aliases.
+
+    Checked before dispatch because a validator on the `type` Literal would
+    never run: the lookup by type fails first.
+
+    Raises:
+        ValueError: *source_type* is `alt` or `lake_compute`.
+    """
+    if source_type in _RETIRED_LAKECOMPUTE_TYPES:
+        raise ValueError(
+            f"'{source_type}' is not a source type; dbt v2 spells lake compute "
+            "'lakecompute'."
+        )
 
 
 def parse_source_config(
@@ -1800,13 +1956,14 @@ def parse_source_config(
         raise ValueError(
             f"Source configuration 'type' must be a string; got {source_type!r}."
         )
-    if source_type not in _SOURCE_TYPE_MAP:
+    reject_retired_lakecompute_type(source_type)
+    if source_type not in _SOURCE_ADAPTERS:
         raise ValueError(
             f"Unknown source type: '{source_type}'. "
-            f"Valid types: {', '.join(sorted(_SOURCE_TYPE_MAP.keys()))}"
+            f"Valid types: {', '.join(sorted(_SOURCE_ADAPTERS.keys()))}"
         )
 
-    return _SOURCE_TYPE_MAP[source_type].model_validate(data, context={"env": env})
+    return _SOURCE_ADAPTERS[source_type].validate_python(data, context={"env": env})
 
 
 def is_database_source(config: ResolvedSourceConfig) -> bool:

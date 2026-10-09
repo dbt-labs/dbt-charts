@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.source import (
+    LAKECOMPUTE_ADAPTER,
     VALID_SOURCE_TYPES,
     BaseSourceConfig,
     DbtProfileSourceConfig,
@@ -34,13 +35,14 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SOURCE_NOT_FOUND,
 )
 from dbt_charts.core.diagnostics.codes_execute import (
-    ERR_NO_DEFAULT_SOURCE,
     ERR_SOURCE_CROSS_FILE_FORBIDDEN,
     ERR_SOURCE_INVALID_TYPE,
     ERR_SOURCE_MISSING_TYPE,
     ERR_SOURCE_NOT_FOUND_EMPTY,
+    ERR_SOURCE_NOT_NAMED,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.project_roots import resolve_dbt_profile_name
 
 # ERR-SOURCE-NOT-FOUND and ERR-SOURCE-INLINE-FORBIDDEN's message_template
 # requires query_name — most SourceResolver callers execute a named
@@ -237,33 +239,51 @@ class DefaultSourceResolver:
         DbtProfileSourceConfig so the registry re-routes on the concrete type.
 
         Raises:
-            ExecutionError: When dbt_project_path is absent, or profiles.yml lookup
-                or dbt's own validation fails (FileNotFoundError / ValueError from
+            ExecutionError: When no profile name resolves, `profiles_dir` has no
+                project to be relative to, or profiles.yml lookup or dbt's own
+                validation fails (FileNotFoundError / ValueError from
                 _read_target_dict).
         """
-        if dbt_context is None or dbt_context.dbt_project_path is None:
-            raise ExecutionError(
-                "dbt_profile source requires a dbt project, "
-                "but this adapter has no dbt_project_path configured."
-            )
-
         from dbt_charts.core.execute.adapters.dbt_adapter import _read_target_dict
 
-        profiles_dir = (
-            (dbt_context.dbt_project_path / cfg.profiles_dir).resolve()
-            if cfg.profiles_dir is not None
-            else None
-        )
+        project_path = dbt_context.dbt_project_path if dbt_context is not None else None
+        profiles_dir = None
+        if cfg.profiles_dir is not None:
+            if project_path is None:
+                raise ExecutionError(
+                    f"profiles_dir {cfg.profiles_dir!r} is relative to the linked "
+                    "dbt project, but no dbt project is linked."
+                )
+            profiles_dir = (project_path / cfg.profiles_dir).resolve()
 
         try:
             target_dict = _read_target_dict(
-                dbt_context.dbt_project_path,
-                cfg.profile,
+                project_path,
+                resolve_dbt_profile_name(cfg.profile, project_path),
                 cfg.target,
                 profiles_dir=profiles_dir,
             )
         except (FileNotFoundError, ValueError) as exc:
             raise ExecutionError(str(exc)) from exc
+
+        if target_dict["type"] == "lakecompute":
+            # The driver has no query-header channel, and a manifest directory
+            # would need a field only a dbt_profile source can carry. Refuse
+            # rather than accept either and drop it.
+            if cfg.attribution:
+                raise ExecutionError(
+                    "attribution is not supported for lakecompute sources yet."
+                )
+            if cfg.target_path is not None:
+                raise ExecutionError(
+                    "target_path is not supported for lakecompute sources yet; "
+                    "ref() resolves against the project's default manifest."
+                )
+            try:
+                return LAKECOMPUTE_ADAPTER.validate_python(target_dict)
+            except ValueError as exc:
+                # Validation errors hide their input, so no credential is quoted.
+                raise ExecutionError(str(exc)) from exc
 
         # Attribution and target_path ride the dbt charts source entry, not the dbt
         # target — profiles.yml belongs to dbt and rejects keys it doesn't know — so
@@ -294,7 +314,7 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
     Four rejection rules fire before any resolution:
 
     0. Source-less queries — `authored is None` is refused with
-       `ERR-NO-DEFAULT-SOURCE`. On the trusted local surface a sourceless
+       `ERR-SOURCE-NOT-NAMED`. On the trusted local surface a sourceless
        ad-hoc query falls through to the engine's scratch DuckDB
        (`DefaultSourceResolver` returns None); on a hosted/multi-tenant surface
        that fallback is an SSRF / local-file-read vector, so every query must
@@ -313,7 +333,8 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
     Accepted inputs delegate to `DefaultSourceResolver.resolve` for the shared
     lookup. The dbt-context fallback is intentionally disabled: an unknown
     name raises regardless of `dbt_context`, because dbt-profile names are not
-    part of the configured allowlist by definition.
+    part of the configured allowlist by definition. A configured `dbt_profile`
+    source is refused too — expanding it reads profiles.yml off the host's disk.
 
     **File sources are ordinary allowlist entries here; the rules above are
     about warehouse sources.** A csv/json/parquet entry names a repo-relative
@@ -356,7 +377,7 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
     ) -> ResolvedSourceConfig | None:
         if authored is None:
             raise DbtChartsError.from_code(
-                ERR_NO_DEFAULT_SOURCE,
+                ERR_SOURCE_NOT_NAMED,
                 available=sorted(project_sources.sources),
             )
 
@@ -390,6 +411,12 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
 
         if authored not in project_sources.sources:
             self._raise_not_found(authored, project_sources, query_name)
+
+        if project_sources.sources[authored].get("type") == "dbt_profile":
+            raise ExecutionError(
+                f"Source {authored!r} is a dbt_profile source, which reads "
+                "profiles.yml from the host's disk; this resolver does not expand it."
+            )
 
         return super().resolve(
             authored=authored,

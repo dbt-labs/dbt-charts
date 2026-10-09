@@ -20,7 +20,7 @@ from dbt_charts.core.compile.models.chart.resolved.callout import (
     ResolvedCalloutChart,
 )
 from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
-from dbt_charts.core.compile.models.primitives import HtmlPolicy
+from dbt_charts.core.compile.models.primitives import HtmlPolicy, Regional
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.variable.authored import (
@@ -207,6 +207,7 @@ class ResolvedBoard:
     # Board.base_dir): its markdown images' anchor, and their key in an artifact.
     base_dir: str | None  # type-state: optional — None is no location
     html_policy: HtmlPolicy
+    regional: Regional
     level: int  # Heading level (1 = root board, matches H{level})
 
     # Style (theme + board overrides already merged).

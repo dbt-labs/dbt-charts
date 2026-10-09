@@ -94,14 +94,8 @@ from dbt_charts.core.compile.models.style.theme import (
 # Generated first (continuous is embedded in BaseScaleStyle, which is
 # embedded in BaseAxisStyle). Order: leaf group → BaseScaleStyle → XScaleStyle.
 
-# ScaleContinuousStylePatch carries ScaleDomainValidationMixin (the domain
-# temporal-type check) via build_patch_model_ext, but NOT
-# _validate_log_pow_symlog_params —
-# that validator is defined directly on ScaleContinuousStyle (not on a mixin),
-# so build_patch_model_ext naturally excludes it from the patch. A theme layer
-# can set type:log and a chart-local patch can set only log.base; the
-# cross-field check fires once, on the fully-merged result via
-# ScaleContinuousStyle.model_validate.
+# ScaleContinuousStylePatch carries only ScaleDomainValidationMixin; the
+# log/pow/symlog rules stay on ScaleContinuousStyle (see there for why).
 if TYPE_CHECKING:
 
     class ScaleContinuousStylePatch(ScaleContinuousStyle):

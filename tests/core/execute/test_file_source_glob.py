@@ -30,14 +30,14 @@ from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 
 def _mat(project: Any) -> FileSourceMaterializer:
-    return FileSourceMaterializer(project, TrivialDuckDBCache())
+    return FileSourceMaterializer(project)
 
 
 class _CountingMaterializer(FileSourceMaterializer):
     """Materializer that counts materialize_and_run calls."""
 
-    def __init__(self, project: Any, cache: TrivialDuckDBCache) -> None:
-        super().__init__(project, cache)
+    def __init__(self, project: Any) -> None:
+        super().__init__(project)
         self.run_calls = 0
 
     def materialize_and_run(  # type: ignore[override]
@@ -397,7 +397,9 @@ class TestFileSourceMaxBytesCap:
         table = pa.table({"id": list(range(50))})
         parquet_path = tmp_path / "data" / "events.parquet"
         parquet_path.parent.mkdir(parents=True)
-        pq.write_table(table, parquet_path)
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            table, parquet_path
+        )
         raw_size = parquet_path.stat().st_size
         uncompressed = _parquet_uncompressed_size(parquet_path)
 
@@ -436,7 +438,9 @@ class TestFileSourceMaxBytesCap:
         parquet_path.parent.mkdir(parents=True)
         # Four row groups, so a guard that read only the first would measure a
         # quarter of the relation, land under the cap, and fail here.
-        pq.write_table(table, parquet_path, row_group_size=50_000)
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            table, parquet_path, row_group_size=50_000
+        )
         raw_size = parquet_path.stat().st_size
         uncompressed = _parquet_uncompressed_size(parquet_path)
 
@@ -472,7 +476,9 @@ class TestFileSourceMaxBytesCap:
         table = pa.table({"id": list(range(2_000))})
         data = tmp_path / "data"
         data.mkdir(parents=True)
-        pq.write_table(table, data / "events.parquet")
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            table, data / "events.parquet"
+        )
         pacsv.write_csv(table, data / "events.csv")
 
         csv_size = (data / "events.csv").stat().st_size
@@ -518,7 +524,9 @@ class TestFileSourceMaxBytesCap:
         table = pa.table({"id": list(range(50))})
         parquet_path = tmp_path / "data" / "events.parquet"
         parquet_path.parent.mkdir(parents=True)
-        pq.write_table(table, parquet_path)
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            table, parquet_path
+        )
         # Any file is over a 1-byte cap; this test is about what the message
         # then tells the caller to do, not about where the threshold sits.
         monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", "1")
@@ -653,7 +661,7 @@ class TestExecutorGlobCacheKey:
             },
         )
         board = self._board()
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
         ex = Executor(
             board,
             adapter_registry=self._registry(project),
@@ -678,7 +686,7 @@ class TestExecutorGlobCacheKey:
         board = self._board()
         result_cache = TrivialDuckDBCache()
 
-        mat1 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
             adapter_registry=self._registry(project),
@@ -689,7 +697,7 @@ class TestExecutorGlobCacheKey:
         ex1.execute_query("q")
         assert mat1.run_calls == 1
 
-        mat2 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
             adapter_registry=self._registry(project),
@@ -711,7 +719,7 @@ class TestExecutorGlobCacheKey:
         board = self._board()
         result_cache = TrivialDuckDBCache()
 
-        mat1 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
             adapter_registry=self._registry(project),
@@ -727,7 +735,7 @@ class TestExecutorGlobCacheKey:
         new_file.parent.mkdir(parents=True, exist_ok=True)
         new_file.write_text('[{"id": 2}]')
 
-        mat2 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
             adapter_registry=self._registry(project),
@@ -790,7 +798,7 @@ class TestExecutorGlobErrorCodes:
         from dbt_charts.core.diagnostics.codes_execute import ERR_GLOB_EMPTY
 
         project, board, registry = self._setup(tmp_path, {})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
         ex = Executor(
             board,
             adapter_registry=registry,
@@ -815,7 +823,7 @@ class TestExecutorGlobErrorCodes:
             f"data/{i:04d}/report.json": f'[{{"id": {i}}}]' for i in range(cap + 1)
         }
         project, board, registry = self._setup(tmp_path, files)
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
         ex = Executor(
             board,
             adapter_registry=registry,
@@ -843,7 +851,7 @@ class TestExecutorGlobErrorCodes:
             "data/b/report.json": '[{"id": 2, "extra": "oops"}]',
         }
         project, board, registry = self._setup(tmp_path, files)
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
         ex = Executor(
             board,
             adapter_registry=registry,

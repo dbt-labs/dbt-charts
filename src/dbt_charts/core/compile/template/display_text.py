@@ -16,7 +16,7 @@ from dbt_charts.core.compile.format_value import (
     format_table_cell_value,
     is_temporal_value,
 )
-from dbt_charts.core.compile.models.primitives import FormatAliases, FormatConfig
+from dbt_charts.core.compile.models.primitives import FormatConfig, FormatTable
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 from dbt_charts.core.compile.template.markdown_fence import resolve_outside_fences
 from dbt_charts.core.compile.template.query_result import QueryResult
@@ -51,7 +51,7 @@ def _is_number_text(text: str) -> bool:
     return True
 
 
-def _is_format_spec(spec: str, formats: FormatAliases | None) -> bool:
+def _is_format_spec(spec: str, formats: FormatTable | None) -> bool:
     from d3_format import parse as d3_parse
     from d3_format.errors import D3FormatError
     from dbt_charts.core.text.format_d3 import (
@@ -76,7 +76,7 @@ def _is_format_spec(spec: str, formats: FormatAliases | None) -> bool:
     return True
 
 
-def _text_format_filter(formats: FormatAliases | None) -> Callable[..., str]:
+def _text_format_filter(formats: FormatTable | None) -> Callable[..., str]:
     def format_cell(
         value: _TemplateArg, spec: _TemplateArg = None, *extra: _TemplateArg
     ) -> str:
@@ -99,7 +99,7 @@ def _text_format_filter(formats: FormatAliases | None) -> Callable[..., str]:
     def _narrative(spec: str) -> str | FormatConfig:
         # Prose reads "$4.2mn", not the axis-style "$4.2 M"; an alias that sets
         # its own notation keeps it.
-        alias = formats.get(spec) if formats else None
+        alias = formats.aliases.get(spec) if formats is not None else None
         if isinstance(alias, FormatConfig) and alias.notation is not None:
             return spec
         return FormatConfig(spec=spec, notation="narrative")
@@ -111,7 +111,7 @@ def resolve_display_text(
     text: str,
     variables: Mapping[str, Any],  # type-state: explicit_any — board variable values
     query_results: Mapping[str, QueryResult],
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> str:
     """Resolve display-text Jinja leniently; fenced code passes through."""
     format_cell = _text_format_filter(formats)

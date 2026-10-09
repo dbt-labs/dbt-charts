@@ -235,13 +235,14 @@ def _draw_control(
     # authored bounds. `step: 0.1` through it becomes 0, which the runtime reads
     # as "no step" — and the drawn thumb, positioned from the raw floats, would
     # then disagree with the value a click commits.
-    if traits_of(box.input).sizing == "slider":
+    reads = traits_of(box.input).bounds
+    if reads == "slider":
         bounds = (
             f' data-dbt-min="{escape_attr(_number_attr(control.slider_min))}"'
             f' data-dbt-max="{escape_attr(_number_attr(control.slider_max))}"'
             f' data-dbt-step="{escape_attr(_number_attr(control.slider_step))}"'
         )
-    elif box.input == "number":
+    elif reads == "authored":
         # Only what the author set: a number typed into a field is bounded by
         # nothing unless the board says so, never by the theme's slider range.
         bounds = "".join(

@@ -132,7 +132,7 @@ class TestResolveSourceConfig:
         """No default-DuckDB fallback: a real registry built via
         build_adapter_registry() (which registers a DuckDBAdapter) still raises
         for source=None — there is no stored default to fall back to."""
-        from dbt_charts.core.diagnostics.codes_execute import ERR_NO_DEFAULT_SOURCE
+        from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_NOT_NAMED
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
         )
@@ -141,14 +141,14 @@ class TestResolveSourceConfig:
 
         with pytest.raises(DbtChartsError) as exc_info:
             registry.resolve_source_config(source=None)
-        assert exc_info.value.code is ERR_NO_DEFAULT_SOURCE
+        assert exc_info.value.code is ERR_SOURCE_NOT_NAMED
 
     def test_no_source_non_duckdb_raises(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         # Non-DuckDB SqlAdapter has credentials/host/port that source_config_from_url
         # would drop — must raise instead of silently producing a mangled config.
-        from dbt_charts.core.diagnostics.codes_execute import ERR_NO_DEFAULT_SOURCE
+        from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_NOT_NAMED
 
         registry = AdapterRegistry(project=local_project(Path()))
         registry.register(
@@ -161,24 +161,24 @@ class TestResolveSourceConfig:
 
         with pytest.raises(DbtChartsError) as exc_info:
             registry.resolve_source_config(source=None)
-        assert exc_info.value.code is ERR_NO_DEFAULT_SOURCE
+        assert exc_info.value.code is ERR_SOURCE_NOT_NAMED
 
     def test_no_source_no_adapter_still_raises(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         # No registry at all — must also raise (not the "no SQL adapter" branch).
-        from dbt_charts.core.diagnostics.codes_execute import ERR_NO_DEFAULT_SOURCE
+        from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_NOT_NAMED
 
         with pytest.raises(DbtChartsError) as exc_info:
             AdapterRegistry(project=local_project(Path())).resolve_source_config(
                 source=None
             )
-        assert exc_info.value.code is ERR_NO_DEFAULT_SOURCE
+        assert exc_info.value.code is ERR_SOURCE_NOT_NAMED
         # No sources configured → `available` is an empty Sequence[str], which the
         # display path renders "none configured" — not "" or a bare list repr.
         assert "none configured" in exc_info.value.message
 
-    def test_no_default_source_error_renders_available_as_joined_names(
+    def test_source_not_named_error_renders_available_as_joined_names(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """The sourceless-SQL error passes `available` as a Sequence[str] like
@@ -186,7 +186,7 @@ class TestResolveSourceConfig:
         for display — never a raw Python list repr. Guards this raise site
         against regressing to a pre-joined string, which would diverge from the
         contract and crash the moment this code gains a hint_generator."""
-        from dbt_charts.core.diagnostics.codes_execute import ERR_NO_DEFAULT_SOURCE
+        from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_NOT_NAMED
 
         registry = _registry_with_sources(
             tmp_path,
@@ -198,7 +198,7 @@ class TestResolveSourceConfig:
 
         with pytest.raises(DbtChartsError) as exc_info:
             registry.resolve_source_config(source=None)
-        assert exc_info.value.code is ERR_NO_DEFAULT_SOURCE
+        assert exc_info.value.code is ERR_SOURCE_NOT_NAMED
         message = exc_info.value.message
         assert "alpha" in message and "beta" in message
         assert "['" not in message
@@ -455,10 +455,9 @@ class TestClose:
         from dbt_charts.core.execute.file_source_materializer import (
             FileSourceMaterializer,
         )
-        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
         project = local_project(tmp_path)
-        materializer = FileSourceMaterializer(project, TrivialDuckDBCache())
+        materializer = FileSourceMaterializer(project)
         closed = False
         original_close = materializer.close
 
@@ -483,7 +482,6 @@ class TestClose:
         from dbt_charts.core.execute.file_source_materializer import (
             FileSourceMaterializer,
         )
-        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -495,7 +493,7 @@ class TestClose:
         built: list[FileSourceMaterializer] = []
 
         def factory() -> FileSourceMaterializer:
-            materializer = FileSourceMaterializer(project, TrivialDuckDBCache())
+            materializer = FileSourceMaterializer(project)
             built.append(materializer)
             return materializer
 
@@ -567,7 +565,7 @@ class TestSourcelessRejectScopedToSql:
         registry = self._hosted_registry(tmp_path, local_project)
         result = registry.execute(SqlQuery(sql="SELECT 1 AS one", source=None))
         assert result.error is not None
-        assert "source name required" in str(result.error).lower()
+        assert "names no source" in str(result.error).lower()
 
     def test_named_non_sql_query_still_resolves_on_hosted_surface(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -619,7 +617,7 @@ class TestSourcelessSqlRejectedOnDefaultResolver:
         )
         return build_adapter_registry(local_project(tmp_path), read_only=False)
 
-    def test_sourceless_sql_query_raises_no_default_source(
+    def test_sourceless_sql_query_raises_source_not_named(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -627,7 +625,7 @@ class TestSourcelessSqlRejectedOnDefaultResolver:
         registry = self._registry_with_a_configured_source(tmp_path, local_project)
         result = registry.execute(SqlQuery(sql="SELECT 1 AS one", source=None))
         assert result.error is not None
-        assert "Name a source for the query" in str(result.error)
+        assert "names no source" in str(result.error)
 
     def test_sourceless_values_query_still_succeeds(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -678,7 +676,6 @@ def test_schema_query_on_a_file_source_refuses_even_with_a_materializer(
     from dbt_charts.core.execute.file_source_materializer import (
         FileSourceMaterializer,
     )
-    from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
     (tmp_path / "dbt_charts.yml").write_text(
         "sources:\n  marts:\n    type: csv\n    files:\n      orders: data/orders.csv\n"
@@ -687,7 +684,7 @@ def test_schema_query_on_a_file_source_refuses_even_with_a_materializer(
     registry = AdapterRegistry(
         project=project,
         project_sources=load_project_sources(project),
-        file_materializer=FileSourceMaterializer(project, TrivialDuckDBCache()),
+        file_materializer=FileSourceMaterializer(project),
     )
 
     result = registry.execute(SchemaQuery(source="marts"))
@@ -729,12 +726,11 @@ class TestFileSourceDispatch:
         from dbt_charts.core.execute.file_source_materializer import (
             FileSourceMaterializer,
         )
-        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
         return AdapterRegistry(
             project=project,
             project_sources=load_project_sources(project),
-            file_materializer=FileSourceMaterializer(project, TrivialDuckDBCache()),
+            file_materializer=FileSourceMaterializer(project),
         )
 
     def test_sql_query_returns_rows_from_a_real_csv(

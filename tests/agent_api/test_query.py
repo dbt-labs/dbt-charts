@@ -108,7 +108,7 @@ class TestExecuteQuerySourcelessHardError:
         result = execute_query(sql="SELECT 1 as x", adapter_registry=registry)
         assert result.success is False
         assert result.errors
-        assert "Name a source for the query" in result.errors[0]
+        assert "names no source" in result.errors[0]
 
     def test_named_source_still_works(self, registry: AdapterRegistry) -> None:
         from dbt_charts.agent_api.query import execute_query
@@ -143,12 +143,12 @@ class TestExecuteQueryTypedReturn:
     ) -> None:
         from dbt_charts.agent_api.query import execute_query
 
-        # A fanout query so diagnostics is non-empty — this is the JSON wire
+        # A re-aggregation query so diagnostics is non-empty — this is the JSON wire
         # boundary (print_json_result's model_dump_json(exclude_none=True)),
         # so a query with zero diagnostics would never exercise the recursive
         # null-dropping into the typed diagnostics list this test pins.
         result = execute_query(
-            sql="SELECT COUNT(*) FROM a JOIN b ON a.id = b.id",
+            sql="SELECT AVG(t) FROM (SELECT r, SUM(x) AS t FROM a GROUP BY r) s",
             source="db",
             adapter_registry=empty_registry,
         )
@@ -159,9 +159,9 @@ class TestExecuteQueryTypedReturn:
             assert key in wire
         assert "error" not in wire
 
-        # confidence is unset on a fanout finding with no relationship hints —
-        # exclude_none drops the key entirely rather than serializing null;
-        # detail/recommendation, which the validator does populate, still show.
+        # confidence is unset on a re-aggregation finding — exclude_none drops
+        # the key entirely rather than serializing null; detail/recommendation,
+        # which the validator does populate, still show.
         for diag in wire["diagnostics"]:
             assert None not in diag.values()
             assert "confidence" not in diag
@@ -176,7 +176,7 @@ class TestExecuteQueryTypedReturn:
         from dbt_charts.agent_api.validate_query import QueryDiagnostic
 
         result = execute_query(
-            sql="SELECT COUNT(*) FROM a JOIN b ON a.id = b.id",
+            sql="SELECT AVG(t) FROM (SELECT r, SUM(x) AS t FROM a GROUP BY r) s",
             source="db",
             adapter_registry=empty_registry,
         )

@@ -134,7 +134,6 @@ def test_align_cols_heights_corrects_height_for_support_table_chart():
                     f'<svg viewBox="0 0 {width} {inflated}"></svg>',
                     width,
                     inflated,
-                    None,
                 )
             else:
                 # Second call with corrected height: fits within TARGET_HEIGHT
@@ -143,14 +142,12 @@ def test_align_cols_heights_corrects_height_for_support_table_chart():
                     f'<svg viewBox="0 0 {width} {corrected_h}"></svg>',
                     width,
                     corrected_h,
-                    None,
                 )
         # tall_bar: not re-rendered (it is the tallest)
         return (
             f'<svg viewBox="0 0 {width} {TARGET_HEIGHT}"></svg>',
             width,
             TARGET_HEIGHT,
-            None,
         )
 
     layout_sizing_mod = importlib.import_module("dbt_charts.core.render.layout_sizing")
@@ -754,12 +751,15 @@ def test_titled_support_table_top_uses_title_offset_not_padding_top():
 
     Pre-fix: padding.top bumped by strip_h pushes the chart title down, causing
              misalignment with sibling charts in the same row.
-    Post-fix: title.offset = theme_title_offset + strip_h so the theme's breathing
-              room is preserved while the strip space is reserved via the offset.
-              padding.top is card_pad only (no strip height added).
+    Post-fix: title.offset = theme_title_offset + a closed-form baseline
+              correction (independent of strip_h — the strip's own ink already
+              grows the view-bounds top margin under autosize:pad) so the
+              theme's breathing room is preserved. padding.top is card_pad
+              only (no strip height added).
     """
     from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
     from dbt_charts.core.render.chart.support_table_attachment import (
+        _support_table_title_offset_correction,
         support_table_strip_height,
     )
     from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
@@ -775,18 +775,25 @@ def test_titled_support_table_top_uses_title_offset_not_padding_top():
     assert expected_strip_h > 0, (
         "strip height must be positive for this test to be meaningful"
     )
-    # The theme's title.position.offset is preserved alongside strip_h.
-    theme_title_offset = theme.title.position.offset or 0.0
-    expected_offset = theme_title_offset + expected_strip_h
 
     title_block = spec.get("title")
     assert isinstance(title_block, dict), (
         f"spec must carry a title block when chart.title is set; got {title_block!r}"
     )
+    title_font_size = title_block.get("fontSize")
+    assert isinstance(title_font_size, (int, float)), (
+        f"spec['title'] must carry a resolved fontSize; got {title_block!r}"
+    )
+    theme_title_offset = theme.title.position.offset or 0.0
+    expected_offset = theme_title_offset + _support_table_title_offset_correction(
+        float(title_font_size)
+    )
+
     actual_offset = float(title_block.get("offset", 0))
     assert actual_offset == pytest.approx(expected_offset, abs=1.0), (
-        f"title.offset must equal theme_offset + strip_h ({expected_offset:.1f}px = "
-        f"{theme_title_offset:.1f} + {expected_strip_h:.1f}); got {actual_offset:.1f}px. "
+        f"title.offset must equal theme_offset + the baseline correction "
+        f"({expected_offset:.1f}px = {theme_title_offset:.1f} + correction); "
+        f"got {actual_offset:.1f}px. "
         "Pre-fix: padding.top is bumped instead, title drifts down."
     )
 
@@ -798,6 +805,79 @@ def test_titled_support_table_top_uses_title_offset_not_padding_top():
         "the old padding-bump path must not run for titled charts. "
         "Post-fix: title.offset carries the strip space, padding.top stays at 0."
     )
+
+
+def test_support_table_title_offset_closed_form_matches_old_measure_and_correct():
+    """title.offset is computed in closed form, with no calibration re-render.
+
+    Before this fix, ``apply_chart_support_table_post_pass`` set
+    ``title.offset = theme_offset + strip_h`` (a probe value), and a pair of
+    now-deleted ``layout_sizing`` helpers measured the rendered SVG and
+    re-rendered up to twice more to cancel VL's own title-baseline
+    overshoot. Those functions are gone: this pins the closed-form
+    replacement's exact output at three
+    title font sizes (the width tiers ``examples/playground/charts/cards/
+    support-table-attached.yml`` actually renders at), captured by running
+    the OLD measure-and-correct algorithm against a live vl-convert render
+    before it was deleted (fontSize 14 -> theme_offset+8, 18 -> +7,
+    24 -> +6), and confirms the result is independent of strip height
+    (varying support_table row count must not move it — the strip's own
+    ink already reserves its own room under autosize:pad).
+
+    ``generate_vega_lite_spec`` never renders to SVG, so a value produced
+    here proves the offset needs no render pass to be exact.
+    """
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    theme = get_theme_style()
+    theme_title_offset = theme.title.position.offset or 0.0
+
+    def _offset(font_size: float, n_entries: int) -> float:
+        entries = [{"source": "revenue"}, {"source": "units"}, {"source": "orders"}][
+            :n_entries
+        ]
+        chart = TypeAdapter(Chart).validate_python(
+            {
+                "id": "dt_chart",
+                "type": "bar",
+                "x": "month",
+                "y": "revenue",
+                "query": SqlQuery(sql="SELECT 1", source="test_db"),
+                "query_name": "q",
+                "title": "Revenue With SupportTable",
+                "style": {
+                    "orientation": "vertical",
+                    "title": {"font": {"size": font_size}},
+                },
+                "support_table": {"entries": entries},
+            }
+        )
+        data = [
+            {"month": "Jan", "revenue": 100.0, "units": 1.0, "orders": 1.0},
+            {"month": "Feb", "revenue": 200.0, "units": 2.0, "orders": 2.0},
+        ]
+        spec = generate_vega_lite_spec(chart, data, width=400, height=300)
+        title_block = spec["title"]
+        return float(title_block["offset"])
+
+    # fontSize -> the OLD calibration's corrected offset, relative to the
+    # theme's own title.position.offset (measured empirically before deletion).
+    expected_correction = {14: 8.0, 18: 7.0, 24: 6.0}
+    for font_size, correction in expected_correction.items():
+        for n_entries in (1, 2, 3):
+            offset = _offset(font_size, n_entries)
+            expected = theme_title_offset + correction
+            assert offset == pytest.approx(expected, abs=0.01), (
+                f"fontSize={font_size}, n_entries={n_entries}: expected title.offset "
+                f"{expected} (theme_offset {theme_title_offset} + correction "
+                f"{correction}), got {offset}. The closed form must reproduce the "
+                "old measure-and-correct algorithm's output exactly, independent "
+                "of strip height."
+            )
 
 
 def test_titleless_support_table_top_keeps_padding_bump():
@@ -828,6 +908,112 @@ def test_titleless_support_table_top_keeps_padding_bump():
     assert pad_top == pytest.approx(expected_strip_h, abs=1.0), (
         f"titleless chart: padding.top must equal strip_h ({expected_strip_h:.1f}px); "
         f"got {pad_top:.1f}px. Titleless path must still use bump_padding_top."
+    )
+
+
+def test_titled_support_table_title_gap_matches_strip_height(tmp_path):
+    """A titled top-support_table chart's title lands strip_h + theme_offset above the plot.
+
+    Renders through the real pipeline (compile -> resolve -> render_board_svg,
+    which shells out to vl-convert) rather than asserting against the
+    closed-form output directly, so a Vega upgrade that moves the underlying
+    title-baseline constant (``round(0.79 * font_size)`` in
+    ``_support_table_title_offset_correction``'s docstring) fails this test,
+    not just a hardcoded expectation.
+
+    Under autosize:pad the strip's own ink grows the view-bounds top margin
+    by exactly its own height, so the title-to-plot gap (title baseline to
+    the outer container the strip's growth already shifted down) still comes
+    out to theme_offset + strip_h -- the closed form cancels VL's baseline
+    shift, it doesn't remove the strip's own reserved room.
+    """
+    import re
+
+    from dbt_charts.cli.filesystem_project import FilesystemProject
+    from dbt_charts.core.compile import compile as compile_board
+    from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.render.board_resolve import build_resolved_board
+    from dbt_charts.core.render.boards import render_board_svg
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        support_table_strip_height,
+    )
+
+    _YAML = """
+title: Gap Test
+queries:
+  q:
+    columns: [month, revenue]
+    values:
+      - [Jan, 100.0]
+      - [Feb, 200.0]
+charts:
+  dt_chart:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    title: Revenue With SupportTable
+    style:
+      orientation: vertical
+    support_table:
+      - source: revenue
+cols:
+  - dt_chart
+"""
+    result = compile_board(_YAML)
+    assert result.success and result.board is not None, result.errors
+
+    project = FilesystemProject(tmp_path)
+    executor = Executor(
+        result.board,
+        build_adapter_registry(project),
+        query_registry=result.query_registry,
+    )
+    variables: dict = {}
+    resolved, render_cache = build_resolved_board(result.board, executor, variables)
+    svg = render_board_svg(
+        resolved, executor, variables, "#ffffff", render_cache=render_cache
+    )
+
+    m = re.search(r'data-authored-path="charts\.dt_chart"', svg)
+    assert m is not None, "dt_chart not found in board SVG"
+    section = svg[m.start() :]
+
+    # Role-title group's inner <g> y (relative to the VL outer container, so
+    # negative when the title is above the plot):
+    # <g class="mark-group role-title"><g transform="translate(x,y)">
+    group_m = re.search(
+        r'role-title[^<]*<g[^>]*transform="translate\([^,]+,(-?[0-9.]+)\)"', section
+    )
+    assert group_m is not None, "role-title group not found in dt_chart section"
+    role_title_group_y = float(group_m.group(1))
+
+    # Title text element baseline y (relative to role-title group):
+    # <text ... transform="translate(x, y)">
+    role_title_pos = section.find("role-title-text")
+    assert role_title_pos != -1, "role-title-text not found in dt_chart section"
+    text_re = re.compile(r'<text[^>]*transform="translate\([^,]+,(-?[0-9.]+)\)"')
+    text_m = text_re.search(section, role_title_pos)
+    assert text_m is not None, "title text element not found in dt_chart section"
+    text_y = float(text_m.group(1))
+
+    # Absolute title baseline = outer_y + role_title_group_y + text_y, and the
+    # outer container sits at outer_y, so gap = -(role_title_group_y + text_y).
+    gap = -(role_title_group_y + text_y)
+
+    theme = get_theme_style()
+    dt_obj = ChartSupportTable.model_validate({"entries": [{"source": "revenue"}]})
+    dt_style = theme.charts.support_table
+    strip_h = support_table_strip_height(dt_obj, dt_style, None)
+    theme_title_offset = theme.title.position.offset or 0.0
+    expected_gap = theme_title_offset + strip_h
+
+    assert gap == pytest.approx(expected_gap, abs=1.0), (
+        f"title-to-plot gap must equal theme_offset + strip_h "
+        f"({expected_gap:.1f}px = {theme_title_offset:.1f} + {strip_h:.1f}); "
+        f"got gap={gap:.1f}px."
     )
 
 
@@ -950,243 +1136,6 @@ cols:
         f"sibling (dt_chart abs_y={dt_title_y:.1f}, plain_chart abs_y={plain_title_y:.1f}). "
         "Pre-fix: bump_padding_top shifts the support_table title down by strip_h (~30px). "
         "Post-fix: title.offset carries the strip space; both titles land at the same y."
-    )
-
-
-def test_titled_support_table_title_gap_matches_strip_height(tmp_path):
-    """After calibration, the gap between title baseline and plot equals strip_h + theme_offset.
-
-    apply_chart_support_table_post_pass sets title.offset = theme_offset + strip_h (probe).
-    _measure_vl_title_plot_gap returns gap = -(role_title_group_y + text_y).
-    The calibration sets corrected_offset = max(0, 2*probe - gap_probe), so
-    the final gap equals probe = theme_offset + strip_h.
-
-    Pre-fix:  gap = probe + VL_baseline (≈ 68px; diff from strip_h ≈ 38px).
-    Post-fix: gap ≈ theme_offset + strip_h (diff < 5px).
-
-    The measurement uses production's _measure_vl_title_plot_gap to avoid
-    re-implementing the formula and inheriting any measurement bugs.
-    """
-    import re
-
-    from dbt_charts.cli.filesystem_project import FilesystemProject
-    from dbt_charts.core.compile import compile as compile_board
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedSupportTable
-    from dbt_charts.core.execute.adapters import build_adapter_registry
-    from dbt_charts.core.execute.executor import Executor
-    from dbt_charts.core.render.board_resolve import build_resolved_board
-    from dbt_charts.core.render.boards import render_board_svg
-    from dbt_charts.core.render.chart.support_table_attachment import (
-        support_table_strip_height,
-    )
-    from dbt_charts.core.render.layout_sizing import _measure_vl_title_plot_gap
-
-    _YAML = """
-title: Gap Test
-queries:
-  q:
-    columns: [month, revenue]
-    values:
-      - [Jan, 100.0]
-      - [Feb, 200.0]
-charts:
-  dt_chart:
-    query: q
-    type: bar
-    x: month
-    y: revenue
-    title: Revenue With SupportTable
-    style:
-      orientation: vertical
-    support_table:
-      - source: revenue
-cols:
-  - dt_chart
-"""
-    result = compile_board(_YAML)
-    assert result.success and result.board is not None, result.errors
-
-    project = FilesystemProject(tmp_path)
-    executor = Executor(
-        result.board,
-        build_adapter_registry(project),
-        query_registry=result.query_registry,
-    )
-    variables: dict = {}
-    resolved, render_cache = build_resolved_board(result.board, executor, variables)
-    svg = render_board_svg(
-        resolved, executor, variables, "#ffffff", render_cache=render_cache
-    )
-
-    m = re.search(r'data-authored-path="charts\.dt_chart"', svg)
-    assert m is not None, "dt_chart not found in board SVG"
-    section = svg[m.start() :]
-
-    # Use production's measurement function to avoid re-implementing the formula.
-    gap = _measure_vl_title_plot_gap(section)
-    assert gap is not None, (
-        "role-title structure not found in dt_chart section — "
-        "_measure_vl_title_plot_gap returned None"
-    )
-
-    theme = get_theme_style()
-    dt_obj = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
-    dt_style = theme.charts.support_table
-    strip_h = support_table_strip_height(dt_obj, dt_style, None)
-    theme_title_offset = theme.title.position.offset or 0.0
-    # Calibration targets: gap = probe = theme_offset + strip_h.
-    expected_gap = theme_title_offset + strip_h
-
-    assert abs(gap - expected_gap) < 5.0, (
-        f"After title-offset calibration, expected gap ≈ {expected_gap:.1f}px "
-        f"(theme_offset={theme_title_offset:.1f} + strip_h={strip_h:.1f}); "
-        f"got gap={gap:.1f}px (diff={abs(gap - expected_gap):.1f}px > 5px). "
-        "Pre-fix: gap = VL_baseline + probe (overcounts by ~22px). "
-        "Post-fix: calibration cancels baseline so gap = probe."
-    )
-
-
-def test_support_table_title_corrected_offset_clamp_returns_zero():
-    """_support_table_title_corrected_offset returns 0 when gap_probe > 2*probe_title_offset.
-
-    The clamp `max(0, 2*probe - gap_probe)` fires when the measured gap exceeds
-    2*probe, meaning the VL baseline alone already exceeds the probe offset. A
-    negative corrected_offset would pull the title INTO the strip; zero is the
-    safe floor (title baseline at exactly the strip top, no descender overlap).
-
-    This is live production behavior: it fires on charts where the effective
-    title-group height is large (e.g. title+subtitle or oversized theme fonts).
-    """
-    from dbt_charts.core.render.layout_sizing import (
-        _support_table_title_corrected_offset,
-    )
-
-    # SVG with role-title structure where gap = 65 (> 2*probe=60 → clamp fires).
-    # group_y = -40, text_y = -25 → gap = -((-40) + (-25)) = 65.
-    svg = (
-        '<g class="mark-group role-title"><g transform="translate(0,-40)">'
-        '<g class="mark-group role-title-text">'
-        '<text transform="translate(100,-25)">Title</text>'
-        "</g></g></g>"
-    )
-    result = _support_table_title_corrected_offset(svg, probe_title_offset=30.0)
-    # corrected = max(0, 2*30 - 65) = max(0, -5) = 0; |0 - 30| = 30 > 1 → 0.0 returned.
-    assert result == pytest.approx(0.0), (
-        f"clamp must return 0.0 when gap_probe (65) > 2*probe (60); got {result!r}"
-    )
-
-
-def test_correct_support_table_height_two_pass_fires_when_title_calibration_undershoots():
-    """_correct_support_table_height issues a second-pass render when title calibration undershoots.
-
-    When needs_title_calibration is True and the first correction render returns
-    corrected_actual that still differs from target by > 1px (because a smaller
-    title.offset also shrinks the autosize:pad chrome), a second pass corrects the
-    residual undershoot.
-
-    Pre-fix: the `if needs_title_calibration and abs(...)` block was absent — no
-    regression path. Post-fix: exactly 3 _render_chart_to_svg calls fire.
-    """
-    import importlib
-    from unittest.mock import MagicMock, patch
-
-    from dbt_charts.core.compile.models.board.normalized import LayoutItem
-    from dbt_charts.core.compile.models.chart.normalized import BarChart
-    from dbt_charts.core.compile.models.chart.resolved import (
-        ResolvedChart,
-        ResolvedSupportTable,
-    )
-    from dbt_charts.core.compile.models.query.normalized import SqlQuery
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
-
-    # SVG with role-title structure so _support_table_title_corrected_offset fires.
-    # group_y = -50, text_y = 10 → gap = -((-50)+10) = 40. probe=30 → corrected=20.
-    _PROBE_SVG = (
-        '<g class="mark-group role-title"><g transform="translate(0,-50)">'
-        '<g class="mark-group role-title-text">'
-        '<text transform="translate(100,10)">Title</text>'
-        "</g></g></g>"
-    )
-
-    TARGET = 300.0
-    ACTUAL_FIRST = TARGET + 50.0  # First (alignment) render inflates by 50
-    ACTUAL_CORRECTION = (
-        TARGET - 8.0
-    )  # Correction render undershoots → second-pass fires
-
-    dt_obj = ResolvedSupportTable.model_validate({"entries": [{"source": "revenue"}]})
-    dt_bar = BarChart(
-        id="two_pass_bar",
-        query=SqlQuery(sql="SELECT 1", source="test"),
-        query_name="q",
-        type="bar",
-        title="My Chart",
-        style=None,
-    )
-    dt_bar = dt_bar.model_copy(update={"support_table": [{"source": "revenue"}]})
-    item_dt = LayoutItem(type="chart", width=500.0, height=0.0, chart=dt_bar)
-
-    executor = MagicMock()
-    resolved_style = resolve_style(get_theme_style())
-
-    mock_dt = MagicMock(spec=ResolvedChart)
-    mock_dt.id = "two_pass_bar"
-    mock_dt.layout_padding = _ZERO_PADDING
-    mock_dt.support_table = dt_obj
-
-    render_count = [0]
-
-    def fake_render(
-        resolved,
-        executor_,
-        variables_,
-        width,
-        *,
-        height=None,
-        title_offset_override=None,
-        **kwargs,
-    ):
-        render_count[0] += 1
-        if render_count[0] == 1:
-            # Alignment render: return role-title SVG + probe_title_offset=30.0.
-            return _PROBE_SVG, width, ACTUAL_FIRST, 30.0
-        if render_count[0] == 2:
-            # First correction render with title_offset_override: undershoots target.
-            return (
-                f'<svg viewBox="0 0 {width} {ACTUAL_CORRECTION}"></svg>',
-                width,
-                ACTUAL_CORRECTION,
-                None,
-            )
-        # Second-pass correction: the final_h = corrected_height + (target - corrected_actual).
-        final_h = height if height is not None else TARGET
-        return f'<svg viewBox="0 0 {width} {final_h}"></svg>', width, final_h, None
-
-    layout_mod = importlib.import_module("dbt_charts.core.render.layout_sizing")
-    with patch.object(layout_mod, "_render_chart_to_svg", side_effect=fake_render):
-        from dbt_charts.core.render.layout_sizing import (
-            SizingRenderCtx,
-            _align_cols_heights,
-        )
-
-        render_ctx = SizingRenderCtx(
-            executor=executor,
-            resolved_style=resolved_style,
-            chart_style_context=_CHART_CTX,
-            render_cache={
-                ("two_pass_bar", 500.0, TARGET): (_PROBE_SVG, TARGET),
-            },
-            natural_heights={("two_pass_bar", 500.0): TARGET - 50.0},
-            pre_resolved={"two_pass_bar": mock_dt},
-            support_table_corrected_widths={},
-        )
-
-        _align_cols_heights([item_dt], TARGET, render_ctx)
-
-    assert render_count[0] == 3, (
-        f"Expected 3 _render_chart_to_svg calls (1 alignment + 2 correction passes); "
-        f"got {render_count[0]}. "
-        "The second-pass block must fire when title calibration undershoots target."
     )
 
 
@@ -1351,7 +1300,6 @@ def test_titled_support_table_correction_path_does_not_raise(tmp_path):
                 f'<svg viewBox="0 0 {width} {ACTUAL_FIRST}"></svg>',
                 width,
                 ACTUAL_FIRST,
-                None,
             )
         # Correction re-render: corrected_height < strip_h — must not raise
         corrected_h = height if height is not None else TARGET
@@ -1359,7 +1307,6 @@ def test_titled_support_table_correction_path_does_not_raise(tmp_path):
             f'<svg viewBox="0 0 {width} {corrected_h}"></svg>',
             width,
             corrected_h,
-            None,
         )
 
     layout_mod = importlib.import_module("dbt_charts.core.render.layout_sizing")

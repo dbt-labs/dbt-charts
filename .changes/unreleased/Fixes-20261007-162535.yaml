@@ -1,0 +1,3 @@
+kind: Fixes
+body: Chart and board style overrides now reject the same out-of-range values as themes, at parse time and in the editor schema.
+time: 2026-10-07T16:25:35.354259-07:00

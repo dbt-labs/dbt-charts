@@ -147,7 +147,7 @@ class TestTextFormat:
 
         result = render(board, executor, format="text").output
 
-        assert "revenue: 100–1.2 K" in result
+        assert "revenue: 100–1.2\u00a0K" in result
 
     def test_numeric_x_shows_range(self, make_chart):
         """A numeric x column shows its min-max range, like y does."""
@@ -444,7 +444,7 @@ class TestTextFormat:
 
         result = render(board, executor, format="text").output
 
-        assert "revenue: 80 K–120 K" in result
+        assert "revenue: 80\u00a0K–120\u00a0K" in result
 
     def test_cartesian_numeric_range_line_chart_matches_bar_chart(self, make_chart):
         """The range formatter has no axis-ladder awareness, so a line
@@ -464,13 +464,9 @@ class TestTextFormat:
 
         assert "revenue: $80–$120" in result
 
-    def test_cartesian_numeric_range_sub_1_number_keeps_milli_reading(self, make_chart):
-        """A bare sub-1 "number" range is formatted the same way a KPI or
-        table cell reads the same value -- ``format_value(0.2, "number")``
-        is "200m" (see ``TestSiSubUnitFloor.test_plain_quantity_fraction_
-        keeps_milli_reading`` in test_format_value.py: the non-money
-        sub-unit floor is a deliberate, separately-pinned decision this
-        function does not override).
+    def test_cartesian_numeric_range_sub_1_number_paints_digits(self, make_chart):
+        """A bare sub-1 "number" range reads like a KPI or table cell:
+        ``format_value(0.2, "number")`` is "0.20", never SI milli.
         """
         data = [
             {"month": "Jan", "revenue": 0.2},
@@ -482,7 +478,7 @@ class TestTextFormat:
 
         result = render(board, executor, format="text").output
 
-        assert "revenue: 200m–800m" in result
+        assert "revenue: 0.20–0.80" in result
 
     def test_cartesian_numeric_range_negative_currency_sign_before_symbol(
         self, make_chart

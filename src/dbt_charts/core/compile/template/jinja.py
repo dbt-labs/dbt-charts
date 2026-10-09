@@ -55,7 +55,11 @@ from dbt_charts.core.compile.errors import (
     TemplateOutputTooLargeError,
 )
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
-from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
+from dbt_charts.core.compile.template._helpers import (
+    _LenientUndefined,
+    _QueryNamespace,
+    template_error_location,
+)
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.compile.template.markdown_fence import mask_fenced_code
 from dbt_charts.core.compile.template.output_budget import (
@@ -129,7 +133,6 @@ _jinja_env_text = _BoardTextEnvironment(undefined=_TextUndefined)
 # Shared by dependency detection and inline substitution so the two stay in sync.
 _QUERY_REF_RE = re.compile(r"\{\{\s*queries\.(\w+)\s*\}\}")
 _CACHE_REF_RE = re.compile(r"\{\{\s*queries\.(\w+)\s*\.\s*cache\s*\}\}")
-
 # A referenced query name becomes a SQL table alias (`(<sql>) AS <name>`), so it
 # must be a usable identifier on every engine. Reject names that collide with a
 # SQL reserved word at compile time — otherwise the alias emits a cryptic parse
@@ -532,9 +535,14 @@ def resolve_jinja_template(
             emitted_bytes=e.emitted_bytes, ceiling=e.ceiling
         ) from e
     except UndefinedError as e:
-        raise JinjaError(f"Undefined variable: {e}", template) from e
+        raise JinjaError(
+            f"Undefined variable: {e}{template_error_location(template, e)}", template
+        ) from e
     except TemplateSyntaxError as e:
-        raise JinjaError(f"Template syntax error: {e}", template) from e
+        raise JinjaError(
+            f"Template syntax error: {e}{template_error_location(template, e)}",
+            template,
+        ) from e
     except TemplateError as e:
         raise JinjaError(f"Template error: {e}", template) from e
     except TypeError as e:

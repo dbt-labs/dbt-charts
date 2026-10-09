@@ -715,3 +715,11 @@ class TestNonExpressionNodeDefaultDenies:
         )
         with pytest.raises(UnparseableSqlError):
             validate_setup_sql("CREATE TEMP TABLE t AS SELECT 1", dialect="duckdb")
+
+
+def test_lakecompute_parses_as_duckdb() -> None:
+    """Lake compute's SQL is rendered as DuckDB; sqlglot has no `lakecompute`
+    dialect, so the engine's alias map names it."""
+    from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+
+    assert sqlglot_dialect("lakecompute") == "duckdb"

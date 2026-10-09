@@ -11,6 +11,7 @@ from typing import Any
 from pydantic_core import to_jsonable_python
 
 from dbt_charts.core.compile.errors import TemplateOutputTooLargeError
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.theme import SliceLabelsStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
@@ -25,11 +26,58 @@ from dbt_charts.core.compile.template.output_budget import (
     TemplateOutputBudgetExceeded,
     render_with_budget,
 )
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.text.format_d3 import d3_format
 from dbt_charts.core.utils import CellValue
 
 LABEL_FIELD = "__dbt_label"
+VALUE_LINE_PLACEHOLDER = "{value_line}"
 ChartRow = dict[str, CellValue]
 ChartRows = list[ChartRow]
+
+
+def _jinja_string_literal(text: str, chart_id: str) -> str:
+    quote = '"' if "'" in text else "'"
+    if quote in text:
+        raise ChartDataError(
+            f"Pie chart {chart_id!r}: the slice format spec {text!r} contains "
+            "both quote characters, so the default slice label cannot embed it.",
+            chart_id=chart_id,
+        )
+    return f"{quote}{text.replace(chr(92), chr(92) * 2)}{quote}"
+
+
+def default_slice_label_template(
+    labels: SliceLabelsStyle,
+    has_color: bool,
+    value_format: ResolvedFormat,
+    chart_id: str,
+) -> str:
+    """The theme's default slice-label template, its value line in ``value_format``.
+
+    The line is the format's affixes around ``value | format(spec)``, the same
+    spec-only formatting the slice tooltip applies; notation is not carried.
+    """
+    for affix in (value_format.prefix, value_format.suffix):
+        if "{" in affix:
+            raise ChartDataError(
+                f"Pie chart {chart_id!r}: the slice format affix {affix!r} "
+                "contains '{', which the default slice label would read as "
+                "template syntax. Drop the brace or author `labels.template`.",
+                chart_id=chart_id,
+            )
+    spec_literal = _jinja_string_literal(value_format.spec, chart_id)
+    value_line = (
+        f"{value_format.prefix}"
+        f"{{{{ value | format({spec_literal}) }}}}"
+        f"{value_format.suffix}"
+    )
+    template = (
+        labels.default_template.with_color
+        if has_color
+        else labels.default_template.no_color
+    )
+    return template.replace(VALUE_LINE_PLACEHOLDER, value_line)
 
 
 def pie_presentation_fingerprint(data: ChartRows) -> str:
@@ -87,7 +135,8 @@ def project_pie_table_rows(
     return [
         {
             "swatch": swatch(index),
-            "share": f"{round(shares[index] * 100)}%",
+            # The slice label's own spec, so both round alike.
+            "share": d3_format(".0%")(shares[index]),
             "name": scalar(data[index].get(color_field)) if color_field else "",
             "value": scalar(data[index].get(theta_field)),
         }

@@ -58,6 +58,8 @@ Style.charts.font:
 - Style.font
 Style.charts.geoshape.aspect_ratio:
 - Style.charts.aspect_ratio
+Style.charts.geoshape.border:
+- Style.charts.border
 Style.charts.geoshape.legend.label.font:
 - Style.charts.font
 - Style.font
@@ -114,6 +116,8 @@ Style.charts.histogram.preferred_width:
 - Style.charts.preferred_width
 Style.charts.histogram.support_table:
 - Style.charts.support_table
+Style.charts.kpi.border:
+- Style.charts.border
 Style.charts.kpi.font:
 - Style.charts.font
 - Style.font
@@ -203,6 +207,8 @@ Style.charts.pie.total.value.font:
 - Style.font
 Style.charts.point_map.aspect_ratio:
 - Style.charts.aspect_ratio
+Style.charts.point_map.border:
+- Style.charts.border
 Style.charts.point_map.legend.label.font:
 - Style.charts.font
 - Style.font
@@ -254,6 +260,8 @@ Style.charts.support_table.label.font:
 - Style.charts.support_table.font
 - Style.charts.font
 - Style.font
+Style.charts.table.border:
+- Style.charts.border
 Style.charts.table.empty_state.font:
 - Style.charts.table.font
 - Style.charts.font

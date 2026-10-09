@@ -13,46 +13,46 @@ from dbt_charts.core.execute.warehouse_check import WarehouseCheck, WarehouseChe
 
 runner = CliRunner()
 
-# MySQL-only syntax: a parse error under the generic dialect.
-_MYSQL_ONLY = "SELECT name FROM t FORCE INDEX (i)"
+# Postgres-only syntax: a parse error under the generic dialect.
+_POSTGRES_ONLY = "SELECT name FROM t WHERE name ~ 'x'"
 
 
 @pytest.fixture
-def mysql_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("MYSQL_PASSWORD", "x")
+def postgres_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("PG_PASSWORD", "x")
     (tmp_path / "dbt_charts.yml").write_text(
         "sources:\n"
         "  wh:\n"
-        "    type: mysql\n"
+        "    type: postgres\n"
         "    host: localhost\n"
         "    database: d\n"
         "    user: u\n"
-        "    password: \"{{ env_var('MYSQL_PASSWORD') }}\"\n"
+        "    password: \"{{ env_var('PG_PASSWORD') }}\"\n"
     )
     return tmp_path
 
 
-def _query(project: Path, *args: str, sql: str = _MYSQL_ONLY):
+def _query(project: Path, *args: str, sql: str = _POSTGRES_ONLY):
     return runner.invoke(
         app, ["query", "wh", sql, "--project-dir", str(project), *args]
     )
 
 
-def test_validate_uses_source_dialect(mysql_project: Path) -> None:
-    result = _query(mysql_project, "--validate")
+def test_validate_uses_source_dialect(postgres_project: Path) -> None:
+    result = _query(postgres_project, "--validate")
     assert result.exit_code == 0, result.output
     assert "WARN-PARSE-ERROR" not in result.output
 
 
-def test_explicit_dialect_wins_over_source(mysql_project: Path) -> None:
-    result = _query(mysql_project, "--validate", "--dialect", "postgres")
+def test_explicit_dialect_wins_over_source(postgres_project: Path) -> None:
+    result = _query(postgres_project, "--validate", "--dialect", "bigquery")
     assert result.exit_code == 1, result.output
     assert "WARN-PARSE-ERROR" in result.output
 
 
-def test_explicit_sqlserver_dialect_is_accepted(mysql_project: Path) -> None:
+def test_explicit_sqlserver_dialect_is_accepted(postgres_project: Path) -> None:
     result = _query(
-        mysql_project,
+        postgres_project,
         "--validate",
         "--dialect",
         "sqlserver",
@@ -61,8 +61,8 @@ def test_explicit_sqlserver_dialect_is_accepted(mysql_project: Path) -> None:
     assert result.exit_code == 0, result.output
 
 
-def test_unknown_dialect_is_a_clear_error(mysql_project: Path) -> None:
-    result = _query(mysql_project, "--validate", "--dialect", "nope")
+def test_unknown_dialect_is_a_clear_error(postgres_project: Path) -> None:
+    result = _query(postgres_project, "--validate", "--dialect", "nope")
     assert result.exit_code == 1
     assert "Unknown SQL dialect 'nope'" in result.output
     assert not isinstance(result.exception, ValueError)
@@ -77,7 +77,7 @@ def stub_warehouse_check(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> WarehouseCheck:
         return WarehouseCheck(
             status="valid",
-            adapter_type="mysql",
+            adapter_type="postgres",
             mechanism="dry-run",
             columns_checked=True,
             columns=[WarehouseCheckColumn(name="name", type="VARCHAR")],
@@ -87,33 +87,33 @@ def stub_warehouse_check(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("stub_warehouse_check")
-def test_describe_uses_source_dialect(mysql_project: Path) -> None:
-    result = _query(mysql_project, "--describe", "--json")
+def test_describe_uses_source_dialect(postgres_project: Path) -> None:
+    result = _query(postgres_project, "--describe", "--json")
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["success"] is True
 
 
 @pytest.mark.usefixtures("stub_warehouse_check")
-def test_validate_and_describe_use_source_dialect(mysql_project: Path) -> None:
-    result = _query(mysql_project, "--validate", "--describe", "--json")
+def test_validate_and_describe_use_source_dialect(postgres_project: Path) -> None:
+    result = _query(postgres_project, "--validate", "--describe", "--json")
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["describe"]["success"] is True
 
 
-def test_unknown_dialect_is_a_clear_error_for_describe(mysql_project: Path) -> None:
-    result = _query(mysql_project, "--describe", "--dialect", "nope")
+def test_unknown_dialect_is_a_clear_error_for_describe(postgres_project: Path) -> None:
+    result = _query(postgres_project, "--describe", "--dialect", "nope")
     assert result.exit_code == 1
     assert "Unknown SQL dialect 'nope'" in result.output
     assert not isinstance(result.exception, ValueError)
 
 
-def test_named_query_validate_uses_source_dialect(mysql_project: Path) -> None:
-    board = mysql_project / "board.yaml"
+def test_named_query_validate_uses_source_dialect(postgres_project: Path) -> None:
+    board = postgres_project / "board.yaml"
     board.write_text(
         "source: wh\n"
         "queries:\n"
         "  q:\n"
-        f"    sql: {_MYSQL_ONLY}\n"
+        f"    sql: {_POSTGRES_ONLY}\n"
         "charts:\n"
         "  c:\n"
         "    query: q\n"
@@ -123,7 +123,14 @@ def test_named_query_validate_uses_source_dialect(mysql_project: Path) -> None:
     )
     result = runner.invoke(
         app,
-        ["query", str(board), "q", "--validate", "--project-dir", str(mysql_project)],
+        [
+            "query",
+            str(board),
+            "q",
+            "--validate",
+            "--project-dir",
+            str(postgres_project),
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "WARN-PARSE-ERROR" not in result.output

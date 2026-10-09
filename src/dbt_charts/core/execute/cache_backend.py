@@ -56,10 +56,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, runtime_checkable
-
-if TYPE_CHECKING:
-    import pyarrow
+from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 # Shared with executor.TruncationInfo.reason — the set of causes a cached
 # rows entry can carry. Defined here (not imported from executor) because
@@ -70,11 +67,6 @@ TruncatedReason: TypeAlias = Literal["max_rows", "max_result_bytes"]
 # Values are dynamically typed (SQL/JSON), so the leaf is Any by nature. Defined
 # once here and reused by the cache backends and the composition engine.
 CacheRows: TypeAlias = list[dict[str, Any]]
-
-# Sentinel variables_hash for file-source cache entries (file sources have no
-# variables). Shared by FileSourceMaterializer (producer) and cache backends
-# (consumer) so the key-convention cannot drift.
-FILE_SOURCE_VARS_HASH = "0" * 16
 
 
 def _require_aware(value: datetime, field: str) -> None:
@@ -252,7 +244,6 @@ class QueryResultCache(Protocol):
         query_name: str,
         source_name: str = "",
         truncated_reason: TruncatedReason | None = None,
-        arrow: pyarrow.Table | None = None,
     ) -> None:
         """Record *outcome* in its own slot, leaving the other one alone.
 
@@ -267,19 +258,6 @@ class QueryResultCache(Protocol):
         reconstruct the same truncation warning a fresh execution would —
         ignored when *outcome* is an Exception.
 
-        *arrow*, when given, is the authoritative typed form of *outcome*: the
-        same rows, typed as the source declared them rather than as the Python
-        objects those declarations decoded into, and already recast into types a
-        SQL engine can load. A backend may store from it instead of the row
-        dicts, and one that does must not apply its own storage encodings
-        (``TrivialDuckDBCache``'s VARCHAR sidecar for uniformly-Decimal columns,
-        say) to the result. Only the file-source materializer passes it, and
-        only for CSV and Parquet, whose parsers hold a ``pyarrow.Table``
-        already; a backend that restores types on ``get()`` from its own
-        metadata can ignore it entirely. Because skipping those encodings is
-        only sound for a file table, *arrow* on a write whose ``variables_hash``
-        is not ``FILE_SOURCE_VARS_HASH`` is a caller bug, and a backend that
-        acts on it must reject that.
         """
         ...
 
@@ -303,55 +281,5 @@ class QueryResultCache(Protocol):
         DuckDB-backed and Postgres-backed caches return True; an in-memory
         dict-based cache (or any future backend that cannot cache the upstream
         rows) returns False.
-        """
-        ...
-
-    def execute_file_source_sql(
-        self, sql: str, params: list[Any]
-    ) -> list[dict[str, Any]]:
-        """Run parameterized SQL against the file-source engine and return rows.
-
-        Called by FileSourceMaterializer after render_parameterized has replaced
-        {{ variable }} expressions with positional placeholders. The engine used
-        is the one where file views/tables are registered:
-
-        - DuckDB-backed caches: the same DuckDB connection where file VIEWs live.
-        - PostgresResultCache: an isolated in-process DuckDB (file tables loaded
-          from Postgres cache on each call).
-
-        Args:
-            sql: Parameterized SQL (all {{ var }} replaced with $1, $2, …).
-            params: Positional parameter values in placeholder order.
-
-        Returns:
-            List of row dicts with column values.
-
-        Raises:
-            RuntimeError: If execution fails (propagates the underlying error).
-        """
-        ...
-
-    def register_file_table(
-        self, table_name: str, source_hash: str, fingerprint_hash: str
-    ) -> None:
-        """Register a SQL view *table_name* pointing at a materialized file table.
-
-        Called by FileSourceMaterializer after put() so that author SQL like
-        ``SELECT * FROM sales`` resolves against the ``_r_*`` result table.
-
-        Args:
-            table_name: The authored name (e.g. ``sales``).
-            source_hash: Source component of the cache key.
-            fingerprint_hash: File-content fingerprint (the query_hash slot).
-        """
-        ...
-
-    def disable_external_access(self) -> None:
-        """Disable external file/network access in the cache engine.
-
-        For DuckDB-backed caches: sets enable_external_access = false so that
-        author SQL cannot call read_csv('http://...') or access local filesystem
-        paths at query time.
-        For Postgres-backed caches: no-op (Postgres has no such setting).
         """
         ...

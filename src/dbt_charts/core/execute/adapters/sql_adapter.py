@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
+    import pyarrow as pa
+
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
@@ -66,6 +68,12 @@ from dbt_charts.core.execute.adapters.dbt_utils import (
     DbtRefResolver,
     source_target_path,
 )
+from dbt_charts.core.execute.drivers import (
+    DriverConnection,
+    is_driver_source,
+    open_driver,
+)
+from dbt_charts.core.execute.result import arrow_to_query_result
 from dbt_charts.core.execute.sql_literals import (
     INLINE_PLACEHOLDERS,
     inline_params_for_dialect,
@@ -417,7 +425,7 @@ class _SourcePool:
             # rejected the query" outcome. Postgres/Snowflake already force it
             # via the statement_timeout_sql send below; BigQuery needs the
             # handle itself to attach default_query_job_config. Without this,
-            # a dialect with neither (databricks, spark, mysql, athena,
+            # a dialect with neither (databricks, spark, athena,
             # clickhouse, sqlserver — redshift has its own
             # statement_timeout_sql override) never touches the handle here,
             # so its connect failure leaks past this classification entirely.
@@ -503,6 +511,189 @@ def _cleanup_adapter(adapter: Any) -> None:
         logger.debug("Error in source pool cleanup", exc_info=True)
 
 
+class _DriverPool:
+    """Per-source pool of warm driver connections on persistent worker threads.
+
+    Each worker opens its OWN connection on first use and keeps it across
+    renders, so the connect (and the auth behind it) is paid once per worker.
+
+    The per-query cap is the driver's own option, sent at connect through
+    ``open_driver``'s ``timeout_seconds`` argument, so nothing here sends a
+    timeout statement. A connection that ran a ``setup_sql`` is reset before the
+    next query, or dropped where the dialect has no reset statement.
+    """
+
+    def __init__(
+        self,
+        source_config: dict[str, Any],  # type-state: explicit_any — raw dumped source
+        driver_config: ResolvedSourceConfig,
+        max_workers: int,
+        timeout_seconds: int,
+    ) -> None:
+        self._driver_config = driver_config
+        self._dialect = get_dialect(source_config["type"])
+        self._timeout_seconds = self._dialect.resolve_timeout_seconds(
+            source_config, timeout_seconds
+        )
+        self._tls: threading.local = threading.local()
+        self._connections: list[DriverConnection] = []
+        self._connections_lock = threading.Lock()
+        self._interrupted = False
+        self._pool = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="dct-driverpool"
+        )
+
+    def execute(
+        self, sql: str, setup_sql: str | None, limit: RowFetchLimit
+    ) -> pa.Table:
+        """Run SQL on a persistent worker thread, reconnecting once if the session died.
+
+        The caller's context is copied onto the worker: ``ThreadPoolExecutor``
+        does not propagate ``ContextVar`` values.
+        """
+        if self._interrupted:
+            raise QueryError.from_code(ERR_QUERY_INTERRUPTED)
+        try:
+            return self._pool.submit(
+                copy_context().run, self._execute_on_worker, sql, setup_sql, limit
+            ).result()
+        except Exception as exc:  # noqa: BLE001 — re-raised unless interrupted
+            # A cancelled statement, a dropped queued query and a refused submit
+            # all mean the same thing.
+            if self._interrupted:
+                raise QueryError.from_code(ERR_QUERY_INTERRUPTED) from exc
+            raise
+
+    def _execute_on_worker(
+        self, sql: str, setup_sql: str | None, limit: RowFetchLimit
+    ) -> pa.Table:
+        connection = self._ensure_connected()
+        try:
+            if self._tls.session_dirty:
+                connection = self._clean_session(connection)
+            return self._run(connection, sql, setup_sql, limit)
+        except _QueryDurationExceeded:
+            raise
+        except Exception:  # noqa: BLE001 — retried below only if the session died
+            if self._interrupted:
+                raise
+            if self._connection_alive(connection):
+                # The warehouse received the query and rejected it. Re-sending it
+                # fails identically, and the reconnect throws away a warm session.
+                raise
+            self._drop_connection()
+            return self._run(self._ensure_connected(), sql, setup_sql, limit)
+
+    def _run(
+        self,
+        connection: DriverConnection,
+        sql: str,
+        setup_sql: str | None,
+        limit: RowFetchLimit,
+    ) -> pa.Table:
+        # Set before the send: a setup_sql that fails partway still leaves
+        # whatever it created on the connection.
+        self._tls.session_dirty = bool(setup_sql)
+        try:
+            if setup_sql:
+                connection.session_sql(setup_sql)
+            return connection.execute(sql, limit)
+        except Exception as exc:  # noqa: BLE001 — classify statement timeout before retry
+            if self._dialect.is_statement_timeout_error(exc):
+                raise _QueryDurationExceeded(self._timeout_seconds) from exc
+            raise
+
+    def _ensure_connected(self) -> DriverConnection:
+        """Return this thread's connection, opening it on first use.
+
+        A failure here raises ConnectionSetupFailed: it happened before any SQL
+        reached the warehouse, so the caller reports a connection failure rather
+        than a rejected query. A missing extra propagates as itself and carries
+        its install command.
+        """
+        connection: DriverConnection | None = getattr(
+            self._tls,
+            "connection",
+            None,  # type-state: silent_fallback — unset until this thread first connects
+        )
+        if connection is not None:
+            return connection
+        try:
+            connection = open_driver(self._driver_config, self._timeout_seconds)
+        except DbtChartsError:
+            # Coded verdicts (a missing extra, a driver download that failed its
+            # checksum) are not connection failures and keep their own code.
+            raise
+        except Exception as e:  # noqa: BLE001 — reclassified by caller, not swallowed
+            raise ConnectionSetupFailed(e) from e
+        self._tls.connection = connection
+        self._tls.session_dirty = False
+        with self._connections_lock:
+            self._connections.append(connection)
+        return connection
+
+    def _connection_alive(self, connection: DriverConnection) -> bool:
+        """Whether the warehouse still answers on this connection.
+
+        Asked of the connection rather than inferred from the error text.
+        """
+        try:
+            connection.execute(_LIVENESS_SQL, resolve_effective_row_limit(1))
+        except Exception:  # noqa: BLE001 — no answer is the answer
+            return False
+        return True
+
+    def _clean_session(self, connection: DriverConnection) -> DriverConnection:
+        """Clear session objects a previous ``setup_sql`` left on the connection."""
+        reset = self._dialect.session_reset_statements()
+        if not reset:
+            self._drop_connection()
+            return self._ensure_connected()
+        for statement in reset:
+            connection.session_sql(statement)
+        return connection
+
+    def _drop_connection(self) -> None:
+        connection: DriverConnection | None = getattr(
+            self._tls,
+            "connection",
+            None,  # type-state: silent_fallback — unset until this thread first connects
+        )
+        self._tls.connection = None
+        self._tls.session_dirty = False
+        if connection is None:
+            return
+        with self._connections_lock:
+            if connection in self._connections:
+                self._connections.remove(connection)
+        _close_connection(connection)
+
+    def interrupt(self) -> None:
+        """Cancel running statements, drop queued ones, and refuse new ones."""
+        self._interrupted = True
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        with self._connections_lock:
+            connections = list(self._connections)
+        for connection in connections:
+            connection.cancel()
+
+    def close(self) -> None:
+        """Stop the worker threads, then close every connection they opened."""
+        self._pool.shutdown(wait=True)
+        with self._connections_lock:
+            connections, self._connections = self._connections, []
+        for connection in connections:
+            _close_connection(connection)
+
+
+def _close_connection(connection: DriverConnection) -> None:
+    """Best-effort close of a driver connection."""
+    try:
+        connection.close()
+    except Exception:  # noqa: BLE001 — best-effort; log and continue
+        logger.debug("Error closing driver connection", exc_info=True)
+
+
 class SqlAdapter(BaseAdapter):
     """Adapter for executing raw SQL queries via dbt adapters.
 
@@ -539,6 +730,7 @@ class SqlAdapter(BaseAdapter):
         self.project = project
         self.profile_type = profile_type
         self._source_pools: dict[str, _SourcePool] = {}
+        self._driver_pools: dict[str, _DriverPool] = {}
         self._source_pools_lock = threading.Lock()
         self._interrupted = False
         self._max_workers = max_workers
@@ -614,6 +806,9 @@ class SqlAdapter(BaseAdapter):
         describe embeds it in a string literal, which rendering must not see)
         can substitute ``prepared.sql`` and still run on the real execute path.
         """
+        if source_config is not None and is_driver_source(source_config):
+            return self._execute_via_driver(prepared, query, source_config)
+
         # Resolver-provided source_config is the single source of truth. When
         # absent, the adapter falls through to its own default connection using
         # the configured profile_type. dbt_profile sources are expanded to their
@@ -850,17 +1045,90 @@ class SqlAdapter(BaseAdapter):
             data=data, columns=columns, truncated_reason=truncated_reason
         )
 
+    def _execute_via_driver(
+        self,
+        prepared: PreparedSql,
+        query: SqlQuery,
+        source_config: ResolvedSourceConfig,
+    ) -> QueryResult:
+        """Send already-prepared SQL on the source's Arrow driver.
+
+        The driver-source counterpart of :meth:`_execute_via_dbt_adapter`.
+        """
+        dialect_name = prepared.dialect_name
+        try:
+            pool = self._get_driver_pool(source_config)
+        except Exception as e:  # noqa: BLE001
+            return handle_adapter_error(f"{dialect_name} query setup", e)
+
+        try:
+            table = pool.execute(
+                prepared.sql, prepared.setup_sql, prepared.row_fetch_limit
+            )
+        except _QueryDurationExceeded as e:
+            return QueryResult(
+                data=[],
+                error=QueryError(
+                    ERR_QUERY_DURATION_EXCEEDED.message_template.format(
+                        seconds=e.seconds, source=query.source or dialect_name
+                    ),
+                    code=ERR_QUERY_DURATION_EXCEEDED,
+                ),
+            )
+        except DbtChartsError as e:
+            return handle_adapter_error(f"{dialect_name} query setup", e)
+        except ConnectionSetupFailed as e:
+            return connection_failure(dialect_name, e.cause)
+        except Exception as e:  # noqa: BLE001
+            return classify_warehouse_error(
+                f"{dialect_name} SQL execution", e, dialect_name
+            )
+
+        result = arrow_to_query_result(table, prepared.row_fetch_limit)
+        if prepared.resolved_relations:
+            result.resolved_relations = prepared.resolved_relations
+        return result
+
+    def _get_driver_pool(self, source_config: ResolvedSourceConfig) -> _DriverPool:
+        """Return the per-source driver pool, creating it once per distinct source."""
+        raw_config = source_config.model_dump(by_alias=True)
+        key = _source_config_hash(raw_config)
+        if key not in self._driver_pools:
+            with self._source_pools_lock:
+                if self._interrupted:
+                    raise QueryError.from_code(ERR_QUERY_INTERRUPTED)
+                if key not in self._driver_pools:
+                    from dbt_charts.core.compile.config import (
+                        resolve_max_query_duration_seconds,
+                        resolve_max_workers,
+                    )
+
+                    self._driver_pools[key] = _DriverPool(
+                        raw_config,
+                        source_config,
+                        resolve_max_workers(self._max_workers),
+                        resolve_max_query_duration_seconds(raw_config),
+                    )
+        return self._driver_pools[key]
+
     def interrupt(self) -> None:
         with self._source_pools_lock:
             self._interrupted = True
             pools = list(self._source_pools.values())
+            driver_pools = list(self._driver_pools.values())
         for pool in pools:
             pool.interrupt()
+        for driver_pool in driver_pools:
+            driver_pool.interrupt()
 
     def close(self) -> None:
         """Close all source pools."""
         with self._source_pools_lock:
             pools = list(self._source_pools.values())
             self._source_pools.clear()
+            driver_pools = list(self._driver_pools.values())
+            self._driver_pools.clear()
         for pool in pools:
             pool.close()
+        for driver_pool in driver_pools:
+            driver_pool.close()

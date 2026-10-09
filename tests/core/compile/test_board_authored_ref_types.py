@@ -80,7 +80,7 @@ class TestQueryRef:
     def test_query_ref_with_leading_whitespace_strips(self):
         """A ref string with leading/trailing whitespace must be stripped before storing.
 
-        Downstream QueryRef.validate_grammar runs fullmatch on the stored value;
+        The QueryRef `ref` pattern is matched against the stored value;
         if the whitespace is kept, it raises ValidationError even for valid refs.
         """
         board = _board(queries={"q": "  shared.yml.queries.sales  "})

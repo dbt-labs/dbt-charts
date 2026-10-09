@@ -7,4 +7,6 @@ declarations, which the registry-emission scan treats as declarations rather
 than emit sites.
 """
 
-RETIRED_WARNING_CODES: frozenset[str] = frozenset({"WARN-ADJACENT-TEXT-ROWS"})
+RETIRED_WARNING_CODES: frozenset[str] = frozenset(
+    {"WARN-ADJACENT-TEXT-ROWS", "WARN-FANOUT-RISK"}
+)

@@ -147,7 +147,7 @@ def test_same_chart_different_widths_get_separate_cache_entries():
 
     def fake_render(_resolved_v2, _executor, _variables, width, **kwargs):
         render_calls.append(width)
-        return f'<svg viewBox="0 0 {width} 300"></svg>', width, 300.0, None
+        return f'<svg viewBox="0 0 {width} 300"></svg>', width, 300.0
 
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
         provider = _make_data_aware_height_provider(
@@ -199,7 +199,7 @@ def test_same_chart_same_width_is_deduplicated():
 
     def fake_render(_resolved_v2, _executor, _variables, width, **kwargs):
         render_calls.append(width)
-        return f'<svg viewBox="0 0 {width} 300"></svg>', width, 300.0, None
+        return f'<svg viewBox="0 0 {width} 300"></svg>', width, 300.0
 
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
         provider = _make_data_aware_height_provider(
@@ -252,7 +252,6 @@ def test_natural_height_tiny_overshoot_clamped_to_static_estimate():
             f'<svg width="{width}" height="{overshoot}"></svg>',
             width,
             overshoot,
-            None,
         )
 
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
@@ -317,7 +316,6 @@ def test_natural_height_large_undershoot_is_not_clamped_up():
             f'<svg width="{width}" height="{composed_height}"></svg>',
             width,
             composed_height,
-            None,
         )
 
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
@@ -372,7 +370,7 @@ def test_align_cols_heights_same_chart_different_heights_get_separate_entries():
         _resolved_v2, _executor, _variables, width, *, height=None, **kwargs
     ):
         h = height or NATURAL_H
-        return f'<svg viewBox="0 0 {width} {h}"></svg>', width, h, None
+        return f'<svg viewBox="0 0 {width} {h}"></svg>', width, h
 
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
         render_ctx = SizingRenderCtx(
@@ -455,7 +453,6 @@ class TestGridRowAlignment:
                 f'<svg viewBox="0 0 {width} {h}"></svg>',
                 float(width),
                 float(h),
-                None,
             )
 
         render_ctx = SizingRenderCtx(
@@ -551,7 +548,6 @@ class TestGridRowAlignment:
                 f'<svg viewBox="0 0 {WIDTH} {ROW_HEIGHT}"></svg>',
                 float(WIDTH),
                 ROW_HEIGHT,
-                None,
             )
 
         with patch.object(
@@ -610,7 +606,7 @@ class TestGridRowAlignment:
 
         def fake_render(_resolved_v2, _executor, _variables, width, **kwargs):
             re_renders.append(_resolved_v2.id)
-            return "<svg/>", float(WIDTH), ROW0_H, None
+            return "<svg/>", float(WIDTH), ROW0_H
 
         with patch.object(
             layout_sizing, "_render_chart_to_svg", side_effect=fake_render
@@ -668,7 +664,6 @@ class TestColsBoardItemAlignment:
                 f'<svg viewBox="0 0 {WIDTH} {h}"></svg>',
                 WIDTH,
                 h,
-                None,
             )
 
         render_ctx = SizingRenderCtx(
@@ -942,7 +937,7 @@ class TestColsBoardItemAlignment:
             _resolved_v2, _executor, _variables, width, *, height=None, **kwargs
         ):
             render_calls.append((_resolved_v2.id, height))
-            return "<svg/>", WIDTH, float(height or 0.0), None
+            return "<svg/>", WIDTH, float(height or 0.0)
 
         with patch.object(
             layout_sizing, "_render_chart_to_svg", side_effect=fake_render
@@ -1002,7 +997,7 @@ class TestAlignBoardChartsRowsLayout:
 
         def fake_render(_resolved_v2, _executor, _variables, width, **kwargs):
             render_calls.append(_resolved_v2.id)
-            return "<svg/>", WIDTH, TALL_H, None
+            return "<svg/>", WIDTH, TALL_H
 
         render_ctx = SizingRenderCtx(
             executor=executor,
@@ -1093,7 +1088,6 @@ class TestAlignBoardChartsRowsLayout:
                 f'<svg viewBox="0 0 {width} {height}"></svg>',
                 width,
                 float(height),
-                None,
             )
 
         render_ctx = SizingRenderCtx(
@@ -1206,7 +1200,6 @@ class TestAlignBoardChartsRowsLayout:
                 f'<svg width="{width}" height="{height}"></svg>',
                 width,
                 float(height),
-                None,
             )
 
         with patch.object(
@@ -1287,7 +1280,7 @@ class TestAlignBoardChartsRowsLayout:
             _resolved_v2, _executor, _variables, width, *, height=None, **kwargs
         ):
             render_calls.append((_resolved_v2.id, height))
-            return "<svg/>", WIDTH, float(height or 0.0), None
+            return "<svg/>", WIDTH, float(height or 0.0)
 
         with patch.object(
             layout_sizing, "_render_chart_to_svg", side_effect=fake_render

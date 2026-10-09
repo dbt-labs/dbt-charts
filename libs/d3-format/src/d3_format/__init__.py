@@ -8,7 +8,22 @@ Public API:
 """
 
 from d3_format.errors import D3FormatError
-from d3_format.format import format
+from d3_format.format import (
+    EN_US,
+    FormatLocale,
+    LocaleDefinition,
+    format,
+    format_locale,
+)
 from d3_format.spec import FormatSpec, parse
 
-__all__ = ["D3FormatError", "FormatSpec", "format", "parse"]
+__all__ = [
+    "EN_US",
+    "D3FormatError",
+    "FormatLocale",
+    "FormatSpec",
+    "LocaleDefinition",
+    "format",
+    "format_locale",
+    "parse",
+]

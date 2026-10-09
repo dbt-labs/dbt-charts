@@ -378,8 +378,8 @@ def test_line_layer_style_unknown_color_token_raises() -> None:
     """An unknown palette token in a per-layer style raises at compile time
     instead of silently leaking through as a literal string (validate-and-error-fast).
     """
+    from dbt_charts.core.compile.errors import CompilationError
     from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
 
     line_layer = LineLayer(
         type="line",
@@ -387,7 +387,7 @@ def test_line_layer_style_unknown_color_token_raises() -> None:
         style={"marks": {"line": {"stroke": {"color": "dbt-creams.does-not-exist"}}}},
     )
     chart = _bar_normalized(layers=[line_layer])
-    with pytest.raises(UnknownColorError):
+    with pytest.raises(CompilationError, match="Chart 'bar1'"):
         resolve(chart, _BAR_DATA, _default_board_style())
 
 

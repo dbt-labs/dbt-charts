@@ -8,7 +8,7 @@ supply an instance-specific recommendation.
 
 from __future__ import annotations
 
-from dbt_charts.core.diagnostics.codes_query import WARN_FANOUT_RISK
+from dbt_charts.core.diagnostics.codes_query import WARN_MISSING_JOIN_PREDICATE
 from dbt_charts.core.diagnostics.from_query_diagnostic import from_query_diagnostic
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic
 
@@ -28,59 +28,63 @@ def test_query_diagnostic_rejects_a_code_outside_the_four_registered() -> None:
 
 def test_message_is_built_from_the_registered_template() -> None:
     diag = QueryDiagnostic(
-        code=WARN_FANOUT_RISK.code,
+        code=WARN_MISSING_JOIN_PREDICATE.code,
         severity="warning",
-        message="join multiplies rows",
+        message="CROSS JOIN between orders and line_items - no join predicate",
     )
     warning = from_query_diagnostic("sales_q", diag)
-    assert warning.message.startswith("Query 'sales_q': join multiplies rows")
+    assert warning.message.startswith(
+        "Query 'sales_q': CROSS JOIN between orders and line_items"
+    )
 
 
 def test_recommendation_present_wins_over_registry_fix_template() -> None:
     diag = QueryDiagnostic(
-        code=WARN_FANOUT_RISK.code,
+        code=WARN_MISSING_JOIN_PREDICATE.code,
         severity="warning",
-        message="join multiplies rows",
-        recommendation="Add a GROUP BY on order_id specifically",
+        message="CROSS JOIN between orders and line_items - no join predicate",
+        recommendation="Join on order_id specifically",
     )
     warning = from_query_diagnostic("sales_q", diag)
-    assert warning.fix == "Add a GROUP BY on order_id specifically"
+    assert warning.fix == "Join on order_id specifically"
 
 
 def test_recommendation_absent_falls_back_to_registry_fix_template() -> None:
     """A QueryDiagnostic with no instance-specific advice still gets a fix."""
     diag = QueryDiagnostic(
-        code=WARN_FANOUT_RISK.code,
+        code=WARN_MISSING_JOIN_PREDICATE.code,
         severity="warning",
-        message="join multiplies rows",
+        message="CROSS JOIN between orders and line_items - no join predicate",
         recommendation=None,
     )
     warning = from_query_diagnostic("sales_q", diag)
-    assert warning.fix == WARN_FANOUT_RISK.fix_template
+    assert warning.fix == WARN_MISSING_JOIN_PREDICATE.fix_template
     assert warning.fix
 
 
 def test_detail_and_evidence_become_typed_fields_not_message_text() -> None:
     """detail/evidence land in .fields, not concatenated into .message (D-10)."""
     diag = QueryDiagnostic(
-        code=WARN_FANOUT_RISK.code,
+        code=WARN_MISSING_JOIN_PREDICATE.code,
         severity="warning",
-        message="join multiplies rows",
-        detail="orders JOIN line_items",
-        evidence=("multiplicity: one-to-many",),
+        message="CROSS JOIN between orders and line_items - no join predicate",
+        detail="orders CROSS JOIN line_items",
+        evidence=("sources: orders, line_items",),
     )
     warning = from_query_diagnostic("sales_q", diag)
-    assert "orders JOIN line_items" not in warning.message
-    assert "multiplicity: one-to-many" not in warning.message
-    assert warning.fields["detail"] == "orders JOIN line_items"
-    assert warning.fields["evidence"] == ["multiplicity: one-to-many"]
+    assert "orders CROSS JOIN line_items" not in warning.message
+    assert "sources: orders, line_items" not in warning.message
+    assert warning.fields["detail"] == "orders CROSS JOIN line_items"
+    assert warning.fields["evidence"] == ["sources: orders, line_items"]
 
 
 def test_path_is_the_query_authoring_path() -> None:
     """query_name is already in scope at the call site — no mutation needed,
     just author `path` directly so this diagnostic is source-map-stampable."""
     diag = QueryDiagnostic(
-        code=WARN_FANOUT_RISK.code, severity="warning", message="join multiplies rows"
+        code=WARN_MISSING_JOIN_PREDICATE.code,
+        severity="warning",
+        message="CROSS JOIN between orders and line_items - no join predicate",
     )
     warning = from_query_diagnostic("sales_q", diag)
     assert warning.path == "queries.sales_q.sql"

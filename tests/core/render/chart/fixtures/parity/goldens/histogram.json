@@ -167,6 +167,10 @@
         "labelSeparation": 16.0,
         "orient": "left",
         "tickColor": "#D0D3D9",
+        "tickCount": {
+          "expr": "max(1, min(ceil(height / 40), domain('y')[1]))"
+        },
+        "tickMinStep": 1,
         "tickSize": 6.0,
         "tickWidth": 1.5,
         "ticks": false,

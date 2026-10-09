@@ -19,7 +19,11 @@ from rich.console import Console
 
 from dbt_charts.cli._error_format import emit_diagnostics_jsonl, print_diagnostics
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
-from dbt_charts.core.diagnostics.codes_query import WARN_FANOUT_RISK, WARN_REAGGREGATION
+from dbt_charts.core.diagnostics.codes_query import (
+    WARN_MISSING_JOIN_PREDICATE,
+    WARN_REAGGREGATION,
+)
+from dbt_charts.core.diagnostics.codes_render import WARN_TOO_MANY_COLOR_CATEGORIES
 from dbt_charts.core.diagnostics.diagnostic import SourceRange
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -71,28 +75,27 @@ def test_rich_mode_has_panel_chrome(err: Diagnostic) -> None:
 
 def test_detail_and_evidence_reach_rendered_output() -> None:
     """A query diagnostic's detail/evidence (e.g. the offending table names
-    for a fanout warning) must reach the printed body, not just `fields`.
+    for a missing-join-predicate warning) must reach the printed body, not just
+    `fields`.
 
     Regression: from_query_diagnostic.py deliberately stops concatenating
     detail/evidence into `message` (they're typed `fields` values instead),
     but print_diagnostics only read code/message/hint/fix/field/range —
-    nothing rendered `fields`, so a fanout warning's table names were
-    silently dropped from CLI output.
+    nothing rendered `fields`, so a join warning's table names were silently
+    dropped from CLI output.
     """
     diag = Diagnostic.from_code(
-        WARN_FANOUT_RISK,
-        message="1:N join with aggregation (3.2x fanout) — verify aggregate correctness",
+        WARN_MISSING_JOIN_PREDICATE,
+        message="CROSS JOIN with no join predicate",
         fields={
-            "severity": "warning",
+            "severity": "error",
             "confidence": 0.9,
-            "detail": "Aggregate expressions reference columns from tables: orders, order_items",
-            "evidence": [
-                "Relationship: orders ↔ order_items (one-to-many, 3.2x fanout, confidence 90%)"
-            ],
+            "detail": "CROSS JOIN produces a cartesian product of orders x line_items",
+            "evidence": ["Sources: orders, order_items"],
         },
     )
     output = _render(diag, plain=True)
-    assert "orders" in output
+    assert "line_items" in output
     assert "order_items" in output
 
 
@@ -154,11 +157,11 @@ def _render_many(diags: list[Diagnostic]) -> str:
     return buf.getvalue()
 
 
-def _fanout(chart: str, line: int, *, message: str | None = None) -> Diagnostic:
+def _categories(chart: str, line: int, *, message: str | None = None) -> Diagnostic:
     return Diagnostic.from_code(
-        WARN_FANOUT_RISK,
-        message=message or f"Query {chart!r}: join multiplies rows",
-        fix="Add a GROUP BY.",
+        WARN_TOO_MANY_COLOR_CATEGORIES,
+        message=message or f"Chart {chart!r}: 13 color categories exceed 8",
+        fix="Drop the color channel.",
         chart=chart,
         range=SourceRange(file="boards/b.yml", start_line=line, end_line=line),
     )
@@ -175,20 +178,23 @@ def _internal(chart: str, line: int, *, message: str = "Boom") -> Diagnostic:
 
 
 def test_repeated_warning_code_prints_once_with_count_and_every_name() -> None:
-    output = _render_many([_fanout("revenue", 3), _fanout("orders", 9)])
+    output = _render_many([_categories("revenue", 3), _categories("orders", 9)])
 
-    assert output.count("WARN-FANOUT-RISK") == 1
-    assert "WARN-FANOUT-RISK ×2" in output
+    assert output.count("WARN-TOO-MANY-COLOR-CATEGORIES") == 1
+    assert "WARN-TOO-MANY-COLOR-CATEGORIES ×2" in output
     assert "Applies to: revenue, orders" in output
-    assert output.count("Fix: Add a GROUP BY.") == 1
+    assert output.count("Fix: Drop the color channel.") == 1
     assert "At: boards/b.yml:3 (+1 more)" in output
 
 
 def test_single_instance_prints_without_count() -> None:
-    output = _render_many([_fanout("revenue", 3)])
+    output = _render_many([_categories("revenue", 3)])
 
     assert "×" not in output
-    assert "WARN-FANOUT-RISK  revenue: Query 'revenue': join multiplies rows" in output
+    assert (
+        "WARN-TOO-MANY-COLOR-CATEGORIES  revenue: Chart 'revenue': 13 color categories exceed 8"
+        in output
+    )
     assert "Applies to" not in output
     assert "more" not in output
     assert "At: boards/b.yml:3" in output
@@ -197,22 +203,22 @@ def test_single_instance_prints_without_count() -> None:
 def test_warnings_with_different_text_say_how_many_are_not_shown() -> None:
     output = _render_many(
         [
-            _fanout("revenue", 3),
-            _fanout("orders", 9, message="a different problem"),
-            _fanout("users", 12, message="another different problem"),
+            _categories("revenue", 3),
+            _categories("orders", 9, message="a different problem"),
+            _categories("users", 12, message="another different problem"),
         ]
     )
 
-    assert "WARN-FANOUT-RISK ×3" in output
-    assert "join multiplies rows" in output
+    assert "WARN-TOO-MANY-COLOR-CATEGORIES ×3" in output
+    assert "13 color categories exceed 8" in output
     assert "a different problem" not in output
     assert "and 2 more" in output
 
 
 def test_different_codes_stay_separate_entries() -> None:
-    output = _render_many([_fanout("a", 1), _internal("b", 2), _fanout("c", 3)])
+    output = _render_many([_categories("a", 1), _internal("b", 2), _categories("c", 3)])
 
-    assert output.count("WARN-FANOUT-RISK") == 1
+    assert output.count("WARN-TOO-MANY-COLOR-CATEGORIES") == 1
     assert output.count("ERR-INTERNAL") == 1
 
 
@@ -247,7 +253,7 @@ def test_validate_json_keeps_every_instance(
     result = ValidateResult(
         success=True,
         path="boards/b.yml",
-        warnings=[_fanout("revenue", 3), _fanout("orders", 9)],
+        warnings=[_categories("revenue", 3), _categories("orders", 9)],
     )
     with pytest.raises(typer.Exit):
         _emit([result], json_output=True, strict=False)
@@ -259,12 +265,12 @@ def test_validate_json_keeps_every_instance(
 @pytest.mark.parametrize(
     ("warnings", "header"),
     [
-        ([_fanout("a", 1)], "⚠ 1 warning:"),
-        ([_fanout("a", 1), _fanout("b", 2)], "⚠ 2 warnings, 1 code:"),
+        ([_categories("a", 1)], "⚠ 1 warning:"),
+        ([_categories("a", 1), _categories("b", 2)], "⚠ 2 warnings, 1 code:"),
         (
             [
-                _fanout("a", 1),
-                _fanout("b", 2),
+                _categories("a", 1),
+                _categories("b", 2),
                 Diagnostic.from_code(WARN_REAGGREGATION, message="again"),
             ],
             "⚠ 3 warnings, 2 codes:",
@@ -299,7 +305,7 @@ def test_diagnostics_with_no_location_are_not_merged() -> None:
 
 
 def test_same_text_charts_do_not_claim_different_text() -> None:
-    output = _render_many([_fanout("revenue", 3), _fanout("orders", 9)])
+    output = _render_many([_categories("revenue", 3), _categories("orders", 9)])
 
     assert "different" not in output
 
@@ -328,8 +334,8 @@ def test_a_short_chart_name_does_not_blank_unrelated_words() -> None:
 
 
 def test_warnings_differing_only_in_fix_say_so() -> None:
-    other = _fanout("orders", 9).model_copy(update={"fix": "Something else."})
+    other = _categories("orders", 9).model_copy(update={"fix": "Something else."})
 
-    output = _render_many([_fanout("revenue", 3), other])
+    output = _render_many([_categories("revenue", 3), other])
 
     assert "and 1 more with different details" in output

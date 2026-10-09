@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts.cli.filesystem_project import (
     FilesystemProject,  # tach-ignore(core->cli: host-type guard; needs a non-cli signal on Project — deferred)
 )
+from dbt_charts.core.compile.models.source import parse_source_config
 from dbt_charts.core.dbt_manifest import load_manifest
 from dbt_charts.core.diagnostics.base import DbtChartsError
 
@@ -48,11 +49,13 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
 from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_NOT_FOUND_EMPTY
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+from dbt_charts.core.execute.drivers import DRIVER_SOURCE_TYPES
 from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
 from dbt_charts.core.inspect.sources.dbt import (
     DbtSchemaSource,
     extract_all_relationships,
 )
+from dbt_charts.core.inspect.sources.driver import DriverSchemaSource
 from dbt_charts.core.inspect.sources.sqlite import SQLiteSchemaSource
 from dbt_charts.core.project import Project, is_absolute_any_os
 
@@ -64,6 +67,7 @@ if TYPE_CHECKING:
 
 
 AdapterFactory = Callable[[dict[str, Any]], Any]
+_LiveSchemaSource = DbtSchemaSource | SQLiteSchemaSource | DriverSchemaSource
 SourceLayer = str  # "super_schema" / "dbt_adapter" / "dbt_manifest"
 
 
@@ -148,7 +152,7 @@ class LayeredSchemaResolver:
         # (e.g. test fixtures). The default path reads the DuckDB config from
         # the registry at adapter-build time in _dbt_for so all construction
         # sites get the same posture without explicit wiring.
-        self._dbt_sources: dict[str, DbtSchemaSource | SQLiteSchemaSource] = {}
+        self._dbt_sources: dict[str, _LiveSchemaSource] = {}
         self._source_lookup_cache: dict[str, dict[str, Any]] | None = None
         # Cached manifest-relationship walk. Loaded directly from the
         # ``target/manifest.json`` file so cache-hit short-circuits don't
@@ -263,12 +267,12 @@ class LayeredSchemaResolver:
 
     # ---- DbtSchemaSource factory (D5) ---------------------------------------
 
-    def _dbt_for(self, source_name: str) -> DbtSchemaSource | SQLiteSchemaSource:
+    def _dbt_for(self, source_name: str) -> _LiveSchemaSource:
         """Build (and cache) the schema source for ``source_name``.
 
         SQLite sources use ``SQLiteSchemaSource`` (stdlib sqlite3, no dbt
-        adapter needed). All other sources use ``DbtSchemaSource`` via
-        ``build_adapter``.
+        adapter needed) and driver sources use ``DriverSchemaSource``. All other
+        sources use ``DbtSchemaSource`` via ``build_adapter``.
 
         Raises ``DbtChartsError`` (ERR-SOURCE-NOT-FOUND or
         ERR-SOURCE-NOT-FOUND-EMPTY) if the registry can't resolve
@@ -279,6 +283,16 @@ class LayeredSchemaResolver:
         """
         if source_name not in self._dbt_sources:
             cfg = self.adapter_registry.resolve_source_config(source_name)
+            if (
+                cfg.get(
+                    "type", ""
+                ).lower()  # type-state: silent_fallback — same read as the sqlite branch below
+                in DRIVER_SOURCE_TYPES
+            ):
+                self._dbt_sources[source_name] = DriverSchemaSource(
+                    parse_source_config(cfg)
+                )
+                return self._dbt_sources[source_name]
             if cfg.get("type", "").lower() == "sqlite":
                 path = cfg.get("path")
                 if not path:
@@ -335,9 +349,7 @@ class LayeredSchemaResolver:
                 )
         return self._dbt_sources[source_name]
 
-    def _try_dbt_for(
-        self, source_name: str
-    ) -> DbtSchemaSource | SQLiteSchemaSource | None:
+    def _try_dbt_for(self, source_name: str) -> _LiveSchemaSource | None:
         """Like ``_dbt_for`` but returns ``None`` on the build-time
         failure we can recover from: ``ImportError`` when the
         dbt-<dialect> package isn't installed. Runtime warehouse-connection
@@ -514,7 +526,7 @@ class LayeredSchemaResolver:
     ) -> tuple[
         dict[str, dict[str, Any]],
         dict[str, dict[str, Any]],
-        DbtSchemaSource | SQLiteSchemaSource | None,
+        _LiveSchemaSource | None,
         bool,
     ]:
         cache_list = None
@@ -547,7 +559,7 @@ class LayeredSchemaResolver:
         universe: list[str],
         cache_tables: dict[str, dict[str, Any]],
         dbt_tables: dict[str, dict[str, Any]],
-        dbt: DbtSchemaSource | SQLiteSchemaSource | None,
+        dbt: _LiveSchemaSource | None,
         dbt_has_manifest: bool,
         lineage_depth: int = 1,
     ) -> tuple[dict[str, Any], set[SourceLayer]]:
@@ -624,7 +636,7 @@ class LayeredSchemaResolver:
         schema: str,
         table: str,
         fresh: bool,
-        dbt: DbtSchemaSource | SQLiteSchemaSource | None,
+        dbt: _LiveSchemaSource | None,
         dbt_has_manifest: bool,
         lineage_depth: int = 1,
     ) -> tuple[dict[str, Any] | None, set[SourceLayer]]:

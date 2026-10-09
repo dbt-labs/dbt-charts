@@ -231,7 +231,9 @@ def test_unknown_source_type_fails_instead_of_raising(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("source", "bad_field"),
     [
-        pytest.param({"type": "dbt_profile"}, "profile", id="missing-profile"),
+        pytest.param(
+            {"type": "dbt_profile", "profile": ["x"]}, "profile", id="bad-profile"
+        ),
         pytest.param(
             {"type": "duckdb", "path": ":memory:", "stray": 1},
             "stray",
@@ -467,3 +469,83 @@ def test_non_mapping_sources_section_fails_instead_of_raising(
     assert (adapter.source, adapter.status) == (None, "fail")
     assert "mapping" in adapter.message
     assert report.success is False
+
+
+def _no_such_module(name: str) -> None:
+    return None
+
+
+def test_lakecompute_is_checked_not_reported_as_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A driver source needs its extra and a real connection, so doctor checks both."""
+    seen: list[ResolvedSourceConfig] = []
+
+    def _connect(config: ResolvedSourceConfig) -> tuple[bool, None]:
+        seen.append(config)
+        return True, None
+
+    monkeypatch.setattr(doctor, "test_connection", _connect)
+    root = _project(
+        tmp_path,
+        {"lake": {"type": "lakecompute", "token": "{{ env_var('LAKE_TOKEN', 'x') }}"}},
+        dbt=False,
+    )
+
+    report = run_doctor(root, True)
+
+    (adapter,) = _checks(report, "adapter")
+    assert adapter.status == "pass"
+    (connection,) = _checks(report, "connection")
+    assert connection.status == "pass"
+    assert len(seen) == 1
+
+
+def test_lakecompute_without_its_extra_names_the_install_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(doctor, "test_connection", _never_called)
+    monkeypatch.setattr(
+        "dbt_charts.core.execute.drivers.lakecompute.find_spec", _no_such_module
+    )
+    root = _project(
+        tmp_path,
+        {"lake": {"type": "lakecompute", "token": "{{ env_var('LAKE_TOKEN', 'x') }}"}},
+        dbt=False,
+    )
+
+    report = run_doctor(root, True)
+
+    (adapter,) = _checks(report, "adapter")
+    assert adapter.status == "fail"
+    assert adapter.hint is not None
+    assert "dbt-charts[lakecompute]" in adapter.hint
+
+
+def test_a_coded_driver_error_during_the_probe_fails_the_connection_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dbt_charts.core.diagnostics.codes_execute import ERR_DRIVER_CHECKSUM_MISMATCH
+    from dbt_charts.core.diagnostics.execution import ExecutionError
+
+    def _raise(config: ResolvedSourceConfig) -> tuple[bool, None]:
+        raise ExecutionError.from_code(
+            ERR_DRIVER_CHECKSUM_MISMATCH,
+            subject="u",
+            actual="a",
+            expected="b",
+            outcome="Discarded.",
+        )
+
+    monkeypatch.setattr(doctor, "test_connection", _raise)
+    root = _project(
+        tmp_path,
+        {"lake": {"type": "lakecompute", "token": "{{ env_var('LAKE_TOKEN', 'x') }}"}},
+        dbt=False,
+    )
+
+    report = run_doctor(root, True)
+
+    (connection,) = _checks(report, "connection")
+    assert connection.status == "fail"
+    assert "pinned" in connection.message

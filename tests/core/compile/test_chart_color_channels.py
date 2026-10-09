@@ -468,36 +468,23 @@ def test_label_field_rejected_by_chart_patch():
 # ============================================================================
 
 
-def test_column_scale_config_rejects_numeric_color_palette():
-    """ColumnScaleConfig.color.palette must be CSS strings, not numbers."""
-    from dbt_charts.core.compile.models.chart.authored import (
-        ColumnScaleConfig,
-        ScaleTargetConfig,
-    )
+@pytest.mark.parametrize("target", ["color", "background"])
+def test_column_scale_config_rejects_numeric_palette(target: str) -> None:
+    """ColumnScaleConfig palettes are CSS strings, not relative float stops."""
+    from dbt_charts.core.compile.models.chart.authored import ColumnScaleConfig
 
-    with pytest.raises(ValueError, match="must be CSS color strings"):
-        ColumnScaleConfig(color=ScaleTargetConfig(palette=[0.2, 1.0]))
-
-
-def test_column_scale_config_rejects_numeric_background_palette():
-    """ColumnScaleConfig.background.palette must be CSS strings, not numbers."""
-    from dbt_charts.core.compile.models.chart.authored import (
-        ColumnScaleConfig,
-        ScaleTargetConfig,
-    )
-
-    with pytest.raises(ValueError, match="must be CSS color strings"):
-        ColumnScaleConfig(background=ScaleTargetConfig(palette=[0.0, 0.5, 1.0]))
+    with pytest.raises(ValueError, match="Input should be a valid string"):
+        ColumnScaleConfig.model_validate({target: {"palette": [0.2, 1.0]}})
 
 
 def test_column_scale_config_accepts_string_palette():
     """ColumnScaleConfig accepts CSS string palettes."""
-    from dbt_charts.core.compile.models.chart.authored import (
-        ColumnScaleConfig,
-        ScaleTargetConfig,
-    )
+    from dbt_charts.core.compile.models.chart.authored import ColumnScaleConfig
 
-    cfg = ColumnScaleConfig(color=ScaleTargetConfig(palette=["#ffffff", "#0000ff"]))
+    cfg = ColumnScaleConfig.model_validate(
+        {"color": {"palette": ["#ffffff", "#0000ff"]}}
+    )
+    assert cfg.color is not None
     assert cfg.color.palette == ["#ffffff", "#0000ff"]
 
 

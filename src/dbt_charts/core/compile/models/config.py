@@ -10,11 +10,12 @@ mapping-like nodes that still support mapping access.
 from __future__ import annotations
 
 from collections.abc import ItemsView, Iterator, KeysView, Mapping, ValuesView
-from typing import Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     PrivateAttr,
@@ -22,7 +23,13 @@ from pydantic import (
     model_validator,
 )
 
-from dbt_charts.core.compile.models.cache import CachePatch
+from dbt_charts.core.compile.models.cache import CachePatch, desugar_cache
+from dbt_charts.core.compile.models.constraints import (
+    ConstrainedModel,
+    Constraint,
+    Requires,
+    ValueIn,
+)
 from dbt_charts.core.compile.models.primitives import HtmlPolicy
 from dbt_charts.core.compile.models.vega_lite.config import VegaLiteConfig
 from dbt_charts.core.compile.vega_lite import VEGA_LITE_SCHEMA_URL
@@ -288,11 +295,8 @@ class ChartRenderingConfig(ConfigNode):
         # data, no x field, or non-cartesian) -- line's own stroke and area's
         # overlap-edge stroke.
         fallback_width: float
-        # Same role as fallback_width, but for area's stacked/streamgraph
-        # perimeter stroke -- a thinner separator weight, not a trend line.
-        # Also the ceiling area.py caps the computed adaptive value at on
-        # that recipe (a dense stacked/streamgraph edge must never thicken
-        # past this separator weight).
+        # Area's stacked/streamgraph perimeter stroke: a fixed separator
+        # weight, not a trend line, so it never derives from density.
         stacked_fallback_width: float
 
     class PointConfig(ConfigNode):
@@ -486,6 +490,12 @@ class VegaRuntimeConfig(ConfigNode):
         return VEGA_LITE_SCHEMA_URL
 
 
+class LakeComputeExecutionConfig(ConfigNode):
+    default_base_url: str = Field(
+        description="Lake compute endpoint used when a source sets no base_url.",
+    )
+
+
 class ExecutionConfig(ConfigNode):
     # DuckDB-backed executors serialize access via _DUCKDB_EXECUTE_LOCK.
     max_workers: int = Field(
@@ -561,6 +571,9 @@ class ExecutionConfig(ConfigNode):
         description="Maps a dbt charts dialect name to its sqlglot equivalent "
         "before parsing.",
     )
+    lakecompute: LakeComputeExecutionConfig = Field(
+        description="Lake compute connection defaults.",
+    )
 
 
 class ServerConfig(ConfigNode):
@@ -575,7 +588,7 @@ class ServerConfig(ConfigNode):
     markdown_metadata_table: bool
 
 
-class ProjectCacheConfig(CachePatch):
+class ProjectCacheConfig(CachePatch, ConstrainedModel):
     """Project cache root (``cache:`` in dbt_charts.yml): the cascade root every
     source/board/query inherits, plus the backend location.
 
@@ -587,28 +600,20 @@ class ProjectCacheConfig(CachePatch):
     query policy is enabled. The shipped root lives in
     ``defaults/default_config.yml``.
 
-    One scalar is missing here that every other scope accepts: ``cache: true``.
-    See the validator below.
+    ``cache: true`` is rejected here: the root has no scope above it to take a
+    ttl from, so it would quietly mean forever.
     """
 
-    @model_validator(mode="after")
-    def _root_must_state_a_ttl(self) -> ProjectCacheConfig:
-        """Caching on at the root with no ttl means forever — say so out loud.
-
-        Reachable only by writing ``cache: true``: the scalar replaces the
-        shipped block whole (``deep_merge_dict`` recurses only between
-        mappings), and unlike every other scope the root has nothing above it
-        to take a ttl from. So the one spelling that promises nothing about
-        duration would quietly pick the longest one there is.
-        """
-        if self.enabled and self.ttl is None:
-            raise ValueError(
-                "the project cache root has to say how long to keep results — "
-                "write cache: <duration> (e.g. cache: 24h) or cache: forever. "
-                "(cache: true means 'keep the ttl from the scope above', and "
-                "the project root has no scope above it.)"
-            )
-        return self
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Requires(
+            ("ttl",),
+            "the project cache root has to say how long to keep results — "
+            "write cache: <duration> (e.g. cache: 24h) or cache: forever. "
+            "(cache: true means 'keep the ttl from the scope above', and "
+            "the project root has no scope above it.)",
+            when=(ValueIn("enabled", (True,)),),
+        ),
+    )
 
     # None = the zero-config in-memory store, a documented outcome rather than
     # a fallback (see the field description). Defaulted, not required, so the
@@ -623,6 +628,9 @@ class ProjectCacheConfig(CachePatch):
             "a fallback."
         ),
     )
+
+
+ProjectCacheInput = Annotated[ProjectCacheConfig, BeforeValidator(desugar_cache)]
 
 
 class Config(ConfigMappingBase):
@@ -640,7 +648,7 @@ class Config(ConfigMappingBase):
 
     model_config = ConfigDict(extra="forbid")
 
-    cache: ProjectCacheConfig
+    cache: ProjectCacheInput
     chart_rendering: ChartRenderingConfig
     execution: ExecutionConfig
     geo_sources: ConfigNode

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from types import EllipsisType
 
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
@@ -52,7 +53,9 @@ from dbt_charts.core.compile.resolve.chart.simple import (
     _resolve_spark_bar,
 )
 from dbt_charts.core.compile.resolve.style.fonts import expand_named_fonts
+from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.diagnostics.codes_compile import ERR_CHART_COLOR_TOKEN
 
 __all__ = [
     "resolve",
@@ -119,123 +122,133 @@ def resolve(
         (AreaChart, BarChart, HeatmapChart, LineChart, ScatterChart, SparkBarChart),
     ):
         require_sort_field(normalized.sort, data)
-    match normalized.type:
-        case "bar":
-            return _resolve_bar(
-                normalized,
-                partition(normalized.multiples, data),
-                chart_style_context,
-                effective_width,
-                datasets,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "histogram":
-            return _resolve_histogram(
-                normalized,
-                partition(normalized.multiples, data),
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "line":
-            return _resolve_line(
-                normalized,
-                partition(normalized.multiples, data),
-                chart_style_context,
-                effective_width,
-                datasets,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "area":
-            return _resolve_area(
-                normalized,
-                partition(normalized.multiples, data),
-                chart_style_context,
-                effective_width,
-                datasets,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "scatter":
-            return _resolve_scatter(
-                normalized,
-                partition(normalized.multiples, data),
-                chart_style_context,
-                effective_width,
-                datasets,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "heatmap":
-            return _resolve_heatmap(
-                normalized,
-                partition(normalized.multiples, data),
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "pie" | "donut":
-            return _resolve_pie(
-                normalized,
-                data,
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                display_text,
-                pie_title_font,
-            )
-        case "kpi":
-            return _resolve_kpi(
-                normalized,
-                data,
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "table":
-            return _resolve_table(
-                normalized,
-                data,
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                table_column_links,
-                table_column_rows,
-                display_text,
-            )
-        case "geoshape" | "map":
-            return _resolve_geoshape(
-                normalized,
-                data,
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "point_map" | "bubble_map":
-            return _resolve_point_map(
-                normalized,
-                data,
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                display_text,
-            )
-        case "callout":
-            return _resolve_callout(normalized, data, chart_style_context, display_text)
-        case "spark_bar":
-            return _resolve_spark_bar(
-                normalized,
-                data,
-                chart_style_context,
-                effective_width,
-                automatic_link_candidate,
-                display_text,
-            )
-        case _:
-            raise ValueError(f"Unknown normalized chart type: {normalized.type!r}")
+    try:
+        match normalized.type:
+            case "bar":
+                return _resolve_bar(
+                    normalized,
+                    partition(normalized.multiples, data),
+                    chart_style_context,
+                    effective_width,
+                    datasets,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "histogram":
+                return _resolve_histogram(
+                    normalized,
+                    partition(normalized.multiples, data),
+                    chart_style_context,
+                    effective_width,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "line":
+                return _resolve_line(
+                    normalized,
+                    partition(normalized.multiples, data),
+                    chart_style_context,
+                    effective_width,
+                    datasets,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "area":
+                return _resolve_area(
+                    normalized,
+                    partition(normalized.multiples, data),
+                    chart_style_context,
+                    effective_width,
+                    datasets,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "scatter":
+                return _resolve_scatter(
+                    normalized,
+                    partition(normalized.multiples, data),
+                    chart_style_context,
+                    effective_width,
+                    datasets,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "heatmap":
+                return _resolve_heatmap(
+                    normalized,
+                    partition(normalized.multiples, data),
+                    chart_style_context,
+                    effective_width,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "pie" | "donut":
+                return _resolve_pie(
+                    normalized,
+                    data,
+                    chart_style_context,
+                    effective_width,
+                    automatic_link_candidate,
+                    display_text,
+                    pie_title_font,
+                )
+            case "kpi":
+                return _resolve_kpi(
+                    normalized,
+                    data,
+                    chart_style_context,
+                    effective_width,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "table":
+                return _resolve_table(
+                    normalized,
+                    data,
+                    chart_style_context,
+                    effective_width,
+                    automatic_link_candidate,
+                    table_column_links,
+                    table_column_rows,
+                    display_text,
+                )
+            case "geoshape" | "map":
+                return _resolve_geoshape(
+                    normalized,
+                    data,
+                    chart_style_context,
+                    effective_width,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "point_map" | "bubble_map":
+                return _resolve_point_map(
+                    normalized,
+                    data,
+                    chart_style_context,
+                    effective_width,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case "callout":
+                return _resolve_callout(
+                    normalized, data, chart_style_context, display_text
+                )
+            case "spark_bar":
+                return _resolve_spark_bar(
+                    normalized,
+                    data,
+                    chart_style_context,
+                    effective_width,
+                    automatic_link_candidate,
+                    display_text,
+                )
+            case _:
+                raise ValueError(f"Unknown normalized chart type: {normalized.type!r}")
+    except UnknownColorError as exc:
+        # Every chart-local color token (style, layers, conditional_formatting)
+        # resolves under one of these resolvers; naming the chart here keeps a
+        # bad token from failing the whole board.
+        raise CompilationError.from_code(
+            ERR_CHART_COLOR_TOKEN, chart_id=normalized.id, reason=str(exc)
+        ) from exc

@@ -32,6 +32,20 @@ One-shot convenience signature also available:
 format(",.2f", 1234.56)    # "1,234.56"
 ```
 
+### `format_locale(definition) -> FormatLocale`
+
+d3's `formatLocale`: a locale from a d3 locale definition (`decimal`, `thousands`,
+`grouping`, `currency`, `numerals`, `percent`, `minus`, `nan`). Its `format(spec)`
+works like the module's `format`, which is `EN_US.format`.
+
+```python
+from d3_format import format_locale
+
+fr = format_locale({"decimal": ",", "thousands": "\u00a0", "grouping": [3],
+                    "currency": ["", "\u00a0€"]})
+fr.format("$,.2f")(1234.5)   # "1 234,50 €"
+```
+
 ### `parse(spec_str) -> FormatSpec`
 
 Parses a d3-format spec string into a `FormatSpec` dataclass. Raises `D3FormatError` on invalid or unsupported syntax.
@@ -112,12 +126,12 @@ turning a d3 quirk into a parse error.
 
 | Topic | d3.js | This library |
 |-------|-------|--------------|
-| Locale | Fully configurable | en-US only (`Locale` dataclass is the extension point) |
 | Non-finite `s` | Reuses the previous call's SI prefix (d3 keeps `prefixExponent` in module state) | Emits no prefix, so the result does not depend on call order |
 
 Everything else — every type letter, SI prefixes, sign modes, parens negatives,
 the `#` alternate form, zero-pad, width, align, fill, tilde-trim, precision
-clamping — matches d3.js byte-for-byte, verified by the checked-in fixture.
+clamping, locales — matches d3.js byte-for-byte, verified by the checked-in
+fixtures.
 
 ## Parity fixture
 
@@ -134,6 +148,8 @@ node regenerate_fixture.mjs
 The script writes directly to `tests/fixtures/d3_reference.json` — do not use `>` redirection (that would overwrite the file with the console status line).
 
 The regeneration script is `scripts/regenerate_fixture.mjs`. Do not run it in CI — the fixture is stable until the spec matrix is intentionally updated.
+
+The locale fixture (`tests/fixtures/locale_parity.json`) comes from the d3-format Vega bundles, through `vl_convert` (a dbt-charts dependency, not this library's): `uv run python libs/d3-format/scripts/regenerate_locale_fixture.py` from the repo root.
 
 ## dbt charts-specific extensions
 

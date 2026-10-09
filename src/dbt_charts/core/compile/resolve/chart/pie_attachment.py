@@ -36,6 +36,7 @@ from dbt_charts.core.diagnostics.codes_render import (
 )
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.fonts import font_is_tabular
+from dbt_charts.core.text.format_d3 import d3_format
 from dbt_charts.core.utils import CellValue
 
 ArcRenderMode = Literal["direct", "hybrid", "full_table"]
@@ -45,10 +46,10 @@ def validate_theta_values(chart_id: str, theta_field: str, data: ChartRows) -> N
     """Reject NULL or negative theta values before share math or label templates.
 
     A NULL theta silently coerces to a zero share in ``compute_shares``, then
-    crashes formatting ``None`` with the default label template's
-    ``'{:,.0f}'.format(value)``. A negative theta produces a share a pie
-    slice's angle cannot represent. Both are query-grain problems the author
-    must fix, not values the renderer can guess a substitute for.
+    paints a null placeholder in the default label template's value line. A
+    negative theta produces a share a pie slice's angle cannot represent. Both
+    are query-grain problems the author must fix, not values the renderer can
+    guess a substitute for.
 
     Scoped to rows where ``theta_field`` is present with a ``None`` value —
     a theta naming a column absent from the data entirely is a different,
@@ -293,12 +294,7 @@ def _format_value_for_width(
     spec = value_format.raw if value_format is not None else None
     prefix = value_format.prefix if value_format is not None else ""
     suffix = value_format.suffix if value_format is not None else ""
-    if spec == "$,.0f":
-        body = f"${numeric:,.0f}"
-    elif spec == ".0%":
-        body = f"{int(round(numeric * 100))}%"
-    else:
-        body = f"{numeric:,.0f}"
+    body = d3_format(spec if spec in (".0%", "$,.0f") else ",.0f")(numeric)
     return f"{prefix}{body}{suffix}"
 
 

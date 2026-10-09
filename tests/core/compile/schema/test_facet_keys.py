@@ -43,6 +43,7 @@ def test_every_authored_board_field_is_classified() -> None:
         "id",
         "incremental",
         "notes",
+        "regional",
         "schema_version",
         "source",
         "style",

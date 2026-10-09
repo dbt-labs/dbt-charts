@@ -15,8 +15,8 @@ A model-level validator is invisible to JSON Schema (introspection reads field
 annotations, not validator bodies); declaring the coercion on the annotation
 lets ``schema/introspection.py`` read it back via ``json_schema_input_type``,
 so the derived schema — what the migrator gates on — knows a bare string is
-accepted too. The grammar check still fires at the type boundary (`ref: str`'s
-`field_validator`) — not scattered through compiler, normalizer, and validator.
+accepted too. The grammar is the `ref` field's pattern, so parse and schema
+share one declaration.
 
 Also exports `normalize_query_value` — the query normalization helper attached as
 the `BeforeValidator` on `authored.py`'s `QueryOrRef`. Living here breaks the
@@ -27,7 +27,9 @@ parser → authored would be circular).
 import re
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+from dbt_charts.core.compile.models.primitives import ErrorHint
 
 # File-path portion: an optional leading run of literal "../" segments (to
 # climb into a sibling directory), then a normal path starting with a
@@ -39,15 +41,32 @@ VAR_REF_RE = re.compile(rf"^{_REF_FILE_PATH}\.variables\.[A-Za-z_]\w*$")
 QUERY_REF_RE = re.compile(rf"^{_REF_FILE_PATH}\.queries\.[A-Za-z_]\w*$")
 CHART_REF_RE = re.compile(rf"^{_REF_FILE_PATH}\.charts\.[A-Za-z_]\w*$")
 
-# Pattern-constrained string arms for VariableOrRef/ChartOrRef's json_schema_input_type
-# (authored.py) — StringConstraints doesn't change runtime validation (coerce_ref_string
-# still accepts any string; the field_validator above enforces the grammar for real), it
-# only tells schema/introspection.py's pattern tracking what to put in the derived
-# schema's "pattern" key, so a malformed ref string reads as invalid in the IDE/migrator
-# too, not just at parse time. queries: has no such constant — normalize_query_value
-# treats any string failing QUERY_REF_RE as SQL, so its string arm stays unconstrained.
-VAR_REF_PATTERN_STR = Annotated[str, StringConstraints(pattern=VAR_REF_RE.pattern)]
-CHART_REF_PATTERN_STR = Annotated[str, StringConstraints(pattern=CHART_REF_RE.pattern)]
+# Pattern-constrained ref strings: the `ref` field of each ref model, and the
+# bare-string arm of VariableOrRef/ChartOrRef (authored.py).
+VAR_REF_PATTERN_STR = Annotated[
+    str,
+    StringConstraints(pattern=VAR_REF_RE.pattern),
+    ErrorHint(
+        "Invalid variable reference {value!r}. Expected "
+        "'<file>.variables.<name>', optionally prefixed with '../' segments."
+    ),
+]
+QUERY_REF_PATTERN_STR = Annotated[
+    str,
+    StringConstraints(pattern=QUERY_REF_RE.pattern),
+    ErrorHint(
+        "Invalid query reference {value!r}. Expected "
+        "'<file>.queries.<name>', optionally prefixed with '../' segments."
+    ),
+]
+CHART_REF_PATTERN_STR = Annotated[
+    str,
+    StringConstraints(pattern=CHART_REF_RE.pattern),
+    ErrorHint(
+        "Invalid chart reference {value!r}. Expected "
+        "'<file>.charts.<name>', optionally prefixed with '../' segments."
+    ),
+]
 
 
 def infer_query_type_from_keys(query_dict: dict[str, Any]) -> str:
@@ -83,7 +102,7 @@ def normalize_query_value(query_def: Any) -> Any:
         return {"sql": query_def, "type": "sql"}
 
     # dict path
-    if "type" in query_def or "ref" in query_def:
+    if "type" in query_def or "ref" in query_def or "schema" in query_def:
         # "ref" key → QueryRef; skip type inference to avoid adding a spurious
         # "type": "sql" that would be rejected as an extra field by QueryRef.
         return query_def
@@ -121,58 +140,28 @@ class CrossFileRef(BaseModel):
 class VariableRef(CrossFileRef):
     """Cross-file variable reference. Bare string is coerced automatically."""
 
-    ref: str = Field(
+    ref: VAR_REF_PATTERN_STR = Field(
         description="Reference path: '<file>.variables.<name>'. May start with one or more "
         "'../' segments to reach a sibling directory. A bare string value is coerced automatically."
     )
-
-    @field_validator("ref")
-    @classmethod
-    def validate_grammar(cls, v: str) -> str:
-        if not VAR_REF_RE.fullmatch(v):
-            raise ValueError(
-                f"Invalid variable reference {v!r}. "
-                "Expected '<file>.variables.<name>', optionally prefixed with '../' segments."
-            )
-        return v
 
 
 class QueryRef(CrossFileRef):
     """Cross-file query reference. Bare string is coerced automatically."""
 
-    ref: str = Field(
+    ref: QUERY_REF_PATTERN_STR = Field(
         description="Reference path: '<file>.queries.<name>'. May start with one or more "
         "'../' segments to reach a sibling directory. A bare string value is coerced automatically."
     )
-
-    @field_validator("ref")
-    @classmethod
-    def validate_grammar(cls, v: str) -> str:
-        if not QUERY_REF_RE.fullmatch(v):
-            raise ValueError(
-                f"Invalid query reference {v!r}. "
-                "Expected '<file>.queries.<name>', optionally prefixed with '../' segments."
-            )
-        return v
 
 
 class ChartRef(CrossFileRef):
     """Cross-file chart reference. Bare string is coerced automatically."""
 
-    ref: str = Field(
+    ref: CHART_REF_PATTERN_STR = Field(
         description="Reference path: '<file>.charts.<name>'. May start with one or more "
         "'../' segments to reach a sibling directory. A bare string value is coerced automatically."
     )
-
-    @field_validator("ref")
-    @classmethod
-    def validate_grammar(cls, v: str) -> str:
-        if not CHART_REF_RE.fullmatch(v):
-            raise ValueError(
-                f"Invalid chart reference {v!r}. "
-                "Expected '<file>.charts.<name>', optionally prefixed with '../' segments."
-            )
-        return v
 
 
 def ref_or_inline(

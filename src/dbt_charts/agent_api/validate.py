@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.agent_api._paths import resolve_board_path
+from dbt_charts.core.board import partition_compile_warnings
 from dbt_charts.core.compile.format import missing_format_columns
 from dbt_charts.core.compile.normalize.charts import _FIELD_CHANNEL_KEYS
 from dbt_charts.core.diagnostics import (
@@ -271,6 +272,9 @@ def _validate_resolved(
         errors += wh_errors
         warnings += wh_warnings
 
+    warnings, _suppressed = partition_compile_warnings(
+        warnings, result.board, None, project.warnings_ignore
+    )
     return ValidateResult(
         success=len(errors) == 0,
         path=resolved.relpath,
@@ -309,10 +313,11 @@ def validate_content(yaml_content: str, *, project: Project) -> ContentValidateR
     validate_compiled_queries(result)
     check_manifest_refs(result, project)
     check_model_columns(result, project)
+    warnings, _suppressed = partition_compile_warnings(
+        list(result.warnings), result.board, None, project.warnings_ignore
+    )
     return ContentValidateResult(
-        success=result.success,
-        errors=list(result.errors),
-        warnings=list(result.warnings),
+        success=result.success, errors=list(result.errors), warnings=warnings
     )
 
 

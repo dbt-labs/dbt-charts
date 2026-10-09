@@ -32,6 +32,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     TableColumnConfig,
 )
 from dbt_charts.core.compile.models.primitives import FontStyle
+from dbt_charts.core.compile.models.style.authored import ColumnScaleTargetConfig
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -77,14 +78,16 @@ class TestScaleTargetConfigModel:
 
 class TestColumnScaleConfigModel:
     def test_background_only(self) -> None:
-        cfg = ColumnScaleConfig(background=ScaleTargetConfig(palette=["#fff", "#000"]))
+        cfg = ColumnScaleConfig(
+            background=ColumnScaleTargetConfig(palette=["#fff", "#000"])
+        )
         assert cfg.background is not None
         assert cfg.color is None
 
     def test_both_targets(self) -> None:
         cfg = ColumnScaleConfig(
-            background=ScaleTargetConfig(palette=["#fff", "#000"]),
-            color=ScaleTargetConfig(palette=["#000", "#fff"]),
+            background=ColumnScaleTargetConfig(palette=["#fff", "#000"]),
+            color=ColumnScaleTargetConfig(palette=["#000", "#fff"]),
         )
         assert cfg.background is not None
         assert cfg.color is not None
@@ -94,7 +97,7 @@ class TestTableColumnConfigScale:
     def test_scale_field(self) -> None:
         config = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(palette=["#fff", "#000"])
+                background=ColumnScaleTargetConfig(palette=["#fff", "#000"])
             ),
         )
         assert config.scale is not None
@@ -241,7 +244,7 @@ class TestResolveCellConditionalStyles:
         col = TableColumnConfig(
             background="#eee",
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=["#000000", "#ffffff"], min=0, max=100
                 )
             ),
@@ -257,7 +260,7 @@ class TestResolveCellConditionalStyles:
     def test_when_overrides_scale(self) -> None:
         col = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=["#000000", "#ffffff"], min=0, max=100
                 )
             ),
@@ -274,7 +277,7 @@ class TestResolveCellConditionalStyles:
     def test_scale_null_color(self) -> None:
         col = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=["#000", "#fff"], min=0, max=100, null_color="#cccccc"
                 )
             ),
@@ -286,7 +289,9 @@ class TestResolveCellConditionalStyles:
         """Null value with no null_color configured -> no scale background."""
         col = TableColumnConfig(
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(palette=["#000", "#fff"], min=0, max=100)
+                background=ColumnScaleTargetConfig(
+                    palette=["#000", "#fff"], min=0, max=100
+                )
             ),
         )
         bg, *_ = resolve_cell_conditional_styles(col, None, [])
@@ -295,7 +300,9 @@ class TestResolveCellConditionalStyles:
     def test_scale_color_target(self) -> None:
         col = TableColumnConfig(
             scale=ColumnScaleConfig(
-                color=ScaleTargetConfig(palette=["#000000", "#ffffff"], min=0, max=100)
+                color=ColumnScaleTargetConfig(
+                    palette=["#000000", "#ffffff"], min=0, max=100
+                )
             ),
         )
         _, color, *_ = resolve_cell_conditional_styles(col, 100, [])
@@ -306,7 +313,7 @@ class TestResolveCellConditionalStyles:
         col = TableColumnConfig(
             format="$,.0f",
             scale=ColumnScaleConfig(
-                background=ScaleTargetConfig(
+                background=ColumnScaleTargetConfig(
                     palette=["#fff7d6", "#f59e0b", "#92400e"],
                     min=0,
                     max=100000,
@@ -986,12 +993,12 @@ class TestNamedPaletteCallerWiring:
         # compile/resolve/chart/_table.py's _with_resolved_scale_stops — this test
         # fabricates that same baked value directly, since it exercises
         # resolve_cell_conditional_styles below the resolver.
-        from dbt_charts.core.compile.models.primitives import (
-            ResolvedNamedPaletteScaleTargetConfig,
-        )
         from dbt_charts.core.compile.models.style.resolved import (
             ResolvedColumnScaleConfig,
             ResolvedTableColumnConfig,
+        )
+        from dbt_charts.core.compile.models.style.resolved.table import (
+            ResolvedNamedPaletteColumnScaleTargetConfig,
         )
         from dbt_charts.core.compile.resolve.style.palette import (
             palette as resolve_named_palette,
@@ -999,7 +1006,7 @@ class TestNamedPaletteCallerWiring:
 
         col = ResolvedTableColumnConfig(
             scale=ResolvedColumnScaleConfig(
-                background=ResolvedNamedPaletteScaleTargetConfig(
+                background=ResolvedNamedPaletteColumnScaleTargetConfig(
                     palette="dbt-seq-blue",
                     resolved_stops=tuple(resolve_named_palette("dbt-seq-blue")),
                     min=0,

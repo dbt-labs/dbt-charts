@@ -12,7 +12,7 @@ from dbt_charts.core.compile.format import (
     resolve_format_parts,
 )
 from dbt_charts.core.compile.format_value import format_kpi_parts, format_value
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import FormatConfig, FormatTable
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
@@ -119,8 +119,8 @@ def test_redefined_currency_prints_its_own_spec_below_one() -> None:
 
 
 def test_engine_currency_swaps_to_the_boards_own_currency_full() -> None:
-    assert format_value(0.67, "currency", {"currency_full": "$,.3f"}) == "$0.670"
-    formats = {"currency_full": "$,.3f"}
+    formats = FormatTable(aliases={"currency_full": "$,.3f"}, currency="USD")
+    assert format_value(0.67, "currency", formats) == "$0.670"
     parts = column_format("number", formats, "currency", values=[0.67])
     assert parts.spec == "$,.3f"
 
@@ -160,7 +160,8 @@ def test_nearest_layer_wins_key_by_key() -> None:
         StylePatch.model_validate({"formats": {"currency": "$,.1f"}}),
         StylePatch.model_validate({"formats": {"currency": "$,.0f"}}),
     ).formats
-    assert formats == {"currency": "$,.0f", "number": ".1f"}
+    assert formats is not None
+    assert formats.aliases == {"currency": "$,.0f", "number": ".1f"}
     assert format_value(1234.5, "currency", formats) == "$1,235"
     assert format_value(1234.5, "number", formats) == "1234.5"
 
@@ -200,7 +201,9 @@ def test_a_redefined_number_reaches_table_cells_and_kpis_with_its_affix() -> Non
 def test_a_number_redefined_as_another_engine_name_reaches_the_kpi() -> None:
     small = finalize_kpi_value_format(None, 0.25, {"number": "percent"})
     assert small is not None and small.raw == "percent"
-    money = finalize_kpi_value_format(None, 1_500_000.0, {"number": "currency"})
+    money = finalize_kpi_value_format(
+        None, 1_500_000.0, FormatTable(aliases={"number": "currency"}, currency="USD")
+    )
     assert money is not None and money.raw == "currency"
 
 

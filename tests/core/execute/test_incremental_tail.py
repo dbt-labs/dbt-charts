@@ -873,8 +873,8 @@ class TestFileSourceIncrementalDoesNotIntercept:
         result_cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
 
         class _CountingMaterializer(FileSourceMaterializer):
-            def __init__(self, project: FilesystemProject, cache) -> None:
-                super().__init__(project, cache)
+            def __init__(self, project: FilesystemProject) -> None:
+                super().__init__(project)
                 self.run_calls = 0
 
             def materialize_and_run(self, source, sql, variables, source_name):  # type: ignore[override]
@@ -882,7 +882,7 @@ class TestFileSourceIncrementalDoesNotIntercept:
                 return super().materialize_and_run(source, sql, variables, source_name)
 
         # Render 1 (cold): materializer runs, results cached.
-        mat1 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
             adapter_registry=build_adapter_registry(project),
@@ -896,7 +896,7 @@ class TestFileSourceIncrementalDoesNotIntercept:
 
         # Render 2 (warm): must NOT raise "Unknown dialect 'csv'" — served
         # from the result cache exactly like a non-incremental query.
-        mat2 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
             adapter_registry=build_adapter_registry(project),

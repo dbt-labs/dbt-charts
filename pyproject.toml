@@ -12,6 +12,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-xdist>=3.5.0",  # Parallel test execution; `test` recipe runs -n auto
     "pytest-timeout>=2.2.0",  # Kill hung tests
+    "pillow>=9.0.0",  # tests only
     "filelock>=3.0",  # FileLock for xdist fixture TOCTOU guard (tests/integration/conftest.py)
     "packaging>=22",  # PEP 440 parsing (tests/core/test_packaging_metadata.py)
     "dbt-core==1.12.5",  # Match the monorepo lock for the dbt-internal-API canaries
@@ -79,7 +80,7 @@ dependencies = [
     # Backport of stdlib importlib.resources — as_file() gains directory support
     # only in 3.12+; dbt_charts targets 3.10+. Used by
     # core/fonts.py:get_fonts_dir() to materialize a persistent real directory
-    # for foreign libs (StaticFiles, vl-convert, fontTools/PIL), and by
+    # for foreign libs (StaticFiles, vl-convert, fontTools), and by
     # agent_api/init.py for the Traversable type of the template walk.
     "importlib_resources>=6.0",
     "jinja2>=3.1.6",
@@ -93,11 +94,8 @@ dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
     "vl-convert-python>=1.9.0",
-    "pygments>=2.0.0",
+    "pygments>=2.18.0",
     "fonttools>=4.0",
-    # PIL.ImageFont.getlength is used during compile-time title-width
-    # measurement (core/render/sizing.measure_title_single_line_width).
-    "pillow>=9.0.0",
     # plotext 6.0.0 reshaped its API and dropped the module-level functions
     # core/render/terminal_charts.py calls (clear_data, clear_figure, plotsize,
     # theme, title, bar, plot, scatter, xticks, build — not a rename, several
@@ -126,11 +124,8 @@ dependencies = [
     # generate_runtime_macro_context) to bootstrap dbt manifests/macro
     # contexts — capped below the next major since that API can be reshaped
     # without warning. dbt_manifest.py imports nothing from dbt: it reads the
-    # manifest as plain JSON. integrations/dbt_plugin.py imports dbt's
-    # EXPERIMENTAL plugin API (dbt.plugins.manager, ArtifactMixin); dbt loads
-    # it on every command, so an import break there fails every dbt run.
-    # Canaries: test_dbt_macro_loader.py, test_dbt_adapter_factory.py,
-    # test_dbt_plugin.py.
+    # manifest as plain JSON. Canaries: test_dbt_macro_loader.py,
+    # test_dbt_adapter_factory.py.
     "dbt-core>=1.8,<2",
     "dbt-adapters>=1.20,<2",
     "dbt-common>=1.0",
@@ -216,6 +211,17 @@ fabric = [
     "dbt-fabric>=1.9,<2.0",
 ]
 
+# dbt v2's lake compute driver has no PyPI build. dbt publishes it on its own CDN
+# and `execute/drivers/_fetch.py` downloads it on first use, checksum-pinned, so
+# this extra installs the machinery to load and verify one: the ADBC driver
+# manager, zstd for the compressed artifact, and platformdirs to find the cache
+# dbt shares.
+lakecompute = [
+    "adbc-driver-manager>=1.12",
+    "platformdirs>=4.0",
+    "zstandard>=0.22",
+]
+
 mcp = [
     # Capped at 1.x: `ai/mcp/server.py` uses the low-level decorator API
     # (`@server.list_resources()`, `@server.call_tool()`, ...), which mcp 2.0
@@ -261,7 +267,7 @@ testpaths = ["tests"]
 # (test_no_path_mutation.py, test_wheel_asset_inventory.py,
 # test_packaging_mdsvg.py, test_oss_install_smoke.py) pin specific tests to
 # one worker for isolation; the default --dist=load ignores that marker.
-addopts = "--import-mode=importlib --dist=loadgroup"
+addopts = "--import-mode=importlib --maxprocesses=6 --dist=loadgroup"
 timeout = 30
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
@@ -531,8 +537,8 @@ forbidden_module_paths = [
 # feature gate in sql_adapter.py; google-cloud-bigquery is the optional
 # `bigquery` extra, not a runtime dep, so the AST audit needs the carve-out.
 # `databricks` (databricks-sql-connector) is imported by the lazily-loaded
-# databricks_connection_manager.py behind the databricks adapter gate and by
-# connections.py's list_catalogs; it is a transitive dep of the optional
+# databricks_connection_manager.py behind the databricks adapter gate; it is a
+# transitive dep of the optional
 # `databricks` extra, not a runtime dep.
 # `openai` is the lazy import inside ai/openai_gateway.py's OpenAIGateway. No
 # `dct` verb reaches it — the gateway exists for in-repo hosts (Cloud,
@@ -604,3 +610,18 @@ module = [
     "dbt_charts.core.execute.trivial_local_cache",
 ]
 disallow_any_unimported = false
+
+# pyarrow ships `__init__.pyi` but no `lib.pyi`, so every symbol it re-exports
+# from the compiled `pyarrow.lib` — Table, table, compute — resolves to Any for
+# mypy. The Arrow driver seam cannot keep pyarrow out of its signatures, since
+# pyarrow.Table is what it carries. Scoped to the modules that name the type.
+[[tool.mypy.overrides]]
+module = [
+    "dbt_charts.core.connections",
+    "dbt_charts.core.execute.result",
+    "dbt_charts.core.execute.adapters.sql_adapter",
+    "dbt_charts.core.execute.drivers.base",
+    "dbt_charts.core.execute.drivers._cdn",
+]
+disallow_any_unimported = false
+disallow_untyped_calls = false

@@ -440,16 +440,12 @@ class TestBakePointCompanions:
     _BASE_POINT = PointMarkStyle()
 
     def test_ring_tracks_stroke_when_not_authored(self) -> None:
-        result = bake_point_companions(
-            self._BASE_POINT, 4.0, 100.0, size_authored=True, ring_authored=False
-        )
+        result = bake_point_companions(self._BASE_POINT, 4.0, 100.0)
         assert result.stroke_width == 4.0
 
     def test_ring_preserved_when_authored(self) -> None:
         pinned = self._BASE_POINT.model_copy(update={"stroke_width": 1.5})
-        result = bake_point_companions(
-            pinned, 4.0, 100.0, size_authored=True, ring_authored=True
-        )
+        result = bake_point_companions(pinned, 4.0, 100.0)
         assert result.stroke_width == 1.5
 
     def test_size_preserved_when_authored_regardless_of_density(self) -> None:
@@ -457,20 +453,16 @@ class TestBakePointCompanions:
         otherwise turn points off -- the density trigger only governs the
         UNauthored default, never overrides an explicit author choice."""
         pinned = self._BASE_POINT.model_copy(update={"size": 99.0})
-        result = bake_point_companions(
-            pinned, 4.0, 1.0, size_authored=True, ring_authored=True
-        )
+        result = bake_point_companions(pinned, 4.0, 1.0)
         assert result.size == 99.0
+
+    def test_size_untouched_without_density_signal(self) -> None:
+        result = bake_point_companions(self._BASE_POINT, 4.0, 0.0)
+        assert result.size is None
 
     def test_size_off_below_threshold(self) -> None:
         threshold = get_chart_rendering().point.min_px_per_point
-        result = bake_point_companions(
-            self._BASE_POINT,
-            4.0,
-            threshold - 0.01,
-            size_authored=False,
-            ring_authored=True,
-        )
+        result = bake_point_companions(self._BASE_POINT, 4.0, threshold - 0.01)
         assert result.size == 0.0
 
     def test_size_on_at_threshold_matches_diameter_ratio(self) -> None:
@@ -480,13 +472,7 @@ class TestBakePointCompanions:
         threshold = get_chart_rendering().point.min_px_per_point
         ratio = get_chart_rendering().point.diameter_ratio
         stroke = 4.0
-        result = bake_point_companions(
-            self._BASE_POINT,
-            stroke,
-            threshold,
-            size_authored=False,
-            ring_authored=True,
-        )
+        result = bake_point_companions(self._BASE_POINT, stroke, threshold)
         assert result.size == pytest.approx((ratio * stroke) ** 2)
 
 
@@ -712,7 +698,7 @@ class TestLineChartAdaptiveStroke:
             )
         )
         # Author does NOT pin stroke width — so the adaptive width is > 0,
-        # but bake_line_stroke skips it (zero sentinel).
+        # but the width resolver skips it (zero sentinel).
         # Companion block must NOT then zero the visible points.
         chart, data, w = _line_chart(20, width=600.0)  # no authored stroke
         resolved = resolve(
@@ -940,9 +926,7 @@ class TestAreaChartAdaptiveStroke:
     def test_fallback_when_no_data_stacked(self) -> None:
         """Stacked recipe (colorless), no data anywhere in the cascade: falls
         back to chart_rendering.stroke.stacked_fallback_width -- the
-        stacked-recipe's own, thinner constant, not the overlap one. The
-        stacked recipe's pre-bake cap comparison must source this same
-        constant."""
+        stacked-recipe's own, thinner constant, not the overlap one."""
         chart, _, w = _area_chart(0, width=600.0)
         resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE, width=w)
         assert (
@@ -957,7 +941,7 @@ class TestLayerInheritsCascadePinnedStroke:
     local style patch. Regression: the layer gate only peeked at the layer's
     own ``style:`` patch, missing an inherited pin and letting the freshly
     computed adaptive value silently overwrite it -- even though the base
-    chart's own bake (``bake_line_stroke`` in adaptive_stroke.py) already
+    chart's own bake (``_apply_line_width`` in _marks.py) already
     honors the same pin correctly.
     """
 
@@ -1008,7 +992,7 @@ class TestUnpinnedOverlayLayerStillGetsAdaptiveWidth:
     value before handing it to ``_resolve_layer_list`` whenever the base was
     pinned -- even for a cross-family overlay (e.g. an area layer on a line
     base) whose own cascade parent carries no pin at all.
-    ``bake_line_stroke`` already no-ops on a pinned mark, so the resolver
+    ``_apply_line_width`` already no-ops on a pinned mark, so the resolver
     doesn't need its own gate; the fix is to always compute the adaptive
     value and let that shared no-op handle the base.
     """
@@ -1045,7 +1029,7 @@ class TestUnpinnedOverlayLayerStillGetsAdaptiveWidth:
 class TestAuthoredNullStrokeRejected:
     """Authored ``stroke: null`` on a line/area mark must still hit the
     builder's own "stroke is None after cascade" error -- never a silently
-    manufactured default stroke. Regression: ``_apply_stroke_width_fallback``
+    manufactured default stroke. Regression: ``_apply_line_width``
     used to build a full ``StrokeStyle()`` out of nothing (``mark.stroke or
     StrokeStyle()``) whenever ``mark.stroke`` was None, resurrecting the
     exact mark the guard below exists to reject.
@@ -1122,7 +1106,7 @@ class TestAuthoredNullStrokeRejected:
 
 
 class TestStreamgraphStrokeCap:
-    """Stacked/streamgraph edges are band separators: never thicker, can thin."""
+    """Stacked/streamgraph edges are band separators: a fixed weight, not density-driven."""
 
     @staticmethod
     def _stream_stroke(n_cats: int, width: float, stack: str | None) -> float:
@@ -1157,23 +1141,32 @@ class TestStreamgraphStrokeCap:
         assert sparse_stream < sparse_overlap
 
     def test_streamgraph_edge_holds_at_thin_fallback(self) -> None:
-        """The stacked-area edge default is already thinner than the adaptive
-        floor, so capping holds it at that thin separator weight regardless of
-        density — never thickened, and it does not ride the density curve the way
-        an unstacked trend edge does."""
+        """The stacked-area edge is a fixed separator weight: it does not ride
+        the density curve the way an unstacked trend edge does."""
         stream_sparse = self._stream_stroke(5, 600.0, stack="center")
         stream_dense = self._stream_stroke(300, 600.0, stack="center")
         assert stream_sparse == stream_dense
 
-    def test_streamgraph_edge_caps_at_stacked_fallback_width_constant(self) -> None:
-        """The cap value itself is chart_rendering.stroke.stacked_fallback_width:
-        the pre-bake cap comparison in area.py must source this engine
-        constant, not the (now-deleted) marks.area.stacked.stroke.width theme
-        literal, or an unpinned dense streamgraph would ride the uncapped
-        adaptive curve (1.5-4.0px) instead of staying at this thin separator
-        weight."""
+    def test_streamgraph_edge_uses_stacked_fallback_width_constant(self) -> None:
+        """An unpinned streamgraph edge takes
+        chart_rendering.stroke.stacked_fallback_width."""
         stream_dense = self._stream_stroke(300, 600.0, stack="center")
         assert stream_dense == get_chart_rendering().stroke.stacked_fallback_width
+
+    def test_streamgraph_edge_ignores_adaptive_clamp(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The stacked separator is a fixed weight: it does not derive from the
+        adaptive clamp, so retuning the clamp cannot move it."""
+        from dbt_charts.core.compile.resolve.chart import adaptive_stroke as module
+
+        real = get_chart_rendering()
+        thin = real.stroke.model_copy(update={"min_width": 0.5, "max_width": 0.5})
+        patched = real.model_copy(update={"stroke": thin})
+        monkeypatch.setattr(module, "get_chart_rendering", lambda: patched)
+
+        stream = self._stream_stroke(300, 600.0, stack="center")
+        assert stream == real.stroke.stacked_fallback_width
 
 
 # ---------------------------------------------------------------------------
@@ -1550,3 +1543,24 @@ rows:
             width=400,
         )
         assert resolved.layers[0].point_mark.size is None
+
+    def test_unpinned_layer_stroke_takes_the_fallback_width(self) -> None:
+        """With no density signal the width resolver has nothing adaptive to
+        apply, so an unpinned line layer on a bar base is a visible chart that
+        reaches ``fallback_width``."""
+        source = self._BOARD.format(stroke=4.0).replace(
+            "              stroke:\n                width: 4.0\n", ""
+        )
+        result = compile_board(source)
+        assert result.success, result.errors
+        data = [{"day": "2024-01-01", "actual": 120, "target": 110}]
+        resolved = resolve(
+            result.board.charts["c1"],
+            data,
+            chart_style_context=result.board.chart_style_context,
+            width=400,
+        )
+        assert (
+            resolved.layers[0].line_mark.stroke.width
+            == get_chart_rendering().stroke.fallback_width
+        )

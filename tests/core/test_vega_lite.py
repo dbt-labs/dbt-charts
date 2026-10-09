@@ -18,6 +18,7 @@ from pydantic import TypeAdapter as _TypeAdapter
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import FormatTable
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
@@ -1013,7 +1014,9 @@ class TestChartWithTitle:
 class TestFormatKpiParts:
     """Tests for format_kpi_parts — decomposing formatted KPI values."""
 
-    _FORMATS = {"money": "$,.2f", "pct": ".1%", "tilde": ",.2s"}
+    _FORMATS = FormatTable(
+        aliases={"money": "$,.2f", "pct": ".1%", "tilde": ",.2s"}, currency="USD"
+    )
 
     def test_currency_format(self):
         from dbt_charts.core.compile.format_value import format_kpi_parts

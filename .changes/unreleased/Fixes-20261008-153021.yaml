@@ -1,0 +1,3 @@
+kind: Fixes
+body: Chart card borders, box shadows, and a text block font now change the render, and a KPI card border now honors its width.
+time: 2026-10-08T15:30:21.05715-07:00

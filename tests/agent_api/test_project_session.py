@@ -152,6 +152,20 @@ def test_project_close_does_not_raise_when_cache_is_none(tmp_path: Path) -> None
     project.close()
 
 
+def test_close_closes_injected_file_materializer_once(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    materializer = MagicMock()
+    project = ProjectSession.from_project(
+        local_project(tmp_path), file_materializer=materializer
+    )
+
+    project.close()
+    project.close()
+
+    materializer.close.assert_called_once_with()
+
+
 def test_project_render_board_forwards_cache_and_project_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -439,10 +453,10 @@ def test_project_sources_caches_until_refresh(tmp_path: Path) -> None:
 def test_project_warnings_ignore_caches_until_refresh(tmp_path: Path) -> None:
     """warnings_ignore is read at open() time; refresh() re-reads and the value reflects disk."""
     dbt_charts_yml = tmp_path / "dbt_charts.yml"
-    dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n")
+    dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
 
     with ProjectSession.open(tmp_path) as project:
-        assert project.warnings_ignore == frozenset({"WARN-FANOUT-RISK"})
+        assert project.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
 
         dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
         project.refresh()
@@ -501,7 +515,7 @@ def test_project_injected_registry_refresh_skips_registry_rebuild_but_clears_cac
     """
     (tmp_path / "dbt_charts.yml").write_text(
         "sources:\n  x:\n    type: duckdb\n    path: x.duckdb\n"
-        "warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n"
+        "warnings:\n  ignore:\n    - WARN-REAGGREGATION\n"
     )
 
     from dbt_charts.core.compile.config import (
@@ -554,11 +568,11 @@ def test_refresh_sees_dbt_charts_yml_added_after_open(tmp_path: Path) -> None:
         assert session.warnings_ignore == frozenset()
 
         (tmp_path / "dbt_charts.yml").write_text(
-            "warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n"
+            "warnings:\n  ignore:\n    - WARN-REAGGREGATION\n"
         )
         session.refresh()
 
-        assert session.warnings_ignore == frozenset({"WARN-FANOUT-RISK"})
+        assert session.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
 
 
 def test_open_threads_resolver_to_adapter_registry(tmp_path: Path) -> None:

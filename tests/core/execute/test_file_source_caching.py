@@ -56,8 +56,8 @@ def _board(sql: str) -> Any:
 class _CountingMaterializer(FileSourceMaterializer):
     """Materializer that counts materialize_and_run calls."""
 
-    def __init__(self, project: FilesystemProject, cache: TrivialDuckDBCache) -> None:
-        super().__init__(project, cache)
+    def __init__(self, project: FilesystemProject) -> None:
+        super().__init__(project)
         self.run_calls = 0
 
     def materialize_and_run(
@@ -93,7 +93,7 @@ class TestWarmRenderSkipsMaterializer:
         result_cache = TrivialDuckDBCache()
 
         # Render 1 (cold): materializer runs, result written through to result_cache.
-        mat1 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
             adapter_registry=_registry(project),
@@ -106,7 +106,7 @@ class TestWarmRenderSkipsMaterializer:
         assert mat1.run_calls == 1
 
         # Render 2 (warm): a fresh executor sharing the persistent result_cache.
-        mat2 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
             adapter_registry=_registry(project),
@@ -124,7 +124,7 @@ class TestWarmRenderSkipsMaterializer:
         board = _board("SELECT * FROM sales ORDER BY amount")
         result_cache = TrivialDuckDBCache()
 
-        mat1 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
             adapter_registry=_registry(project),
@@ -141,7 +141,7 @@ class TestWarmRenderSkipsMaterializer:
         )
         _bump_mtime_of(project, "data/sales.csv")
 
-        mat2 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
             adapter_registry=_registry(project),
@@ -167,7 +167,7 @@ class TestSourceVersionMemoizedMidRender:
         """
         project = _project(tmp_path, {"data/sales.csv": "region,amount\nNorth,100\n"})
         board = _board("SELECT * FROM sales")
-        mat = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat = _CountingMaterializer(project)
         ex = Executor(
             board,
             adapter_registry=_registry(project),
@@ -232,7 +232,7 @@ class TestMultiFileSource:
         assert board is not None
         result_cache = TrivialDuckDBCache()
 
-        mat1 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
             adapter_registry=_registry(project),
@@ -248,7 +248,7 @@ class TestMultiFileSource:
         )
         _bump_mtime_of(project, "data/customers.csv")
 
-        mat2 = _CountingMaterializer(project, TrivialDuckDBCache())
+        mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
             adapter_registry=_registry(project),
@@ -270,7 +270,7 @@ class TestLazySharedMaterializer:
 
         def _factory() -> FileSourceMaterializer:
             builds["n"] += 1
-            return FileSourceMaterializer(project, TrivialDuckDBCache())
+            return FileSourceMaterializer(project)
 
         # Cold render: the factory builds exactly one shared materializer.
         ex1 = Executor(
@@ -311,7 +311,7 @@ class TestMaterializerReadsOnlyOnMiss:
         from dbt_charts.core.compile.models.source import CsvSourceConfig
 
         source = CsvSourceConfig(type="csv", files={"sales": "data/sales.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales")
         mat.materialize_and_run(source, "SELECT COUNT(*) FROM sales", {}, "sales")
@@ -337,7 +337,7 @@ class TestConcurrentMaterialize:
         from dbt_charts.core.compile.models.source import CsvSourceConfig
 
         source = CsvSourceConfig(type="csv", files={"sales": "data/sales.csv"})
-        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+        mat = FileSourceMaterializer(project)
 
         barrier = threading.Barrier(8)
 

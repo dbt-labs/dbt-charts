@@ -417,7 +417,7 @@ class GeoshapeEmitter:
                     value_field_type,
                     title=field_title(value_field, chart.field_labels),
                     format=(
-                        chart.style.tooltip_format
+                        chart.style.tooltip_format.spec
                         if value_field_type == "quantitative"
                         else None
                     ),
@@ -594,7 +594,7 @@ class PointMapEmitter:
                         )
             encoding["color"] = enc
 
-        tooltip_format = chart.style.tooltip_format
+        tooltip_format = chart.style.tooltip_format.spec
         tooltip_fields = build_point_tooltip_fields(
             data,
             lat_field=lat_field,

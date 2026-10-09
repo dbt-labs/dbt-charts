@@ -126,15 +126,23 @@ class LabelsDefaultTemplate(BaseModel):
     ``context_extras`` callback in ``render/chart/emitters/pie.py``
     (``percent``, ``color``, ``value``, ``total``) so they work regardless
     of the chart's theta/color field names.
+
+    ``{value_line}`` stands for the slice value in the slice tooltip's format.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     with_color: str = Field(
-        description="Default per-slice label template when the chart has a color binding.",
+        description=(
+            "Default per-slice label template when the chart has a color binding. "
+            "`{value_line}` stands for the slice value in the slice tooltip's format."
+        ),
     )
     no_color: str = Field(
-        description="Default per-slice label template when the chart has no color binding.",
+        description=(
+            "Default per-slice label template when the chart has no color binding. "
+            "`{value_line}` stands for the slice value in the slice tooltip's format."
+        ),
     )
 
     @field_validator("with_color", "no_color")

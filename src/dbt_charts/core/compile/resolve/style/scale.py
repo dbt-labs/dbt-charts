@@ -31,6 +31,20 @@ from dbt_charts.core.text.numeral_scale import (
 )
 
 
+def ladder_anchor_at_start(tick_values: tuple[float, ...]) -> bool:
+    """Whether an anchored unit sits on the first tick rather than the last.
+
+    Sign-aware: the largest positive tick, else the most negative, so a
+    zero-crossing ladder never anchors on its negative end or the 0 cap.
+    ``tick_values`` are the ticks Vega draws. With none, Vega's last tick.
+    """
+    if not tick_values:
+        return False
+    positives = [v for v in tick_values if v > 0]
+    anchor_value = max(positives) if positives else min(tick_values)
+    return tick_values.index(anchor_value) == 0
+
+
 def build_resolved_scale(
     scale: BaseScaleStyle | XScaleStyle | None,
 ) -> ResolvedScaleStyle | None:
@@ -87,6 +101,7 @@ def _build_ruler(
     font_family: str,
     font_tabular: bool,
     chart_id: str,
+    anchor_at_start: bool,
     notation: Notation | None = None,
     repeat: AffixRepeat | None = None,
 ) -> ResolvedRulerAxis | None:
@@ -131,10 +146,6 @@ def _build_ruler(
 
     effective_mode = raw_scale.mode if column_forming else SuffixMode.REPEAT
     prefix, digit_spec = ruler_digit_format(si_format)
-    # Which END of the ascending ladder is the magnitude-extreme -- see
-    # ResolvedAxisStyle.ruler's docstring for why this is a position
-    # (baked once here) rather than the tick's raw value.
-    anchor_at_start = tick_values.index(max(tick_values, key=abs)) == 0
     register: Notation = notation or (
         "analytic" if effective_mode is SuffixMode.ANCHOR else "narrative"
     )
@@ -187,4 +198,4 @@ def _build_ruler(
     )
 
 
-__all__ = ["build_resolved_scale", "_build_ruler"]
+__all__ = ["build_resolved_scale", "_build_ruler", "ladder_anchor_at_start"]

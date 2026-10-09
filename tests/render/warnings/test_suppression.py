@@ -26,7 +26,7 @@ from dbt_charts.core.compile.config import (
     get_project_warnings_ignore,
 )
 from dbt_charts.core.diagnostics import (
-    WARN_FANOUT_RISK,
+    WARN_REAGGREGATION,
     WARN_REDUNDANT_ENCODING,
     Diagnostic,
 )
@@ -126,7 +126,7 @@ def test_partition_union_project_alone_is_sufficient() -> None:
 def test_partition_multiple_warnings_mixed() -> None:
     """Only the warning whose code is in an ignore set is suppressed."""
     w_fake = Diagnostic.from_code(WARN_REDUNDANT_ENCODING, message="m1", chart="c1")
-    w_other = Diagnostic.from_code(WARN_FANOUT_RISK, message="m2", chart="c1")
+    w_other = Diagnostic.from_code(WARN_REAGGREGATION, message="m2", chart="c1")
     active, suppressed = partition(
         [w_fake, w_other],
         cli_codes={WARN_REDUNDANT_ENCODING.code},
@@ -145,7 +145,9 @@ def test_partition_multiple_warnings_mixed() -> None:
 def test_validate_suppression_codes_accepts_registered_codes() -> None:
     from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 
-    validate_suppression_codes(["WARN-FANOUT-RISK", "WARN-REAGGREGATION"], source="x")
+    validate_suppression_codes(
+        ["WARN-MISSING-JOIN-PREDICATE", "WARN-REAGGREGATION"], source="x"
+    )
 
 
 def test_validate_suppression_codes_rejects_unknown_code() -> None:
@@ -155,14 +157,15 @@ def test_validate_suppression_codes_rejects_unknown_code() -> None:
         validate_suppression_codes(["WARN-PIE-TOO-MANY-SEGMENT"], source="chart 'c'")
 
 
-def test_validate_suppression_codes_keeps_a_retired_code_loading_with_a_warning() -> (
-    None
-):
+@pytest.mark.parametrize("code", ["WARN-ADJACENT-TEXT-ROWS", "WARN-FANOUT-RISK"])
+def test_validate_suppression_codes_keeps_a_retired_code_loading_with_a_warning(
+    code: str,
+) -> None:
     """A code a release removed still loads, and says it no longer exists."""
     from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 
-    with pytest.warns(UserWarning, match="WARN-ADJACENT-TEXT-ROWS.*no longer"):
-        validate_suppression_codes(["WARN-ADJACENT-TEXT-ROWS"], source="dbt_charts.yml")
+    with pytest.warns(UserWarning, match=f"{code}.*no longer"):
+        validate_suppression_codes([code], source="dbt_charts.yml")
 
 
 def test_validate_suppression_codes_error_names_the_source() -> None:
@@ -244,13 +247,12 @@ rows:
     assert any("WARN-PIE-TOO-MANY-SEGMENT" in e.message for e in result.errors)
 
 
-def test_query_ignore_suppresses_fanout_risk() -> None:
+def test_query_ignore_suppresses_reaggregation() -> None:
     """queries.<name>.ignore: actually suppresses a query-domain diagnostic.
 
-    This is the correct, already-working lever for FR-79's trap: chart-scoped
-    `warnings_ignore` can never reach WARN-FANOUT-RISK/WARN-REAGGREGATION
-    (they never carry a chart id), so this is where an author must suppress
-    them instead."""
+    Chart-scoped `warnings_ignore` can never reach query-domain codes like
+    WARN-REAGGREGATION (they never carry a chart id), so this is where an
+    author must suppress them instead."""
     from dbt_charts.core.compile.compiler import validate_compiled_queries
 
     board_yaml = """
@@ -264,12 +266,12 @@ charts:
 queries:
   q:
     sql: >-
-      SELECT o.id AS category, COUNT(*) AS value
-      FROM orders o JOIN line_items li ON o.id = li.order_id
-      GROUP BY o.id
+      SELECT category, AVG(total) AS value
+      FROM (SELECT category, SUM(amount) AS total FROM orders GROUP BY category) s
+      GROUP BY category
     source: test_source
     ignore:
-      - WARN-FANOUT-RISK
+      - WARN-REAGGREGATION
 rows:
   - c
 """
@@ -277,8 +279,8 @@ rows:
     assert result.success
     validate_compiled_queries(result)
 
-    assert not any(w.code == "WARN-FANOUT-RISK" for w in result.warnings)
-    assert any(w.code == "WARN-FANOUT-RISK" for w in result.suppressed_warnings)
+    assert not any(w.code == "WARN-REAGGREGATION" for w in result.warnings)
+    assert any(w.code == "WARN-REAGGREGATION" for w in result.suppressed_warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +369,9 @@ def test_render_ignore_codes_does_not_suppress_unmatched(
     assert result.board is not None
     executor = _make_executor(result.board, result.query_registry)
 
-    monkeypatch.setattr(_registry, "DETECTORS", [_fake_detector(WARN_FANOUT_RISK.code)])
+    monkeypatch.setattr(
+        _registry, "DETECTORS", [_fake_detector(WARN_REAGGREGATION.code)]
+    )
 
     render_result = render(
         result.board,
@@ -376,7 +380,7 @@ def test_render_ignore_codes_does_not_suppress_unmatched(
         ignore_codes={WARN_REDUNDANT_ENCODING.code},
     )
     assert len(render_result.warnings) == 1
-    assert render_result.warnings[0].code == WARN_FANOUT_RISK.code
+    assert render_result.warnings[0].code == WARN_REAGGREGATION.code
     assert render_result.suppressed_warnings == []
 
 
@@ -460,7 +464,7 @@ def test_project_warnings_ignore_does_not_suppress_other_codes(
         result.board,
         executor,
         format="json",
-        warnings_ignore=frozenset({WARN_FANOUT_RISK.code}),
+        warnings_ignore=frozenset({WARN_REAGGREGATION.code}),
     )
     assert len(render_result.warnings) == 1
     assert render_result.suppressed_warnings == []
@@ -474,17 +478,19 @@ def test_get_project_warnings_ignore_reads_fresh_per_call(
     get_project_warnings_ignore no longer caches; each call re-reads disk.
     """
     dbt_charts_yml = tmp_path / "dbt_charts.yml"
-    dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n")
-
-    first = get_project_warnings_ignore(local_project(tmp_path))
-    assert "WARN-FANOUT-RISK" in first
-
-    # Edit the file in place — no invalidation call.
     dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
 
+    first = get_project_warnings_ignore(local_project(tmp_path))
+    assert "WARN-REAGGREGATION" in first
+
+    # Edit the file in place — no invalidation call.
+    dbt_charts_yml.write_text(
+        "warnings:\n  ignore:\n    - WARN-MISSING-JOIN-PREDICATE\n"
+    )
+
     second = get_project_warnings_ignore(local_project(tmp_path))
-    assert "WARN-REAGGREGATION" in second
-    assert "WARN-FANOUT-RISK" not in second, (
+    assert "WARN-MISSING-JOIN-PREDICATE" in second
+    assert "WARN-REAGGREGATION" not in second, (
         "get_project_warnings_ignore returned stale cached data; FR-005 requires fresh read"
     )
 
@@ -518,7 +524,7 @@ def test_get_project_warnings_ignore_rejects_non_string_entries(
 # fake detector, not because that code is realistically chart-suppressible in
 # production — they're proving the per-chart suppression mechanics work for any
 # diagnostic that actually carries a chart id. A *query*-domain code (e.g.
-# WARN-FANOUT-RISK) would be wrong here: `from_query_diagnostic` never sets a
+# WARN-REAGGREGATION) would be wrong here: `from_query_diagnostic` never sets a
 # chart id (a query can back more than one chart), so chart-scoped
 # `warnings_ignore` can never match it — see
 # test_chart_warnings_ignore_rejects_query_domain_code below.
@@ -636,7 +642,7 @@ def test_per_chart_warnings_ignore_does_not_suppress_board_level_warning(
 
 
 def test_chart_warnings_ignore_rejects_query_domain_code() -> None:
-    """A query-domain code (WARN-FANOUT-RISK) in a chart's warnings_ignore:
+    """A query-domain code (WARN-REAGGREGATION) in a chart's warnings_ignore:
     fails compile with an actionable message, instead of silently no-oping.
 
     Query-lint diagnostics (`from_query_diagnostic`) never carry a chart id —
@@ -652,7 +658,7 @@ charts:
     x: category
     y: value
     warnings_ignore:
-      - WARN-FANOUT-RISK
+      - WARN-REAGGREGATION
 queries:
   q:
     sql: SELECT 'a' AS category, 1 AS value
@@ -663,7 +669,7 @@ rows:
     result = compile(board_yaml)
     assert not result.success
     assert any(
-        "WARN-FANOUT-RISK" in e.message and "queries.<name>.ignore" in e.message
+        "WARN-REAGGREGATION" in e.message and "queries.<name>.ignore" in e.message
         for e in result.errors
     ), [e.message for e in result.errors]
 
@@ -739,10 +745,10 @@ def test_render_dashboard_honors_project_warnings_ignore(
     from dbt_charts.core.project import InMemoryBoard
 
     (tmp_path / "dbt_charts.yml").write_text(
-        "warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n"
+        "warnings:\n  ignore:\n    - WARN-REAGGREGATION\n"
     )
     monkeypatch.setattr(
-        _registry, "DETECTORS", [_fake_detector("WARN-FANOUT-RISK", chart_id="c")]
+        _registry, "DETECTORS", [_fake_detector("WARN-REAGGREGATION", chart_id="c")]
     )
 
     project = local_project(tmp_path)
@@ -758,4 +764,14 @@ def test_render_dashboard_honors_project_warnings_ignore(
     assert result.status == "ok"
     assert result.warnings == []
     assert len(result.suppressed_warnings) == 1
-    assert result.suppressed_warnings[0].code == "WARN-FANOUT-RISK"
+    assert result.suppressed_warnings[0].code == "WARN-REAGGREGATION"
+
+
+def test_query_ignore_keeps_a_retired_code_loading_with_a_warning() -> None:
+    """A retired code stays a legal `ignore:` entry."""
+    from dbt_charts.core.compile.models.query.authored import AuthoredSqlQuery
+
+    with pytest.warns(UserWarning, match="WARN-ADJACENT-TEXT-ROWS.*no longer"):
+        AuthoredSqlQuery.model_validate(
+            {"sql": "select 1", "ignore": ["WARN-ADJACENT-TEXT-ROWS"]}
+        )

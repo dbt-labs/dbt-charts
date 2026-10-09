@@ -71,6 +71,13 @@ class DatabricksDialect(SQLDialect):
             "ORDER BY table_schema, table_name, ordinal_position"
         )
 
+    def quote(self, identifier: str) -> str:
+        """Backtick-quote an identifier — Spark SQL's only quoted form.
+
+        https://spark.apache.org/docs/latest/sql-ref-identifier.html
+        """
+        return "`" + identifier.replace("`", "``") + "`"
+
 
 class SparkDialect(DatabricksDialect):
     """Spark dialect — same SQL grammar as Databricks, but the PySpark cursors

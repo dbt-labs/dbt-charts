@@ -27,6 +27,26 @@ from dbt_charts.core.render.warnings import (
 
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
+_FOUR_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+
+
+def _threshold(chart: Chart) -> int:
+    return max(len(make_test_resolved_chart(chart).palette), 8)
+
+
+def _line_with_palette(palette: str | list[str]) -> LineChart:
+    return LineChart(
+        id="c1",
+        type="line",
+        query_name="q",
+        x="x",
+        y="val",
+        color="series",
+        style=LineChartStylePatch.model_validate(
+            {"color": {"categorical": {"palette": palette}}}
+        ),
+    )
+
 
 def _rows(n: int) -> list[dict[str, Any]]:
     return [{"x": i, "val": i, "series": f"s{i}"} for i in range(n)]
@@ -48,14 +68,14 @@ def test_fires_above_threshold_on_nominal_color() -> None:
     chart = LineChart(
         id="c1", type="line", query_name="q", x="x", y="val", color="series"
     )
-    palette_size = len(make_test_resolved_chart(chart).palette)
-    warnings = detector.detect(_make_ctx(chart, _rows(palette_size + 1), "nominal"))
+    count = _threshold(chart) + 1
+    warnings = detector.detect(_make_ctx(chart, _rows(count), "nominal"))
     assert len(warnings) == 1
     w = warnings[0]
     assert isinstance(w, Diagnostic)
     assert w.code == WARN_TOO_MANY_COLOR_CATEGORIES.code
     assert w.field == "series"
-    assert str(palette_size + 1) in w.message
+    assert str(count) in w.message
     assert w.fix is not None
 
 
@@ -63,8 +83,30 @@ def test_no_fire_at_threshold() -> None:
     chart = LineChart(
         id="c1", type="line", query_name="q", x="x", y="val", color="series"
     )
-    palette_size = len(make_test_resolved_chart(chart).palette)
-    assert detector.detect(_make_ctx(chart, _rows(palette_size), "nominal")) == []
+    assert detector.detect(_make_ctx(chart, _rows(_threshold(chart)), "nominal")) == []
+
+
+def test_no_fire_for_six_series_on_a_four_color_palette() -> None:
+    chart = _line_with_palette(_FOUR_COLORS)
+    assert detector.detect(_make_ctx(chart, _rows(6), "nominal")) == []
+
+
+def test_fires_for_thirteen_series_on_a_four_color_palette() -> None:
+    chart = _line_with_palette(_FOUR_COLORS)
+    warnings = detector.detect(_make_ctx(chart, _rows(13), "nominal"))
+    assert len(warnings) == 1
+    assert warnings[0].message == (
+        "Chart 'c1': color encoding on 'series' yields 13 distinct series, "
+        "more than the 8 a reader can tell apart."
+    )
+
+
+def test_threshold_follows_a_palette_longer_than_eight() -> None:
+    palette = [f"#{i:02x}{i:02x}{i:02x}" for i in range(16, 28)]
+    chart = _line_with_palette(palette)
+    assert detector.detect(_make_ctx(chart, _rows(12), "nominal")) == []
+    warnings = detector.detect(_make_ctx(chart, _rows(13), "nominal"))
+    assert "more than the 12 a reader" in warnings[0].message
 
 
 def test_no_fire_on_quantitative_color() -> None:
@@ -105,7 +147,7 @@ def test_fires_on_wide_chart_without_color_and_names_y() -> None:
             BarChart(id="c1", type="bar", query_name="q", x="x", y=["a"])
         ).palette
     )
-    measures = [f"m{i:02d}" for i in range(palette_size + 1)]
+    measures = [f"m{i:02d}" for i in range(max(palette_size, 8) + 1)]
     chart = BarChart(id="c1", type="bar", query_name="q", x="x", y=measures)
     rows = [{"x": i, **dict.fromkeys(measures, i)} for i in range(3)]
     warnings = detector.detect(_make_ctx(chart, rows, "nominal"))
@@ -118,48 +160,23 @@ def test_no_fire_on_wide_chart_within_the_palette() -> None:
     chart = BarChart(
         id="c1", type="bar", query_name="q", x="x", y=["a", "b", "c"], color="list"
     )
-    palette_size = len(make_test_resolved_chart(chart).palette)
-    lists_within_palette = palette_size // 3
+    lists_within_threshold = _threshold(chart) // 3
     assert (
-        detector.detect(_make_ctx(chart, _wide_rows(lists_within_palette), "nominal"))
+        detector.detect(_make_ctx(chart, _wide_rows(lists_within_threshold), "nominal"))
         == []
     )
 
 
-def test_fires_when_series_exceed_a_short_authored_palette() -> None:
-    """A 6-color palette recycles colors at 7 series."""
-    chart = LineChart(
-        id="c1",
-        type="line",
-        query_name="q",
-        x="x",
-        y="val",
-        color="series",
-        style=LineChartStylePatch.model_validate(
-            {"color": {"categorical": {"palette": "hero-6"}}}
-        ),
-    )
-    warnings = detector.detect(_make_ctx(chart, _rows(7), "nominal"))
+def test_fires_only_above_the_floor_on_a_short_authored_palette() -> None:
+    """A 6-color palette recycles at 7 series, but a reader still tells 8 apart."""
+    chart = _line_with_palette("hero-6")
+    assert detector.detect(_make_ctx(chart, _rows(8), "nominal")) == []
+    warnings = detector.detect(_make_ctx(chart, _rows(9), "nominal"))
     assert len(warnings) == 1
     assert warnings[0].message == (
-        "Chart 'c1': color encoding on 'series' yields 7 distinct series; the "
-        "palette only has 6 distinct colors before recycling."
+        "Chart 'c1': color encoding on 'series' yields 9 distinct series, "
+        "more than the 8 a reader can tell apart."
     )
-
-
-def test_no_fire_when_series_fit_a_short_authored_palette() -> None:
-    chart = LineChart(
-        id="c1",
-        type="line",
-        query_name="q",
-        x="x",
-        y="val",
-        color="series",
-        style=LineChartStylePatch.model_validate(
-            {"color": {"categorical": {"palette": "hero-6"}}}
-        ),
-    )
-    assert detector.detect(_make_ctx(chart, _rows(6), "nominal")) == []
 
 
 def test_no_fire_with_an_empty_authored_palette() -> None:
@@ -183,7 +200,7 @@ def test_no_fire_with_an_empty_authored_palette() -> None:
 def test_fires_on_a_real_stacked_bar_spec() -> None:
     """Renders through the production pipeline (``render_resolved_chart``)
     instead of the ``_make_ctx`` stub every other test in this file uses."""
-    rows = [{"month": "Jan", "region": f"R{i}", "v": 5} for i in range(1, 8)]
+    rows = [{"month": "Jan", "region": f"R{i}", "v": 5} for i in range(1, 10)]
     chart = BarChart(
         id="c1",
         type="bar",
@@ -212,8 +229,8 @@ def test_fires_on_a_real_stacked_bar_spec() -> None:
     warnings = detector.detect(ctx)
     assert len(warnings) == 1
     assert warnings[0].message == (
-        "Chart 'c1': color encoding on 'region' yields 7 distinct series; the "
-        "palette only has 6 distinct colors before recycling."
+        "Chart 'c1': color encoding on 'region' yields 9 distinct series, "
+        "more than the 8 a reader can tell apart."
     )
 
 
@@ -224,8 +241,9 @@ def test_no_fire_on_a_real_line_chart_with_quantitative_color() -> None:
     chart = LineChart(
         id="c1", type="line", query_name="q", x="month", y="v", color="yr"
     )
-    palette_size = len(make_test_resolved_chart(chart).palette)
-    rows = [{"month": "Jan", "yr": 2000 + i, "v": 5} for i in range(palette_size + 1)]
+    rows = [
+        {"month": "Jan", "yr": 2000 + i, "v": 5} for i in range(_threshold(chart) + 1)
+    ]
     resolved = make_test_resolved_chart(chart, rows, width=600)
     spec = render_resolved_chart(
         resolved, rows, resolve_style(get_theme_style())
@@ -256,7 +274,7 @@ def test_fires_on_wide_scatter_without_color_and_names_y() -> None:
             ScatterChart(id="c1", type="scatter", query_name="q", x="x", y=["a"])
         ).palette
     )
-    measures = [f"m{i:02d}" for i in range(palette_size + 1)]
+    measures = [f"m{i:02d}" for i in range(max(palette_size, 8) + 1)]
     chart = ScatterChart(id="c1", type="scatter", query_name="q", x="x", y=measures)
     rows = [{"x": i, **dict.fromkeys(measures, i)} for i in range(3)]
     warnings = detector.detect(_make_ctx(chart, rows, "nominal"))

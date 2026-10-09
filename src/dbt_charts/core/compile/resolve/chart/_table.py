@@ -13,7 +13,7 @@ from dbt_charts.core.compile.format import (
     column_format,
     decimal_pad_table_for,
     declared_format,
-    sub_unit_spec,
+    sub_unit_spec_for_value,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -24,9 +24,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
-    FormatAliases,
-    ResolvedNamedPaletteScaleTargetConfig,
-    ResolvedScaleTargetConfig,
+    FormatTable,
 )
 from dbt_charts.core.compile.models.style.authored import (
     TableColumnConfig,
@@ -39,6 +37,10 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedColumnSharedScale,
     ResolvedTableColumnConfig,
     ResolvedTableStyle,
+)
+from dbt_charts.core.compile.models.style.resolved.table import (
+    ResolvedColumnScaleTargetConfig,
+    ResolvedNamedPaletteColumnScaleTargetConfig,
 )
 from dbt_charts.core.compile.resolve.chart._channels import _channels_for
 from dbt_charts.core.compile.resolve.chart._kwargs import (
@@ -67,7 +69,7 @@ from dbt_charts.core.fonts import (
     DBT_SANS_TABULAR_FONT_FAMILY,
     SOURCE_SERIF_4_FONT_FAMILY,
 )
-from dbt_charts.core.text.format_d3 import is_d3_si_spec
+from dbt_charts.core.text.format_d3 import d3_format, is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import (
     build_decimal_pad_table,
     column_digit_format,
@@ -75,10 +77,6 @@ from dbt_charts.core.text.numeral_scale import (
     fractional_digit_count,
     shared_scale_for_column,
     tier_distance,
-)
-from dbt_charts.core.text.predefined_formats import (
-    PREDEFINED_SUB_UNIT_FALLBACK,
-    si_sub_unit_floor,
 )
 from dbt_charts.core.utils import coerce_numeric_cell
 
@@ -240,41 +238,12 @@ def _materialize_table_columns(
     return result
 
 
-def _si_spec_for_value(
-    raw: str | None,
-    si_check_fmt: str,
-    prefix: str,
-    suffix: str,
-    value: float,
-    formats: FormatAliases | None,
-) -> str:
-    """The spec ``format_kpi_parts`` will actually paint ``value`` with, when
-    ``shared_scale`` is ``None`` -- the exact condition this fallback fires
-    under.
-
-    ``format_kpi_parts`` swaps a ``PREDEFINED_SUB_UNIT_FALLBACK`` member (e.g.
-    ``currency``) off its SI spec onto a plain two-decimal spec for any single
-    row that falls in the sub-$1 band -- money below $1 has no sub-cent SI
-    unit to name. Must track that swap exactly: a pad table built by
-    measuring every row with the bare SI spec would be too shallow for what
-    that swapped row actually prints, and ``decimal_pad_for`` raises past it.
-    """
-    if raw not in PREDEFINED_SUB_UNIT_FALLBACK:
-        return si_check_fmt
-    floor = si_sub_unit_floor(si_check_fmt, prefix, suffix)
-    if floor < abs(value) < 1.0:
-        return sub_unit_spec(raw, formats)
-    return si_check_fmt
-
-
 def _unscaled_decimal_pad_table(
     values: list[float],
     si_check_fmt: str,
     font_family: str,
     raw: str | None,
-    prefix: str,
-    suffix: str,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
 ) -> tuple[str, ...]:
     """Decimal pad table for a column with no shared SI tier to divide by --
     every cell keeps its own per-cell significant-figures spec. Self-gates on
@@ -286,10 +255,10 @@ def _unscaled_decimal_pad_table(
     Compile-side twin of ``support_table_attachment.py``'s
     ``_unscaled_decimal_pad``: same string-level questions (do these cells
     share a printed unit; how many fractional digits does the deepest one
-    print), but formats with ``_d3_fmt`` directly rather than render's
+    print), but formats with ``d3_format`` (the board locale) rather than render's
     ``format_value``, since ``compile`` cannot import ``render``
     (``compile ↛ render``). Each value is measured through
-    ``_si_spec_for_value``, not the bare ``si_check_fmt`` -- a sub-$1 cell
+    ``sub_unit_spec_for_value``, not the bare ``si_check_fmt`` -- a sub-1 cell
     prints deeper than the rest of the column.
 
     Returns ``()`` when every cell already prints the same number of
@@ -298,9 +267,7 @@ def _unscaled_decimal_pad_table(
     texts = [
         (
             v,
-            _d3_fmt(
-                _si_spec_for_value(raw, si_check_fmt, prefix, suffix, v, formats), v
-            ),
+            d3_format(sub_unit_spec_for_value(raw, si_check_fmt, v, formats))(v),
         )
         for v in values
     ]
@@ -316,7 +283,7 @@ def _unscaled_decimal_pad_table(
 def _with_resolved_scale_stops(
     columns: dict[str, TableColumnConfig] | None,
     text_color: str | None,
-    formats: FormatAliases | None,
+    formats: FormatTable | None,
     font_family: str,
     rows: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
     allow_shared_scale: bool,
@@ -329,10 +296,10 @@ def _with_resolved_scale_stops(
     Every string palette on a table column is resolved to stops via the
     WCAG-safe `surface="table"` carve — unlike bake_scale_target_stops, this
     path has no VEGA_SCHEME_NAMES carve-out, so every string palette bakes as
-    ResolvedNamedPaletteScaleTargetConfig. This is correct: tables never
+    ResolvedNamedPaletteColumnScaleTargetConfig. This is correct: tables never
     forward a VL scheme name; table palettes are always dbt-charts named ones.
 
-    Inline stop lists leave background/color as plain ResolvedScaleTargetConfig
+    Inline stop lists leave background/color as plain ResolvedColumnScaleTargetConfig
     (no resolved_stops). `text_color` is only required when a column actually
     authors a named-string scale palette.
 
@@ -377,7 +344,6 @@ def _with_resolved_scale_stops(
         # column, matching the Problem this task targets ("the engine
         # default, or any inline ~s spec").
         si_check_fmt, raw_format_name = _effective.spec, _effective.raw
-        explicit_prefix, explicit_suffix = _effective.prefix, _effective.suffix
 
         shared_scale: ResolvedColumnSharedScale | None = None
         if allow_shared_scale and coerced_values and is_d3_si_spec(si_check_fmt):
@@ -492,8 +458,6 @@ def _with_resolved_scale_stops(
                 si_check_fmt,
                 font_family,
                 raw_format_name,
-                explicit_prefix,
-                explicit_suffix,
                 formats,
             )
         if col.scale is None:
@@ -523,7 +487,7 @@ def _with_resolved_scale_stops(
                     )
                 )
                 resolved_scale_fields[attr] = (
-                    ResolvedNamedPaletteScaleTargetConfig.model_validate(
+                    ResolvedNamedPaletteColumnScaleTargetConfig.model_validate(
                         {
                             **target.model_dump(exclude_unset=True),
                             "resolved_stops": stops,
@@ -531,8 +495,10 @@ def _with_resolved_scale_stops(
                     )
                 )
             else:
-                resolved_scale_fields[attr] = ResolvedScaleTargetConfig.model_validate(
-                    target.model_dump(exclude_unset=True)
+                resolved_scale_fields[attr] = (
+                    ResolvedColumnScaleTargetConfig.model_validate(
+                        target.model_dump(exclude_unset=True)
+                    )
                 )
         scale_base = col.scale.model_dump(exclude_none=True)
         scale_base.update(

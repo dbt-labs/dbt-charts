@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.compile.models.primitives import DEFAULT_REGIONAL
 from dbt_charts.core.diagnostics import (
     WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
     WARN_PIE_DOMINANT_SEGMENT,
@@ -68,6 +69,7 @@ def _make_v2_board(charts: dict[str, Any]) -> Any:
         tags=(),
         text="",
         base_dir=None,
+        regional=DEFAULT_REGIONAL,
         html_policy="none",
         level=1,
         style=_board_style(),

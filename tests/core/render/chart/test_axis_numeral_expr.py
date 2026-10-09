@@ -33,7 +33,8 @@ import re
 
 import vl_convert as vlc
 
-from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from d3_format import LocaleDefinition
+from dbt_charts.core.compile.models.primitives import Regional, ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedRulerAxis,
     ResolvedTickLabel,
@@ -50,6 +51,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     compose_axis_format,
     inject_axis_numeral_expr,
 )
+from dbt_charts.core.text.format_d3 import locale_definition, number_locale_scope
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     ruler_digit_format,
@@ -102,7 +104,10 @@ def _ruler(
 
 
 def _render_axis_labels(
-    values: list[float], domain: tuple[float, float], label_expr: str
+    values: list[float],
+    domain: tuple[float, float],
+    label_expr: str,
+    locale: LocaleDefinition | None = None,
 ) -> list[str]:
     """Render a real y-axis with explicit tick values through vl_convert.
 
@@ -124,6 +129,8 @@ def _render_axis_labels(
             },
         },
     }
+    if locale is not None:
+        spec["config"] = {"locale": {"number": locale}}
     svg = vlc.vegalite_to_svg(spec)
     texts = [html.unescape(t) for t in _TEXT_RE.findall(svg)]
     numeric = [t for t in texts if any(ch.isdigit() for ch in t)]
@@ -239,7 +246,7 @@ class TestExpressionShape:
         ruler = _ruler(3, SuffixMode.REPEAT, reserve=False)
         expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert '"k"' in expr
-        assert '" K"' not in expr
+        assert json.dumps("\u00a0K") not in expr
         assert RESERVATION_GUARD not in expr
         assert "''" in expr
 
@@ -270,7 +277,7 @@ class TestRealVegaRendering:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "$500 K",
+            "$500\u00a0K",
         ]
 
     def test_authored_prefix_anchors_on_a_bare_si_spec_like_currencys_dollar(
@@ -297,7 +304,7 @@ class TestRealVegaRendering:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "€500 K",
+            "€500\u00a0K",
         ]
 
     def test_native_symbol_and_authored_prefix_compose_together_on_the_anchor(
@@ -325,7 +332,7 @@ class TestRealVegaRendering:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "US $500 K",
+            "US $500\u00a0K",
         ]
 
     def test_authored_suffix_trails_the_magnitude_suffix(self) -> None:
@@ -349,7 +356,7 @@ class TestRealVegaRendering:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "500 K EUR",
+            "500\u00a0K EUR",
         ]
 
     def test_repeat_mode_900k_ladder(self) -> None:
@@ -472,7 +479,7 @@ class TestNegativeLadderAnchor:
         pad = ruler.reservation
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen, for a negative value.
         assert labels == [
-            "\u2212600 K",
+            "\u2212600\u00a0K",
             "\u2212400" + pad,
             "\u2212200" + pad,
             "0" + pad,
@@ -665,13 +672,15 @@ class TestNegativeAnchorCurrencySign:
     """
 
     def test_ruler_negative_anchor_renders_sign_before_symbol(self) -> None:
-        """Compacting ruler path: negative anchor tick must be '-$500 K', not '$-500 K'."""
+        """Compacting ruler path: negative anchor tick must be '-$500\u00a0K', not '$-500\u00a0K'."""
         ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True, format_spec="$.3~s")
         expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [-500_000.0, -300_000.0, -100_000.0, 0.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
-        assert labels[0] == "−$500 K", f"expected sign before symbol, got {labels[0]!r}"
+        assert labels[0] == "−$500\u00a0K", (
+            f"expected sign before symbol, got {labels[0]!r}"
+        )
 
     def test_tick_label_negative_anchor_renders_sign_before_symbol(self) -> None:
         """Non-compacting tick_label path: negative anchor must be '-$500', not '$-500'."""
@@ -703,7 +712,7 @@ class TestNegativeAnchorCurrencySign:
         )["labelExpr"]
         ticks = [-500_000.0, -300_000.0, -100_000.0, 0.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
-        assert labels[0] == "US −$500 K", (
+        assert labels[0] == "US −$500\u00a0K", (
             f"expected prefix+sign+symbol, got {labels[0]!r}"
         )
 
@@ -1041,6 +1050,39 @@ class TestAnchoredNegativeTickParity:
         painted = _render_axis_labels(list(ticks), (ticks[0], ticks[-1]), expr)
         assert painted[0].startswith("€−500")
         assert painted == quantitative_tick_labels(ticks, self._FMT, ruler)
+
+    def test_zero_crossing_ruler_anchors_the_positive_end(self) -> None:
+        from dbt_charts.core.compile.resolve.style.scale import (
+            ladder_anchor_at_start,
+        )
+
+        fmt = ResolvedFormat(spec="$.3~s")
+        ticks = (-400e6, -200e6, 0.0, 200e6)
+        ruler = _ruler(
+            6,
+            SuffixMode.ANCHOR,
+            anchor_at_start=ladder_anchor_at_start(ticks),
+            format_spec=fmt.spec,
+        )
+        expr = inject_axis_numeral_expr({}, ruler, None, fmt)["labelExpr"]
+        painted = _render_axis_labels(list(ticks), (ticks[0], ticks[-1]), expr)
+        assert "M" in painted[-1]
+        assert "M" not in painted[0]
+        assert painted == quantitative_tick_labels(ticks, fmt, ruler)
+
+    def test_lone_currency_ruler_in_a_suffix_locale(self) -> None:
+        locale = Regional(locale="de-DE").format_locale
+        ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True, format_spec="$.3~s")
+        fmt = ResolvedFormat(spec="$.3~s")
+        ticks = (-500_000.0, -300_000.0, -100_000.0, 0.0)
+        with number_locale_scope(locale):
+            expr = inject_axis_numeral_expr({}, ruler, None, fmt)["labelExpr"]
+            measured = quantitative_tick_labels(ticks, fmt, ruler)
+        painted = _render_axis_labels(
+            list(ticks), (ticks[0], ticks[-1]), expr, locale_definition(locale)
+        )
+        assert painted[0].startswith("€−500")
+        assert painted == measured
 
     def test_tick_label(self) -> None:
         tick_label = ResolvedTickLabel(format=",.0f", anchor_at_start=True)

@@ -10,7 +10,7 @@ All DB connection machinery lives in execute/adapters/dbt_adapter_factory.py.
 Cloud and other consumers call this, not dbt.adapters directly — Cloud in
 particular must never import google.cloud itself.
 
-Discovery deliberately bypasses build_adapter: dbt's Credentials base requires
+BigQuery discovery deliberately bypasses build_adapter: dbt's Credentials base requires
 `schema` (the BigQuery dataset) as a str, which is the very thing discovery is
 looking for, so routing through an adapter would mean inventing a sentinel
 dataset just to construct one. The BigQuery client needs no dataset at all.
@@ -37,11 +37,14 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts._install_hint import install_hint
 
 if TYPE_CHECKING:
+    import pyarrow as pa
+
     from dbt_charts.core.compile.models.source import (
         BigQuerySourceConfig,
         ResolvedSourceConfig,
         SourceConfig,
     )
+    from dbt_charts.core.execute.adapters.base import RowFetchLimit
     from dbt_charts.core.inspect.bulk_schema import SchemaTree
     from dbt_charts.core.inspect.relations import Relation
 
@@ -366,35 +369,29 @@ def list_datasets(source_config: SourceConfig) -> list[str]:
 
 
 def list_catalogs(source_config: SourceConfig) -> list[str]:
-    """Catalogs this token can see (`catalog` is ignored; dbt-databricks can't open a catalog-less session)."""
+    """Catalogs these credentials can see; ``source_config.catalog`` is ignored."""
     from dbt_charts.core.compile.models.source import DatabricksSourceConfig
+    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        build_adapter,
+        open_connection,
+    )
 
     if not isinstance(source_config, DatabricksSourceConfig):
         raise ValueError(
             f"list_catalogs is Databricks-only, got {source_config.type!r}."
         )
-    import databricks.sql as sql
-
-    timeouts: dict[str, int] = {}
-    if source_config.socket_timeout is not None:
-        timeouts = {
-            "_socket_timeout": source_config.socket_timeout,
-            "_retry_stop_after_attempts_duration": source_config.socket_timeout,
-        }
+    creds = source_config.model_dump(
+        by_alias=True, exclude_unset=True, exclude_none=True
+    )
+    # None is chosen yet; the warehouse doesn't validate dbt's hive_metastore default.
+    del creds["catalog"]
+    adapter = build_adapter(creds)
     try:
-        with (
-            sql.connect(
-                server_hostname=source_config.host,
-                http_path=source_config.http_path,
-                access_token=source_config.token,
-                **timeouts,
-            ) as connection,
-            connection.cursor() as cursor,
-        ):
-            cursor.execute("SHOW CATALOGS")
-            return [row[0] for row in cursor.fetchall()]
+        with open_connection(adapter, "list_catalogs"):
+            _, table = adapter.execute("SHOW CATALOGS", auto_begin=False, fetch=True)
     except Exception as e:  # noqa: BLE001 — classify at the driver boundary
         raise classify_connection_error("databricks", e) from e
+    return [row[0] for row in table.rows]
 
 
 def dataset_location(source_config: SourceConfig) -> str:
@@ -426,6 +423,22 @@ def dataset_location(source_config: SourceConfig) -> str:
             e, permission="bigquery.datasets.get"
         ) from e
     return location
+
+
+def _send_one_statement(source_config: ResolvedSourceConfig, sql: str) -> pa.Table:
+    """Open a driver source, run *sql*, return its rows, and close the session.
+
+    No query cap is applied here, so the driver's own default governs. The
+    session is released whether or not the statement was accepted.
+    """
+    from dbt_charts.core.execute.adapters.base import resolve_effective_row_limit
+    from dbt_charts.core.execute.drivers import open_driver
+
+    connection = open_driver(source_config, None)
+    try:
+        return connection.execute(sql, resolve_effective_row_limit(1))
+    finally:
+        connection.close()
 
 
 def test_connection(
@@ -467,12 +480,25 @@ def test_connection(
             raised deeper in the probe is classified like any other escape,
             since it can carry driver internals.
     """
+    from dbt_charts.core.diagnostics.base import DbtChartsError
     from dbt_charts.core.dialects import get_dialect
     from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
         ConnectionSetupFailed,
         build_adapter,
         open_connection,
     )
+    from dbt_charts.core.execute.drivers import is_driver_source
+
+    if is_driver_source(source_config):
+        try:
+            _send_one_statement(source_config, "SELECT 1")
+        except (ImportError, DbtChartsError):
+            # A missing extra or a driver download that failed verification: an
+            # environment problem for the operator, not a warehouse outcome.
+            raise
+        except Exception as e:  # noqa: BLE001 — classify every driver-level escape
+            return False, classify_connection_error(source_config.type, e)
+        return True, None
 
     creds = source_config.model_dump(
         by_alias=True, exclude_unset=True, exclude_none=True
@@ -537,6 +563,7 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
         build_adapter,
         open_connection,
     )
+    from dbt_charts.core.execute.drivers import is_driver_source
     from dbt_charts.core.inspect.bulk_schema import (
         bulk_schema_scope,
         parse_bulk_schema_rows,
@@ -556,6 +583,9 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
     driver_limit = (
         row_limit.fetch_limit if dialect.cursor_supports_driver_limit else None
     )
+
+    if is_driver_source(source_config):
+        return _bulk_schema_via_driver(source_config, sql, source_type, row_limit)
 
     try:
         # No macro context: this runs plain metadata SQL on every connection
@@ -580,6 +610,42 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
             f"bulk_schema_for_config query for {source_type!r} was truncated to "
             f"{row_limit.effective_limit} rows by {truncated_reason!r} — schema "
             "tree is incomplete. Raise execution.max_rows or "
+            "DCT_MAX_ROWS_CEILING above the source's column count to fix this."
+        )
+    return tree
+
+
+def _bulk_schema_via_driver(
+    source_config: ResolvedSourceConfig,
+    sql: str,
+    source_type: str,
+    row_limit: RowFetchLimit,
+) -> SchemaTree:
+    """The driver-source arm of :func:`bulk_schema_for_config`, with its contract."""
+    from dbt_charts.core.diagnostics.base import DbtChartsError
+    from dbt_charts.core.execute.drivers import open_driver
+    from dbt_charts.core.execute.result import arrow_to_query_result
+    from dbt_charts.core.inspect.bulk_schema import parse_bulk_schema_rows
+
+    try:
+        connection = open_driver(source_config, None)
+        try:
+            table = connection.execute(sql, row_limit)
+        finally:
+            connection.close()
+        result = arrow_to_query_result(table, row_limit)
+        tree = parse_bulk_schema_rows(result.data)
+    except DbtChartsError:
+        raise
+    except (
+        Exception  # noqa: BLE001 — normalize driver errors to RuntimeError
+    ) as e:
+        raise RuntimeError(f"bulk_schema_for_config query failed: {e}") from e
+    if result.truncated_reason is not None:
+        raise RuntimeError(
+            f"bulk_schema_for_config query for {source_type!r} was truncated to "
+            f"{row_limit.effective_limit} rows by {result.truncated_reason!r} — "
+            "schema tree is incomplete. Raise execution.max_rows or "
             "DCT_MAX_ROWS_CEILING above the source's column count to fix this."
         )
     return tree
@@ -611,6 +677,25 @@ def probe_relation_readability(
         build_adapter,
         open_connection,
     )
+    from dbt_charts.core.execute.drivers import is_driver_source
+
+    if is_driver_source(source_config):
+        from dbt_charts.core.dialects import get_dialect
+
+        # The dialect spells the relation: a driver has no adapter to ask.
+        dialect = get_dialect(source_config.type)
+        qualified = ".".join(
+            dialect.quote(part)
+            for part in (relation.database, relation.schema, relation.name)
+            if part
+        )
+        try:
+            _send_one_statement(source_config, f"SELECT * FROM {qualified} LIMIT 0")
+        except (
+            Exception  # noqa: BLE001
+        ) as e:  # broad on purpose — surfaces driver-level errors as messages
+            return False, str(e) or type(e).__name__
+        return True, ""
 
     creds = source_config.model_dump(
         by_alias=True, exclude_unset=True, exclude_none=True

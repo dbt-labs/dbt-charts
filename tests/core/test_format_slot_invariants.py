@@ -491,9 +491,8 @@ def _heatmap_number_format(shape: str, value: float) -> dict[str, Any]:
 
 
 def _histogram_number_format(shape: str, value: float) -> dict[str, Any]:
-    """``HistogramChartStyle.number_format`` -- a histogram is excluded from the
-    structured tooltip (``StructuredTooltipFeature.applies_to``).
-    """
+    """``HistogramChartStyle.number_format`` -- a histogram has no structured
+    tooltip; ``NativeTooltipAffixFeature`` composes the affix on its card."""
     fmt, formats = _shape_value(shape)
     chart: dict[str, Any] = {"type": "histogram", "query": "q", "x": "v"}
     if fmt is not None:
@@ -682,7 +681,8 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             covers=(("HistogramChartStyle", "number_format"),),
             bands=_ALL_BANDS,
             build=_histogram_number_format,
-            rejects="ERR-FORMAT-AFFIX-NATIVE-TOOLTIP-UNSUPPORTED",
+            # The format paints a row count, which is never negative.
+            checks_sign=False,
         ),
         SlotFixture(
             "style.charts.tooltip.format",
@@ -1191,6 +1191,28 @@ def test_unit_beside_an_authored_suffix_paints_the_same_in_kpi_text(
     assert re.search(expected, parts["value" if slot == "headline" else "support"])
 
 
+_TABLE_SUFFIX_PAINT: dict[str, tuple[dict[str, str], float, str]] = {
+    **_UNIT_SUFFIX_PAINT,
+    "currency": (
+        {"spec": "currency_whole", "suffix": " net"},
+        120_450.0,
+        r"120,450 net",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_TABLE_SUFFIX_PAINT))
+def test_table_column_keeps_the_authored_suffix_gap(case: str) -> None:
+    fmt, value, expected = _TABLE_SUFFIX_PAINT[case]
+    board = _table_columns("spec_less", value)
+    board["charts"]["c"]["style"] = {"columns": {"v": {"format": fmt}}}
+    svg = render_board_to_svg(_to_yaml(board))
+    painted = [_TAG_RE.sub("", t) for t in _digit_texts(svg)]
+    assert any(re.search(expected, t) for t in painted), (
+        f"case={case}: expected {expected!r} in {painted!r}"
+    )
+
+
 # A date spec beside an authored affix on the Python-painted slots (table column, KPI
 # headline, KPI support): the affix paints around the date.
 
@@ -1348,7 +1370,7 @@ def test_support_table_currency_preset_at_or_above_one_still_compacts(
 ) -> None:
     svg = render_board_to_svg(_to_yaml(build("currency", BANDS["large"])))
     assert any(
-        t.startswith("$12.4M") or t.startswith("$12.4mn") for t in _dollar_texts(svg)
+        t.startswith(("$12.4M", "$12.4mn", "$12.4\u00a0M")) for t in _dollar_texts(svg)
     )
 
 
@@ -1564,5 +1586,5 @@ def test_support_table_notation_alone_is_honored_like_with_a_prefix(
 
     notation_only = cells({"spec": ".3~s", "notation": "analytic"})
     with_prefix = cells({"spec": ".3~s", "notation": "analytic", "prefix": "€"})
-    assert "12.4 M" in notation_only, notation_only
-    assert "€12.4 M" in with_prefix, with_prefix
+    assert "12.4\u00a0M" in notation_only, notation_only
+    assert "€12.4\u00a0M" in with_prefix, with_prefix

@@ -312,6 +312,9 @@ Named presets (prefer these over raw D3 strings):
 | `percent_number_delta` | `+2.3%` — input is whole-number (2.3) | **KPI only** |
 | `percentage_points_delta` | `+3.2 pts`; input is whole points (3.2), not a fraction (0.032) | for a point delta, not a ratio delta |
 
+The `$` in these specs prints the board locale's currency: `$` in `en-US`, `€` after the digits in `de-DE`. `regional.currency: EUR` (an ISO code; also in `charts/meta.yml` for a folder) swaps the symbol, keeping the locale's placement.
+
+
 **`percent_number` and `percent_number_delta` only work on `type: kpi`.** Using them on line/bar/area/scatter causes a render error. For those chart types use `percent` or `percent_delta` (decimal-fraction input) or omit formatting and accept axis defaults.
 
 ## Common Mistakes

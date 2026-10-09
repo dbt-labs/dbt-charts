@@ -25,7 +25,8 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
-    FormatAliases,
+    BoxShadow,
+    FormatTable,
     ResolvedFontStyle,
     ResolvedFormat,
     SpacingValues,
@@ -129,11 +130,8 @@ class ResolvedRulerAxis:
     # every case observed (nice_tick_values only ever overshoots outward,
     # never inward).
     #
-    # Both ends are the true magnitude-extreme only on a ladder that
-    # crosses (or touches) zero without being one-sided -- an ascending,
-    # evenly-spaced ladder's |value| is minimized somewhere in the middle
-    # and maximized at exactly one of the two ends, so this is always
-    # decidable, once, from tick_values alone.
+    # Which end: ``ladder_anchor_at_start`` over the drawn ticks, or the
+    # magnitude extreme when the top edge is unbaked.
     anchor_at_start: bool
     # The trailing padding a non-suffix tick reserves, composed once here
     # (font_measure.compose_suffix_reservation) from the space characters
@@ -194,11 +192,9 @@ class ResolvedTickLabel:
     # prefix/suffix) and the format's `repeat`, else column_forming (folded in
     # at resolve, never re-declared in render): no affix -> irrelevant, unset.
     # Anchored -> bool, whether the anchor tick is first rather than last
-    # (largest positive tick when any exist, else the most-negative —
-    # sign-aware, unlike the magnitude-based ResolvedRulerAxis.anchor_at_start,
-    # since a "$" has no scale dependency the way a shared "K"/"M" suffix
-    # does; the last tick without a ladder). Repeated (`repeat: every`, or no
-    # column forms) -> None, the affix on every tick — mirrors
+    # (``ladder_anchor_at_start`` over the drawn ticks; the last tick without
+    # a ladder). Repeated (`repeat:
+    # every`, or no column forms) -> None, the affix on every tick — mirrors
     # ResolvedRulerAxis's SuffixMode.REPEAT.
     anchor_at_start: bool | None = None
     # Mirrors ResolvedRulerAxis.decimal_pad_table: one padding string per
@@ -693,7 +689,7 @@ class ResolvedChartDefaults:
     title: TitleStyle
     heading_sizes: list[float]
     pagination: PaginationConfig | None
-    formats: FormatAliases | None
+    formats: FormatTable | None
     background: str
     # The opaque canvas label ink derives contrast against: the board
     # background composited over the theme's own canvas. Read by
@@ -726,7 +722,7 @@ class ResolvedStyle:
     tones: KpiTonesStyle
     font: ResolvedFontStyle
     border: BorderStyle
-    box_shadow: str | None  # None = no shadow (valid concrete value)
+    box_shadow: BoxShadow | None  # None = no shadow (valid concrete value)
     opacity: float
     frame: FrameStyle
     title: TitleStyle

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Grouped-bar overlap now applies to bar charts with both positive and negative values.
+time: 2026-10-08T02:15:17.660474-07:00

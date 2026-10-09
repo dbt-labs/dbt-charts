@@ -550,7 +550,7 @@ class TestAlignColsHeights:
         with patch.object(
             layout_sizing_mod,
             "_render_chart_to_svg",
-            return_value=(new_svg, item_short.width, 300.0, None),
+            return_value=(new_svg, item_short.width, 300.0),
         ) as mock_render:
             _align_cols_heights([item_tall, item_short], target_height, render_ctx)
 

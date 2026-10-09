@@ -1,3 +1,0 @@
-kind: Features
-body: "Installing dbt-charts alongside dbt-core now writes `minimani.json` next to `manifest.json` on every dbt run; a write failure only warns."
-time: 2026-10-02T18:00:46.000000-07:00

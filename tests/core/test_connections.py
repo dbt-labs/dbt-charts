@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -727,38 +726,75 @@ _NO_SUCH_CATALOG = (
 )
 
 
-def test_list_catalogs_connects_without_a_catalog_and_returns_show_catalogs_names(
+class _CatalogsAdapter(_RecordingAdapter):
+    def execute(self, sql: str, **kwargs: Any) -> tuple[None, SimpleNamespace]:
+        super().execute(sql, **kwargs)
+        return None, SimpleNamespace(rows=[("workspace",), ("samples",)])
+
+
+def _catalogs_adapter(
+    monkeypatch: pytest.MonkeyPatch, adapter: _RecordingAdapter
+) -> list[dict[str, Any]]:
+    built: list[dict[str, Any]] = []
+
+    def _build(creds: dict[str, Any], **_kwargs: Any) -> _RecordingAdapter:
+        built.append(creds)
+        return adapter
+
+    monkeypatch.setattr(
+        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter", _build
+    )
+    return built
+
+
+def test_list_catalogs_runs_show_catalogs_through_the_adapter_without_a_catalog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    connect = MagicMock()
-    cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__
-    cursor.return_value.fetchall.return_value = [("workspace",), ("samples",)]
-    monkeypatch.setattr("databricks.sql.connect", connect)
+    adapter = _CatalogsAdapter()
+    built = _catalogs_adapter(monkeypatch, adapter)
 
     names = list_catalogs(
         _databricks_config("").model_copy(update={"socket_timeout": 7})
     )
 
     assert names == ["workspace", "samples"]
-    cursor.return_value.execute.assert_called_once_with("SHOW CATALOGS")
-    connect.assert_called_once_with(
-        server_hostname="dbc-1.cloud.databricks.com",
+    assert adapter.statements == ["SHOW CATALOGS"]
+    assert "catalog" not in built[0]
+    assert (built[0]["token"], built[0]["socket_timeout"]) == ("t", 7)
+
+
+def test_list_catalogs_hands_the_adapter_service_principal_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built = _catalogs_adapter(monkeypatch, _CatalogsAdapter())
+    m2m = DatabricksSourceConfig(
+        type="databricks",
+        host="dbc-1.cloud.databricks.com",
         http_path="/sql/1.0/warehouses/abc",
-        access_token="t",
-        _socket_timeout=7,
-        _retry_stop_after_attempts_duration=7,
+        client_id="sp-app-id",
+        client_secret="sp-secret",
+        catalog="",
+    )
+
+    list_catalogs(m2m)
+
+    assert "token" not in built[0]
+    assert (built[0]["client_id"], built[0]["client_secret"]) == (
+        "sp-app-id",
+        "sp-secret",
     )
 
 
 def test_list_catalogs_classifies_a_driver_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from databricks.sql.exc import RequestError
-
-    def _connect(**_kwargs: Any) -> None:
-        raise RequestError("401 Unauthorized for token dapi-secret-1234")
-
-    monkeypatch.setattr("databricks.sql.connect", _connect)
+    _catalogs_adapter(
+        monkeypatch,
+        _RecordingAdapter(
+            fail_on="SHOW CATALOGS",
+            fail_with=RuntimeError("401 Unauthorized for token dapi-secret-1234"),
+        ),
+    )
 
     with pytest.raises(WarehouseProbeError) as exc_info:
         list_catalogs(_databricks_config(""))

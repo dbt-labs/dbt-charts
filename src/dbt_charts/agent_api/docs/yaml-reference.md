@@ -16,7 +16,7 @@ AuthoredBoard definition from YAML.
 | `text` | str | Markdown text content for text-only sections. |
 | `html_policy` | enum: "none", "safe-subset", "trusted-raw" | HTML rendering policy for the board's body text. Inline nested boards inherit it unless they set their own; tabs always inherit, and imported board files do not. One of: "none" (default): HTML is escaped and rendered as plain markdown; "safe-subset": reserved for a parser-checked allowlist (not yet enforced; currently renders as none); "trusted-raw": raw HTML via foreignObject. TRUSTED-CONTENT ONLY: this is NOT a security sandbox. &lt;script&gt;/event-handlers are stripped as a best-effort guard, not a guarantee. Enable only on first-party boards you fully control. |
 | `source` | str | Default source name for all queries in this board. Inheritable via meta.yml cascade. |
-| `cache` | [Cache](#cache) | Cache policy for every query in this dashboard, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts the whole dashboard out. Inheritable via the meta.yml cascade. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy for every query in this dashboard, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts the whole dashboard out. Inheritable via the meta.yml cascade. |
 | `incremental` | str \| const: false | Default watermark column for incremental refresh: queries in this board fetch only new rows since the last run and merge them with the cached result, keyed on this column. Queries inherit this value and may override it with their own incremental: setting. Set to false on a nested board to opt out of a parent's incremental setting. |
 | `variables` | dict[str, [Variable](#variable) \| str \| [VariableRef](#variableref)] | Named inputs that parameterize queries; each renders as a control unless it sets visible: false. |
 | `queries` | dict[str, str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref)] | Named result sets the charts draw from (SQL, CSV, HTTP, and more). |
@@ -27,7 +27,7 @@ AuthoredBoard definition from YAML.
 | `tabs` | [TabLayout](#tablayout) | Tabbed navigation layout where each tab contains its own layout. |
 | `card_gap` | bool | When True, adds gap between cards. Default: cards are edge-to-edge (0 gap). |
 | `chart_focus` | str | Render only this named chart with its dependent variables (useful for embedding or SVG export). |
-| `details` | [BoardDetails](#boarddetails) | Collapsible section metadata. String shorthand: details: 'text' → BoardDetails(summary='text'). Block form: details: {summary: ..., expanded_title: ..., expanded: false}. |
+| `details` | str \| [BoardDetails](#boarddetails) | Collapsible section metadata. String shorthand: details: 'text' → BoardDetails(summary='text'). Block form: details: {summary: ..., expanded_title: ..., expanded: false}. |
 | `id` | str | Explicit ID for this board. Auto-generated from filename if omitted. |
 | `style` | [Style](#style) | Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (footer, timestamp): a nested board never draws its own footer or timestamp line, so these never reach it either. background is the one appearance field that never cascades: unset means transparent, not an ancestor's color. |
 | `width` | str \| int | Width when nested (e.g., '50%', '400px', or an integer in pixels). On the root board there is no parent to place it into, so it instead sets the board's own width (equivalent to 'style.frame.width'); percentages are rejected there since there's nothing to size relative to. |
@@ -35,6 +35,7 @@ AuthoredBoard definition from YAML.
 | `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. Accepts a bool, variable name, Jinja expression, or {query, column} probe. |
 | `extends` | str \| list[str] \| enum: "clarity", "neon", "paper", "stark", "vivid" | Board name(s) or relative path(s) this board inherits from, low to high priority. A built-in theme name resolves it directly. |
 | `auto_link` | bool | When True, table charts with no explicit link: automatically link each row to its canonical /data/&lt;source&gt;/&lt;schema&gt;/&lt;table&gt;/detail/ page. Default off. An explicit link: always wins; set link: false on a chart to suppress its automatic link. |
+| `regional` | [Regional](#regional) | Locale and currency for every number on the board. Set it in charts/meta.yml to cover a folder; a nested board takes its root's. |
 | `theme` | enum: "clarity", "neon", "paper", "stark", "vivid" | Built-in theme name; shorthand for `extends: &lt;name&gt;`. |
 
 <a id="cache"></a>
@@ -86,15 +87,15 @@ Raw SQL query: the default query type.
 |-------|------|-------------|
 | `source` | str \| dict[str, Any] | Source name reference, or an inline file path (e.g. `./data/sales.csv`). File paths are detected by `/` or data file extension. An inline connection-bearing dict (`{type: postgres, ...}`) is rejected at compile time; reference a named source instead. |
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
-| `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
-| `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DATE-AS-TEXT', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-MISSING-JOIN-PREDICATE', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PARSE-ERROR', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REAGGREGATION', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']). |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
 | `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "sql" |  |
 | `sql` | str | The statement to run, with Jinja2 over board variables, other queries, and the filter helpers. |
 | `setup_sql` | str | Non-nestable SQL preamble executed before the main query (e.g., CREATE TEMP FUNCTION). |
 | `target` | str | dbt target name for queries against a dbt_profile source (defaults to 'dev'). |
-| `dialect` | enum: "athena", "bigquery", "clickhouse", "databricks", "duckdb", "fabric", "mysql", "postgres", "presto", "redshift", "snowflake", "spark", "sqlite", "sqlserver", "trino" | Warehouse dialect the SQL is written in, translated to the source's. |
+| `dialect` | enum: "athena", "bigquery", "clickhouse", "databricks", "duckdb", "fabric", "lakecompute", "mysql", "postgres", "presto", "redshift", "snowflake", "spark", "sqlite", "sqlserver", "trino" | Warehouse dialect the SQL is written in, translated to the source's. |
 
 <a id="httpquery"></a>
 ## HttpQuery
@@ -112,8 +113,8 @@ REST API query.
 |-------|------|-------------|
 | `source` | str \| dict[str, Any] | Source name reference, or an inline file path (e.g. `./data/sales.csv`). File paths are detected by `/` or data file extension. An inline connection-bearing dict (`{type: postgres, ...}`) is rejected at compile time; reference a named source instead. |
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
-| `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
-| `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DATE-AS-TEXT', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-MISSING-JOIN-PREDICATE', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PARSE-ERROR', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REAGGREGATION', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']). |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
 | `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "http" |  |
@@ -140,8 +141,8 @@ Inline data authored as a list of row mappings.
 |-------|------|-------------|
 | `source` | str \| dict[str, Any] | Source name reference, or an inline file path (e.g. `./data/sales.csv`). File paths are detected by `/` or data file extension. An inline connection-bearing dict (`{type: postgres, ...}`) is rejected at compile time; reference a named source instead. |
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
-| `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
-| `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DATE-AS-TEXT', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-MISSING-JOIN-PREDICATE', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PARSE-ERROR', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REAGGREGATION', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']). |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
 | `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "values" |  |
@@ -163,8 +164,8 @@ Inline data authored as column names plus positional row values.
 |-------|------|-------------|
 | `source` | str \| dict[str, Any] | Source name reference, or an inline file path (e.g. `./data/sales.csv`). File paths are detected by `/` or data file extension. An inline connection-bearing dict (`{type: postgres, ...}`) is rejected at compile time; reference a named source instead. |
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
-| `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
-| `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DATE-AS-TEXT', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-MISSING-JOIN-PREDICATE', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PARSE-ERROR', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REAGGREGATION', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']). |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
 | `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "values" |  |
@@ -177,8 +178,8 @@ dbt source schema query.
 |-------|------|-------------|
 | `source` | str \| dict[str, Any] | Source name reference, or an inline file path (e.g. `./data/sales.csv`). File paths are detected by `/` or data file extension. An inline connection-bearing dict (`{type: postgres, ...}`) is rejected at compile time; reference a named source instead. |
 | `notes` | str | Prose summary of what this query returns, passed along with its results to tooling. |
-| `ignore` | list[str] | Diagnostic codes to suppress for this query (e.g., ['WARN-FANOUT-RISK', 'WARN-REAGGREGATION']). |
-| `cache` | [Cache](#cache) | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
+| `ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DATE-AS-TEXT', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-MISSING-JOIN-PREDICATE', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PARSE-ERROR', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REAGGREGATION', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']). |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references. |
 | `formats` | dict[str, one of: 'currency', 'currency_full', 'currency_whole', 'date_short', 'delta', 'integer', 'number', 'number_full', 'percent', 'percent_delta', 'percent_whole', 'time_short', 'year' \| str] | How the query's columns print, as column: format name. A name is an engine format (`currency`, `percent`, `year`, ...) or one the board defines in `style.formats`; a d3 spec is rejected. Every chart showing the column uses the format unless it sets its own. |
 | `incremental` | str \| const: false | Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted. |
 | `type` | const: "schema" | Never inferred; write `type: schema` explicitly. |
@@ -216,14 +217,15 @@ Authored patch for bar and histogram charts; histogram adds automatic x binning.
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `x` | str | X-axis column name from the query result. |
 | `y` | str \| list[str] | Y-axis column name(s). Accepts a single column or list for multi-series charts. |
 | `x_label` | str | Title for the X axis, replacing the one derived from the x column's name. |
 | `y_label` | str | Title for the Y axis, replacing the one the chart derives on its own. |
-| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only. |
+| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`. |
 | `sort` | [ChartSort](#chartsort) | Which column orders the marks, and in which direction (asc/desc). |
 | `multiples` | [MultiplesConfig](#multiplesconfig) | Partition this chart into small multiples by a `rows` column (vertical stack), a `columns` column (side by side), or both (grid). Panels share one measure scale by default. |
 | `support_table` | list[str \| ChartSupportTableSource \| ChartSupportTableAggregate \| ChartSupportTablePerSeries] \| [ChartSupportTable](#chartsupporttable) | Optional mini data-grid attached below/above the chart. |
@@ -252,14 +254,15 @@ Authored patch for line charts.
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `x` | str | X-axis column name from the query result. |
 | `y` | str \| list[str] | Y-axis column name(s). Accepts a single column or list for multi-series charts. |
 | `x_label` | str | Title for the X axis, replacing the one derived from the x column's name. |
 | `y_label` | str | Title for the Y axis, replacing the one the chart derives on its own. |
-| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only. |
+| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`. |
 | `sort` | [ChartSort](#chartsort) | Which column orders the marks, and in which direction (asc/desc). |
 | `multiples` | [MultiplesConfig](#multiplesconfig) | Partition this chart into small multiples by a `rows` column (vertical stack), a `columns` column (side by side), or both (grid). Panels share one measure scale by default. |
 | `support_table` | list[str \| ChartSupportTableSource \| ChartSupportTableAggregate \| ChartSupportTablePerSeries] \| [ChartSupportTable](#chartsupporttable) | Optional mini data-grid attached below/above the chart. |
@@ -287,14 +290,15 @@ Authored patch for area charts.
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `x` | str | X-axis column name from the query result. |
 | `y` | str \| list[str] | Y-axis column name(s). Accepts a single column or list for multi-series charts. |
 | `x_label` | str | Title for the X axis, replacing the one derived from the x column's name. |
 | `y_label` | str | Title for the Y axis, replacing the one the chart derives on its own. |
-| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only. |
+| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`. |
 | `sort` | [ChartSort](#chartsort) | Which column orders the marks, and in which direction (asc/desc). |
 | `multiples` | [MultiplesConfig](#multiplesconfig) | Partition this chart into small multiples by a `rows` column (vertical stack), a `columns` column (side by side), or both (grid). Panels share one measure scale by default. |
 | `support_table` | list[str \| ChartSupportTableSource \| ChartSupportTableAggregate \| ChartSupportTablePerSeries] \| [ChartSupportTable](#chartsupporttable) | Optional mini data-grid attached below/above the chart. |
@@ -322,14 +326,15 @@ Authored patch for scatter charts.
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `x` | str | X-axis column name from the query result. |
 | `y` | str \| list[str] | Y-axis column name(s). Accepts a single column or list for multi-series charts. |
 | `x_label` | str | Title for the X axis, replacing the one derived from the x column's name. |
 | `y_label` | str | Title for the Y axis, replacing the one the chart derives on its own. |
-| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only. |
+| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`. |
 | `sort` | [ChartSort](#chartsort) | Which column orders the marks, and in which direction (asc/desc). |
 | `multiples` | [MultiplesConfig](#multiplesconfig) | Partition this chart into small multiples by a `rows` column (vertical stack), a `columns` column (side by side), or both (grid). Panels share one measure scale by default. |
 | `support_table` | list[str \| ChartSupportTableSource \| ChartSupportTableAggregate \| ChartSupportTablePerSeries] \| [ChartSupportTable](#chartsupporttable) | Optional mini data-grid attached below/above the chart. |
@@ -359,14 +364,15 @@ Authored patch for heatmap charts.
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `x` | str | X-axis column name from the query result. |
 | `y` | str \| list[str] | Y-axis column name(s). Accepts a single column or list for multi-series charts. |
 | `x_label` | str | Title for the X axis, replacing the one derived from the x column's name. |
 | `y_label` | str | Title for the Y axis, replacing the one the chart derives on its own. |
-| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only. |
+| `color` | str | Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`. |
 | `sort` | [ChartSort](#chartsort) | Which column orders the marks, and in which direction (asc/desc). |
 | `multiples` | [MultiplesConfig](#multiplesconfig) | Partition this chart into small multiples by a `rows` column (vertical stack), a `columns` column (side by side), or both (grid). Panels share one measure scale by default. |
 | `support_table` | list[str \| ChartSupportTableSource \| ChartSupportTableAggregate \| ChartSupportTablePerSeries] \| [ChartSupportTable](#chartsupporttable) | Optional mini data-grid attached below/above the chart. |
@@ -394,10 +400,11 @@ Authored patch for pie and donut charts; donut defaults `style.inner_radius` to 
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
-| `color` | str | Column naming each wedge, giving it its own hue. Bare column name only. |
+| `color` | str | Column naming each wedge, giving it its own hue. Bare column name only; a literal color goes in `style.color.static`. |
 | `total` | [ChartTotal](#charttotal) | Sum of the slice values, drawn in the donut hole. |
 | `height` | int \| float | Explicit chart height in pixels. Positive number only. |
 | `width` | int \| float | Chart width in pixels. Positive number only. In a rows layout the chart's slot pins to this width (a fixed footprint, capped at the row). In cols and grid layouts it contributes to the dashboard's intrinsic width measurement when the board has no width of its own, and the layout still owns the final slot. |
@@ -423,7 +430,8 @@ Authored patch for KPI (key performance indicator) charts.
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `label` | str | Caption naming what the headline value measures; `style.variant` places it. |
 | `glyph` | str | Text shown before the headline value (e.g. '▲', '●'). |
 | `support` | [KpiSupportConfig](#kpisupportconfig) | Secondary block, a delta, comparison, or note; `style.variant` places it. |
@@ -449,7 +457,8 @@ Authored patch for table charts.
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `style` | [TableChartStyle](#tablechartstyle) | Appearance overrides for this chart alone. |
@@ -477,11 +486,12 @@ Authored patch for point_map and bubble_map charts; the two type spellings are s
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `projection` | str \| [Projection](#projection) | Map projection name or Vega-Lite projection config. |
-| `color` | str | Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only. |
+| `color` | str | Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only; a literal color goes in `style.color.static`. |
 | `geo` | str \| dict[str, Any] | Named GeoJSON boundary source, or inline GeoJSON spec, for geoshape charts. |
 | `geo_source` | str | Named geographic data source for loading GeoJSON boundaries. |
 | `lookup` | str | Data column to join against geographic data (map join key). |
@@ -514,11 +524,12 @@ Authored patch for map and geoshape charts; the two type spellings are synonyms.
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `projection` | str \| [Projection](#projection) | Map projection name or Vega-Lite projection config. |
-| `color` | str | Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only. |
+| `color` | str | Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only; a literal color goes in `style.color.static`. |
 | `geo` | str \| dict[str, Any] | Named GeoJSON boundary source, or inline GeoJSON spec, for geoshape charts. |
 | `geo_source` | str | Named geographic data source for loading GeoJSON boundaries. |
 | `lookup` | str | Data column to join against geographic data (map join key). |
@@ -564,7 +575,8 @@ Authored patch for spark_bar charts (compact horizontal bars).
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
 | `link` | str \| const: false | Click-through URL template for drill-down links. Set to false to suppress this chart's automatic link on a board with auto_link: true; table column links are unaffected. |
-| `warnings_ignore` | list[str] | Codes of render warnings to suppress for this chart. |
+| `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. |
+| `warnings_ignore` | list[one of: 'WARN-ADJACENT-TEXT-ROWS', 'WARN-AREA-UNSTACKED-READS-AS-STACKED', 'WARN-AXIS-ALIGN-DISCARDED', 'WARN-AXIS-LABEL-COLLISION', 'WARN-AXIS-TITLE-TRUNCATED', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-BAR-GROUPED-SERIES-COINCIDE', 'WARN-CALLOUT-TEXT-TRUNCATED', 'WARN-CATEGORY-COLOR-PIN-UNSEEN', 'WARN-CHART-TITLE-TRUNCATED', 'WARN-COLUMN-CHECK-UNAVAILABLE', 'WARN-DBT-MANIFEST-MISSING', 'WARN-DBT-MODEL-COLUMNS-UNRESOLVED', 'WARN-DBT-QUERY-COLUMNS-INDETERMINATE', 'WARN-DEFAULTS-FILE-GIVEN-AS-BOARD', 'WARN-DOUBLE-HEADER', 'WARN-DUAL-AXIS-COMPETING-SCALES', 'WARN-ENDPOINT-LABEL-GAP-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-OVERFLOW', 'WARN-ENDPOINT-LABEL-RAIL-TIED', 'WARN-EXTENDS-LAYOUT-APPENDED', 'WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM', 'WARN-FANOUT-RISK', 'WARN-FLAT-COLS-UNSIZED-OVERFLOW', 'WARN-H1-BODY-NO-TITLE', 'WARN-HTML-POLICY-CAPPED', 'WARN-KPI-ALIGN-OVERFLOW', 'WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED', 'WARN-KPI-LABEL-TRUNCATED', 'WARN-LAYER-X-DOMAIN-PAINT-ORDER', 'WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH', 'WARN-LAYOUT-MIN-EXCEEDS-HEIGHT', 'WARN-LEGEND-POSITION-WIDTH-FALLBACK', 'WARN-LEGEND-VALUES-UNRESOLVED', 'WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER', 'WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS', 'WARN-LOW-TEXT-CONTRAST', 'WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE', 'WARN-PALETTE-UNSUPPORTED', 'WARN-PIE-DOMINANT-SEGMENT', 'WARN-PIE-TOO-MANY-SEGMENTS', 'WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS', 'WARN-PLOT-HEIGHT-BELOW-MINIMUM', 'WARN-PLOT-WIDTH-BELOW-MINIMUM', 'WARN-POINT-MAP-NEGATIVE-SIZE-VALUES', 'WARN-POINT-MAP-OUT-OF-PROJECTION', 'WARN-QUERY-RESULT-TRUNCATED', 'WARN-QUERY-RETURNED-ZERO-ROWS', 'WARN-REDUNDANT-AUTHORED-DEFAULT', 'WARN-REDUNDANT-AUTHORED-LABEL', 'WARN-REDUNDANT-ENCODING', 'WARN-SCHEMA-MIGRATED', 'WARN-SERIES-LABEL-TRUNCATED', 'WARN-SERIES-LABELS-REPEAT-WORD', 'WARN-SINGLE-CHART-REDUNDANT-TITLE', 'WARN-SPARK-LABEL-TRUNCATED', 'WARN-STATIC-PAGINATION-CAPPED', 'WARN-SUPPORT-TABLE-CELL-OVERFLOW', 'WARN-TABLE-COLUMNS-OVERFLOW', 'WARN-TABLE-CRAMPED', 'WARN-TABLE-PAGE-SQUEEZED', 'WARN-TABLE-TEXT-TRUNCATED', 'WARN-TEMPORAL-SINGLE-POINT', 'WARN-TOO-MANY-COLOR-CATEGORIES', 'WARN-TOO-MANY-X-CATEGORIES', 'WARN-UNREFERENCED-CHART', 'WARN-VALUE-LABELS-CROWD-WIDTH', 'WARN-WAREHOUSE-CHECK-UNAVAILABLE', 'WARN-WIDE-MEASURE-LABEL-COLLISION', 'WARN-Y-ENCODING-MOSTLY-NULL'] | Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.&lt;name&gt;.ignore` instead. |
 | `title` | str | Heading naming what the chart shows. Rejected on type: kpi. |
 | `subtitle` | str | Supporting text beneath the chart title. |
 | `x` | str | Bar-magnitude (numeric) column name. |
@@ -643,8 +655,8 @@ Authored overlay for Style: all fields optional.
 | `accent` | str | Accent color token cascaded to sparklines, bars, and focus rings. |
 | `muted` | str | Muted secondary-text color token (KPI support rows, table and spark subtitles). |
 | `font` | [RootFontStyle](#rootfontstyle) | Root font configuration including emoji mode. |
-| `border` | str \| [BorderStyle](#borderstyle) | Default border style cascaded to all chart cards. |
-| `box_shadow` | str | CSS box shadow for chart cards; None means no shadow. |
+| `border` | str \| [BorderStyle](#borderstyle) | Frame drawn around the whole board; none by default. |
+| `box_shadow` | str | Drop shadow under chart cards: x offset, y offset, blur, color. |
 | `opacity` | float | Default mark opacity (0–1). |
 | `title` | [TitleStyle](#titlestyle) | Typography for every heading: board and prose titles, and chart, table, and spark object titles. |
 | `text` | [TextStyle](#textstyle) | Markdown and plain text content style. |
@@ -674,13 +686,22 @@ Single-row boolean query probe.
 | `query` | str | Name of the query to execute. |
 | `column` | str | Column in the single result row holding the boolean value. |
 
+<a id="regional"></a>
+## Regional
+How a board writes numbers: its d3 locale and currency symbol.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `locale` | [NumberLocale](#numberlocale) \| enum: "ar-AE", "ar-BH", "ar-DJ", "ar-DZ", "ar-EG", "ar-EH", "ar-ER", "ar-IL", "ar-IQ", "ar-JO", "ar-KM", "ar-KW", "ar-LB", "ar-LY", "ar-MA", "ar-MR", "ar-OM", "ar-PS", "ar-QA", "ar-SA", … (38 more; see the JSON Schema) | The d3-format locale for every number on the board: a locale name, or a full d3 locale definition. |
+| `currency` | enum: "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "SEK", "NOK", "DKK", "INR", "CNY", "BRL", "MXN" | ISO 4217 code whose symbol replaces the locale's own in its currency template, at the locale's placement. Unset prints the locale's own. |
+
 <a id="variableoptions"></a>
 ## VariableOptions
 Options configuration for variable inputs.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `static` | list[str \| int \| float] | Option values written out in place, all strings or all numbers. Numeric options type the value the control sends back as a number unless data_type says otherwise. |
+| `static` | list[str] \| list[int \| float] | Option values written out in place, all strings or all numbers. Numeric options type the value the control sends back as a number unless data_type says otherwise. |
 | `query` | str | Query name whose result rows provide option values. |
 | `column` | str | Column in the query result to use as option values. |
 | `label_column` | str | Column in the query result to use as display labels (separate from values). |
@@ -769,7 +790,7 @@ A bar-type layer on a cartesian chart.
 | `x` | str | X-axis column name for this layer. |
 | `y` | str | Y-axis column name for this layer. |
 | `label` | str | Name for this layer's measure wherever the layer is identified. Defaults to its y column name. |
-| `color` | str | Column whose values split this layer into colored series; bare column name only. |
+| `color` | str | Column whose values split this layer into colored series; bare column name only. Paint belongs under the layer's `style.marks`. |
 | `axis_y` | [LayerAxisYStyle](#layeraxisystyle) | This layer's own y axis: which side it sits on, its title, scale, ticks, grid. |
 | `style` | [BarLayerStyle](#barlayerstyle) | Appearance overrides for this layer's bar marks. |
 | `y_start` | str | Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as the chart's y: both numeric, or both dates. |
@@ -792,7 +813,7 @@ A line-type layer on a cartesian chart.
 | `x` | str | X-axis column name for this layer. |
 | `y` | str | Y-axis column name for this layer. |
 | `label` | str | Name for this layer's measure wherever the layer is identified. Defaults to its y column name. |
-| `color` | str | Column whose values split this layer into colored series; bare column name only. |
+| `color` | str | Column whose values split this layer into colored series; bare column name only. Paint belongs under the layer's `style.marks`. |
 | `axis_y` | [LayerAxisYStyle](#layeraxisystyle) | This layer's own y axis: which side it sits on, its title, scale, ticks, grid. |
 | `style` | [LineLayerStyle](#linelayerstyle) | Appearance overrides for this layer's line marks. |
 
@@ -814,7 +835,7 @@ An area-type layer on a cartesian chart.
 | `x` | str | X-axis column name for this layer. |
 | `y` | str | Y-axis column name for this layer. |
 | `label` | str | Name for this layer's measure wherever the layer is identified. Defaults to its y column name. |
-| `color` | str | Column whose values split this layer into colored series; bare column name only. |
+| `color` | str | Column whose values split this layer into colored series; bare column name only. Paint belongs under the layer's `style.marks`. |
 | `axis_y` | [LayerAxisYStyle](#layeraxisystyle) | This layer's own y axis: which side it sits on, its title, scale, ticks, grid. |
 | `style` | [AreaLayerStyle](#arealayerstyle) | Appearance overrides for this layer's area marks. |
 
@@ -836,7 +857,7 @@ A scatter-type layer on a cartesian chart.
 | `x` | str | X-axis column name for this layer. |
 | `y` | str | Y-axis column name for this layer. |
 | `label` | str | Name for this layer's measure wherever the layer is identified. Defaults to its y column name. |
-| `color` | str | Column whose values split this layer into colored series; bare column name only. |
+| `color` | str | Column whose values split this layer into colored series; bare column name only. Paint belongs under the layer's `style.marks`. |
 | `axis_y` | [LayerAxisYStyle](#layeraxisystyle) | This layer's own y axis: which side it sits on, its title, scale, ticks, grid. |
 | `style` | [ScatterLayerStyle](#scatterlayerstyle) | Appearance overrides for this layer's point marks. |
 
@@ -1008,7 +1029,7 @@ Authored overlay for KpiChartStyle. Produced by cascade from theme YAML.
 | `support` | [KpiSupportStyle](#kpisupportstyle) | KPI support row slot. |
 | `min_card_width` | float | Minimum KPI card width in pixels. |
 | `default_height` | float | Default KPI card height in pixels. |
-| `border` | str \| [BorderStyle](#borderstyle) | KPI card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | KPI card border style. Unset fields fall back to [`style.charts.border`](#chartsstyle). |
 | `content_padding` | str \| float \| [SpacingValues](#spacingvalues) | Inner inset (top/right/bottom/left) for KPI card content in pixels. |
 | `align` | enum: "left", "center", "right" | Horizontal alignment of the value, label, and support text within the card. |
 
@@ -1023,7 +1044,7 @@ Authored overlay for TableChartStyle. Table chart style overrides layered on top
 | `padding` | [PaddingStyle](#paddingstyle) | Per-chart-type padding override; 4 sides in pixels. Unset fields fall back to [`style.charts.padding`](#chartsstyle). |
 | `background` | str | Table background color; None inherits from theme. |
 | `font` | [FontStyle](#fontstyle) | Table chart-level font overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
-| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. Unset fields fall back to [`style.charts.border`](#chartsstyle). |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Table color: static text paint or gradient scale only (no categorical arm). |
 | `outer_padding` | float | Outer table padding in pixels. |
 | `bottom_padding` | float | Extra bottom padding below the last row in pixels. |
@@ -1091,7 +1112,7 @@ Authored overlay for PointMapChartStyle. Point map chart style.
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Geo color: static paint or gradient scale only (no categorical arm). |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. |
-| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. Unset fields fall back to [`style.charts.border`](#chartsstyle). |
 | `projection` | [ProjectionStyle](#projectionstyle) | Vega-Lite projection configuration for this geo family. |
 | `basemap` | [BasemapStyle](#basemapstyle) | Background map layer; None source = no topo layer. |
 | `marks` | [PointMapChartMarksStyle](#pointmapchartmarksstyle) | Point-map-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
@@ -1112,7 +1133,7 @@ Authored overlay for GeoshapeChartStyle. Geoshape (choropleth) chart style.
 | `max_height` | float | Maximum chart height in pixels. Falls back to [`style.charts.max_height`](#chartsstyle). |
 | `color` | [StaticGradientColorStyle](#staticgradientcolorstyle) | Geo color: static paint or gradient scale only (no categorical arm). |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. |
-| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. Unset fields fall back to [`style.charts.border`](#chartsstyle). |
 | `projection` | [ProjectionStyle](#projectionstyle) | Vega-Lite projection configuration for this geo family. |
 | `basemap` | [BasemapStyle](#basemapstyle) | Background map layer; None source = no topo layer. |
 | `marks` | [GeoshapeChartMarksStyle](#geoshapechartmarksstyle) | Geoshape-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
@@ -1238,7 +1259,7 @@ Box border. Does NOT cascade (ADR-003: box properties reset per level).
 
 <a id="titlestyle"></a>
 ## TitleStyle
-Authored overlay for TitleStyle. Board and board titles.
+Authored overlay for TitleStyle. Typography shared by every heading: board, prose, chart, table, and spark titles.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1292,7 +1313,7 @@ Authored overlay for ChartsStyle. Registry of all chart-type styles plus shared 
 | `max_height` | float | Maximum chart height in pixels. |
 | `color` | [ColorStyle](#colorstyle) | Chart color: static mark paint, categorical palette, and/or gradient scale. |
 | `font` | [FontStyle](#fontstyle) | Chart-level font overrides. Unset fields fall back to [`style.font`](#style). |
-| `border` | str \| [BorderStyle](#borderstyle) | Chart card border style. |
+| `border` | str \| [BorderStyle](#borderstyle) | Border around every chart card; callout cards keep their own. |
 | `title` | [TitleStyle](#titlestyle) | Title style for every chart's title. Unset fields fall back to [`style.title`](#style). |
 | `category_colors` | dict[str, [CategoryColorBinding](#categorycolorbinding)] | Board-wide category→color bindings, keyed by data field name. Pins a category to one swatch across every chart on the board. |
 | `tooltip` | [TooltipStyle](#tooltipstyle) | Board-wide chart tooltip style. |
@@ -1433,6 +1454,28 @@ Pre-parsed CSS spacing (margin/padding).
 | `right` | float | Right spacing in pixels. |
 | `bottom` | float | Bottom spacing in pixels. |
 | `left` | float | Left spacing in pixels. |
+
+<a id="numberlocale"></a>
+## NumberLocale
+A d3 formatLocale definition.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `decimal` | str | The decimal mark (e.g. `"."`). |
+| `thousands` | str | The group separator (e.g. `","`). |
+| `grouping` | tuple[int, ...] | The group sizes (e.g. `[3]`), cycled as needed. |
+| `currency` | tuple[str, str] | The currency prefix and suffix (e.g. `["$", ""]`) a `$` in a d3 spec prints. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `percent` | str | The percent sign. |
+| `minus` | str | The minus sign. |
+| `analytic` | tuple[str, str, str, str] | The extra-short thousand, million, billion and trillion suffixes, where a magnitude is declared once (en-US: K, M, B, T after a non-breaking space). A leading space is part of the suffix. |
+| `narrative` | tuple[str, str, str, str] | The abbreviated thousand, million, billion and trillion suffixes on every value (en-US: `["k", "mn", "bn", "trn"]`). |
 
 <a id="chartsupporttablesource"></a>
 ## ChartSupportTableSource
@@ -2131,7 +2174,7 @@ Authored overlay for TextCodeStyle. Inline and fenced code spans in markdown pro
 | `background` | str | Box background fill. |
 | `border` | str \| [BorderStyle](#borderstyle) | Box border (width, color, radius). |
 | `highlight` | bool | Syntax-highlight fenced markdown code blocks. |
-| `theme` | str | Pygments style name for fenced markdown code tokens. |
+| `theme` | enum: "abap", "algol", "algol_nu", "arduino", "autumn", "borland", "bw", "coffee", "colorful", "default", "dracula", "emacs", "friendly", "friendly_grayscale", "fruity", "github-dark", "gruvbox-dark", "gruvbox-light", "igor", "inkpot", … (29 more; see the JSON Schema) | Pygments style name for fenced markdown code tokens. |
 
 <a id="textblockquotestyle"></a>
 ## TextBlockquoteStyle
@@ -2149,7 +2192,7 @@ Authored overlay for TextBoldStyle. Inline **bold** text runs in markdown prose,
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `weight` | str \| float | CSS font-weight for bold text runs and bold table cells. |
+| `weight` | enum: "normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900", 100, 200, 300, 400, 500, 600, 700, 800, 900 | CSS font-weight for bold text runs and bold table cells. |
 
 <a id="dividerstyle"></a>
 ## DividerStyle
@@ -2809,8 +2852,8 @@ Scale-based continuous color mapping for a table column.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `background` | [ScaleTargetConfig](#scaletargetconfig) | Continuous background color mapping for this column. |
-| `color` | [ScaleTargetConfig](#scaletargetconfig) | Continuous text color mapping for this column. |
+| `background` | [ColumnScaleTargetConfig](#columnscaletargetconfig) | Continuous background color mapping for this column. |
+| `color` | [ColumnScaleTargetConfig](#columnscaletargetconfig) | Continuous text color mapping for this column. |
 
 <a id="sparkemptystyle"></a>
 ## SparkEmptyStyle
@@ -3121,6 +3164,28 @@ Authored overlay for TableRowRoleStyle.
 | `font` | [FontStyle](#fontstyle) | Per-role font style override; None uses the default row font. |
 | `background` | str | Per-role row background color; None means no override. |
 
+<a id="columnscaletargetconfig"></a>
+## ColumnScaleTargetConfig
+A table column's scale target: CSS color strings only.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `palette` | str \| list[str] \| enum: "accent", "bluegreen", "blueorange", "bluepurple", "blues", "brownbluegreen", "browns", "category-6-tonal-blue", "category-6-tonal-blue.dark", "category-6-tonal-blue.deep", "category-6-tonal-blue.light", "category-6-tonal-blue.pale", "category-6-tonal-brown", "category-6-tonal-brown.dark", "category-6-tonal-brown.deep", "category-6-tonal-brown.light", "category-6-tonal-brown.pale", "category-6-tonal-green", "category-6-tonal-green.dark", "category-6-tonal-green.deep", … (120 more; see the JSON Schema) | Which colors the scale draws from: a built-in palette name or Vega scheme, or a CSS color list. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `domain` | const: "data" | Scale domain source ('data' uses the data extent, widened to nice round bounds when nice is true; None uses explicit min/max). |
+| `min` | float \| int | Minimum scale domain value (overrides data minimum). |
+| `max` | float \| int | Maximum scale domain value (overrides data maximum). |
+| `nice` | bool | Widen a data-derived domain to round ('nice') bounds and label every nice tick on the legend, mirroring Vega-Lite's own scale.nice. Applies to the color scale a gradient legend labels, not the x/y position scale. Ignored once min or max is set; a single-sided bound already fixes that edge exactly. Widening is currently honored on heatmap's themed color gradient only; geoshape's choropleth honors `nice: false` (exact endpoint labels) but not `nice: true`'s widening. |
+| `null_color` | str | Color assigned to null values. |
+| `hinge` | float \| const: "auto" | Diverging scale midpoint value, or 'auto' to use the data midpoint. |
+| `arm_mode` | enum: "asymmetric", "symmetric" | How diverging scale arms are stretched: 'asymmetric' (proportional) or 'symmetric' (equal arms). |
+
 <a id="sparkbarlabelstyle"></a>
 ## SparkBarLabelStyle
 Authored overlay for SparkBarLabelStyle.
@@ -3171,8 +3236,8 @@ Authored overlay for LabelsDefaultTemplate. Default Jinja templates for per-slic
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `with_color` | str | Default per-slice label template when the chart has a color binding. |
-| `no_color` | str | Default per-slice label template when the chart has no color binding. |
+| `with_color` | str | Default per-slice label template when the chart has a color binding. `{value_line}` stands for the slice value in the slice tooltip's format. |
+| `no_color` | str | Default per-slice label template when the chart has no color binding. `{value_line}` stands for the slice value in the slice tooltip's format. |
 
 <a id="postgressourceconfig"></a>
 ## PostgresSourceConfig
@@ -3192,7 +3257,7 @@ Postgres source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
 | `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
 | `port` | int | Database port number. |
@@ -3224,7 +3289,7 @@ Snowflake source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
 | `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
 | `user` | str | Snowflake user name. Omit for token-based authentication when supported. |
@@ -3271,7 +3336,7 @@ BigQuery source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
 | `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
 | `keyfile` | str | Path to service account JSON key file. |
@@ -3319,7 +3384,7 @@ Redshift source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
 | `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
 | `port` | int | Redshift port number. |
@@ -3369,45 +3434,23 @@ Databricks source configuration.
 | `type` | const: "databricks" |  |
 | `host` | str | Databricks workspace host name. |
 | `http_path` | str | HTTP path of the SQL warehouse. |
-| `token` | str | Personal access token. |
 | `catalog` | str | Unity Catalog catalog name. |
 
 **Optional**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
 | `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
+| `token` | str | Personal access token. Use this or client_id with client_secret. |
+| `client_id` | str | Application ID of an OAuth service principal. Set with client_secret. |
+| `client_secret` | str | OAuth secret of the service principal. Set with client_id. |
 | `schema` | str | Default schema for queries. |
 | `connect_retries` | int | Number of times to retry a failed connection. Has no effect unless retry_all is also set to true. |
 | `connect_timeout` | int | Seconds to wait between connection retry attempts, not a limit on how long a single attempt may take. Has no effect unless retry_all is also set to true. |
 | `socket_timeout` | int | Socket read timeout in seconds for the SQL warehouse connection. It also replaces the driver's own retry budget for a failed connection, which defaults to about 15 minutes, so a value below that shortens a hang against an unreachable warehouse while a larger value lengthens it. |
 | `retry_all` | bool | Whether dbt Charts itself retries a failed connection attempt, using connect_retries and connect_timeout. False (the default) means dbt Charts does not retry; the Databricks driver still retries certain connection failures on its own regardless of this setting. |
-
-<a id="mysqlsourceconfig"></a>
-## MySQLSourceConfig
-MySQL source configuration.
-
-**Required**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | const: "mysql" |  |
-| `host` | str | MySQL host name or IP address. |
-| `database` | str | MySQL database name. |
-| `user` | str | MySQL user name. |
-| `password` | str | MySQL password. |
-
-**Optional**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
-| `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
-| `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
-| `port` | int | MySQL port number. |
-| `schema` | str | Default schema for queries. |
 
 <a id="duckdbsourceconfig"></a>
 ## DuckDBSourceConfig
@@ -3423,7 +3466,7 @@ DuckDB source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
 | `path` | str | DuckDB file path or ':memory:' for an in-memory database. |
 | `schema` | str | Default schema for unqualified table names (sets search_path). |
@@ -3454,7 +3497,7 @@ SQLite source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 
 <a id="csvsourceconfig"></a>
 ## CsvSourceConfig
@@ -3471,7 +3514,7 @@ CSV file source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `delimiter` | str | Field delimiter character. |
 | `encoding` | str | File encoding. |
 
@@ -3490,7 +3533,7 @@ Parquet file source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 
 <a id="jsonsourceconfig"></a>
 ## JsonSourceConfig
@@ -3507,7 +3550,7 @@ JSON file source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `union_by_name` | bool | When True, rows from different files in a glob set are unified by column name: columns absent in a particular file are filled with NULL.  When False (default), all files in a glob set must share the same column schema; a mismatch raises an error. |
 
 <a id="httpsourceconfig"></a>
@@ -3525,7 +3568,7 @@ HTTP/REST API source configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `headers` | dict[str, str] | Default HTTP headers (e.g. Authorization). |
 
 <a id="dbtprofilesourceconfig"></a>
@@ -3537,17 +3580,104 @@ Reference to a dbt profile.
 | Field | Type | Description |
 |-------|------|-------------|
 | `type` | const: "dbt_profile" |  |
-| `profile` | str | dbt profile name from profiles.yml. |
 
 **Optional**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
+| `profile` | str | dbt profile name from profiles.yml. Defaults to $DBT_PROFILE, then the `profile:` of the linked dbt project's dbt_project.yml. |
 | `target` | str | dbt target to use; defaults to the profile's default target. |
 | `profiles_dir` | str | Directory containing profiles.yml, relative to the linked dbt project directory (see --dbt-project-dir). Use when profiles.yml is in a subdirectory (e.g. services/dbt). Resolution order: profiles_dir → $DBT_PROFILES_DIR → linked dbt project → ~/.dbt. |
 | `target_path` | str | Directory holding the manifest.json built for this target, relative to the linked dbt project directory; same meaning as dbt's --target-path. ref() and source() resolve against &lt;target_path&gt;/manifest.json. Build it with `dbt parse --target &lt;target&gt; --target-path &lt;target_path&gt;`. Defaults to dbt's own resolution: $DBT_TARGET_PATH → dbt_project.yml target-path → target. |
+
+<a id="lakecomputetokensource"></a>
+## LakeComputeTokenSource
+Lake compute authenticated with an access token (the default method).
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | const: "lakecompute" |  |
+| `token` | str | Lake compute access token. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
+| `base_url` | str | Lake compute API endpoint. |
+| `catalog_bundle` | str | Catalog bundle the lake compute session reads. |
+| `method` | const: "token" | Authentication method. |
+
+<a id="lakecomputeapikeysource"></a>
+## LakeComputeApiKeySource
+Lake compute authenticated with an API key.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | const: "lakecompute" |  |
+| `method` | const: "api_key" | Authentication method. |
+| `api_key` | str | Lake compute API key. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
+| `base_url` | str | Lake compute API endpoint. |
+| `catalog_bundle` | str | Catalog bundle the lake compute session reads. |
+
+<a id="lakecomputeoktasource"></a>
+## LakeComputeOktaSource
+Lake compute authenticated through Okta in the browser.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | const: "lakecompute" |  |
+| `method` | const: "okta_browser" | Authentication method. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
+| `base_url` | str | Lake compute API endpoint. |
+| `catalog_bundle` | str | Catalog bundle the lake compute session reads. |
+| `okta_auth_url` | str | Okta authorization endpoint. |
+| `okta_token_url` | str | Okta token endpoint. |
+| `okta_client_id` | str | Okta application client ID. |
+
+<a id="lakecomputefivetransource"></a>
+## LakeComputeFivetranSource
+Lake compute authenticated with a Fivetran credential.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | const: "lakecompute" |  |
+| `method` | const: "fivetran" | Authentication method. |
+| `fivetran_credential` | str | Fivetran API credential. |
+
+**Optional**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cache` | bool \| str \| [Cache](#cache) \| const: "forever" | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
+| `max_query_duration_seconds` | int | Maximum execution time for one query in seconds. Overrides execution.max_query_duration_seconds for this source. |
+| `base_url` | str | Lake compute API endpoint. |
+| `catalog_bundle` | str | Catalog bundle the lake compute session reads. |
+| `fivetran_auth_url` | str | Fivetran API endpoint for exchanging the credential. |
 
 <a id="duckdbextensionconfig"></a>
 ## DuckDBExtensionConfig
@@ -3632,3 +3762,4 @@ Settings authored under `execution:` in `dbt_charts.yml` at the project root, no
 | `max_result_bytes` | int | Maximum serialized byte size of a single query result (must be &gt; 0). |
 | `max_template_output_bytes` | int | Maximum cumulative bytes of Jinja-emitted template output for a single board render (must be &gt; 0). |
 | `dialect_aliases` | dict[str, str] | Maps a dbt charts dialect name to its sqlglot equivalent before parsing. |
+| `lakecompute` | LakeComputeExecutionConfig | Lake compute connection defaults. |

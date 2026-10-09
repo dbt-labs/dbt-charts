@@ -26,11 +26,13 @@ from dataclasses import dataclass
 from enum import Enum
 
 from d3_format import FormatSpec, parse as _d3_parse
-from dbt_charts.core.text.format_d3 import _D3_TO_ANALYTIC, _D3_TO_NARRATIVE, Notation
+from dbt_charts.core.text.format_d3 import (
+    Notation,
+    active_format_locale,
+)
 
-# d3's SI prefix letter at each tier — the same letters _D3_TO_ANALYTIC and
-# _D3_TO_NARRATIVE key on, so the suffix strings are read from there rather
-# than restated as a new literal table. Below thousands a value is already
+# d3's SI prefix letter at each tier — the letters a locale's magnitude
+# words key on. Below thousands a value is already
 # short enough to write out in full, so it never needs a magnitude suffix.
 # Capped at trillions deliberately: a tick ladder runs from zero and stays
 # within about one tier of its top by construction, so a ruler/ledger/strip
@@ -70,8 +72,8 @@ def suffix_at_register(exponent: int, register: Notation) -> str:
     doesn't apply — see the "ruler" section of the numeral design doc), which
     needs the suffix text at a register the scale's own mode didn't select.
     """
-    table = _D3_TO_ANALYTIC if register == "analytic" else _D3_TO_NARRATIVE
-    return table[_D3_PREFIX_BY_EXPONENT[exponent]]
+    words = active_format_locale().magnitudes(register)
+    return words[_D3_PREFIX_BY_EXPONENT[exponent]]
 
 
 class SuffixMode(Enum):
@@ -267,9 +269,13 @@ def _printed_si_suffix(formatted: str) -> str:
     negative cell's suffix still compares equal to a positive sibling's --
     the paren itself carries no unit information, and leaving it in would
     make whether a column happens to contain a negative value decide whether
-    it decimal-aligns at all.
+    it decimal-aligns at all. A currency the locale places after the digits
+    goes the same way (``"12,1k €"``).
     """
     text = formatted[:-1] if formatted.endswith(")") else formatted
+    trailing_currency = active_format_locale().currency[1]
+    if trailing_currency:
+        text = text.removesuffix(trailing_currency)
     end = len(text)
     while end > 0 and text[end - 1].isalpha():
         end -= 1
@@ -423,7 +429,8 @@ def build_decimal_pad_table(
 
 
 def fractional_digit_count(num_str: str) -> int:
-    """Digit-only count of ``num_str``'s fractional part (after the first ".").
+    """Digit-only count of ``num_str``'s fractional part (after the locale's
+    decimal mark).
 
     The ONE definition of "how many fractional digits does this formatted
     string show" every pad-table builder and selector shares --
@@ -437,7 +444,8 @@ def fractional_digit_count(num_str: str) -> int:
     significant-figures spec identically, regardless of *why* a value
     trimmed short.
     """
-    return sum(1 for c in num_str.partition(".")[2] if c.isdigit())
+    decimal = active_format_locale().decimal
+    return sum(1 for c in num_str.partition(decimal)[2] if c.isdigit())
 
 
 def decimal_pad_for(pad_table: tuple[str, ...], num_str: str) -> str:
@@ -624,7 +632,7 @@ def non_compacting_tick_format(
 
     Mirrors ``ruler_digit_format``'s split so the same anchor-only prefix
     convention applies to non-compacting ladders: there IS a meaningful
-    anchor tick (the magnitude-extreme), and the currency symbol disambiguates
+    anchor tick, and the currency symbol disambiguates
     nothing when repeated on every tick -- $8,000 / 6,000 / 4,000 ... reads
     the same as $8,000 / $6,000 / $4,000 ..., while the anchor-only form
     is the established dbt charts convention for both modes.

@@ -16,7 +16,7 @@ class DescribeQueryArgs(BaseModel):
 
     Gates on validate_query first — short-circuits on parse errors and missing join
     predicates with actionable diagnostics; otherwise returns columns alongside any
-    non-error diagnostics (e.g. WARN-FANOUT-RISK warnings) so the agent can read them
+    non-error diagnostics (e.g. WARN-REAGGREGATION warnings) so the agent can read them
     without being blocked from the column shape.
 
     Uses a no-execution check where one exists: DuckDB's own DESCRIBE, or a

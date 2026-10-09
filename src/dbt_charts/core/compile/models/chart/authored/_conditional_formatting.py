@@ -21,8 +21,11 @@ from dbt_charts.core.compile.models.constraints import (
     IsSet,
     Requires,
 )
-from dbt_charts.core.compile.models.primitives import FontStyle, ToneLiteral
-from dbt_charts.core.compile.models.style.authored import _validate_glyph_text
+from dbt_charts.core.compile.models.primitives import (
+    FontStyle,
+    GlyphText,
+    ToneLiteral,
+)
 from dbt_charts.core.compile.models.style.theme import (
     VALID_FONT_WEIGHTS,
     font_weight_as_css,
@@ -33,10 +36,10 @@ from dbt_charts.core.utils import coerce_numeric_cell
 class _PredicateBase(ConstrainedModel):
     """Shared predicate fields and helpers for conditional rules."""
 
-    # extra="forbid": rejects unknown fields like all authored models.
-    # populate_by_name=True: 'in' is a Python keyword, so the field is `in_`
-    # in Python; YAML authors write `in:` and the alias bridges the two.
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    # 'in' is a Python keyword, so the field is `in_` in Python and the alias
+    # `in` is the only authored spelling. Dumping by alias lets every
+    # dump-and-revalidate site in the pipeline round-trip.
+    model_config = ConfigDict(extra="forbid", serialize_by_alias=True)
 
     eq: Any = Field(
         default=None, description="Match rows where the column value equals this value."
@@ -138,8 +141,6 @@ def match_predicate(rule: _PredicateBase, value: Any) -> bool:
 class ConditionalRule(_PredicateBase):
     """A single conditional formatting rule."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
     __constraints__: ClassVar[tuple[Constraint, ...]] = (
         AtLeastOneOf(
             _PREDICATE_KEYS, "ConditionalRule requires exactly one condition operator"
@@ -182,7 +183,7 @@ class ConditionalRule(_PredicateBase):
         default=None,
         description="Font style overrides (color, weight, style, decoration) applied when the rule matches.",
     )
-    glyph: str | None = Field(
+    glyph: GlyphText | None = Field(
         default=None,
         description="Text shown before the cell value when the rule matches.",
     )
@@ -197,7 +198,6 @@ class ConditionalRule(_PredicateBase):
 
     @model_validator(mode="after")
     def _validate_rule(self) -> ConditionalRule:
-        _validate_glyph_text(self.glyph, label="ConditionalRule")
         if self.font is not None and self.font.weight is not None:
             if font_weight_as_css(self.font.weight) not in VALID_FONT_WEIGHTS:
                 raise ValueError(

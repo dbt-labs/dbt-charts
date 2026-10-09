@@ -89,17 +89,17 @@ Included assets:
     (Adobe names this face `Source Serif 4 Variable`; the registry, the themes,
     and vl-convert's family lookup all say `Source Serif 4`) or moves any shared
     codepoint's `hmtx` advance width.
-  - **`hmtx` equality is not "nothing moved", and the 4.004 swap is the proof.**
-    Wrap points come from summed `hmtx` advances, but title columns are reserved
-    with PIL/FreeType `getlength` (`render/sizing.py`), which grid-fits the
-    outline. Adobe's build carries no `gasp`/`prep` hinting tables where the old
-    file did, so single glyphs moved a pixel — `A` 13→14, `W` 18→20 — and five
-    board goldens shifted a title/variables split by 2–5px while every `hmtx`
-    advance stayed identical. Kerning is not involved: `GPOS` is `kern, mark,
-    mkmk` in both, and PIL is built without raqm here, so no `GPOS` is applied on
-    that path. The build script reports the FreeType width of a fixed probe
-    string across the swap for exactly this reason; expect goldens to move, and
-    get the diff viz-reviewed.
+  - **`hmtx` equality does not cover FreeType measures.** Wrap points and title
+    columns come from summed `hmtx` advances (mdsvg), so a swap that keeps every
+    advance identical keeps them identical. A measure through PIL/FreeType
+    `getlength` (the test geometry sweeps) grid-fits the outline instead:
+    Adobe's build carries no `gasp`/`prep` hinting tables where the old file did,
+    so single glyphs measure a pixel differently — `A` 13→14, `W` 18→20 — with
+    every `hmtx` advance unchanged. `GPOS` is `kern, mark, mkmk` in both, and PIL
+    is built without raqm here, so no `GPOS` is applied on that path. The build
+    script reports the FreeType width of a fixed probe string across the swap;
+    expect goldens that depend on FreeType metrics to move, and get the diff
+    viz-reviewed.
   - It carries 918 codepoints. The file it replaced carried 231 — it had been
     produced by decompressing the Latin woff2, so Greek and Mathematical
     Operators were absent from the measurement face too and could not be subset

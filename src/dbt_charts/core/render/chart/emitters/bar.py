@@ -311,7 +311,13 @@ def apply_grouped_bar_spacing(
         return
 
     cat_ch = "y" if is_horizontal else "x"
-    mark_props = spec.mark_props
+    # A mixed-sign measure splits each bar into a positive and a negative
+    # sub-layer; the outer layered spec's own mark_props is never painted.
+    bar_mark_props = (
+        [layer.mark_props for layer in spec.layers if layer.mark == "bar"]
+        if spec.mark == "layered"
+        else [spec.mark_props]
+    )
     if cat_ch in encoding and not x_encoding_is_banded(encoding[cat_ch]):
         # A continuous categorical channel (quantitative, or a temporal x
         # promoted past max_ordinal_buckets) has no band scale for the offset
@@ -367,7 +373,8 @@ def apply_grouped_bar_spacing(
     size_dim = "height" if is_horizontal else "width"
 
     if fraction <= 0:
-        mark_props[size_dim] = {"band": max(0.05, 1.0 + fraction)}
+        for mark_props in bar_mark_props:
+            mark_props[size_dim] = {"band": max(0.05, 1.0 + fraction)}
         return
 
     # Positive overlap: only supported for exactly 2 series.
@@ -381,7 +388,8 @@ def apply_grouped_bar_spacing(
 
     if not is_horizontal:
         # Vertical: width band > 1 overflows → exact, responsive overlap.
-        mark_props["width"] = {"band": 1.0 + fraction}
+        for mark_props in bar_mark_props:
+            mark_props["width"] = {"band": 1.0 + fraction}
         return
 
     # Horizontal: band clamps, so size comes from Vega's own resolved
@@ -390,10 +398,11 @@ def apply_grouped_bar_spacing(
     # fraction < 1 here keeps (1+fraction)*bandwidth under 2*bandwidth ==
     # total_step — the group footprint can't spill into a neighboring
     # category by construction, no clamp needed.
-    mark_props["size"] = {"expr": f"{1.0 + fraction} * bandwidth('yOffset')"}
-    # Drop the band-relative height (from bar_mark_to_vl / theme band_width) so
-    # the explicit pixel size is the sole height control — band and size conflict.
-    mark_props.pop("height", None)
+    for mark_props in bar_mark_props:
+        mark_props["size"] = {"expr": f"{1.0 + fraction} * bandwidth('yOffset')"}
+        # Drop the band-relative height (from bar_mark_to_vl / theme band_width) so
+        # the explicit pixel size is the sole height control — band and size conflict.
+        mark_props.pop("height", None)
 
 
 def _emit_histogram(
@@ -500,6 +509,13 @@ def _emit_histogram(
         ),
     }
     bake_tick_ladder(y_enc["axis"], chart.style.axis_y)
+    if "values" not in y_enc["axis"]:
+        # A row count is whole: never a tick between two counts, and no more
+        # ticks than the tallest bin has rows.
+        y_enc["axis"].setdefault("tickMinStep", 1)
+        y_enc["axis"].setdefault(
+            "tickCount", {"expr": "max(1, min(ceil(height / 40), domain('y')[1]))"}
+        )
 
     encoding: dict[str, Any] = {"x": x_enc, "y": y_enc}
     transforms: list[VLDict] = []

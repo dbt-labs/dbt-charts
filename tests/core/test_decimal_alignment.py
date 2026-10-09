@@ -605,6 +605,7 @@ class TestResolveBakeDecision:
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             font_tabular=True,
             chart_id="test",
+            anchor_at_start=False,
         )
         assert ruler is not None
         assert ruler.decimal_pad_table == (), (
@@ -636,6 +637,7 @@ class TestResolveBakeDecision:
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             font_tabular=True,
             chart_id="test",
+            anchor_at_start=False,
         )
         assert ruler is not None
         assert ruler.decimal_pad_table, (
@@ -736,6 +738,7 @@ class TestVegaDecimalPadExpr:
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             font_tabular=True,
             chart_id="test",
+            anchor_at_start=False,
         )
         assert ruler_with_pad is not None and ruler_with_pad.decimal_pad_table, (
             "fixture ruler must have non-empty pad table -- check _build_ruler gate"
